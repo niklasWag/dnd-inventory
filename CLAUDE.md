@@ -7,9 +7,9 @@ Project guidance for Claude Code. Read these rules before working on this codeba
 A **D&D 5e (2024 rules) inventory management web app**, intended for private use. Designed as a party manager where "solo" is a party-of-one (same data model, single member). Local-first browser app that grows into a self-hosted backend with Discord OAuth and live party sync.
 
 **Authoritative specs — read first if relevant to the task:**
-- `OUTLINE.md` — full product scope, data model, permissions, milestones.
-- `MVP.md` — MVP scope (single-user, browser-local). The MVP `AppState` is a strict subset of the final outline.
-- `TECH_STACK.md` — all technology choices with rationale.
+- `docs/OUTLINE.md` — full product scope, data model, permissions, milestones.
+- `docs/MVP.md` — MVP scope (single-user, browser-local). The MVP `AppState` is a strict subset of the final outline.
+- `docs/TECH_STACK.md` — all technology choices with rationale.
 
 If you find anything in code that contradicts these docs, **the docs win** — update the code or surface the conflict.
 
@@ -22,7 +22,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - When the user asks for an outline/plan/design doc, **ask clarifying questions first**, then write — don't guess at decisions.
 - After non-trivial implementation work, propose a commit but **do not commit without explicit permission**.
 
-### Tech stack (see `TECH_STACK.md` for full rationale)
+### Tech stack (see `docs/TECH_STACK.md` for full rationale)
 
 - TypeScript everywhere. Strict mode (`strict: true`, `noUncheckedIndexedAccess`, `noImplicitOverride`).
 - Frontend: React 18 + Vite. Styling: Tailwind + shadcn/ui. State: Zustand + Immer.
@@ -42,7 +42,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - Reducer actions correspond 1:1 to `TransactionLog.type` values. Adding a mutation means adding both an action and a log type.
 - All mutations go through the reducer: validate → apply → append log entry → persist (debounced).
 
-### Data model rules (see `OUTLINE.md` §4)
+### Data model rules (see `docs/OUTLINE.md` §4)
 
 - **Every user is always in a party.** Solo = party-of-one with `isSoloShortcut: true`. Never invent a parallel solo path.
 - Stash `scope` is `character | party | recovered-loot`. There is **no `solo` scope**.
@@ -53,7 +53,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - `PartyMembership` primary key is composite `(userId, partyId, role)` — a party creator has two rows (dm + player).
 - The MVP hard-codes some fields to placeholder values (`equipped: false`, `encumbranceRule: "off"`, `bankerUserId: null`, etc.). Do not redesign the schema to "remove" them — they're placeholders for future features.
 
-### Permissions / behavior rules (see `OUTLINE.md` §3.14 + §8)
+### Permissions / behavior rules (see `docs/OUTLINE.md` §3.14 + §8)
 
 - DM never silently edits a player's character. Every cross-character mutation goes through an explicit action that is logged.
 - Banker only exists when the party has 2+ members. DM cannot self-appoint as Banker.
@@ -85,7 +85,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 
 ### When in doubt
 
-- If a decision isn't in `OUTLINE.md`, `MVP.md`, or `TECH_STACK.md`, **ask the user** rather than guessing.
+- If a decision isn't in `docs/OUTLINE.md`, `docs/MVP.md`, or `docs/TECH_STACK.md`, **ask the user** rather than guessing.
 - If a request would contradict one of these docs, surface the conflict before implementing.
 - Prefer the simpler approach. The right amount of complexity is the minimum needed for the current task.
 
@@ -112,7 +112,7 @@ pnpm typecheck                            # tsc --noEmit across workspace
 
 ### Key invariants to preserve
 
-- `AppState` shape always matches `OUTLINE.md` §4 (with MVP placeholders where applicable).
+- `AppState` shape always matches `docs/OUTLINE.md` §4 (with MVP placeholders where applicable).
 - Every mutation appends a `TransactionLog` entry with a typed payload.
 - JSON export/import round-trip is bit-for-bit lossless (export → wipe → import = identical state).
 - Auto-stack key: `(definitionId, notes ?? "")`.

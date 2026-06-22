@@ -127,9 +127,12 @@ Monorepo via **pnpm workspaces** (anticipating shared rules engine between clien
 │  └─ seeds/                   # PHB / DMG content JSON + loader
 ├─ infra/
 │  └─ docker/                  # docker-compose + nginx config (added at M3)
-├─ OUTLINE.md
-├─ MVP.md
-└─ TECH_STACK.md               # this file
+├─ CLAUDE.md                   # project instructions (auto-loaded at root)
+└─ docs/
+   ├─ OUTLINE.md
+   ├─ MVP.md
+   ├─ TECH_STACK.md            # this file
+   └─ roadmap.md
 ```
 
 **Until M3** only `apps/web`, `packages/shared`, `packages/rules`, and `packages/seeds` exist. The monorepo structure is set up from day one so the M3 backend addition is purely additive.
