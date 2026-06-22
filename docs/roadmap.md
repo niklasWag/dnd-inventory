@@ -18,7 +18,7 @@ App boots; welcome empty state; settings page with wipe; logging plumbing in pla
 
 **Repo & tooling**
 - [x] pnpm workspace root (`pnpm-workspace.yaml`, root `package.json`)
-- [x] `apps/web` Vite + React 18 + TypeScript app scaffolded
+- [x] `apps/web` Vite + React 19 + TypeScript app scaffolded
 - [x] `packages/shared` package created (empty placeholder index)
 - [x] `packages/rules` package created (empty placeholder index)
 - [x] `packages/seeds` package created (empty placeholder index)
@@ -108,6 +108,15 @@ App boots; welcome empty state; settings page with wipe; logging plumbing in pla
 > - Decide on a real router (React Router data-mode per TECH_STACK §2.6) before adding the Character Sheet — the current `Route` enum is a deliberate two-screen stopgap.
 > - Tidy duplicated devDeps across `packages/*/package.json` (still pending from the earlier M0 chunk).
 > - **Open question for M1:** auto-create a default Storage stash on character creation, or zero? (Listed under Open Questions §11.)
+>
+> **2026-06-22 (later) — Bumped to current majors + cleared all audit findings.**
+> - **React 18 → 19.2.7, Vite 5 → 8.0.16, Vitest 2 → 4.1.9.** Plus `@vitejs/plugin-react` 4→6, `@types/react`/-dom 18→19, `@testing-library/react` 16.1→16.3, `jsdom` 25→29.
+> - **TECH_STACK.md updated** (React 18 → React 19 in §1 table + §2.1).
+> - **Code changes:** 4 files — React 19 dropped the global `JSX` namespace, replaced `: JSX.Element` with `: ReactElement` imports in `App.tsx`, `Layout.tsx`, `Welcome.tsx`, `Settings.tsx`.
+> - **Cleared the "tidy duplicated devDeps" followup along the way:** `packages/{shared,rules,seeds}/package.json` and root `package.json` were still pinning `vitest@^2.1.8`, which transitively dragged in vite 5 + esbuild 0.21. That was the source of every `pnpm audit` finding. Bumping all four to `vitest@^4` eliminated the second vite resolution and dropped the lockfile from 2× vite to 1×.
+> - **Security:** `pnpm audit` → **0 vulnerabilities** (was 1 critical / 1 high / 3 moderate, all in stale transitive vite/esbuild).
+> - **Workspace status:** typecheck ✓ · lint ✓ · prettier ✓ · 9/9 tests pass · build ✓.
+> - **Historical note on the earlier Vite 5 / React 18 / Vitest 2 choice in this same M0:** that was a defensive "what installed cleanly on first try" pick that turned out to be unnecessary — vitest 4 + vite 8 dedupes cleanly. The original rationale in the notes above is left intact as a record.
 
 ---
 

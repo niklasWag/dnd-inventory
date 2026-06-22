@@ -11,7 +11,7 @@ This document is the **source of truth for technology choices** across both the 
 | Layer | Choice | Notes |
 |---|---|---|
 | Language | **TypeScript** end-to-end | One language, shared rules engine code. |
-| Frontend | **React 18 + Vite** | SPA; Vite for dev/build. |
+| Frontend | **React 19 + Vite** | SPA; Vite for dev/build. |
 | Styling | **Tailwind CSS + shadcn/ui** | Light/dark theme; copy-paste primitives. |
 | State | **Zustand + Immer** | Reducer-shaped global store. |
 | Local persistence | **Dexie (IndexedDB)** | Async, generous quota. |
@@ -28,8 +28,8 @@ This document is the **source of truth for technology choices** across both the 
 
 ## 2. Frontend
 
-### 2.1 Framework — React 18 + Vite + TypeScript
-- React 18's concurrent features (transitions, deferred values) are useful when bulk operations touch many stashes.
+### 2.1 Framework — React 19 + Vite + TypeScript
+- React 19's concurrent features (transitions, deferred values, `useActionState`) are useful when bulk operations touch many stashes.
 - Vite gives near-instant HMR for the SPA dev loop.
 - Largest ecosystem of D&D-adjacent component libraries and icon sets.
 

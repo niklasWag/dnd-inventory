@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -22,7 +22,7 @@ interface SettingsProps {
  * MVP §7 screen 9 (Settings): app version, wipe data (with confirm).
  * Export/Import and Character/Party rename land in later milestones.
  */
-export function Settings({ onWipe }: SettingsProps): JSX.Element {
+export function Settings({ onWipe }: SettingsProps): ReactElement {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [wiping, setWiping] = useState(false);
 

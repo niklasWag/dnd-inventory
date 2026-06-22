@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { Settings } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-export function Layout({ route, onNavigate, children }: LayoutProps): JSX.Element {
+export function Layout({ route, onNavigate, children }: LayoutProps): ReactElement {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border">

@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { UserPlus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,7 @@ interface WelcomeProps {
  * Per MVP §7 screen 1: big "Create your character" CTA + settings link.
  * The CTA is a stub until M1 wires the create-character form.
  */
-export function Welcome({ onNavigate }: WelcomeProps): JSX.Element {
+export function Welcome({ onNavigate }: WelcomeProps): ReactElement {
   return (
     <div className="mx-auto flex max-w-xl flex-col items-center gap-6 py-16 text-center">
       <h1 className="text-4xl font-bold tracking-tight">Welcome, adventurer.</h1>
