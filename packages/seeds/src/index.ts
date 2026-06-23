@@ -1,3 +1,8 @@
-// Placeholder. PHB / DMG seed loaders land in MVP M2 / R2.
-// Seed JSON files (private; not in git) live in `data/`.
-export {};
+export { loadPhbSeed } from './loader';
+export { PHB_SEED_VERSION } from './seedVersion';
+export {
+  phbSeedEntrySchema,
+  phbSeedFileSchema,
+  type PhbSeedEntry,
+  type PhbSeedFile,
+} from './phb-2024-mundane.schema';

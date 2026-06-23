@@ -2,6 +2,9 @@ import { useState, type ReactElement } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 
+import { Button } from '@/components/ui/button';
+import { AddItemModal } from '@/components/stash/AddItemModal';
+import { StashItemsTable } from '@/components/stash/StashItemsTable';
 import { useStore } from '@/store';
 
 type Tab = 'inventory' | 'storage' | 'party' | 'recovered-loot';
@@ -16,23 +19,45 @@ const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
 /**
  * CharacterSheet (MVP §7 screen 2). Header + 4 tabs.
  *
- * Tab bodies are intentional placeholders for M1 — the surrounding
- * milestones fill them in:
- *   - Inventory items table → M2
- *   - Storage stash list / detail → M3
- *   - Currency rows everywhere → M4
+ * M2 wires three of the four tabs (Inventory / Party Stash / Recovered
+ * Loot) to the shared `StashItemsTable` + `AddItemModal`. Storage stays a
+ * placeholder until M3 ships the create/rename/delete actions.
+ *
+ * Remaining placeholders that future milestones fill in:
+ *   - Currency rows on each tab → M4
  *   - Move / Split per row → M5
+ *   - Storage stash list / detail → M3
  */
 export function CharacterSheet(): ReactElement {
   const { id } = useParams<{ id: string }>();
-  const character = useStore(
-    useShallow((s) => s.appState?.characters.find((c) => c.id === id) ?? null),
+  const sheet = useStore(
+    useShallow((s) => {
+      if (s.appState === null) return null;
+      const c = s.appState.characters.find((ch) => ch.id === id);
+      if (c === undefined) return null;
+      const partyStash = s.appState.stashes.find((st) => st.scope === 'party');
+      if (partyStash === undefined) return null;
+      return {
+        character: c,
+        inventoryStashId: c.inventoryStashId,
+        partyStashId: partyStash.id,
+        recoveredLootStashId: s.appState.party.recoveredLootStashId,
+      };
+    }),
   );
   const [tab, setTab] = useState<Tab>('inventory');
+  const [adding, setAdding] = useState(false);
 
-  if (character === null) {
+  if (sheet === null) {
     return <Navigate to="/" replace />;
   }
+
+  const { character, inventoryStashId, partyStashId, recoveredLootStashId } = sheet;
+  const targetStash = stashForTab(tab, {
+    inventoryStashId,
+    partyStashId,
+    recoveredLootStashId,
+  });
 
   return (
     <div className="space-y-6">
@@ -70,22 +95,70 @@ export function CharacterSheet(): ReactElement {
         </nav>
       </div>
 
-      <section className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-        <TabPlaceholder tab={tab} />
+      <section>
+        {tab === 'storage' ? (
+          <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+            Storage stash management arrives in M3.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-muted-foreground">
+                {labelForTab(tab)}
+              </h2>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  setAdding(true);
+                }}
+              >
+                + Add item
+              </Button>
+            </div>
+            <StashItemsTable stashId={targetStash} />
+          </div>
+        )}
       </section>
+
+      {tab !== 'storage' ? (
+        <AddItemModal
+          open={adding}
+          onOpenChange={setAdding}
+          stashId={targetStash}
+          stashLabel={labelForTab(tab)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function TabPlaceholder({ tab }: { tab: Tab }): ReactElement {
+function labelForTab(tab: Exclude<Tab, 'storage'>): string {
   switch (tab) {
     case 'inventory':
-      return <p>Inventory items table arrives in M2.</p>;
-    case 'storage':
-      return <p>Storage stash management arrives in M3.</p>;
+      return 'Inventory';
     case 'party':
-      return <p>Party Stash items + currency arrive in M2 / M4.</p>;
+      return 'Party Stash';
     case 'recovered-loot':
-      return <p>Recovered Loot view arrives in M2 / M4.</p>;
+      return 'Recovered Loot';
+  }
+}
+
+function stashForTab(
+  tab: Tab,
+  ids: { inventoryStashId: string; partyStashId: string; recoveredLootStashId: string },
+): string {
+  switch (tab) {
+    case 'inventory':
+      return ids.inventoryStashId;
+    case 'party':
+      return ids.partyStashId;
+    case 'recovered-loot':
+      return ids.recoveredLootStashId;
+    case 'storage':
+      // Unused — the Storage tab renders the M3 placeholder instead of the
+      // StashItemsTable. Return Inventory's id to satisfy the type; the
+      // modal is also hidden when `tab === 'storage'`.
+      return ids.inventoryStashId;
   }
 }

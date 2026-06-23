@@ -1,6 +1,6 @@
 import { Outlet, useNavigate } from 'react-router-dom';
 import type { ReactElement } from 'react';
-import { Settings as SettingsIcon } from 'lucide-react';
+import { BookOpen, Settings as SettingsIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
@@ -26,6 +26,17 @@ export function RootLayout(): ReactElement {
             D&amp;D Inventory Manager
           </button>
           <nav className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void navigate('/catalog');
+              }}
+              aria-label="Catalog"
+            >
+              <BookOpen className="h-4 w-4" />
+              <span className="sr-only sm:not-sr-only">Catalog</span>
+            </Button>
             <Button
               variant="ghost"
               size="sm"

@@ -40,10 +40,69 @@ const createCharacterEntry = z.object({
   }),
 });
 
+/**
+ * `acquire` — an item lands in a stash. Auto-stack is reducer-internal:
+ * if the row existed already, `itemInstanceId` is the existing row's id;
+ * if it was just created, it's the new id. The payload mirrors OUTLINE §4
+ * (`source` covers the full enum so future milestones — shops, hoards,
+ * duplicate-to-edit — extend the reducer without touching the schema).
+ */
+const acquireEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('acquire'),
+  payload: z.object({
+    stashId: z.string().min(1),
+    itemInstanceId: z.string().min(1),
+    definitionId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    source: z.enum(['hoard', 'purchase', 'custom-create', 'duplicate']),
+  }),
+});
+
+/**
+ * `consume` — an item row's quantity goes down. `removed` is the reducer-
+ * derived flag that telegraphs "this take dropped the row to 0 and it was
+ * removed from the stash" — useful for log readers / future undo so they
+ * don't need to replay the whole AppState to know the row is gone.
+ */
+const consumeEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('consume'),
+  payload: z.object({
+    stashId: z.string().min(1),
+    itemInstanceId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    removed: z.boolean(),
+  }),
+});
+
+/**
+ * `seed-catalog` — bulk catalog upsert from the bundled PHB seed (MVP §9).
+ * Fires on first launch (everything in `addedDefinitionIds`) and on any
+ * subsequent boot where the persisted `seedVersion` is behind the bundle
+ * (`updatedDefinitionIds` picks up changed PHB rows; homebrew is left alone).
+ *
+ * One entry per boot keeps the log compact — we'd rather record "the
+ * catalog moved to version N" than spam a `create-homebrew`-shaped row
+ * for every PHB item.
+ */
+const seedCatalogEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('seed-catalog'),
+  payload: z.object({
+    seedVersion: z.number().int().nonnegative(),
+    addedDefinitionIds: z.array(z.string().min(1)),
+    updatedDefinitionIds: z.array(z.string().min(1)),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   createCharacterEntry,
+  acquireEntry,
+  consumeEntry,
+  seedCatalogEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

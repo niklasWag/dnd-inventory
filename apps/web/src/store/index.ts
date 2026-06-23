@@ -38,7 +38,6 @@ function resolveActor(
   state: AppState,
   slice: LogEntrySlice,
 ): { actorUserId: string; actorRole: 'dm' | 'player'; partyId: string } {
-  void state; // M2+ reads state.user.id / state.party.id for non-bootstrap actions
   // Single switch over the discriminant. When new TxType variants land in
   // M2+, add a `case` here AND the @app/shared union, both type-checked.
   switch (slice.type) {
@@ -49,6 +48,32 @@ function resolveActor(
         actorUserId: slice.payload.userId,
         actorRole: 'dm',
         partyId: slice.payload.partyId,
+      };
+    case 'acquire':
+    case 'consume':
+      // Player-initiated mutations. In MVP the sole user wears both hats;
+      // R4 (multi-member parties) introduces the DM/player split + the
+      // `'banker'` actorRole variant.
+      if (state === null) {
+        throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'player',
+        partyId: state.party.id,
+      };
+    case 'seed-catalog':
+      // System-driven (bootstrap), but the User is the actor of record so
+      // the entry stays self-explanatory in the future history view.
+      // Logged as `'dm'` because catalog curation is the DM's domain per
+      // OUTLINE §3.7 (and the MVP user wears both hats anyway).
+      if (state === null) {
+        throw new Error('resolveActor: seed-catalog requires populated AppState');
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'dm',
+        partyId: state.party.id,
       };
   }
 }

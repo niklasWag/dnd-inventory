@@ -13,6 +13,10 @@
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests"
   },
+  "dependencies": {
+    "@app/shared": "workspace:*",
+    "zod": "^4.4.3"
+  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "eslint": "^9.18.0",

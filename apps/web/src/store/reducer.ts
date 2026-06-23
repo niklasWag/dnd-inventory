@@ -1,4 +1,4 @@
-import type { TransactionLogEntry } from '@app/shared';
+import type { ItemDefinition, ItemInstance, TransactionLogEntry } from '@app/shared';
 
 import type { Action, AppState } from './types';
 
@@ -46,7 +46,28 @@ export function reduce(state: AppState, action: Action): ReducerResult {
   switch (action.type) {
     case 'create-character':
       return createCharacter(state, action.payload);
+    case 'acquire':
+      return acquire(state, action.payload);
+    case 'consume':
+      return consume(state, action.payload);
+    case 'seed-catalog':
+      return seedCatalog(state, action.payload);
   }
+}
+
+/**
+ * Narrows `AppState` from `... | null` to its populated shape, throwing
+ * with the action name if state is null. Centralizes the boilerplate that
+ * every post-bootstrap reducer case needs.
+ */
+function requireState(
+  state: AppState,
+  action: string,
+): NonNullable<AppState> {
+  if (state === null) {
+    throw new Error(`${action}: no AppState (create-character must run first)`);
+  }
+  return state;
 }
 
 // -------------------------------------------------------------------- //
@@ -187,6 +208,194 @@ function createCharacter(
         inventoryStashId,
         partyStashId,
         recoveredLootStashId,
+      },
+    },
+  };
+}
+
+// -------------------------------------------------------------------- //
+// acquire (M2)
+// -------------------------------------------------------------------- //
+
+/**
+ * Adds `quantity` of `definitionId` to `stashId`. Auto-stacks on
+ * `(definitionId, notes ?? "")` per MVP §6 — identical adds collapse into
+ * the existing row.
+ *
+ * Validate-then-apply: rejects unknown stash, unknown definition, and
+ * non-positive quantities. The log entry always carries the resolved
+ * `itemInstanceId` (the existing one when stacked, a fresh one when new)
+ * so log replayers can follow the row through later `consume` / move
+ * actions.
+ */
+function acquire(
+  state: AppState,
+  payload: Extract<Action, { type: 'acquire' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'acquire');
+
+  if (payload.quantity <= 0) {
+    throw new Error('acquire: quantity must be positive');
+  }
+  if (!s.stashes.some((st) => st.id === payload.stashId)) {
+    throw new Error(`acquire: unknown stashId ${payload.stashId}`);
+  }
+  if (!s.catalog.some((d) => d.id === payload.definitionId)) {
+    throw new Error(`acquire: unknown definitionId ${payload.definitionId}`);
+  }
+
+  // Auto-stack key: (definitionId, notes ?? "").
+  const notesKey = payload.notes ?? '';
+  const existing = s.items.find(
+    (i) =>
+      i.ownerId === payload.stashId &&
+      i.definitionId === payload.definitionId &&
+      (i.notes ?? '') === notesKey,
+  );
+
+  let resolvedItemId: string;
+  let nextItems: ItemInstance[];
+
+  if (existing !== undefined) {
+    resolvedItemId = existing.id;
+    nextItems = s.items.map((i) =>
+      i.id === existing.id ? { ...i, quantity: i.quantity + payload.quantity } : i,
+    );
+  } else {
+    resolvedItemId = crypto.randomUUID();
+    const newRow: ItemInstance = {
+      id: resolvedItemId,
+      definitionId: payload.definitionId,
+      ownerType: 'stash',
+      ownerId: payload.stashId,
+      containerInstanceId: null,
+      quantity: payload.quantity,
+      equipped: false,
+      attuned: false,
+      identified: true,
+      currentCharges: null,
+    };
+    if (payload.notes !== undefined) newRow.notes = payload.notes;
+    nextItems = [...s.items, newRow];
+  }
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntry: {
+      type: 'acquire',
+      payload: {
+        stashId: payload.stashId,
+        itemInstanceId: resolvedItemId,
+        definitionId: payload.definitionId,
+        quantity: payload.quantity,
+        source: payload.source,
+      },
+    },
+  };
+}
+
+// -------------------------------------------------------------------- //
+// consume (M2)
+// -------------------------------------------------------------------- //
+
+/**
+ * Decrements `quantity` from `itemInstanceId`. If the new quantity hits
+ * zero the row is removed entirely and the log entry records `removed: true`
+ * so downstream readers (future history view, undo) don't need to replay
+ * AppState to know the row is gone.
+ *
+ * Rejects unknown ids and over-consumption (no negative quantities).
+ */
+function consume(
+  state: AppState,
+  payload: Extract<Action, { type: 'consume' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'consume');
+
+  if (payload.quantity <= 0) {
+    throw new Error('consume: quantity must be positive');
+  }
+
+  const row = s.items.find((i) => i.id === payload.itemInstanceId);
+  if (row === undefined) {
+    throw new Error(`consume: unknown itemInstanceId ${payload.itemInstanceId}`);
+  }
+  if (payload.quantity > row.quantity) {
+    throw new Error(
+      `consume: quantity ${String(payload.quantity)} exceeds row quantity ${String(row.quantity)}`,
+    );
+  }
+
+  const remaining = row.quantity - payload.quantity;
+  const removed = remaining === 0;
+  const nextItems = removed
+    ? s.items.filter((i) => i.id !== row.id)
+    : s.items.map((i) => (i.id === row.id ? { ...i, quantity: remaining } : i));
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntry: {
+      type: 'consume',
+      payload: {
+        stashId: row.ownerId,
+        itemInstanceId: row.id,
+        quantity: payload.quantity,
+        removed,
+      },
+    },
+  };
+}
+
+// -------------------------------------------------------------------- //
+// seed-catalog (M2)
+// -------------------------------------------------------------------- //
+
+/**
+ * Bulk-upserts catalog entries from the bundled PHB seed and bumps
+ * `state.seedVersion` to the supplied value. First-launch path adds every
+ * entry; subsequent boots upsert by id and never touch homebrew rows
+ * (the upsert key is the entry id, so homebrew ids — which don't share the
+ * `phb-2024:` prefix — are invisible to this loop).
+ *
+ * Rejects when state is null because the catalog lives inside `AppState`;
+ * the bootstrap (`src/store/seed.ts`) is responsible for sequencing this
+ * AFTER `create-character` or AFTER hydration of an existing state.
+ */
+function seedCatalog(
+  state: AppState,
+  payload: Extract<Action, { type: 'seed-catalog' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'seed-catalog');
+
+  const byId = new Map(s.catalog.map((d) => [d.id, d]));
+  const added: string[] = [];
+  const updated: string[] = [];
+
+  for (const entry of payload.entries) {
+    if (byId.has(entry.id)) {
+      updated.push(entry.id);
+    } else {
+      added.push(entry.id);
+    }
+    byId.set(entry.id, entry);
+  }
+
+  // Preserve insertion order for tests + DOM stability: existing rows in
+  // their original positions (re-pointed at the upserted definition), then
+  // any new rows appended in seed-file order.
+  const nextCatalog: ItemDefinition[] = s.catalog.map((d) => byId.get(d.id) ?? d);
+  for (const entry of payload.entries) {
+    if (added.includes(entry.id)) nextCatalog.push(entry);
+  }
+
+  return {
+    state: { ...s, catalog: nextCatalog, seedVersion: payload.seedVersion },
+    logEntry: {
+      type: 'seed-catalog',
+      payload: {
+        seedVersion: payload.seedVersion,
+        addedDefinitionIds: added,
+        updatedDefinitionIds: updated,
       },
     },
   };

@@ -183,48 +183,69 @@ App boots; welcome empty state; settings page with wipe; logging plumbing in pla
 PHB seed loads; Catalog Browser; add items to a stash; auto-stack; quantity edits.
 
 **Seed pipeline (`packages/seeds/`)**
-- [ ] `phb-2024-mundane.json` placed (private, gitignored or note-only per `../CLAUDE.md`)
-- [ ] `phb-2024-mundane.schema.ts` — Zod schema for the seed file
-- [ ] `loader.ts` — `loadPhbSeed()` returns parsed, validated entries
-- [ ] `loader.test.ts` — seed file parses against schema
-- [ ] `seedVersion` exported as a constant
+- [x] `phb-2024-mundane.json` placed (private, gitignored or note-only per `../CLAUDE.md`)
+- [x] `phb-2024-mundane.schema.ts` — Zod schema for the seed file
+- [x] `loader.ts` — `loadPhbSeed()` returns parsed, validated entries
+- [x] `loader.test.ts` — seed file parses against schema
+- [x] `seedVersion` exported as a constant
 
 **Reducer**
-- [ ] App boot seeds PHB catalog on first launch (empty `seedVersion` → full seed)
-- [ ] First-launch seed test: boot with empty AppState → catalog populated, `seedVersion` set
-- [ ] App boot upserts PHB entries when `seedVersion` is behind bundle (homebrew untouched)
-- [ ] Boot-upsert test: stale seedVersion triggers upsert; homebrew rows survive
-- [ ] `acquire` action type + payload schema (adds an `ItemInstance` to a stash)
-- [ ] `acquire` reducer case implements auto-stack on `(definitionId, notes ?? "")`
-- [ ] Auto-stack test: adding same `(defId, notes)` twice → one row, qty 2
-- [ ] Auto-stack test: same defId with different notes → two rows
-- [ ] `consume` action (quantity decrement / row removal at 0)
-- [ ] `consume` test: decrement above 0 keeps row, decrement to 0 removes it
-- [ ] Log entries appended for `acquire` and `consume`
+- [x] App boot seeds PHB catalog on first launch (empty `seedVersion` → full seed)
+- [x] First-launch seed test: boot with empty AppState → catalog populated, `seedVersion` set
+- [x] App boot upserts PHB entries when `seedVersion` is behind bundle (homebrew untouched)
+- [x] Boot-upsert test: stale seedVersion triggers upsert; homebrew rows survive
+- [x] `acquire` action type + payload schema (adds an `ItemInstance` to a stash)
+- [x] `acquire` reducer case implements auto-stack on `(definitionId, notes ?? "")`
+- [x] Auto-stack test: adding same `(defId, notes)` twice → one row, qty 2
+- [x] Auto-stack test: same defId with different notes → two rows
+- [x] `consume` action (quantity decrement / row removal at 0)
+- [x] `consume` test: decrement above 0 keeps row, decrement to 0 removes it
+- [x] Log entries appended for `acquire` and `consume`
 
 **UI**
-- [ ] `AddItemModal.tsx` with Catalog / Custom tabs (Custom is stubbed for M6)
-- [ ] Catalog search input + category filter
-- [ ] Catalog row with quantity selector + "Add to [current stash]"
-- [ ] Inventory tab renders item rows from store
-- [ ] Per-row quantity adjust (+/− buttons) dispatching `acquire` / `consume`
-- [ ] Per-row Remove action with confirm
-- [ ] `CatalogBrowser.tsx` route (read-only PHB list with placeholder Duplicate button for M6)
-- [ ] Component test: add same item twice → one row, qty 2 in the DOM
+- [x] `AddItemModal.tsx` with Catalog / Custom tabs (Custom is stubbed for M6)
+- [x] Catalog search input + category filter
+- [x] Catalog row with quantity selector + "Add to [current stash]"
+- [x] Inventory tab renders item rows from store
+- [x] Per-row quantity adjust (+/− buttons) dispatching `acquire` / `consume`
+- [x] Per-row Remove action with confirm
+- [x] `CatalogBrowser.tsx` route (read-only PHB list with placeholder Duplicate button for M6)
+- [x] Component test: add same item twice → one row, qty 2 in the DOM
 
-**Item Detail screen (per `MVP.md` §7 screen 4)**
-- [ ] `ItemDetail.tsx` — full description, quantity, notes (per-item history hidden, data captured)
-- [ ] Click an item row in any stash navigates to its Item Detail
-- [ ] `edit-item-instance` action + payload schema (notes, customName, quantity) — **NOTE: new TxType not yet in `OUTLINE.md` §4 — propose adding before implementing**
-- [ ] Edit notes on item instance dispatches `edit-item-instance`
-- [ ] Edit customName on item instance dispatches `edit-item-instance`
-- [ ] Edit-instance test: changes persist; log entry recorded
-- [ ] Invariant test: `edit-item-instance` rejects edits to fields not owned by the instance (rarity, weight, etc. live on the definition)
-- [ ] Component test: edit notes → close → reopen detail → notes persisted
+**Item Detail screen (per `MVP.md` §7 screen 4)** — **DEFERRED:** roadmap-listed `edit-item-instance` TxType is not in `OUTLINE.md` §4. Per CLAUDE.md (docs are source of truth), the spec needs an additive entry before we ship this. M2 ships **without** Item Detail; rename / notes flows land in a later milestone once the OUTLINE update lands.
+- [-] `ItemDetail.tsx` — full description, quantity, notes (per-item history hidden, data captured)
+- [-] Click an item row in any stash navigates to its Item Detail
+- [-] `edit-item-instance` action + payload schema (notes, customName, quantity) — **DEFERRED**, needs OUTLINE §4 update first
+- [-] Edit notes on item instance dispatches `edit-item-instance`
+- [-] Edit customName on item instance dispatches `edit-item-instance`
+- [-] Edit-instance test: changes persist; log entry recorded
+- [-] Invariant test: `edit-item-instance` rejects edits to fields not owned by the instance (rarity, weight, etc. live on the definition)
+- [-] Component test: edit notes → close → reopen detail → notes persisted
 
 #### M2 — Notes
 
-> -
+> **2026-06-23 — M2 complete.**
+> - **PHB seed (`packages/seeds/`):** `data/phb-2024-mundane.json` ships **181 entries** covering all six MVP §9 categories — 38 weapons (simple+martial, melee+ranged, incl. firearms), 13 armor pieces (light/medium/heavy + shield), 64 adventuring gear, 37 tools (artisan's + thieves' + gaming sets + instruments), 5 ammunition, 18 containers, plus 6 consumables. Schema-validated at boot via `phbSeedFileSchema`. Deterministic ids prefixed `phb-2024:<slug>` — slug lives in the JSON so name tweaks never orphan `ItemInstance.definitionId` references. `PHB_SEED_VERSION = 1`.
+> - **TransactionLog union extended** with three new variants (`acquire`, `consume`, `seed-catalog`); the M1 distributive `LogEntrySlice<T>` conditional kept all per-case narrowing intact, no rework needed in the middleware.
+> - **Reducer** gained three pure cases. `acquire` auto-stacks on `(definitionId, notes ?? "")`; the log slice always carries the resolved `itemInstanceId` so both first-add and subsequent stacks reference the same row. `consume` decrements and removes rows that hit 0, with a `removed: boolean` flag on the log payload so future readers don't have to replay state. `seed-catalog` upserts by id — homebrew rows (no `phb-2024:` prefix) are invisible to the loop.
+> - **`store/seed.ts`** is the single place the UI imports `@app/seeds` from. Called twice per boot path: once in `main.tsx` after hydration (no-op when state is null OR seedVersion is current), once in `CreateCharacter` right after `dispatch({ type: 'create-character' })` so fresh users see a populated AddItemModal without refreshing.
+> - **Three stash tabs share one component** — `StashItemsTable` renders Inventory / Party Stash / Recovered Loot with the same row UI (+/−, Remove). Storage tab keeps the M3 placeholder. `AddItemModal` + `CatalogPicker` route into all three.
+> - **Catalog Browser** mounted at `/catalog`, linked from `RootLayout` next to Settings. Read-only table with search + category filter; PHB rows show a disabled Duplicate button (M6).
+> - **Tests:** 45 pass workspace-wide (3 shared schemas + 5 seeds loader + 37 web). 14 new tests around `acquire` / `consume` / `seed-catalog` reducer behavior + 5 new component tests on CharacterSheet (empty state, item row render, auto-stack to-DOM, − button dispatches consume, Storage placeholder).
+> - **Build:** 665 kB JS / 20.2 kB CSS (gzip 207 / 4.8). The +100 kB vs M1 is `@radix-ui/react-select` — first time we needed the select primitive. Code-splitting is a TECH_STACK §10 polish task, not blocked on it now.
+>
+> **Spec deviations & open items, surfaced for visibility:**
+> - **`edit-item-instance` deferred.** The roadmap had it under M2, but OUTLINE §4's TxType union doesn't list it. Item Detail screen + per-instance notes editing are gated on an additive OUTLINE update (propose during M3). Workaround for users who want notes today: they can re-acquire with different `notes` to split into a new row — auto-stack respects the `(definitionId, notes ?? "")` key.
+> - **`acquire.source = "custom-create"` for catalog-add.** OUTLINE §4 enumerates `source: "hoard" | "purchase" | "custom-create" | "duplicate"`. None of these is a clean fit for "user pulled a PHB row from the catalog" — `custom-create` is the closest (it's the user-initiated path). Once R6 introduces shops + `purchase`, revisit and either add a `"catalog-add"` value or reuse `purchase` with `shopId: null`. Filed for OUTLINE consideration; not blocking M3.
+> - **Substring search, not fuzzy.** `CatalogPicker` does `name + description + tags` substring matching against `query.toLowerCase()`. The fuzzy ranker (OUTLINE §3.7) lives in `packages/rules/search.ts` and activates in R6. MVP §12 acknowledges this — `default to fuzzy across name+description+tags`.
+> - **Result list capped at 50 in `CatalogPicker`** to keep the modal scrollable. `CatalogBrowser` has no cap (it's the full read-only view). If users grow homebrew beyond ~200 entries we'll need pagination — not yet.
+>
+> **Followups for M3:**
+> - `create-stash` / `rename-stash` / `delete-stash` actions + reducer.
+> - `delete-stash` invariant: items flow to Recovered Loot before the stash + its CurrencyHolding are removed (MVP §5 flow #12).
+> - Storage tab gains the card list + detail screen.
+> - **Propose OUTLINE §4 update** for `edit-item-instance` (and possibly `rename-character` / `rename-party` per M7).
+> - shadcn `tabs` primitive when CharacterSheet's hand-rolled tab nav starts pulling its weight (M3 adds Storage interaction, which makes the tab UX more meaningful).
 
 ---
 

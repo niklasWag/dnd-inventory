@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { seedCatalogIfNeeded } from '@/store/seed';
 
 /**
  * Form schema (M1). Mirrors the subset of fields the UI collects; the
@@ -62,6 +63,10 @@ export function CreateCharacter(): ReactElement {
   function onSubmit(values: FormOutput): void {
     try {
       dispatch({ type: 'create-character', payload: values });
+      // Seed the catalog right after the first create so the user sees a
+      // populated AddItemModal without having to refresh. Idempotent
+      // (no-op on subsequent boots once seedVersion has caught up).
+      seedCatalogIfNeeded();
       const id = useStore.getState().appState?.characters[0]?.id;
       if (id !== undefined) void navigate(`/character/${id}`, { replace: true });
     } catch (err) {

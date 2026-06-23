@@ -1,5 +1,6 @@
 import type {
   AppState as AppStateShape,
+  ItemDefinition,
   TransactionLogEntry as LogEntry,
   TxType,
 } from '@app/shared';
@@ -12,26 +13,55 @@ import type {
 export type AppState = AppStateShape | null;
 
 /**
- * Action — the union of every dispatchable mutation. M1 ships one:
- * `create-character`. Adding a milestone means extending BOTH this union
- * AND the `TransactionLogEntry` union in @app/shared (CLAUDE.md: action
- * types correspond 1:1 to TransactionLog.type values).
+ * Action — the discriminated union of every dispatchable mutation. Adding
+ * a milestone means extending BOTH this union AND the `TransactionLogEntry`
+ * union in `@app/shared` (CLAUDE.md: action types correspond 1:1 to
+ * `TransactionLog.type` values).
  *
- * Note: action payloads here are intentionally a SUBSET of the
- * corresponding log payload — the store middleware fills in the derived
- * fields (characterId, inventoryStashId, partyStashId, …) at dispatch
- * time, so the UI only supplies what the user actually entered.
+ * Action payloads here are intentionally a SUBSET of the corresponding log
+ * payload — the store middleware fills in the derived fields (ids,
+ * timestamps, etc.) at dispatch time, so the UI only supplies what the
+ * user actually entered.
+ *
+ * `seed-catalog` is internal (dispatched by the bootstrap, not by UI), but
+ * runs through the same dispatch path so the "every mutation logs" store
+ * invariant holds.
  */
-export type Action = {
-  type: 'create-character';
-  payload: {
-    name: string;
-    species: string;
-    class: string;
-    level: number;
-    str: number;
-  };
-};
+export type Action =
+  | {
+      type: 'create-character';
+      payload: {
+        name: string;
+        species: string;
+        class: string;
+        level: number;
+        str: number;
+      };
+    }
+  | {
+      type: 'acquire';
+      payload: {
+        stashId: string;
+        definitionId: string;
+        quantity: number;
+        source: 'hoard' | 'purchase' | 'custom-create' | 'duplicate';
+        notes?: string;
+      };
+    }
+  | {
+      type: 'consume';
+      payload: {
+        itemInstanceId: string;
+        quantity: number;
+      };
+    }
+  | {
+      type: 'seed-catalog';
+      payload: {
+        seedVersion: number;
+        entries: ItemDefinition[];
+      };
+    };
 
 export type TransactionLogEntry = LogEntry;
 export type { TxType };
