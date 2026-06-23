@@ -445,6 +445,10 @@ Per-stash coins, conversion helper, GP-equivalent totals on stash list/cards.
 > - **Bundle-size watchpoint:** M3 → 723 kB; M4 → 731 kB. Cumulative still well under 1 MB raw. The vite warning about >500 kB chunks is informational — `manualChunks` is a TECH_STACK §10 polish task that lands when the bundle materially impacts user-perceived load time.
 > - **Currency `subtract` is shipped but unused in M4.** M5 will use it for cross-stash transfers (subtract from source, add to destination as one atomic dispatch). R4 Banker actions will use both.
 > - **OUTLINE §4 currency-change.reason enum:** M4 dispatches `'deposit' | 'withdraw' | 'convert'`. R4 will add `'split-evenly' | 'gameplay-drain'`. M3 added `'stash-deleted'`. All values currently in OUTLINE.
+>
+> **2026-06-23 — User-flagged M4 follow-ups (post-implementation feedback):**
+> - **Bulk currency edit.** One +/− click per coin is OK for tweaks but breaks down for hoard drops ("+300 sp"). The schema already supports any signed delta — only the UI is missing. Three UX options surveyed: (a) editable inline cells (type "+300" → dispatch), (b) a "Set amount" sub-modal with 5 free-form fields that dispatches one `currency-change` carrying the diff, (c) a "Loot" preset alongside Convert. Lean (a) — minimal modal real estate, matches the existing "click the number to edit" UX pattern from spreadsheets. **Scheduled to R7 (2026-06-23)** alongside the bulk multi-select cluster; see R7 tasks for the concrete checklist (`+300` / `-50` / `=42` inline syntax).
+> - **Per-party economy controls (the "silver standard" use case generalized).** Two knobs: `Party.priceModifier: number` (default `1.0`; multiplies PHB/DMG seed prices — covers silver-standard `0.1`, high-magic inflation `2.0`, grim-scarcity `0.25`, or any homebrew economy) and `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` (default `"gp"`; **display ceiling** — gold-standard campaigns read "200 gp" rather than "20 pp"). The `Shop.priceModifier` already in §3.9 composes with the party modifier. Display canonicalization rule (`packages/rules/pricing.ts:formatPrice`): render in the largest coin denomination ≤ `baseCurrency` that divides cleanly. Prevents both fractional coins ("0.5 gp") and unwanted rollup ("20 pp" under gold standard). Spec-locked in OUTLINE §3.5 + §12. **Scheduled to R6 (2026-06-23) — promoted out of Future / Stretch because R6 activates `pricing.ts` and introduces `purchase`/`sale`, which are the first call sites that read a price.**
 
 ---
 
@@ -800,8 +804,10 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 **Rules — activate stubs (§6)**
 - [ ] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band)
 - [ ] `hoard.ts` tests cover representative CR bands
-- [ ] `packages/rules/pricing.ts` implemented (base price × shop modifier; default 0.5× sell)
-- [ ] `pricing.ts` tests cover modifier, override, and sell-to-merchant rate
+- [ ] `packages/rules/pricing.ts` implemented (base price × party.priceModifier × shop.priceModifier; default 0.5× sell)
+- [ ] `pricing.ts:formatPrice(cp, baseCurrency)` — display canonicalizer per OUTLINE §3.5 (largest denomination ≤ baseCurrency that divides cleanly; no fractional coins; no rollup past ceiling; sub-cp rounds to nearest cp)
+- [ ] `pricing.ts` tests cover modifier composition, override, sell-to-merchant rate, AND every row of the OUTLINE §3.5 preset table (Gold / Silver / Copper / Electrum / Platinum)
+- [ ] `pricing.ts` tests cover the "no rollup past ceiling" rule explicitly (200 gp under `baseCurrency="gp"` stays "200 gp", never "20 pp")
 - [ ] `packages/rules/search.ts` implemented (fuzzy across name + description + tags)
 - [ ] `search.ts` tests cover ranking + filter combinations
 
@@ -812,6 +818,19 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] Action: `purchase` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
 - [ ] Action: `sale` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
 - [ ] Purchase decrements finite shop stock; unlimited stock untouched
+
+**Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
+- [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
+- [ ] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
+- [ ] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted
+- [ ] `purchase` / `sale` reducer cases consult `party.priceModifier` × `shop.priceModifier` via `pricing.ts` when resolving the cost of a catalog row
+- [ ] Reducer test: PHB-sourced rows are scaled by `priceModifier`; homebrew-sourced rows skip the modifier (per `ItemDefinition.source` discriminator)
+- [ ] Reducer test: purchase under `priceModifier: 0.1` of a 5 gp PHB item charges 50 cp from the buyer's stash
+- [ ] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
+- [ ] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
+- [ ] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
+- [ ] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
+- [ ] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
 
 **Loot distribution (§3.10)**
 - [ ] Loot Distribution Wizard screen (§5.10) — per-hoard choice: shared pool vs direct assign
@@ -861,6 +880,10 @@ Light/dark theme, responsive player views (mobile), fuzzy multi-field search, ac
 - [ ] **Bulk multi-select for move / delete** on stash tables (§3.4) — checkbox column, bulk action bar
 - [ ] Bulk-move test: select N items, pick target stash, all transfer with one log entry each (or a single grouped entry — decide and document)
 - [ ] Bulk-delete test: select N items, confirm once, all removed
+- [ ] **Bulk currency edit on `<CurrencyRow>`** — *promoted from Future / Stretch (2026-06-23); R7 is the natural home alongside other bulk-action UX*. M4's ±1 inline controls handle small tweaks; "loot drop: +300 sp" is painful. Plan: editable inline cells that accept signed integers (`+300`, `-50`, or an absolute target `=42`) and dispatch a single `currency-change` carrying the diff. Schema-additive — same action, richer UI on top. Keyboard ergonomic: tab through cells, type signed integer, Enter dispatches.
+- [ ] Bulk currency edit test: type `+300` into the sp cell, Enter, sp holding moves by exactly +300, one `currency-change` log entry with reason `'deposit'`
+- [ ] Bulk currency edit test: type `-50` into a cell with insufficient funds, submit-blocks (mirrors the existing `−` button's disabled-at-0 behavior)
+- [ ] Bulk currency edit test: absolute-target syntax (`=42`) dispatches the computed diff (e.g. holding 30, type `=42` → log entry with delta `+12`)
 
 #### R7 — Notes
 
@@ -898,6 +921,8 @@ Not committed; capture interest + scope creep here so it doesn't leak into M1–
 - [ ] VTT integration (Foundry / Roll20 character link)
 - [ ] Public party directory (opt-in) for finding open campaigns
 - [ ] Light character sheet expansion (AC, HP, proficiencies for fuller display)
+- [x] **Bulk currency edit on `<CurrencyRow>`** — *promoted to R7 on 2026-06-23* (alongside the bulk multi-select cluster). Inline signed-integer entry on each denomination cell (`+300`, `-50`, `=42`) dispatching one `currency-change`. See R7 tasks above. Schema-compatible — no new action variant.
+- [x] **Per-party economy controls** — *promoted to R6 on 2026-06-23* (alongside `pricing.ts` activation + `Shop` + `purchase`/`sale`). Two knobs: `Party.priceModifier` (default `1.0`) and `Party.baseCurrency` (default `"gp"`). UI preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom. See R6 tasks above and OUTLINE §3.5.
 
 #### Future / Stretch — Notes
 

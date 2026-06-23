@@ -93,6 +93,28 @@ No HP, spells, AC, proficiencies in v1.
 - Currency conversion helper.
 - **Treasure hoard generator** (2024 DMG tables by CR/level band).
 - "Split evenly" for Party Stash gold (Banker action; falls back to DM when no Banker).
+- **Bulk currency entry** (post-MVP). MVP M4 ships ±1 inline +/− controls plus a Convert modal — sufficient for tweaks but painful for hoard drops ("loot +300 sp"). R7 iteration (see roadmap.md): editable cells that accept signed integers (`+300`, `-50`) and absolute targets (`=42`), each dispatching a single `currency-change` carrying the computed diff. Schema-unchanged.
+- **Per-party economy controls** (post-MVP, opt-in). Two orthogonal knobs in Party Settings (§5.15) describe a campaign's economy:
+  - **`Party.priceModifier: number`** (default `1.0`) — multiplies every PHB/DMG seed price. Covers the common silver-standard variant (`0.1` — a PHB 5 gp item becomes 5 sp at the table) and any homebrew economy the DM wants (`0.5` for "everything is half off", `2.0` for high-magic inflation, `0.25` for grim resource scarcity). Conceptually the party-scope mirror of `Shop.priceModifier` from §3.9 (the two compose: `finalCp = phbCostCp × party.priceModifier × shop.priceModifier`).
+  - **`Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"`** (default `"gp"`) — the **display ceiling** for canonicalized prices. The canonicalizer (below) never rolls a price *above* this denomination, so a gold-standard campaign reads "200 gp" rather than "20 pp", and a silver-standard campaign reads "200 sp" rather than "2 gp". Purely a display rule; storage and arithmetic always use real CP.
+  - **PHB / DMG seed costs are stored verbatim** (`cost.amount = 5, cost.currency = "gp"` for a 5 gp item) and never rewritten. The seed is the canonical 2024 ruleset.
+  - **The coin ladder is also never re-keyed**: `cp=1, sp=10, ep=50, gp=100, pp=1000` are physical coin denominations, not a pricing model. `CurrencyHolding` and `currency-change` always mean exactly what they say in physical coins regardless of either knob.
+  - **The modifier applies only at the seed-price interpretation boundary**: when a catalog row is rendered and when a `purchase` / `sale` action is dispatched. `effectiveCostCp = round(phbCostCp × priceModifier)`. A 5 gp PHB item (= 500 cp) with `priceModifier: 0.1` becomes 50 cp at display + checkout; the party's `CurrencyHolding` pays in real coins.
+  - **Display canonicalization rule (lives in `packages/rules/pricing.ts:formatPrice`).** Given an amount in CP and a `baseCurrency` ceiling, render in the **largest coin denomination ≤ `baseCurrency` where the value is a whole number**. Two intents working together:
+    1. **Prefer whole numbers over fractions** — never render "0.5 gp" or "0.1 sp". A scaled-down 5 gp price (`500 cp × 0.1 = 50 cp`) under `baseCurrency: "gp"` renders as **"5 sp"** (50 cp divides cleanly by 10), never "0.5 gp". A `5 cp` price renders as **"5 cp"**, never "0.5 sp".
+    2. **Don't roll up past the base currency** — never render "20 pp" under a gold-standard campaign. A `20 000 cp` PHB price under `baseCurrency: "gp"` renders as **"200 gp"**, not "20 pp". Under `baseCurrency: "pp"` the same value renders as "20 pp".
+    3. **Sub-cp results round to nearest cp** — `1 cp × 0.1 = 0.1 cp` becomes `1 cp` (cp is the floor; ties go up). The rounding happens once at the modifier boundary, not on every display.
+  - **Named presets (UI shortcuts; the canonical D&D standards).** Party Settings (§5.15) offers a one-click chooser that sets both knobs at once. "Custom" lets the DM pick `priceModifier` and `baseCurrency` independently for homebrew economies that don't fit a named ladder. The presets are pure UI sugar — storage is always the two raw fields.
+    | Preset name | `priceModifier` | `baseCurrency` | Intent |
+    |---|---|---|---|
+    | **Gold standard** *(default)* | `1.0` | `"gp"` | Canonical 2024 PHB economy. |
+    | **Silver standard** | `0.1` | `"sp"` | The "1 gp PHB price = 1 sp at the table" variant. Sub-sp items round to cp. |
+    | **Copper standard** | `0.01` | `"cp"` | Grim-scarcity economies; everything denominated in copper. |
+    | **Electrum standard** | `0.5` *(× 0.1 from gp + × 5 sp→ep)* | `"ep"` | Niche / historical. Most tables won't use this. |
+    | **Platinum standard** | `1.0` | `"pp"` | High-magic / late-tier campaigns where pp is the unit of account; PHB prices stay numerically the same but roll up to pp where they divide cleanly. |
+    | **Custom** | DM-set float | DM-set enum | Any homebrew economy (`2.0` inflation, `0.25` grim, etc.). |
+  - **Homebrew items are stored in the price the DM typed** (real coins, real value) and are **not** scaled by `priceModifier`. They ARE subject to `baseCurrency` canonicalization on display (so the DM doesn't see "1.5 gp" on a homebrew priced at 15 sp). The `ItemDefinition.source` field (already `"PHB" | "DMG" | "homebrew"` in §4) is the discriminator for the modifier; canonicalization is universal.
+  - Exposed via the §5.17 "Variant-rules toggle" surface in Party Settings (§5.15). See §12.
 
 ### 3.6 Encumbrance (2024 rules)
 - Carrying capacity = STR × 15.
@@ -498,3 +520,5 @@ When the **DM** leaves:
 - **VTT integration** (Foundry/Roll20 character link).
 - **Public party directory** (opt-in) for finding open campaigns.
 - **Light character sheet expansion** — AC, HP, proficiencies for fuller display.
+- **Bulk currency entry** (see §3.5). *Scheduled to R7 alongside the bulk multi-select cluster (see roadmap.md). Inline signed-integer / absolute-target syntax on each denomination cell; same `currency-change` schema. The full spec stays in §3.5; this row is kept as a backlink for context.*
+- **Per-party economy controls** (see §3.5). *Scheduled to R6 alongside `pricing.ts` activation, `Shop`, and `purchase`/`sale` (see roadmap.md). Two knobs (`Party.priceModifier`, `Party.baseCurrency`) plus a Settings preset chooser (Gold / Silver / Copper / Electrum / Platinum / Custom). The full spec stays in §3.5; this row is kept as a backlink for context.*
