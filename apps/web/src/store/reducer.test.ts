@@ -1355,3 +1355,247 @@ describe('reducer: delete-stash (M3)', () => {
   });
 });
 
+describe('reducer: currency-change (M4)', () => {
+  /**
+   * M4 dispatches `currency-change` from two paths: the inline +/− buttons
+   * on `<CurrencyRow>` (reason: 'deposit' | 'withdraw') and the Convert
+   * modal (reason: 'convert', mixed delta). The reducer is reason-agnostic
+   * — it applies the delta, refuses zero-net or would-go-negative results,
+   * and emits one log entry with the dispatch reason preserved.
+   */
+
+  it('applies a positive delta and logs reason=deposit', () => {
+    const { inventoryStashId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const s = useStore.getState().appState!;
+    const holding = s.currencies.find((c) => c.stashId === inventoryStashId)!;
+    expect(holding.gp).toBe(1);
+    expect(holding.cp + holding.sp + holding.ep + holding.pp).toBe(0);
+
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('currency-change');
+    if (last.type !== 'currency-change') return; // narrow
+    expect(last.payload.stashId).toBe(inventoryStashId);
+    expect(last.payload.delta).toEqual({ cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 });
+    expect(last.payload.reason).toBe('deposit');
+  });
+
+  it('applies a negative delta and logs reason=withdraw', () => {
+    const { inventoryStashId } = localBootstrap();
+    // Seed +1 gp first.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    // Now withdraw it back to zero.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 },
+        reason: 'withdraw',
+      },
+    });
+    const holding = useStore.getState().appState!.currencies.find(
+      (c) => c.stashId === inventoryStashId,
+    )!;
+    expect(holding.gp).toBe(0);
+
+    const last = useStore.getState().log.at(-1)!;
+    if (last.type !== 'currency-change') throw new Error('expected currency-change');
+    expect(last.payload.reason).toBe('withdraw');
+  });
+
+  it('applies a mixed delta (convert path: 100 sp → 10 gp)', () => {
+    const { inventoryStashId } = localBootstrap();
+    // Seed 100 sp.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 100, ep: 0, gp: 0, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    // Convert: -100 sp + +10 gp.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: -100, ep: 0, gp: 10, pp: 0 },
+        reason: 'convert',
+      },
+    });
+    const holding = useStore.getState().appState!.currencies.find(
+      (c) => c.stashId === inventoryStashId,
+    )!;
+    expect(holding.sp).toBe(0);
+    expect(holding.gp).toBe(10);
+
+    const last = useStore.getState().log.at(-1)!;
+    if (last.type !== 'currency-change') throw new Error('expected currency-change');
+    expect(last.payload.delta).toEqual({ cp: 0, sp: -100, ep: 0, gp: 10, pp: 0 });
+    expect(last.payload.reason).toBe('convert');
+  });
+
+  it('rejects unknown stashId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-change',
+        payload: {
+          stashId: 'no-such-stash',
+          delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+          reason: 'deposit',
+        },
+      }),
+    ).toThrow(/unknown stashId/i);
+  });
+
+  it('rejects an all-zero delta as a no-op', () => {
+    const { inventoryStashId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-change',
+        payload: {
+          stashId: inventoryStashId,
+          delta: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          reason: 'deposit',
+        },
+      }),
+    ).toThrow(/no-op delta/i);
+  });
+
+  it('refuses to push a denomination negative (cp from zero)', () => {
+    const { inventoryStashId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-change',
+        payload: {
+          stashId: inventoryStashId,
+          delta: { cp: -1, sp: 0, ep: 0, gp: 0, pp: 0 },
+          reason: 'withdraw',
+        },
+      }),
+    ).toThrow(/negative/i);
+  });
+
+  it('refuses a convert that would push the source negative', () => {
+    const { inventoryStashId } = localBootstrap();
+    // Seed only 50 gp.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 50, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-change',
+        payload: {
+          stashId: inventoryStashId,
+          delta: { cp: 0, sp: 1000, ep: 0, gp: -100, pp: 0 },
+          reason: 'convert',
+        },
+      }),
+    ).toThrow(/negative/i);
+  });
+
+  it('throws when AppState is null', () => {
+    useStore.setState({ appState: null });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-change',
+        payload: {
+          stashId: 'whatever',
+          delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+          reason: 'deposit',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('log entry carries actorRole=player, actorUserId=state.user.id, partyId=state.party.id', () => {
+    const { inventoryStashId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const s = useStore.getState().appState!;
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.actorRole).toBe('player');
+    expect(last.actorUserId).toBe(s.user.id);
+    expect(last.partyId).toBe(s.party.id);
+    expect(last.id.length).toBeGreaterThan(0);
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+
+  it('state validates against appStateSchema after a currency-change dispatch', () => {
+    const { inventoryStashId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 1, sp: 2, ep: 3, gp: 4, pp: 5 },
+        reason: 'deposit',
+      },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('two consecutive +1 gp dispatches accumulate to 2 gp', () => {
+    const { inventoryStashId } = localBootstrap();
+    const delta = { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 } as const;
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: { stashId: inventoryStashId, delta, reason: 'deposit' },
+    });
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: { stashId: inventoryStashId, delta, reason: 'deposit' },
+    });
+    const holding = useStore.getState().appState!.currencies.find(
+      (c) => c.stashId === inventoryStashId,
+    )!;
+    expect(holding.gp).toBe(2);
+  });
+
+  it('applies cleanly to Storage stash holdings (no special-casing by scope)', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: storageStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 25, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const holding = useStore.getState().appState!.currencies.find(
+      (c) => c.stashId === storageStashId,
+    )!;
+    expect(holding.gp).toBe(25);
+  });
+});
+

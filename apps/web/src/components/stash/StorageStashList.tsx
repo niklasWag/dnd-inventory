@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { CreateStashModal } from './CreateStashModal';
+import { CurrencyBreakdown } from './CurrencyBreakdown';
 import { useStore } from '@/store';
 
 interface StorageStashListProps {
@@ -26,10 +27,9 @@ interface StorageCard {
  * carried stash and lives on its own tab; Party Stash / Recovered Loot
  * are party-scope and have their own tabs.
  *
- * Each card shows the stash name + item count (sum of quantities). The
- * currency placeholder `— gp` will fill in with the real GP-equivalent
- * total when M4 ships currency editing. Clicking a card navigates to
- * `/storage/:stashId`.
+ * Each card shows the stash name + item count (sum of quantities) and a
+ * 5-denomination breakdown of the stash's CurrencyHolding (M4 — previously
+ * an `— gp` placeholder). Clicking a card navigates to `/storage/:stashId`.
  *
  * Selector design (M2.5 lesson + M3 refinement): `useShallow` does
  * shallow-equal on the OUTER container; nested objects we construct on
@@ -105,7 +105,8 @@ export function StorageStashList({ characterId }: StorageStashListProps): ReactE
               >
                 <h3 className="text-base font-semibold tracking-tight">{card.name}</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {card.itemCount} {card.itemCount === 1 ? 'item' : 'items'} · — gp
+                  {card.itemCount} {card.itemCount === 1 ? 'item' : 'items'} ·{' '}
+                  <CurrencyBreakdown stashId={card.id} />
                 </p>
               </button>
             </li>

@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
 import { AddItemModal } from '@/components/stash/AddItemModal';
+import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
 import { StorageStashList } from '@/components/stash/StorageStashList';
 import { useStore } from '@/store';
@@ -21,13 +22,13 @@ const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
  * CharacterSheet (MVP §7 screen 2). Header + 4 tabs.
  *
  * M2 wires three of the four tabs (Inventory / Party Stash / Recovered
- * Loot) to the shared `StashItemsTable` + `AddItemModal`. Storage stays a
- * placeholder until M3 ships the create/rename/delete actions.
+ * Loot) to the shared `StashItemsTable` + `AddItemModal`. M3 shipped the
+ * Storage tab card list. M4 adds the `<CurrencyRow>` above the items
+ * table on the three non-Storage tabs (Storage cards show their own
+ * `<CurrencyBreakdown>` per card).
  *
  * Remaining placeholders that future milestones fill in:
- *   - Currency rows on each tab → M4
  *   - Move / Split per row → M5
- *   - Storage stash list / detail → M3
  */
 export function CharacterSheet(): ReactElement {
   const { id } = useParams<{ id: string }>();
@@ -101,6 +102,7 @@ export function CharacterSheet(): ReactElement {
           <StorageStashList characterId={character.id} />
         ) : (
           <div className="space-y-4">
+            <CurrencyRow stashId={targetStash} />
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-muted-foreground">
                 {labelForTab(tab)}

@@ -101,11 +101,29 @@ describe('StorageStashList (M3)', () => {
     expect(screen.getByText(/4 items/i)).toBeInTheDocument();
   });
 
-  it('renders a currency placeholder ("— gp") until M4 ships currency editing', () => {
+  it('renders the M4 currency breakdown on each card (zero values for a fresh stash)', () => {
     const { characterId } = bootstrap();
     createOne(characterId, 'Treasury');
     renderWith(characterId);
-    expect(screen.getByText(/—\s*gp/i)).toBeInTheDocument();
+    // CurrencyBreakdown renders "0c 0s 0e 0g 0p" for a fresh CurrencyHolding.
+    expect(screen.getByText(/0c/)).toBeInTheDocument();
+    expect(screen.getByText(/0g/)).toBeInTheDocument();
+    expect(screen.getByText(/0p/)).toBeInTheDocument();
+  });
+
+  it('reflects non-zero currency live on the card', () => {
+    const { characterId } = bootstrap();
+    const stashId = createOne(characterId, 'Treasury');
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 25, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    renderWith(characterId);
+    expect(screen.getByText(/25g/)).toBeInTheDocument();
   });
 
   it('clicking the + New Storage stash button opens the create modal', async () => {

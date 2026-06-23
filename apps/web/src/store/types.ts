@@ -112,6 +112,23 @@ export type Action =
       payload: {
         stashId: string;
       };
+    }
+  | {
+      // M4: signed delta on a single stash's CurrencyHolding. Dispatched
+      // from the inline +/− editor (reason: 'deposit' | 'withdraw') and
+      // from the Convert modal (reason: 'convert', mixed delta). The
+      // reducer rejects all-zero deltas, unknown stashIds, and any delta
+      // that would push a denomination below zero. R4 will extend the
+      // reason enum with 'split-evenly' | 'gameplay-drain' for multi-
+      // member Banker actions; M3 already wired 'stash-deleted' for the
+      // synthetic delete-cascade entry (emitted directly from the
+      // reducer, not via this dispatch path).
+      type: 'currency-change';
+      payload: {
+        stashId: string;
+        delta: { cp: number; sp: number; ep: number; gp: number; pp: number };
+        reason: 'deposit' | 'withdraw' | 'convert';
+      };
     };
 
 export type TransactionLogEntry = LogEntry;

@@ -174,3 +174,27 @@ describe('StorageDetail (M3)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
+
+describe('StorageDetail (M4)', () => {
+  it('renders a CurrencyBreakdown in the header and a CurrencyRow above the items table', () => {
+    const { storageStashId } = bootstrapWithStorage('Treasury');
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: storageStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 25, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    renderAt(`/storage/${storageStashId}`);
+
+    // Header breakdown: 25g visible.
+    expect(screen.getByText(/25g/)).toBeInTheDocument();
+    // Inline editor: Currency heading + Convert button + Total line.
+    expect(
+      screen.getByRole('heading', { name: /^currency$/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /convert/i })).toBeInTheDocument();
+    expect(screen.getByText(/total: 25 gp/i)).toBeInTheDocument();
+  });
+});

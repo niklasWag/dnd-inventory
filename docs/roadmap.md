@@ -396,33 +396,55 @@ Create / rename / delete named Storage stashes; per-stash detail view.
 Per-stash coins, conversion helper, GP-equivalent totals on stash list/cards.
 
 **Rules (`packages/rules/currency.ts`)**
-- [ ] `toCopper(coins)` implemented
-- [ ] `toCopper` tests cover all 5 denominations + zero + mixed
-- [ ] `fromCopper(cp)` implemented (sensible denomination mix)
-- [ ] `fromCopper` tests cover boundary mixes (e.g. 99 cp, 100 cp, 1000 cp)
-- [ ] `toGpEquivalent(coins)` implemented
-- [ ] `toGpEquivalent` test
-- [ ] `convert(coins, target)` implemented
-- [ ] `convert` tests cover up-conversion (cp→gp) and down-conversion (gp→cp)
-- [ ] `add(a, b)` / `subtract(a, b)` implemented with negative-guard
-- [ ] `subtract` test: throws / returns error when result would be negative
+- [x] `toCopper(coins)` implemented
+- [x] `toCopper` tests cover all 5 denominations + zero + mixed
+- [x] `fromCopper(cp)` implemented (sensible denomination mix)
+- [x] `fromCopper` tests cover boundary mixes (e.g. 99 cp, 100 cp, 1000 cp)
+- [x] `toGpEquivalent(coins)` implemented
+- [x] `toGpEquivalent` test
+- [x] `convert(coins, target)` implemented
+- [x] `convert` tests cover up-conversion (cp→gp) and down-conversion (gp→cp)
+- [x] `add(a, b)` / `subtract(a, b)` implemented with negative-guard
+- [x] `subtract` test: throws / returns error when result would be negative
 
 **Reducer**
-- [ ] `currency-change` action + payload schema (target stashId, delta object)
-- [ ] `currency-change` reducer applies via `add` / `subtract`
-- [ ] `currency-change` test: deltas applied, log entry recorded with before/after
-- [ ] `currency-change` invariant test: refuses to push any denomination negative
+- [x] `currency-change` action + payload schema (target stashId, delta object)
+- [x] `currency-change` reducer applies via `add` / `subtract`
+- [x] `currency-change` test: deltas applied, log entry recorded with before/after
+- [x] `currency-change` invariant test: refuses to push any denomination negative
 
 **UI**
-- [ ] Currency row component (5 coin inputs + total GP-equivalent)
-- [ ] Inline +/− buttons per denomination
-- [ ] "Convert" helper (source denom → target denom, qty)
-- [ ] Storage cards / Party Stash summary show GP-equivalent total
-- [ ] Component test: convert 100 sp → 10 gp updates row + total
+- [x] Currency row component (5 coin inputs + total GP-equivalent)
+- [x] Inline +/− buttons per denomination
+- [x] "Convert" helper (source denom → target denom, qty)
+- [x] Storage cards / Party Stash summary show GP-equivalent total
+- [x] Component test: convert 100 sp → 10 gp updates row + total
 
 #### M4 — Notes
 
-> -
+> **2026-06-23 — M4 complete.**
+>
+> - **Schema changes (additive, no migration).** `packages/shared/src/schemas/transactionLog.ts` extracted the inline `delta` shape on `currencyChangeEntry` to a named `currencyDeltaSchema` export. The discriminated union is unchanged; M3 Dexie blobs validate identically.
+> - **`packages/rules/currency.ts` shipped.** Full six-function surface: `toCopper`, `fromCopper`, `toGpEquivalent`, `convert`, `add`, `subtract`. CP-equivalent multipliers per OUTLINE §4 (`cp=1, sp=10, ep=50, gp=100, pp=1000`). `fromCopper` uses greedy-from-largest (pp → gp → ep → sp → cp); 99 cp → 1 ep + 4 sp + 9 cp. `convert` refuses lossy moves (1 sp → 0.1 gp throws) rather than rounding; the Convert modal disables submit on lossy combos so the user sees feedback before submit. 28 TDD-RED tests drove the file design.
+> - **Reducer contract** is unchanged from M3 (`ReducerResult.logEntries: LogEntrySlice[]`). One new case (`currencyChange`): validates target stash exists, refuses no-op all-zero deltas, refuses any delta that would push a denomination negative, emits a single `currency-change` log entry. 12 reducer tests cover positive/negative/mixed deltas, unknown stashIds, no-op rejection, would-go-negative defense, log entry shape, schema validation, accumulation, and Storage-stash applicability.
+> - **`delete-stash` extracted its inline currency formula** (`cp + sp*10 + ep*50 + gp*100 + pp*1000`) to `currency.toCopper`. Single-line refactor; the existing M3 cascade test pinned the same `currencyTotalCp` value after the swap (greenly).
+> - **`<CurrencyRow>`** (NEW) — 5-denomination inline editor + Total: X gp footer + Convert button. Each +/− click dispatches one `currency-change` with reason auto-derived (`deposit` on +, `withdraw` on −). `−` disabled when the denomination is 0 (defense-in-depth — the reducer also rejects). 7 tests.
+> - **`<ConvertCurrencyModal>`** (NEW) — shadcn `Dialog` + RHF + Zod resolver. Fields: qty (positive integer, coerced via `z.coerce.number().int().positive()`), source `<select>`, target `<select>`. Preview line ("100 sp = 10 gp") recomputes via `currency.toCopper` divisibility check; submit disabled on insufficient / lossy / same-denom. Uses plain `<select>` rather than Radix `Select` because Radix's portal + keyboard model is brittle in jsdom (the visible component is unchanged inside a Dialog). 8 tests.
+> - **`<CurrencyBreakdown>`** (NEW) — display-only `0c 0s 0e 25g 0p` formatter pulling the live `CurrencyHolding` by `stashId`. Used on Storage cards (`StorageStashList`) and the `StorageDetail` header — replaces the M3 `— gp` placeholder. 3 tests.
+> - **Wired into all four stash views.** `CharacterSheet.tsx` adds `<CurrencyRow>` above `<StashItemsTable>` on tabs 1, 3, 4 (Inventory / Party Stash / Recovered Loot). `StorageDetail.tsx` adds `<CurrencyBreakdown>` to the header line and `<CurrencyRow>` above the items table. `StorageStashList.tsx` swaps `— gp` for `<CurrencyBreakdown>` on each card. The M3-vintage `// Currency rows on each tab → M4` placeholder comment is gone.
+> - **`useShallow` + `useMemo` discipline** (M2.5 + M3 lesson, applied again): the CurrencyRow / CurrencyBreakdown / ConvertCurrencyModal selectors all pull raw primitives via `useShallow` and derive nested shapes locally. No infinite-loop incidents this milestone.
+> - **Tests:** 176 web tests + 28 rules tests + 8 schema/seed tests = **212 passing** workspace-wide. M3 ended at ~147; M4 adds **+65 tests** (28 rules + 12 reducer + 7 CurrencyRow + 8 ConvertCurrencyModal + 3 CurrencyBreakdown + 1 StorageStashList replacement + 1 StorageStashList non-zero + 3 CharacterSheet/StorageDetail wiring + 2 misc).
+> - **Build:** 730.89 kB JS / 22.40 kB CSS (gzip 222.96 kB / 5.14 kB). Bundle delta vs M3: **+7.9 kB JS raw / +1.96 kB gzip** — well under the plan's +15 kB target. No new shadcn primitives needed (Dialog / Input / Label / Button all pre-existing). The three new components + the modal are small and tree-shake cleanly.
+> - **Lossy-convert decision documented in `currency.convert` JSDoc.** Refuses rather than rounds — currency deltas are integers (Zod schema enforces it), silent rounding would mislead the user. The Convert modal disables submit on lossy combos by previewing the result and checking integer-ness via `toCopper({ [source]: qty }) % targetMultiplier === 0`. If users complain, add a "round down" toggle in a future polish pass (M4 follow-up #1 below).
+>
+> **Followups carried forward to M5 / R1 / R4:**
+> - **Currency weight (R1):** D&D 5e currency has weight (5 gp = 1 lb per OUTLINE §3.6). M4 doesn't fold currency into encumbrance; R1's capacity rule needs to.
+> - **Auto-stack invariant under M5 transfers:** carries the same caveat from M2.5/M3. Currency `convert` doesn't have an auto-stack equivalent — `+10 gp` always lands on the same `CurrencyHolding` row.
+> - **`fromCopper` strategy is greedy-from-largest.** If users prefer minimize-pp or some other heuristic, document the change in the JSDoc and bump a test fixture.
+> - **Debouncing rapid +/− clicks (M4 → M5+):** every click is one log entry. Watch the log size in practice; if a 50-click binge to "50 gp" annoys users, add a 500 ms coalescer at the dispatch site.
+> - **Bundle-size watchpoint:** M3 → 723 kB; M4 → 731 kB. Cumulative still well under 1 MB raw. The vite warning about >500 kB chunks is informational — `manualChunks` is a TECH_STACK §10 polish task that lands when the bundle materially impacts user-perceived load time.
+> - **Currency `subtract` is shipped but unused in M4.** M5 will use it for cross-stash transfers (subtract from source, add to destination as one atomic dispatch). R4 Banker actions will use both.
+> - **OUTLINE §4 currency-change.reason enum:** M4 dispatches `'deposit' | 'withdraw' | 'convert'`. R4 will add `'split-evenly' | 'gameplay-drain'`. M3 added `'stash-deleted'`. All values currently in OUTLINE.
 
 ---
 

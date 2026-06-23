@@ -210,3 +210,42 @@ describe('CharacterSheet (M2)', () => {
     expect(screen.getByRole('heading', { name: 'Torch' })).toBeInTheDocument();
   });
 });
+
+describe('CharacterSheet (M4)', () => {
+  it('renders a CurrencyRow on the Inventory tab', () => {
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { name: 'A', species: 'B', class: 'C', level: 1, str: 10 },
+    });
+    const id = useStore.getState().appState!.characters[0]!.id;
+    renderAt(`/character/${id}`);
+
+    // The CurrencyRow renders a "Currency" header and a Convert button.
+    expect(
+      screen.getByRole('heading', { name: /^currency$/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /convert/i })).toBeInTheDocument();
+    expect(screen.getByText(/total: 0 gp/i)).toBeInTheDocument();
+  });
+
+  it('clicking + on a denomination dispatches a currency-change with reason=deposit', async () => {
+    const user = userEvent.setup();
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { name: 'A', species: 'B', class: 'C', level: 1, str: 10 },
+    });
+    const id = useStore.getState().appState!.characters[0]!.id;
+    renderAt(`/character/${id}`);
+
+    const beforeLen = useStore.getState().log.length;
+    await user.click(screen.getByLabelText(/increment gp/i));
+
+    const newEntries = useStore.getState().log.slice(beforeLen);
+    expect(newEntries).toHaveLength(1);
+    const entry = newEntries[0]!;
+    expect(entry.type).toBe('currency-change');
+    if (entry.type !== 'currency-change') throw new Error('expected currency-change');
+    expect(entry.payload.delta).toEqual({ cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 });
+    expect(entry.payload.reason).toBe('deposit');
+  });
+});

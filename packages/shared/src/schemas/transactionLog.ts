@@ -216,31 +216,41 @@ const deleteStashEntry = z.object({
 });
 
 /**
- * `currency-change` — additive denomination delta on a single stash's
- * `CurrencyHolding`. Delta values may be negative (withdraw) or positive
- * (deposit). The reason tag is for log readability; the OUTLINE §4 enum
- * lists `deposit | withdraw | split-evenly | gameplay-drain | convert`,
- * and M3 introduces `'stash-deleted'` for the delete-cascade synthetic
- * entry (additive — to be reflected in OUTLINE §4 as a small spec
- * follow-up at the end of M3, mirroring how M2.5 added `'catalog-add'`
- * to `acquire.source`).
+ * Signed 5-denomination delta. Shared between the `currency-change` log
+ * entry, the reducer action payload, and the `packages/rules/currency`
+ * math functions so all three speak the same shape.
  *
- * In M3 the only emitter is `delete-stash` (and only when the deleted
- * stash held non-zero currency, which is dormant in M3 since editing
- * arrives in M4).
+ * Values may be negative (withdraw / source side of a convert) or
+ * positive (deposit / target side). The reducer is responsible for
+ * refusing dispatches that would push any denomination on the target
+ * `CurrencyHolding` below zero (which `currencyHoldingSchema` already
+ * forbids via `.nonnegative()`).
+ */
+export const currencyDeltaSchema = z.object({
+  cp: z.number().int(),
+  sp: z.number().int(),
+  ep: z.number().int(),
+  gp: z.number().int(),
+  pp: z.number().int(),
+});
+
+export type CurrencyDelta = z.infer<typeof currencyDeltaSchema>;
+
+/**
+ * `currency-change` — additive denomination delta on a single stash's
+ * `CurrencyHolding`. The reason tag is for log readability; the OUTLINE §4
+ * enum lists `deposit | withdraw | split-evenly | gameplay-drain |
+ * convert | stash-deleted`. M3 introduced `'stash-deleted'` (the
+ * delete-cascade synthetic entry); M4 dispatches `'deposit' | 'withdraw'
+ * | 'convert'` from the inline currency editor + Convert modal. R4 will
+ * extend with `'split-evenly' | 'gameplay-drain'` for multi-member parties.
  */
 const currencyChangeEntry = z.object({
   ...baseLogFields,
   type: z.literal('currency-change'),
   payload: z.object({
     stashId: z.string().min(1),
-    delta: z.object({
-      cp: z.number().int(),
-      sp: z.number().int(),
-      ep: z.number().int(),
-      gp: z.number().int(),
-      pp: z.number().int(),
-    }),
+    delta: currencyDeltaSchema,
     reason: z
       .enum(['deposit', 'withdraw', 'split-evenly', 'gameplay-drain', 'convert', 'stash-deleted'])
       .optional(),

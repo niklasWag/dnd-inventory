@@ -5,6 +5,8 @@ import { ArrowLeft, Pencil, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { AddItemModal } from '@/components/stash/AddItemModal';
+import { CurrencyBreakdown } from '@/components/stash/CurrencyBreakdown';
+import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
 import { CreateStashModal as _CreateStashModal } from '@/components/stash/CreateStashModal'; // ensure no circular import issues
 import { RenameStashModal } from '@/components/stash/RenameStashModal';
@@ -96,7 +98,8 @@ export function StorageDetail(): ReactElement {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">{stashName}</h1>
           <p className="text-sm text-muted-foreground">
-            Storage stash · {itemCount} {itemCount === 1 ? 'item' : 'items'} · — gp
+            Storage stash · {itemCount} {itemCount === 1 ? 'item' : 'items'} ·{' '}
+            <CurrencyBreakdown stashId={view.stashId} />
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -124,6 +127,8 @@ export function StorageDetail(): ReactElement {
           </Button>
         </div>
       </header>
+
+      <CurrencyRow stashId={view.stashId} />
 
       <section className="space-y-4">
         <div className="flex items-center justify-between">

@@ -5,6 +5,7 @@ import type {
   Stash,
   TransactionLogEntry,
 } from '@app/shared';
+import { currency } from '@app/rules';
 
 import type { Action, AppState } from './types';
 
@@ -76,6 +77,8 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return renameStash(state, action.payload);
     case 'delete-stash':
       return deleteStash(state, action.payload);
+    case 'currency-change':
+      return currencyChange(state, action.payload);
   }
 }
 
@@ -653,9 +656,9 @@ function renameStash(
  * Refuses to delete Inventory (`isCarried=true`), Party Stash
  * (`scope='party'`), and Recovered Loot (`scope='recovered-loot'`).
  *
- * `currencyTotalCp` uses an inline CP-equivalent formula —
- * `cp + sp*10 + ep*50 + gp*100 + pp*1000`. M4 extracts this to
- * `packages/rules` and replaces the call site here.
+ * `currencyTotalCp` is computed via `@app/rules` currency.toCopper —
+ * single source of truth for the CP-equivalent ladder shared with the
+ * M4 currency editor.
  */
 function deleteStash(
   state: AppState,
@@ -749,14 +752,10 @@ function deleteStash(
     : [];
 
   const itemCount = itemsInStash.reduce((sum, i) => sum + i.quantity, 0);
-  // M4 will replace with `packages/rules` currency math. The inline
-  // placeholder is dormant in M3 (currency is always 0 in M3 dispatches).
-  const currencyTotalCp =
-    stashCurrency.cp +
-    stashCurrency.sp * 10 +
-    stashCurrency.ep * 50 +
-    stashCurrency.gp * 100 +
-    stashCurrency.pp * 1000;
+  // CP-equivalent snapshot of the deleted stash's currency at delete time
+  // (always 0 in M3; M4 lets users actually fund stashes via the inline
+  // currency editor, after which this path becomes load-bearing).
+  const currencyTotalCp = currency.toCopper(stashCurrency);
 
   return {
     state: {
@@ -784,6 +783,82 @@ function deleteStash(
           // allow back-compat with pre-amendment entries.
           ownerCharacterId: stash.ownerCharacterId,
         },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// currency-change (M4)
+// -------------------------------------------------------------------- //
+
+/**
+ * Signed denomination delta on a single stash's CurrencyHolding. M4's
+ * inline `<CurrencyRow>` editor dispatches this for every +/− click
+ * (reason: 'deposit' | 'withdraw') and the Convert modal dispatches one
+ * with a mixed two-denomination delta (reason: 'convert'). The reducer
+ * is reason-agnostic: it validates the target, refuses no-op and
+ * negative-result deltas, applies the change, and emits one log entry
+ * with the dispatch reason preserved.
+ *
+ * Note: the synthetic delete-cascade currency entry (reason:
+ * 'stash-deleted', M3) is emitted directly from `deleteStash` against
+ * Recovered Loot, NOT routed through this reducer case — the cascade
+ * shares the same pre-mutation snapshot with the surrounding transfer
+ * entries.
+ */
+function currencyChange(
+  state: AppState,
+  payload: Extract<Action, { type: 'currency-change' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'currency-change');
+  const stash = s.stashes.find((st) => st.id === payload.stashId);
+  if (stash === undefined) {
+    throw new Error(`currency-change: unknown stashId ${payload.stashId}`);
+  }
+  const holding = s.currencies.find((c) => c.stashId === payload.stashId);
+  if (holding === undefined) {
+    throw new Error(
+      `currency-change: invariant violation — no CurrencyHolding for ${payload.stashId}`,
+    );
+  }
+
+  const { delta } = payload;
+  const allZero =
+    delta.cp === 0 && delta.sp === 0 && delta.ep === 0 && delta.gp === 0 && delta.pp === 0;
+  if (allZero) throw new Error('currency-change: no-op delta');
+
+  const nextHolding: CurrencyHolding = {
+    ...holding,
+    cp: holding.cp + delta.cp,
+    sp: holding.sp + delta.sp,
+    ep: holding.ep + delta.ep,
+    gp: holding.gp + delta.gp,
+    pp: holding.pp + delta.pp,
+  };
+  if (
+    nextHolding.cp < 0 ||
+    nextHolding.sp < 0 ||
+    nextHolding.ep < 0 ||
+    nextHolding.gp < 0 ||
+    nextHolding.pp < 0
+  ) {
+    throw new Error(
+      `currency-change: would push a denomination negative on ${payload.stashId}`,
+    );
+  }
+
+  return {
+    state: {
+      ...s,
+      currencies: s.currencies.map((c) =>
+        c.stashId === payload.stashId ? nextHolding : c,
+      ),
+    },
+    logEntries: [
+      {
+        type: 'currency-change',
+        payload: { stashId: payload.stashId, delta, reason: payload.reason },
       },
     ],
   };
