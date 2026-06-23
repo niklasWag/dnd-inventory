@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { Navigate, useParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
+import { ArrowLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,14 +41,19 @@ type FormOutput = z.output<typeof formSchema>;
 
 export function ItemDetail(): ReactElement {
   const { itemInstanceId } = useParams<{ itemInstanceId: string }>();
+  const navigate = useNavigate();
 
-  // Single shallow-equal selector: row, definition, stash, dispatch.
+  // Single shallow-equal selector: row, definition, stash, characterId.
   // useShallow is mandatory — fresh object literals would otherwise
   // re-trigger Zustand's equality check on every store change.
+  //
+  // `characterId` is the back-button destination. For character-scope
+  // stashes it's the owner; for party / recovered-loot stashes (MVP §6:
+  // exactly one character) it's the lone character.
   const view = useStore(
     useShallow((s) => {
       if (s.appState === null || itemInstanceId === undefined) {
-        return { row: null, def: null, stash: null } as const;
+        return { row: null, def: null, stash: null, characterId: null } as const;
       }
       const row = s.appState.items.find((i) => i.id === itemInstanceId) ?? null;
       const def = row !== null
@@ -56,7 +62,11 @@ export function ItemDetail(): ReactElement {
       const stash = row !== null
         ? s.appState.stashes.find((st) => st.id === row.ownerId) ?? null
         : null;
-      return { row, def, stash };
+      const characterId =
+        stash?.scope === 'character' && stash.ownerCharacterId !== null
+          ? stash.ownerCharacterId
+          : (s.appState.characters[0]?.id ?? null);
+      return { row, def, stash, characterId };
     }),
   );
 
@@ -90,7 +100,10 @@ export function ItemDetail(): ReactElement {
   }, [view.row, reset]);
 
   if (view.row === null) return <Navigate to="/" replace />;
-  const { row, def, stash } = view;
+  const { row, def, stash, characterId } = view;
+
+  const backHref = characterId !== null ? `/character/${characterId}` : '/';
+  const backLabel = stash?.name !== undefined ? `Back to ${stash.name}` : 'Back';
 
   function onSubmit(values: FormOutput): void {
     if (row === null) return;
@@ -121,6 +134,19 @@ export function ItemDetail(): ReactElement {
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          void navigate(backHref);
+        }}
+        className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        {backLabel}
+      </Button>
+
       <header className="space-y-1">
         <h1 className="text-3xl font-bold tracking-tight">{displayName}</h1>
         <p className="text-sm text-muted-foreground">

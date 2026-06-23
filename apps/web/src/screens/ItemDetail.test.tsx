@@ -5,6 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { ItemDetail } from './ItemDetail';
 import { Welcome } from './Welcome';
+import { CharacterSheet } from './CharacterSheet';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore, flushPendingPersist } from '@/store';
 import { loadAppState } from '@/db/load';
@@ -21,6 +22,7 @@ function renderAt(path: string): void {
   const router = createMemoryRouter(
     [
       { path: '/', Component: Welcome },
+      { path: '/character/:id', Component: CharacterSheet },
       { path: '/item/:itemInstanceId', Component: ItemDetail },
     ],
     { initialEntries: [path] },
@@ -164,5 +166,20 @@ describe('ItemDetail (M2.5)', () => {
     const { itemInstanceId } = bootstrapWithTorch();
     renderAt(`/item/${itemInstanceId}`);
     expect(screen.getByText(/source: catalog-add/i)).toBeInTheDocument();
+  });
+
+  it('renders a Back link that returns to the owning character sheet', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithTorch();
+    renderAt(`/item/${itemInstanceId}`);
+
+    // Label includes the stash name for context.
+    const back = screen.getByRole('button', { name: /back to inventory/i });
+    expect(back).toBeInTheDocument();
+
+    await user.click(back);
+
+    // CharacterSheet renders the character name as an h1.
+    expect(screen.getByRole('heading', { name: 'Thorin' })).toBeInTheDocument();
   });
 });
