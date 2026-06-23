@@ -8,7 +8,7 @@ See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut,
 
 ## Status
 
-MVP M0 (skeleton) complete — see `docs/roadmap.md`.
+MVP M4 (Currency) complete — see `docs/roadmap.md`. Next: M5 (Move + Split).
 
 ## Requirements
 
