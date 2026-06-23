@@ -1,4 +1,10 @@
-import type { ItemDefinition, ItemInstance, TransactionLogEntry } from '@app/shared';
+import type {
+  CurrencyHolding,
+  ItemDefinition,
+  ItemInstance,
+  Stash,
+  TransactionLogEntry,
+} from '@app/shared';
 
 import type { Action, AppState } from './types';
 
@@ -39,7 +45,17 @@ export type LogEntrySlice<T extends TransactionLogEntry = TransactionLogEntry> =
 
 export interface ReducerResult {
   state: AppState;
-  logEntry: LogEntrySlice;
+  /**
+   * Log entries to append to `state.log`, in order. Most reducer cases
+   * emit exactly one slice; `delete-stash` (M3) is the first case to emit
+   * a cascade (N `transfer` + 0–1 `currency-change` + 1 `delete-stash`).
+   *
+   * Middleware (`apps/web/src/store/index.ts`) iterates this array and
+   * resolves each slice into a fully-formed `TransactionLogEntry` via
+   * `resolveActor` + `buildLogEntry`, appending the resolved array to
+   * `state.log` in one `set()` call.
+   */
+  logEntries: LogEntrySlice[];
 }
 
 export function reduce(state: AppState, action: Action): ReducerResult {
@@ -54,6 +70,12 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return seedCatalog(state, action.payload);
     case 'edit-item-instance':
       return editItemInstance(state, action.payload);
+    case 'create-stash':
+      return createStash(state, action.payload);
+    case 'rename-stash':
+      return renameStash(state, action.payload);
+    case 'delete-stash':
+      return deleteStash(state, action.payload);
   }
 }
 
@@ -200,7 +222,7 @@ function createCharacter(
 
   return {
     state: nextState,
-    logEntry: {
+    logEntries: [{
       type: 'create-character',
       payload: {
         characterId,
@@ -211,7 +233,7 @@ function createCharacter(
         partyStashId,
         recoveredLootStashId,
       },
-    },
+    }],
   };
 }
 
@@ -283,7 +305,7 @@ function acquire(
 
   return {
     state: { ...s, items: nextItems },
-    logEntry: {
+    logEntries: [{
       type: 'acquire',
       payload: {
         stashId: payload.stashId,
@@ -292,7 +314,7 @@ function acquire(
         quantity: payload.quantity,
         source: payload.source,
       },
-    },
+    }],
   };
 }
 
@@ -336,7 +358,7 @@ function consume(
 
   return {
     state: { ...s, items: nextItems },
-    logEntry: {
+    logEntries: [{
       type: 'consume',
       payload: {
         stashId: row.ownerId,
@@ -344,7 +366,7 @@ function consume(
         quantity: payload.quantity,
         removed,
       },
-    },
+    }],
   };
 }
 
@@ -392,14 +414,14 @@ function seedCatalog(
 
   return {
     state: { ...s, catalog: nextCatalog, seedVersion: payload.seedVersion },
-    logEntry: {
+    logEntries: [{
       type: 'seed-catalog',
       payload: {
         seedVersion: payload.seedVersion,
         addedDefinitionIds: added,
         updatedDefinitionIds: updated,
       },
-    },
+    }],
   };
 }
 
@@ -469,13 +491,13 @@ function editItemInstance(
 
   return {
     state: { ...s, items: nextItems },
-    logEntry: {
+    logEntries: [{
       type: 'edit-item-instance',
       payload: {
         itemInstanceId: row.id,
         changedFields,
       },
-    },
+    }],
   };
 }
 
@@ -488,4 +510,273 @@ function generateInviteCode(): string {
   let code = '';
   for (const b of bytes) code += alphabet[b % alphabet.length];
   return `INV-${code}`;
+}
+
+// -------------------------------------------------------------------- //
+// create-stash / rename-stash / delete-stash (M3)
+// -------------------------------------------------------------------- //
+
+/**
+ * Create a Storage stash (character-scope, non-carried) owned by
+ * `ownerCharacterId`. Atomically adds the `Stash` row + its zeroed
+ * `CurrencyHolding`. Inventory / Party Stash / Recovered Loot are
+ * NOT dispatched here — `create-character` auto-provisions all three.
+ *
+ * Validate-then-apply: rejects unknown owner; rejects empty/whitespace-
+ * only names. Trims leading/trailing whitespace before persisting so the
+ * stored name is the canonical form (matches the `editItemInstance`
+ * decision to preserve user-typed values otherwise).
+ */
+function createStash(
+  state: AppState,
+  payload: Extract<Action, { type: 'create-stash' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'create-stash');
+
+  const name = payload.name.trim();
+  if (name.length === 0) {
+    throw new Error('create-stash: name is empty');
+  }
+  const owner = s.characters.find((c) => c.id === payload.ownerCharacterId);
+  if (owner === undefined) {
+    throw new Error(`create-stash: unknown ownerCharacterId ${payload.ownerCharacterId}`);
+  }
+
+  const stashId = crypto.randomUUID();
+  const newStash: Stash = {
+    id: stashId,
+    scope: 'character',
+    name,
+    ownerCharacterId: owner.id,
+    partyId: null,
+    isCarried: false,
+    createdAt: new Date().toISOString(),
+  };
+  const newCurrency: CurrencyHolding = {
+    id: crypto.randomUUID(),
+    stashId,
+    cp: 0,
+    sp: 0,
+    ep: 0,
+    gp: 0,
+    pp: 0,
+  };
+
+  return {
+    state: {
+      ...s,
+      stashes: [...s.stashes, newStash],
+      currencies: [...s.currencies, newCurrency],
+    },
+    logEntries: [{
+      type: 'create-stash',
+      payload: {
+        stashId,
+        scope: 'character',
+        name,
+        ownerCharacterId: owner.id,
+      },
+    }],
+  };
+}
+
+function renameStash(
+  state: AppState,
+  payload: Extract<Action, { type: 'rename-stash' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'rename-stash');
+
+  const stash = s.stashes.find((st) => st.id === payload.stashId);
+  if (stash === undefined) {
+    throw new Error(`rename-stash: unknown stashId ${payload.stashId}`);
+  }
+
+  // M3 lock: only Storage stashes (character-scope + non-carried) are
+  // renamable. The three auto-provisioned names — Inventory, Party Stash,
+  // Recovered Loot — are MVP §7 fixtures.
+  if (stash.scope === 'character' && stash.isCarried) {
+    throw new Error('rename-stash: cannot rename Inventory');
+  }
+  if (stash.scope === 'party') {
+    throw new Error('rename-stash: cannot rename Party Stash');
+  }
+  if (stash.scope === 'recovered-loot') {
+    throw new Error('rename-stash: cannot rename Recovered Loot');
+  }
+
+  const newName = payload.newName.trim();
+  if (newName.length === 0) {
+    throw new Error('rename-stash: newName is empty');
+  }
+  if (newName === stash.name) {
+    // Matches the M2.5 invariant: every dispatch appends one log entry —
+    // a no-op rename can't satisfy that, so we reject.
+    throw new Error('rename-stash: name unchanged');
+  }
+
+  const oldName = stash.name;
+  const next: Stash = { ...stash, name: newName };
+
+  return {
+    state: {
+      ...s,
+      stashes: s.stashes.map((st) => (st.id === stash.id ? next : st)),
+    },
+    logEntries: [{
+      type: 'rename-stash',
+      payload: { stashId: stash.id, oldName, newName },
+    }],
+  };
+}
+
+/**
+ * Delete a Storage stash, cascading the doomed stash's contents into
+ * Recovered Loot. Order of operations (one atomic reducer call):
+ *
+ *   1. Move each item row to Recovered Loot (`ownerId` updated; same
+ *      `itemInstanceId`, same `quantity`; no auto-stack collapse —
+ *      M3 keeps transfer-into-Recovered-Loot rows separate. M5
+ *      will decide the merge UX for user-initiated transfers).
+ *   2. If the doomed stash held non-zero currency, roll it into
+ *      Recovered Loot's `CurrencyHolding` (additive). In M3 this is
+ *      dormant since currency editing arrives in M4; the path is
+ *      tested via direct state injection so M4 can ship without
+ *      revisiting this reducer.
+ *   3. Remove the stash row and its `CurrencyHolding`.
+ *   4. Emit the log cascade in order:
+ *      - one `transfer` entry per item moved,
+ *      - one `currency-change` entry with `reason: 'stash-deleted'`
+ *        IFF the stash held non-zero currency,
+ *      - one terminal `delete-stash` entry with the snapshot
+ *        `{ name, itemCount, currencyTotalCp }`.
+ *
+ * Refuses to delete Inventory (`isCarried=true`), Party Stash
+ * (`scope='party'`), and Recovered Loot (`scope='recovered-loot'`).
+ *
+ * `currencyTotalCp` uses an inline CP-equivalent formula —
+ * `cp + sp*10 + ep*50 + gp*100 + pp*1000`. M4 extracts this to
+ * `packages/rules` and replaces the call site here.
+ */
+function deleteStash(
+  state: AppState,
+  payload: Extract<Action, { type: 'delete-stash' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'delete-stash');
+
+  const stash = s.stashes.find((st) => st.id === payload.stashId);
+  if (stash === undefined) {
+    throw new Error(`delete-stash: unknown stashId ${payload.stashId}`);
+  }
+  if (stash.scope === 'character' && stash.isCarried) {
+    throw new Error('delete-stash: cannot delete Inventory');
+  }
+  if (stash.scope === 'party') {
+    throw new Error('delete-stash: cannot delete Party Stash');
+  }
+  if (stash.scope === 'recovered-loot') {
+    throw new Error('delete-stash: cannot delete Recovered Loot');
+  }
+
+  const recoveredLootId = s.party.recoveredLootStashId;
+  const itemsInStash = s.items.filter((i) => i.ownerId === stash.id);
+  const stashCurrency = s.currencies.find((c) => c.stashId === stash.id);
+  if (stashCurrency === undefined) {
+    throw new Error(`delete-stash: invariant violation — no CurrencyHolding for ${stash.id}`);
+  }
+  const recoveredHolding = s.currencies.find((c) => c.stashId === recoveredLootId);
+  if (recoveredHolding === undefined) {
+    throw new Error('delete-stash: invariant violation — no CurrencyHolding for Recovered Loot');
+  }
+
+  // 1. Re-point each item's ownerId to Recovered Loot (no auto-stack).
+  const nextItems = s.items.map((i) =>
+    i.ownerId === stash.id ? { ...i, ownerId: recoveredLootId } : i,
+  );
+
+  // 2. Roll currency into Recovered Loot (only when non-zero).
+  const isNonZero =
+    stashCurrency.cp !== 0 ||
+    stashCurrency.sp !== 0 ||
+    stashCurrency.ep !== 0 ||
+    stashCurrency.gp !== 0 ||
+    stashCurrency.pp !== 0;
+  const nextRecovered: CurrencyHolding = isNonZero
+    ? {
+        ...recoveredHolding,
+        cp: recoveredHolding.cp + stashCurrency.cp,
+        sp: recoveredHolding.sp + stashCurrency.sp,
+        ep: recoveredHolding.ep + stashCurrency.ep,
+        gp: recoveredHolding.gp + stashCurrency.gp,
+        pp: recoveredHolding.pp + stashCurrency.pp,
+      }
+    : recoveredHolding;
+
+  // 3. Remove the stash row + its CurrencyHolding; rewrite Recovered
+  //    Loot's holding when currency rolled in.
+  const nextStashes = s.stashes.filter((st) => st.id !== stash.id);
+  const nextCurrencies = s.currencies
+    .filter((c) => c.stashId !== stash.id)
+    .map((c) => (c.stashId === recoveredLootId ? nextRecovered : c));
+
+  // 4. Build the log cascade.
+  const transferEntries: LogEntrySlice[] = itemsInStash.map((item) => ({
+    type: 'transfer',
+    payload: {
+      itemInstanceId: item.id,
+      quantity: item.quantity,
+      fromStashId: stash.id,
+      toStashId: recoveredLootId,
+    },
+  }));
+
+  const currencyEntries: LogEntrySlice[] = isNonZero
+    ? [
+        {
+          type: 'currency-change',
+          payload: {
+            stashId: recoveredLootId,
+            delta: {
+              cp: stashCurrency.cp,
+              sp: stashCurrency.sp,
+              ep: stashCurrency.ep,
+              gp: stashCurrency.gp,
+              pp: stashCurrency.pp,
+            },
+            reason: 'stash-deleted',
+          },
+        },
+      ]
+    : [];
+
+  const itemCount = itemsInStash.reduce((sum, i) => sum + i.quantity, 0);
+  // M4 will replace with `packages/rules` currency math. The inline
+  // placeholder is dormant in M3 (currency is always 0 in M3 dispatches).
+  const currencyTotalCp =
+    stashCurrency.cp +
+    stashCurrency.sp * 10 +
+    stashCurrency.ep * 50 +
+    stashCurrency.gp * 100 +
+    stashCurrency.pp * 1000;
+
+  return {
+    state: {
+      ...s,
+      stashes: nextStashes,
+      currencies: nextCurrencies,
+      items: nextItems,
+    },
+    logEntries: [
+      ...transferEntries,
+      ...currencyEntries,
+      {
+        type: 'delete-stash',
+        payload: {
+          stashId: stash.id,
+          name: stash.name,
+          itemCount,
+          currencyTotalCp,
+        },
+      },
+    ],
+  };
 }

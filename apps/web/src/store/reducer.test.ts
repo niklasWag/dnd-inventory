@@ -6,22 +6,26 @@ import { wipeAll } from '@/db/wipe';
 import {
   appStateSchema,
   transactionLogEntrySchema,
-  type ItemDefinition,
 } from '@app/shared';
 import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
+
+import { bootstrap } from '@/test/fixtures';
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
   await wipeAll();
 });
 
+// reducer.test.ts uses level: 1 specifically (a lot of suites depend on that
+// baseline). fixtures' default is level: 3 — pass our own payload explicitly
+// to bootstrap() to keep these tests stable.
 const validPayload = {
   name: 'Thorin',
   species: 'Dwarf',
   class: 'Fighter',
   level: 1,
   str: 16,
-};
+} as const;
 
 describe('store plumbing', () => {
   it('starts with null appState and empty log', () => {
@@ -111,8 +115,8 @@ describe('reducer: create-character (M1)', () => {
     expect(log[0]!.timestamp).toMatch(/\d{4}-\d{2}-\d{2}T/);
     // payload should carry every id the UI needs to navigate
     if (log[0]!.type === 'create-character') {
-      expect(log[0]!.payload.characterId).toBe(appState!.characters[0]!.id);
-      expect(log[0]!.payload.inventoryStashId).toBe(appState!.characters[0]!.inventoryStashId);
+      expect(log[0].payload.characterId).toBe(appState!.characters[0]!.id);
+      expect(log[0].payload.inventoryStashId).toBe(appState!.characters[0]!.inventoryStashId);
     }
   });
 
@@ -153,32 +157,12 @@ describe('reducer: create-character (M1)', () => {
 // -------------------------------------------------------------------- //
 
 /**
- * Test helper: bring the store to the post-M2-bootstrap baseline — a fresh
- * character plus a seeded catalog. Every M2 test starts here so each suite
- * focuses on its own action rather than the create-character setup.
+ * Thin alias around the shared fixtures `bootstrap()` so this test file's
+ * suites keep using `level: 1` for the create-character payload.
+ * Fixtures default to `level: 3`.
  */
-function bootstrap(): {
-  characterId: string;
-  inventoryStashId: string;
-  partyStashId: string;
-  recoveredLootStashId: string;
-  catalog: ItemDefinition[];
-} {
-  const { dispatch } = useStore.getState();
-  dispatch({ type: 'create-character', payload: validPayload });
-  const phb = loadPhbSeed();
-  dispatch({
-    type: 'seed-catalog',
-    payload: { seedVersion: PHB_SEED_VERSION, entries: phb },
-  });
-  const s = useStore.getState().appState!;
-  return {
-    characterId: s.characters[0]!.id,
-    inventoryStashId: s.characters[0]!.inventoryStashId,
-    partyStashId: s.stashes.find((st) => st.scope === 'party')!.id,
-    recoveredLootStashId: s.party.recoveredLootStashId,
-    catalog: s.catalog,
-  };
+function localBootstrap(): ReturnType<typeof bootstrap> {
+  return bootstrap(validPayload);
 }
 
 describe('reducer: seed-catalog (M2)', () => {
@@ -201,7 +185,7 @@ describe('reducer: seed-catalog (M2)', () => {
   });
 
   it('is idempotent: re-applying the same seed yields the same catalog size', () => {
-    bootstrap();
+    localBootstrap();
     const sizeAfterFirst = useStore.getState().appState!.catalog.length;
     useStore.getState().dispatch({
       type: 'seed-catalog',
@@ -211,7 +195,7 @@ describe('reducer: seed-catalog (M2)', () => {
   });
 
   it('upserts PHB rows without disturbing homebrew entries', () => {
-    bootstrap();
+    localBootstrap();
     // Inject a fake homebrew row directly — the create-homebrew action
     // lands in M6, but seed-catalog must already respect homebrew.
     const homebrewId = 'homebrew:test-trinket';
@@ -278,7 +262,7 @@ describe('reducer: seed-catalog (M2)', () => {
 
 describe('reducer: acquire (M2)', () => {
   it('creates a new item row when the stash is empty for that definition', () => {
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
 
     useStore.getState().dispatch({
@@ -299,7 +283,7 @@ describe('reducer: acquire (M2)', () => {
   });
 
   it('auto-stacks identical (definitionId, notes) acquires onto one row', () => {
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
 
@@ -325,7 +309,7 @@ describe('reducer: acquire (M2)', () => {
   });
 
   it('keeps different notes on separate rows', () => {
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const dagger = catalog.find((d) => d.id === 'phb-2024:dagger')!;
     const { dispatch } = useStore.getState();
 
@@ -356,7 +340,7 @@ describe('reducer: acquire (M2)', () => {
   });
 
   it('logs the acquire entry with actorRole=player', () => {
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
@@ -373,7 +357,7 @@ describe('reducer: acquire (M2)', () => {
   });
 
   it('rejects unknown stashId, unknown definitionId, and non-positive quantity', () => {
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
 
@@ -415,7 +399,7 @@ describe('reducer: acquire (M2)', () => {
   });
 
   it('produces AppState that still validates against the shared schema', () => {
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
@@ -432,7 +416,7 @@ describe('reducer: acquire (M2)', () => {
 
 describe('reducer: consume (M2)', () => {
   function bootstrapWithStack(quantity: number): { itemInstanceId: string; stashId: string } {
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
@@ -504,7 +488,7 @@ describe('reducer: consume (M2)', () => {
 function bootstrapWithItem(
   initial: { customName?: string; notes?: string } = {},
 ): { itemInstanceId: string; inventoryStashId: string; torchDefId: string } {
-  const { inventoryStashId, catalog } = bootstrap();
+  const { inventoryStashId, catalog } = localBootstrap();
   const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
   useStore.getState().dispatch({
     type: 'acquire',
@@ -674,7 +658,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
 
   it('leaves two rows separate when an edit would collide on (definitionId, notes) — M5 follow-up', () => {
     // Two Torch rows distinguished only by `notes`.
-    const { inventoryStashId, catalog } = bootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
     dispatch({
@@ -784,3 +768,589 @@ describe('schema back-compat: source = custom-create still validates (M2.5)', ()
     expect(() => transactionLogEntrySchema.parse(fresh)).not.toThrow();
   });
 });
+
+// -------------------------------------------------------------------- //
+// M3: create-stash / rename-stash / delete-stash
+// -------------------------------------------------------------------- //
+
+describe('reducer: create-stash (M3)', () => {
+  it('appends a character-scope, non-carried Storage stash', () => {
+    const { characterId } = localBootstrap();
+    const beforeCount = useStore.getState().appState!.stashes.length;
+
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+    });
+
+    const s = useStore.getState().appState!;
+    expect(s.stashes).toHaveLength(beforeCount + 1);
+    const newStash = s.stashes.at(-1)!;
+    expect(newStash.scope).toBe('character');
+    expect(newStash.isCarried).toBe(false);
+    expect(newStash.name).toBe('Chest at home');
+    if (newStash.scope === 'character') {
+      expect(newStash.ownerCharacterId).toBe(characterId);
+      expect(newStash.partyId).toBeNull();
+    }
+    expect(newStash.id).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it('appends a matching CurrencyHolding row (all zeros)', () => {
+    const { characterId } = localBootstrap();
+
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Vault' },
+    });
+
+    const s = useStore.getState().appState!;
+    const newStash = s.stashes.at(-1)!;
+    const holding = s.currencies.find((c) => c.stashId === newStash.id);
+    expect(holding).toBeDefined();
+    expect(holding).toMatchObject({ cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('logs a single create-stash entry with the expected payload', () => {
+    const { characterId } = localBootstrap();
+
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Wagon' },
+    });
+
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('create-stash');
+    if (last?.type === 'create-stash') {
+      const newStash = useStore.getState().appState!.stashes.at(-1)!;
+      expect(last.payload).toEqual({
+        stashId: newStash.id,
+        scope: 'character',
+        name: 'Wagon',
+        ownerCharacterId: characterId,
+      });
+      expect(last.actorRole).toBe('player');
+    }
+  });
+
+  it('trims leading/trailing whitespace from the name', () => {
+    const { characterId } = localBootstrap();
+
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: '  Tower of Mystra  ' },
+    });
+
+    const newStash = useStore.getState().appState!.stashes.at(-1)!;
+    expect(newStash.name).toBe('Tower of Mystra');
+  });
+
+  it('throws when ownerCharacterId is unknown', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'create-stash',
+        payload: { ownerCharacterId: 'does-not-exist', name: 'Ghost vault' },
+      }),
+    ).toThrow(/unknown ownerCharacterId/);
+  });
+
+  it('throws on empty name', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'create-stash',
+        payload: { ownerCharacterId: characterId, name: '' },
+      }),
+    ).toThrow(/name is empty/);
+  });
+
+  it('throws on whitespace-only name (after trim is empty)', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'create-stash',
+        payload: { ownerCharacterId: characterId, name: '    ' },
+      }),
+    ).toThrow(/name is empty/);
+  });
+
+  it('throws when state is null (must run create-character first)', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'create-stash',
+        payload: { ownerCharacterId: 'foo', name: 'bar' },
+      }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('produces AppState that still validates against the shared schema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'A' },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('does NOT create a second isCarried=true stash for the same character', () => {
+    // Sanity check: the action payload shape doesn't permit `isCarried`,
+    // and the reducer always constructs `isCarried: false`. We assert the
+    // invariant after dispatch instead of trying to bypass the type system.
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Second pack?' },
+    });
+    const carriedStashes = useStore
+      .getState()
+      .appState!.stashes.filter((st) => st.isCarried === true);
+    expect(carriedStashes).toHaveLength(1);
+    expect(carriedStashes[0]!.name).toBe('Inventory');
+  });
+});
+
+describe('reducer: rename-stash (M3)', () => {
+  /**
+   * Helper: bootstrap + create one Storage stash, return its id so each
+   * test starts from a baseline with a Storage stash to rename.
+   */
+  function bootstrapWithStorage(initialName = 'Chest at home'): {
+    characterId: string;
+    storageStashId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    recoveredLootStashId: string;
+  } {
+    const base = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: base.characterId, name: initialName },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    return { ...base, storageStashId };
+  }
+
+  it('renames a Storage stash; id + createdAt stable', () => {
+    const { storageStashId } = bootstrapWithStorage('Old name');
+    const before = useStore.getState().appState!.stashes.find((st) => st.id === storageStashId)!;
+
+    useStore.getState().dispatch({
+      type: 'rename-stash',
+      payload: { stashId: storageStashId, newName: 'Vault of Waterdeep' },
+    });
+
+    const after = useStore.getState().appState!.stashes.find((st) => st.id === storageStashId)!;
+    expect(after.name).toBe('Vault of Waterdeep');
+    expect(after.id).toBe(before.id);
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(after.scope).toBe(before.scope);
+    expect(after.isCarried).toBe(before.isCarried);
+  });
+
+  it('logs a rename-stash entry with oldName + newName', () => {
+    const { storageStashId } = bootstrapWithStorage('Before');
+    useStore.getState().dispatch({
+      type: 'rename-stash',
+      payload: { stashId: storageStashId, newName: 'After' },
+    });
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('rename-stash');
+    if (last?.type === 'rename-stash') {
+      expect(last.payload).toEqual({
+        stashId: storageStashId,
+        oldName: 'Before',
+        newName: 'After',
+      });
+      expect(last.actorRole).toBe('player');
+    }
+  });
+
+  it('trims leading/trailing whitespace from newName', () => {
+    const { storageStashId } = bootstrapWithStorage();
+    useStore.getState().dispatch({
+      type: 'rename-stash',
+      payload: { stashId: storageStashId, newName: '  Tower  ' },
+    });
+    const stash = useStore.getState().appState!.stashes.find((st) => st.id === storageStashId)!;
+    expect(stash.name).toBe('Tower');
+  });
+
+  it('throws when renaming Inventory', () => {
+    const { inventoryStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: inventoryStashId, newName: 'Backpack' },
+      }),
+    ).toThrow(/cannot rename Inventory/);
+  });
+
+  it('throws when renaming Party Stash', () => {
+    const { partyStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: partyStashId, newName: 'Group Pool' },
+      }),
+    ).toThrow(/cannot rename Party Stash/);
+  });
+
+  it('throws when renaming Recovered Loot', () => {
+    const { recoveredLootStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: recoveredLootStashId, newName: 'Forgotten' },
+      }),
+    ).toThrow(/cannot rename Recovered Loot/);
+  });
+
+  it('throws on unknown stashId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: 'does-not-exist', newName: 'X' },
+      }),
+    ).toThrow(/unknown stashId/);
+  });
+
+  it('throws on empty newName', () => {
+    const { storageStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: storageStashId, newName: '' },
+      }),
+    ).toThrow(/newName is empty/);
+  });
+
+  it('throws on whitespace-only newName', () => {
+    const { storageStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: storageStashId, newName: '   ' },
+      }),
+    ).toThrow(/newName is empty/);
+  });
+
+  it('throws on no-op rename (newName === current name after trim)', () => {
+    const { storageStashId } = bootstrapWithStorage('Vault');
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: storageStashId, newName: '  Vault  ' },
+      }),
+    ).toThrow(/name unchanged/);
+  });
+
+  it('throws when state is null', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-stash',
+        payload: { stashId: 'foo', newName: 'bar' },
+      }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('produces AppState that still validates against the shared schema', () => {
+    const { storageStashId } = bootstrapWithStorage();
+    useStore.getState().dispatch({
+      type: 'rename-stash',
+      payload: { stashId: storageStashId, newName: 'Renamed' },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+});
+
+describe('reducer: delete-stash (M3)', () => {
+  /**
+   * Helper: bootstrap + create one Storage stash optionally acquiring
+   * items into it. Returns every id a delete-stash test might want.
+   */
+  function bootstrapWithStorage(): {
+    characterId: string;
+    storageStashId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    recoveredLootStashId: string;
+    catalog: ReturnType<typeof localBootstrap>['catalog'];
+  } {
+    const base = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    return { ...base, storageStashId };
+  }
+
+  it('deletes an empty Storage stash; single delete-stash log entry', () => {
+    const { storageStashId } = bootstrapWithStorage();
+    const beforeStashes = useStore.getState().appState!.stashes.length;
+    const beforeCurrencies = useStore.getState().appState!.currencies.length;
+    const beforeLog = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'delete-stash',
+      payload: { stashId: storageStashId },
+    });
+
+    const s = useStore.getState().appState!;
+    expect(s.stashes).toHaveLength(beforeStashes - 1);
+    expect(s.stashes.find((st) => st.id === storageStashId)).toBeUndefined();
+    expect(s.currencies).toHaveLength(beforeCurrencies - 1);
+    expect(s.currencies.find((c) => c.stashId === storageStashId)).toBeUndefined();
+
+    const log = useStore.getState().log;
+    expect(log.length).toBe(beforeLog + 1); // one delete-stash; no transfers (empty), no currency-change (zero)
+    const last = log.at(-1);
+    expect(last?.type).toBe('delete-stash');
+    if (last?.type === 'delete-stash') {
+      expect(last.payload).toEqual({
+        stashId: storageStashId,
+        name: 'Chest at home',
+        itemCount: 0,
+        currencyTotalCp: 0,
+      });
+    }
+  });
+
+  it('moves items to Recovered Loot with original quantities preserved', () => {
+    const { storageStashId, recoveredLootStashId, catalog } = bootstrapWithStorage();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    const { dispatch } = useStore.getState();
+    dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: rope.id, quantity: 1, source: 'catalog-add' },
+    });
+    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const ropeId = useStore.getState().appState!.items.find((i) => i.definitionId === rope.id)!.id;
+
+    dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.items.find((i) => i.id === torchId)?.ownerId).toBe(recoveredLootStashId);
+    expect(s.items.find((i) => i.id === ropeId)?.ownerId).toBe(recoveredLootStashId);
+    expect(s.items.find((i) => i.id === torchId)?.quantity).toBe(1);
+    expect(s.items.find((i) => i.id === ropeId)?.quantity).toBe(1);
+  });
+
+  it('emits N transfer entries + 1 delete-stash entry, in order', () => {
+    const { storageStashId, recoveredLootStashId, catalog } = bootstrapWithStorage();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    const { dispatch } = useStore.getState();
+    dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: rope.id, quantity: 1, source: 'catalog-add' },
+    });
+    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const ropeId = useStore.getState().appState!.items.find((i) => i.definitionId === rope.id)!.id;
+    const beforeLogLen = useStore.getState().log.length;
+
+    dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+
+    const log = useStore.getState().log;
+    const newEntries = log.slice(beforeLogLen);
+    expect(newEntries).toHaveLength(3); // 2 transfer + 1 delete-stash
+    expect(newEntries[0]?.type).toBe('transfer');
+    expect(newEntries[1]?.type).toBe('transfer');
+    expect(newEntries[2]?.type).toBe('delete-stash');
+
+    const transferEntries = newEntries.filter((e) => e.type === 'transfer');
+    const movedItemIds = transferEntries
+      .map((e) => (e.type === 'transfer' ? e.payload.itemInstanceId : ''))
+      .sort();
+    expect(movedItemIds).toEqual([torchId, ropeId].sort());
+
+    for (const e of transferEntries) {
+      if (e.type !== 'transfer') continue;
+      expect(e.payload.fromStashId).toBe(storageStashId);
+      expect(e.payload.toStashId).toBe(recoveredLootStashId);
+      expect(e.payload.quantity).toBe(1);
+      expect(e.actorRole).toBe('player');
+    }
+  });
+
+  it('single transfer entry for a stacked item; itemCount = sum of quantities', () => {
+    const { storageStashId, catalog } = bootstrapWithStorage();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: torch.id, quantity: 5, source: 'catalog-add' },
+    });
+    const beforeLogLen = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+
+    const newEntries = useStore.getState().log.slice(beforeLogLen);
+    const transferEntries = newEntries.filter((e) => e.type === 'transfer');
+    expect(transferEntries).toHaveLength(1);
+    if (transferEntries[0]?.type === 'transfer') {
+      expect(transferEntries[0].payload.quantity).toBe(5);
+    }
+    const deleteEntry = newEntries.find((e) => e.type === 'delete-stash');
+    if (deleteEntry?.type === 'delete-stash') {
+      expect(deleteEntry.payload.itemCount).toBe(5);
+    }
+  });
+
+  it('leaves two rows separate when an item being transferred collides with a Recovered Loot row — M5 follow-up', () => {
+    // M3: transfer does NOT auto-stack. M5's user-initiated transfer UI
+    // will decide between reject / merge / synthetic-consume.
+    const { storageStashId, recoveredLootStashId, catalog } = bootstrapWithStorage();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const { dispatch } = useStore.getState();
+    // Pre-seed: one Torch in Recovered Loot.
+    dispatch({
+      type: 'acquire',
+      payload: { stashId: recoveredLootStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    // Now a Torch in the Storage stash (will be transferred on delete).
+    dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+
+    dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+
+    const torchesInRecovered = useStore
+      .getState()
+      .appState!.items.filter((i) => i.ownerId === recoveredLootStashId && i.definitionId === torch.id);
+    expect(torchesInRecovered).toHaveLength(2);
+  });
+
+  it('rejects deletion of Inventory', () => {
+    const { inventoryStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: inventoryStashId } }),
+    ).toThrow(/cannot delete Inventory/);
+  });
+
+  it('rejects deletion of Party Stash', () => {
+    const { partyStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: partyStashId } }),
+    ).toThrow(/cannot delete Party Stash/);
+  });
+
+  it('rejects deletion of Recovered Loot', () => {
+    const { recoveredLootStashId } = bootstrapWithStorage();
+    expect(() =>
+      useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: recoveredLootStashId } }),
+    ).toThrow(/cannot delete Recovered Loot/);
+  });
+
+  it('rejects unknown stashId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: 'does-not-exist' } }),
+    ).toThrow(/unknown stashId/);
+  });
+
+  it('does NOT emit a currency-change entry when the deleted stash has zero currency', () => {
+    const { storageStashId } = bootstrapWithStorage();
+    const beforeLogLen = useStore.getState().log.length;
+    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    const newEntries = useStore.getState().log.slice(beforeLogLen);
+    expect(newEntries.find((e) => e.type === 'currency-change')).toBeUndefined();
+  });
+
+  it('emits one currency-change entry with reason=stash-deleted when currency is non-zero (M4 dormant path)', () => {
+    const { storageStashId, recoveredLootStashId } = bootstrapWithStorage();
+    // Synthetically set the Storage stash currency to non-zero (M3 has no
+    // currency-edit UI; this exercises the otherwise-dormant code path).
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          currencies: s.appState.currencies.map((c) =>
+            c.stashId === storageStashId
+              ? { ...c, gp: 5, sp: 3, cp: 7 }
+              : c,
+          ),
+        },
+      };
+    });
+    const beforeLogLen = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+
+    const newEntries = useStore.getState().log.slice(beforeLogLen);
+    const currencyEntries = newEntries.filter((e) => e.type === 'currency-change');
+    expect(currencyEntries).toHaveLength(1);
+    if (currencyEntries[0]?.type === 'currency-change') {
+      expect(currencyEntries[0].payload.stashId).toBe(recoveredLootStashId);
+      expect(currencyEntries[0].payload.reason).toBe('stash-deleted');
+      expect(currencyEntries[0].payload.delta).toEqual({ cp: 7, sp: 3, ep: 0, gp: 5, pp: 0 });
+    }
+
+    // Recovered Loot's holding has the rolled-in values.
+    const recovered = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!;
+    expect(recovered).toMatchObject({ cp: 7, sp: 3, ep: 0, gp: 5, pp: 0 });
+
+    // delete-stash payload records the CP-equivalent snapshot.
+    // Formula: cp + sp*10 + ep*50 + gp*100 + pp*1000 = 7 + 30 + 0 + 500 + 0 = 537.
+    const deleteEntry = newEntries.find((e) => e.type === 'delete-stash');
+    if (deleteEntry?.type === 'delete-stash') {
+      expect(deleteEntry.payload.currencyTotalCp).toBe(537);
+    }
+  });
+
+  it('throws when state is null', () => {
+    expect(() =>
+      useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: 'foo' } }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('produces AppState that still validates against the shared schema after cascade', () => {
+    const { storageStashId, catalog } = bootstrapWithStorage();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: torch.id, quantity: 3, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('all entries in a cascade share actorUserId / actorRole / partyId', () => {
+    const { storageStashId, catalog } = bootstrapWithStorage();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const beforeLogLen = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+
+    const newEntries = useStore.getState().log.slice(beforeLogLen);
+    const userId = useStore.getState().appState!.user.id;
+    const partyId = useStore.getState().appState!.party.id;
+    for (const e of newEntries) {
+      expect(e.actorUserId).toBe(userId);
+      expect(e.actorRole).toBe('player');
+      expect(e.partyId).toBe(partyId);
+    }
+    // Distinct ids.
+    expect(new Set(newEntries.map((e) => e.id)).size).toBe(newEntries.length);
+  });
+});
+

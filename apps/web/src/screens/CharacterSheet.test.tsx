@@ -8,7 +8,8 @@ import { Welcome } from './Welcome';
 import { ItemDetail } from './ItemDetail';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
-import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
+
+import { bootstrap } from '@/test/fixtures';
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -33,20 +34,6 @@ function renderAt(path: string): void {
     { initialEntries: [path] },
   );
   render(<RouterProvider router={router} />);
-}
-
-/** Bootstrap to the M2 baseline: character created + catalog seeded. */
-function bootstrap(): { id: string; inventoryStashId: string } {
-  useStore.getState().dispatch({
-    type: 'create-character',
-    payload: { name: 'Thorin', species: 'Dwarf', class: 'Fighter', level: 3, str: 16 },
-  });
-  useStore.getState().dispatch({
-    type: 'seed-catalog',
-    payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
-  });
-  const s = useStore.getState().appState!;
-  return { id: s.characters[0]!.id, inventoryStashId: s.characters[0]!.inventoryStashId };
 }
 
 describe('CharacterSheet (M1)', () => {
@@ -88,14 +75,14 @@ describe('CharacterSheet (M1)', () => {
 
 describe('CharacterSheet (M2)', () => {
   it('renders an empty-state for the Inventory tab when nothing has been acquired', () => {
-    const { id } = bootstrap();
+    const { characterId: id } = bootstrap();
     renderAt(`/character/${id}`);
 
     expect(screen.getByText(/Nothing here yet/i)).toBeInTheDocument();
   });
 
   it('shows an acquired item row with the correct name and qty', () => {
-    const { id, inventoryStashId } = bootstrap();
+    const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore
       .getState()
       .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -117,7 +104,7 @@ describe('CharacterSheet (M2)', () => {
   });
 
   it('auto-stacks: two acquires of the same item yield one row, qty 2', () => {
-    const { id, inventoryStashId } = bootstrap();
+    const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore
       .getState()
       .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -151,7 +138,7 @@ describe('CharacterSheet (M2)', () => {
 
   it('clicking − dispatches consume and updates the DOM', async () => {
     const user = userEvent.setup();
-    const { id, inventoryStashId } = bootstrap();
+    const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore
       .getState()
       .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -173,19 +160,34 @@ describe('CharacterSheet (M2)', () => {
     expect(within(row!).getByText('1')).toBeInTheDocument();
   });
 
-  it('Storage tab still shows the M3 placeholder', async () => {
+  it('Storage tab renders the empty-state when no Storage stashes exist (M3)', async () => {
     const user = userEvent.setup();
-    const { id } = bootstrap();
+    const { characterId: id } = bootstrap();
     renderAt(`/character/${id}`);
 
     await user.click(screen.getByRole('tab', { name: 'Storage' }));
 
-    expect(screen.getByText(/Storage stash management arrives in M3/)).toBeInTheDocument();
+    expect(screen.getByText(/no storage stashes yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /new storage stash/i })).toBeInTheDocument();
+  });
+
+  it('Storage tab lists a Storage stash card after one is created (M3)', async () => {
+    const user = userEvent.setup();
+    const { characterId: id } = bootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: id, name: 'Vault of Waterdeep' },
+    });
+    renderAt(`/character/${id}`);
+
+    await user.click(screen.getByRole('tab', { name: 'Storage' }));
+
+    expect(screen.getByText('Vault of Waterdeep')).toBeInTheDocument();
   });
 
   it('clicking a row name navigates to /item/:id (M2.5)', async () => {
     const user = userEvent.setup();
-    const { id, inventoryStashId } = bootstrap();
+    const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore
       .getState()
       .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;

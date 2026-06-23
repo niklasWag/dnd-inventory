@@ -345,27 +345,49 @@ Mini-milestone bridging M2 → M3. Closes the M2 deferred items now that OUTLINE
 Create / rename / delete named Storage stashes; per-stash detail view.
 
 **Reducer**
-- [ ] `create-stash` action + payload schema (Storage only; Inventory/Party/Recovered are auto-provisioned)
-- [ ] `create-stash` test: appends Stash + matching CurrencyHolding row
-- [ ] Invariant test: cannot create a second `isCarried: true` stash for the same character
-- [ ] `rename-stash` action + reducer case
-- [ ] `rename-stash` test: name updates, id stable
-- [ ] `delete-stash` action + reducer case
-- [ ] `delete-stash` invariant: refuses to delete Inventory / Party Stash / Recovered Loot
-- [ ] `delete-stash` behavior: items move to Recovered Loot, then stash + its CurrencyHolding are removed
-- [ ] `delete-stash` test: items end up in Recovered Loot with provenance log entry
+- [x] `create-stash` action + payload schema (Storage only; Inventory/Party/Recovered are auto-provisioned)
+- [x] `create-stash` test: appends Stash + matching CurrencyHolding row
+- [x] Invariant test: cannot create a second `isCarried: true` stash for the same character
+- [x] `rename-stash` action + reducer case
+- [x] `rename-stash` test: name updates, id stable
+- [x] `delete-stash` action + reducer case
+- [x] `delete-stash` invariant: refuses to delete Inventory / Party Stash / Recovered Loot
+- [x] `delete-stash` behavior: items move to Recovered Loot, then stash + its CurrencyHolding are removed
+- [x] `delete-stash` test: items end up in Recovered Loot with provenance log entry
 
 **UI**
-- [ ] Storage tab lists Storage stashes as cards (item count + GP-equivalent placeholder until M4)
-- [ ] "New Storage stash" button → modal with name input
-- [ ] Click card navigates to `StorageDetail` route
-- [ ] `StorageDetail.tsx` — items table, rename button, delete button (with confirm count)
-- [ ] `StorageDetail` ships an in-screen Back affordance to the owning character's sheet — per M2.5 UX principle (see M2.5 Notes 2026-06-23 later entry). Detail routes own their own Back; do NOT expand `RootLayout` into a global back-button surface.
-- [ ] Component test: create → rename → delete flow
+- [x] Storage tab lists Storage stashes as cards (item count + GP-equivalent placeholder until M4)
+- [x] "New Storage stash" button → modal with name input
+- [x] Click card navigates to `StorageDetail` route
+- [x] `StorageDetail.tsx` — items table, rename button, delete button (with confirm count)
+- [x] `StorageDetail` ships an in-screen Back affordance to the owning character's sheet — per M2.5 UX principle (see M2.5 Notes 2026-06-23 later entry). Detail routes own their own Back; do NOT expand `RootLayout` into a global back-button surface.
+- [x] Component test: create → rename → delete flow
 
 #### M3 — Notes
 
-> -
+> **2026-06-23 — M3 complete.**
+> - **Schema changes (additive, no migration).** `packages/shared/src/schemas/transactionLog.ts` gained five new variants: `transfer`, `create-stash`, `rename-stash`, `delete-stash`, `currency-change`. `currency-change.reason` enum widened with `'stash-deleted'` (used by the delete-cascade synthetic entry; mirror added to OUTLINE §4). All five share the existing `baseLogFields` shape; persisted Dexie blobs from M2/M2.5 still validate (the discriminated union accepts older subsets).
+> - **Reducer contract change.** `ReducerResult.logEntry: LogEntrySlice` widened to `logEntries: LogEntrySlice[]`. All five pre-existing cases wrap their slice in `[…]`. Middleware in `store/index.ts` iterates the array and resolves each via `resolveActor` + `buildLogEntry` against the SAME pre-mutation snapshot, so all entries in a cascade share `actorUserId`/`actorRole`/`partyId`/`timestamp` ±jitter. Single one-time refactor; future per-mutation cascades come free.
+> - **Three new reducer cases + their cascading sibling.** `create-stash` (10 tests), `rename-stash` (12 tests including the Storage-only protection on Inventory/Party/Recovered Loot), `delete-stash` (14 tests including the cascade ordering, dormant currency-change path, and protected-stash refusals). The cascade emits N transfer entries + 0–1 `currency-change` (only when non-zero) + 1 terminal `delete-stash`. Items keep their `itemInstanceId` when they move to Recovered Loot — `transfer` does NOT auto-stack (M3 decision #2; auto-stack remains `acquire`-scoped).
+> - **Rename: Storage only (M3 decision #6).** Inventory / Party Stash / Recovered Loot reject rename in the reducer. The UI never offers a rename button for them either — the rename affordance lives only on `StorageDetail`.
+> - **Item count on cards: sum of quantities** (M3 decision #7). "4 items" means 4 things, not "1 row of 4 torches". Consistent across Storage cards, `StorageDetail` header, and the delete-stash dialog copy.
+> - **`/storage/:stashId` route + StorageDetail screen.** Mirrors the `ItemDetail` layout: in-screen Back button (label `Back to {character.name}`, deterministic `navigate('/character/<id>')` per the M2.5 UX principle), header with name + rename/delete actions, reused `StashItemsTable`, reused `AddItemModal`. Non-Storage ids (Inventory/Party/Recovered Loot) and unknown ids redirect away.
+> - **`<ItemHistory>` widened for `transfer`** (M3 decision #8). The type-guarded filter now matches the four payload-carries-`itemInstanceId` TxTypes (`acquire`, `consume`, `edit-item-instance`, `transfer`). Stash-name lookup falls back to the first-8 of the uuid when the source stash has been deleted (delete-cascade is the very thing that emits these entries). 2 new tests.
+> - **Test fixtures extracted** (M3 decision #9). `apps/web/src/test/fixtures.ts` exports `bootstrap()`, `bootstrapWithItem()`, `makeEntry()`, plus the canonical `VALID_CREATE_CHARACTER_PAYLOAD`. The 4 test files that previously duplicated `bootstrap()` (reducer, CharacterSheet, ItemDetail, ItemHistory) now import. `reducer.test.ts` retains a thin local alias `localBootstrap()` that forwards `validPayload` (level: 1) — the file's own M1 invariants depend on the specific payload; fixtures default to level: 3.
+> - **`StashItemsTable` reused unmodified.** The component already accepted any `stashId`. Storage tabs / `StorageDetail` use it identically to Inventory / Party / Recovered Loot.
+> - **shadcn `alert-dialog`** added via `pnpm dlx shadcn@latest add alert-dialog`. Same install-path quirk as the M2.5 sonner addition — the CLI dropped the file at `@/components/ui/`; moved to `src/components/ui/alert-dialog.tsx` and removed the stray `@` directory. New direct dep: `@radix-ui/react-alert-dialog ^1.1.17`.
+> - **`useShallow` + `useMemo` discipline** (carry forward from M2.5). `StorageStashList` and `StorageDetail` both follow the pattern: `useShallow` selects the raw primitives (`stashes`/`items`), `useMemo` derives any nested object/array that the component consumes. Returning freshly-built nested objects directly from `useShallow` triggers the infinite-update loop because shallow-equality compares the outer container; nested object identities change each render. M3 hit this exactly once during dev (StorageStashList's first cut) — captured the pattern for posterity.
+> - **Currency math placeholder.** `deleteStash` uses an inline `cp + sp*10 + ep*50 + gp*100 + pp*1000` formula for `currencyTotalCp`. Always 0 in M3 (no currency-edit UI; only synthetic seeding in a dedicated test exercises the path). M4 extracts to `packages/rules` and replaces.
+> - **Tests:** 139 pass workspace-wide (3 shared + 5 seeds + 131 web). New web tests: 36 reducer (10 create-stash + 12 rename-stash + 14 delete-stash), 6 CreateStashModal, 7 StorageStashList, 9 StorageDetail, 5 RenameStashModal, 4 DeleteStashDialog, 2 ItemHistory (transfer rendering), 2 CharacterSheet (Storage tab empty-state + cards-after-create). M2.5's 69 still green after the `ReducerResult` widening.
+> - **Build:** 723 kB JS / 22.23 kB CSS (gzip 221 / 5.12). Bundle delta vs M2.5: **+17 kB JS raw / +4 kB gzip** — under the plan's +25 kB target. The alert-dialog primitive accounts for most of it; the three new screens/components are small. Cumulative bundle still well under 1 MB raw.
+> - **Manual smoke test passed** end-to-end per the plan §13 checklist: create → name → add Torch ×3 → rename → reload → delete → see Torch in Recovered Loot with full transfer history.
+>
+> **Followups carried forward:**
+> - **Currency math (M4):** extract the inline CP-equivalent formula from `deleteStash` into `packages/rules`. Same formula will then drive M4's currency editing UI + Storage card GP-equivalent display.
+> - **Transfer auto-stack UX (M5):** M3 leaves transferred rows separate; M5's user-initiated transfer UI has the right context to decide between reject / explicit-merge / synthetic-consume.
+> - **`transfer` payload could snapshot `fromStashName` (R-tier):** the deleted-stash fallback (short-uuid) is functional; if user feedback complains about cryptic history entries after frequent stash deletes, add `fromStashName` to the schema variant (additive).
+> - **Stash sort order (M5):** `createdAt` ascending in M3. M5 may want a user-controlled drag-reorder.
+> - **Test fixture sprawl:** `bootstrapWithStorage()` is now duplicated in three test files (`reducer.test.ts`, `StorageDetail.test.tsx`, the delete-stash describe block). Extract to fixtures alongside the existing helpers in the next milestone.
 
 ---
 

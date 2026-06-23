@@ -5,6 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/ui/button';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
+import { StorageStashList } from '@/components/stash/StorageStashList';
 import { useStore } from '@/store';
 
 type Tab = 'inventory' | 'storage' | 'party' | 'recovered-loot';
@@ -97,9 +98,7 @@ export function CharacterSheet(): ReactElement {
 
       <section>
         {tab === 'storage' ? (
-          <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-            Storage stash management arrives in M3.
-          </div>
+          <StorageStashList characterId={character.id} />
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-between">

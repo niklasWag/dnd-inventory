@@ -76,6 +76,23 @@ function resolveActor(
         actorRole: 'dm',
         partyId: state.party.id,
       };
+    case 'transfer':
+    case 'create-stash':
+    case 'rename-stash':
+    case 'delete-stash':
+    case 'currency-change':
+      // M3 player-initiated stash CRUD + the synthetic transfer +
+      // currency-change emitted from the delete-stash cascade. R4
+      // (multi-member) will widen this group when DM / Banker roles
+      // can also drive them.
+      if (state === null) {
+        throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'player',
+        partyId: state.party.id,
+      };
   }
 }
 
@@ -108,11 +125,18 @@ export const useStore = create<StoreState>()(
       // avoid — the reducer is meant to be plain-value pure).
       const prev = get();
       const result = reduce(prev.appState, action);
-      const entry = buildLogEntry(prev.appState, result.logEntry);
+      // Most reducer cases emit one slice; M3's `delete-stash` cascade
+      // emits N+1 (transfers + delete-stash) or N+2 (when currency rolls
+      // into Recovered Loot). Resolve each slice against the SAME
+      // pre-mutation snapshot — within a single dispatch all entries
+      // share `actorUserId`/`actorRole`/`partyId`.
+      const entries = result.logEntries.map((slice) => buildLogEntry(prev.appState, slice));
 
       set((draft) => {
         draft.appState = result.state;
-        draft.log.push(entry);
+        for (const entry of entries) {
+          draft.log.push(entry);
+        }
       });
 
       const snapshot = get();

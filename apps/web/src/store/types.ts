@@ -79,6 +79,39 @@ export type Action =
           notes?: string;
         };
       };
+    }
+  | {
+      // M3: create a Storage stash (character-scope, non-carried) owned
+      // by `ownerCharacterId`. The reducer constructs the `Stash` row +
+      // its `CurrencyHolding` (all zeroed) atomically. Inventory / Party
+      // Stash / Recovered Loot are auto-provisioned by `create-character`
+      // and are NOT dispatched here.
+      type: 'create-stash';
+      payload: {
+        ownerCharacterId: string;
+        name: string;
+      };
+    }
+  | {
+      // M3: rename a Storage stash. Reducer rejects rename of Inventory
+      // (`isCarried=true`), Party Stash, and Recovered Loot — the three
+      // auto-provisioned names are MVP §7 fixtures.
+      type: 'rename-stash';
+      payload: {
+        stashId: string;
+        newName: string;
+      };
+    }
+  | {
+      // M3: delete a Storage stash. Cascade: items move to Recovered Loot
+      // (one synthetic `transfer` per item), currency rolls into Recovered
+      // Loot if non-zero (one synthetic `currency-change`), then the stash
+      // row + its `CurrencyHolding` are removed. Reducer rejects deletion
+      // of Inventory, Party Stash, and Recovered Loot.
+      type: 'delete-stash';
+      payload: {
+        stashId: string;
+      };
     };
 
 export type TransactionLogEntry = LogEntry;

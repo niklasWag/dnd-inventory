@@ -4,36 +4,13 @@ import { render, screen, within } from '@testing-library/react';
 import { ItemHistory } from './ItemHistory';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
-import { transactionLogEntrySchema, type TransactionLogEntry } from '@app/shared';
+
+import { makeEntry } from '@/test/fixtures';
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
   await wipeAll();
 });
-
-/**
- * Build a minimal valid log entry with sensible defaults. We parse through
- * `transactionLogEntrySchema` so the fixture is provably a real entry —
- * this also keeps us inside the CLAUDE.md "no `any`, validate at boundaries"
- * rule (the entry is constructed as `unknown`, then Zod parses it back).
- */
-function makeEntry<T extends TransactionLogEntry['type']>(
-  type: T,
-  payload: Extract<TransactionLogEntry, { type: T }>['payload'],
-  overrides: Partial<Pick<TransactionLogEntry, 'id' | 'timestamp' | 'actorRole'>> = {},
-): TransactionLogEntry {
-  const candidate: unknown = {
-    id: overrides.id ?? crypto.randomUUID(),
-    partyId: 'party-fixture',
-    sessionId: null,
-    timestamp: overrides.timestamp ?? new Date().toISOString(),
-    actorUserId: 'user-fixture',
-    actorRole: overrides.actorRole ?? 'player',
-    type,
-    payload,
-  };
-  return transactionLogEntrySchema.parse(candidate);
-}
 
 describe('ItemHistory', () => {
   it('renders the empty state when no entries match', () => {
@@ -138,5 +115,90 @@ describe('ItemHistory', () => {
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(1);
     expect(within(items[0]!).getByText(/source: catalog-add/i)).toBeInTheDocument();
+  });
+
+  it('renders a transfer entry summary with stash names from state (M3)', () => {
+    // Seed state.stashes so the summary can look up names.
+    const fromStashId = 'stash-from';
+    const toStashId = 'stash-to';
+    useStore.setState({
+      appState: {
+        version: 1,
+        seedVersion: 0,
+        user: { id: 'u', displayName: 'You', createdAt: new Date().toISOString() },
+        party: {
+          id: 'p',
+          name: 'P',
+          ownerUserId: 'u',
+          inviteCode: 'INV-ABCDEF',
+          recoveredLootStashId: toStashId,
+          bankerUserId: null,
+          isSoloShortcut: true,
+          createdAt: new Date().toISOString(),
+        },
+        memberships: [],
+        characters: [],
+        stashes: [
+          {
+            id: fromStashId,
+            scope: 'character',
+            name: 'Chest at home',
+            ownerCharacterId: 'c1',
+            partyId: null,
+            isCarried: false,
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: toStashId,
+            scope: 'recovered-loot',
+            name: 'Recovered Loot',
+            ownerCharacterId: null,
+            partyId: 'p',
+            isCarried: false,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        catalog: [],
+        items: [],
+        currencies: [],
+        log: [],
+      },
+      log: [
+        makeEntry('transfer', {
+          itemInstanceId: 'item-1',
+          quantity: 3,
+          fromStashId,
+          toStashId,
+        }),
+      ],
+    });
+
+    render(<ItemHistory itemInstanceId="item-1" />);
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(1);
+    expect(within(items[0]!).getByText(/Transferred ×3 from Chest at home to Recovered Loot/i))
+      .toBeInTheDocument();
+  });
+
+  it('falls back to a short uuid when the source stash has been deleted (M3)', () => {
+    // No stashes in state — the source has been removed (delete-cascade
+    // synthesizes the transfer entry, then the stash row goes away).
+    useStore.setState({
+      log: [
+        makeEntry('transfer', {
+          itemInstanceId: 'item-1',
+          quantity: 2,
+          fromStashId: 'abcdef12-0000-0000-0000-000000000000',
+          toStashId: 'fedcba98-0000-0000-0000-000000000000',
+        }),
+      ],
+    });
+
+    render(<ItemHistory itemInstanceId="item-1" />);
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(1);
+    // Both ids fall back to their first-8 prefix.
+    expect(within(items[0]!).getByText(/Transferred ×2 from abcdef12 to fedcba98/i))
+      .toBeInTheDocument();
   });
 });

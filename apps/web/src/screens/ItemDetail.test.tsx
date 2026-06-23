@@ -10,8 +10,9 @@ import { Toaster } from '@/components/ui/sonner';
 import { useStore, flushPendingPersist } from '@/store';
 import { loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
-import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
 import { appStateSchema } from '@app/shared';
+
+import { bootstrapWithItem } from '@/test/fixtures';
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -36,31 +37,10 @@ function renderAt(path: string): void {
   );
 }
 
-/** Bootstrap: character + seed + one Torch acquired. Returns the row id. */
+/** Bootstrap to the M2.5 baseline for ItemDetail tests: 1 Torch acquired. */
 function bootstrapWithTorch(): { itemInstanceId: string; inventoryStashId: string } {
-  useStore.getState().dispatch({
-    type: 'create-character',
-    payload: { name: 'Thorin', species: 'Dwarf', class: 'Fighter', level: 3, str: 16 },
-  });
-  useStore.getState().dispatch({
-    type: 'seed-catalog',
-    payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
-  });
-  const inventoryStashId = useStore.getState().appState!.characters[0]!.inventoryStashId;
-  const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
-  useStore.getState().dispatch({
-    type: 'acquire',
-    payload: {
-      stashId: inventoryStashId,
-      definitionId: torch.id,
-      quantity: 1,
-      source: 'catalog-add',
-    },
-  });
-  return {
-    itemInstanceId: useStore.getState().appState!.items[0]!.id,
-    inventoryStashId,
-  };
+  const r = bootstrapWithItem();
+  return { itemInstanceId: r.itemInstanceId, inventoryStashId: r.inventoryStashId };
 }
 
 describe('ItemDetail (M2.5)', () => {

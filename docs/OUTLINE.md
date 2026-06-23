@@ -263,7 +263,7 @@ No HP, spells, AC, proficiencies in v1.
   - `recharge` → `{ itemInstanceId, from, to, trigger: "dawn" | "dusk" | "long-rest" | "short-rest" | "manual" }`
   - `use-charge` → `{ itemInstanceId, amount }`
   - `edit-item-instance` → `{ itemInstanceId, changedFields: ("customName" | "notes" | "identified" | "equipped" | "attuned" | "currentCharges" | "conditionOverrides")[] }` — generic per-instance editor for fields that don't have a dedicated TxType. The full new value lives on the instance itself; only the changed field names are logged (mirrors `edit-homebrew`).
-  - `currency-change` → `{ stashId, delta: CurrencyDelta, reason?: "deposit" | "withdraw" | "split-evenly" | "gameplay-drain" | "convert" }`
+  - `currency-change` → `{ stashId, delta: CurrencyDelta, reason?: "deposit" | "withdraw" | "split-evenly" | "gameplay-drain" | "convert" | "stash-deleted" }` — `"stash-deleted"` is emitted by the `delete-stash` cascade when the deleted stash held non-zero currency (the delta rolls into Recovered Loot's `CurrencyHolding`). Added in M3.
   - `join-party` / `leave-party` → `{ partyId, characterId? }`
   - `dm-transfer` → `{ fromUserId, toUserId }`
   - `kick-player` → `{ kickedUserId }`

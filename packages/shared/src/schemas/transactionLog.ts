@@ -124,6 +124,122 @@ const editItemInstanceEntry = z.object({
   }),
 });
 
+/**
+ * `transfer` — an item row (or a slice of one) moves from one stash to
+ * another. The reducer is the source of truth for which row's id is
+ * preserved (M3: items keep their `itemInstanceId` when they move to
+ * Recovered Loot as part of a `delete-stash` cascade; M5 will define
+ * the move/split UX).
+ *
+ * M3 emits these synthetically as part of `delete-stash`. M5 user-
+ * initiated transfers will dispatch this directly.
+ */
+const transferEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('transfer'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    fromStashId: z.string().min(1),
+    toStashId: z.string().min(1),
+  }),
+});
+
+/**
+ * `create-stash` — a new stash row + its `CurrencyHolding` are added to
+ * state. M3 only dispatches the `scope: 'character'` variant (Storage
+ * stashes — non-carried, character-owned). The schema enum keeps the
+ * full set so future milestones can synthesize log entries for the
+ * already-auto-provisioned Inventory / Party Stash / Recovered Loot
+ * stashes if needed (M1 currently rolls them into the `create-character`
+ * entry instead — no separate `create-stash` entries are emitted there).
+ */
+const createStashEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('create-stash'),
+  payload: z.object({
+    stashId: z.string().min(1),
+    scope: z.enum(['character', 'party', 'recovered-loot']),
+    name: z.string().min(1),
+    ownerCharacterId: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * `rename-stash` — name update only; id + scope + createdAt are stable.
+ * M3 only allows renaming Storage stashes (character-scope + non-carried).
+ * The reducer rejects rename of Inventory / Party Stash / Recovered Loot.
+ */
+const renameStashEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('rename-stash'),
+  payload: z.object({
+    stashId: z.string().min(1),
+    oldName: z.string().min(1),
+    newName: z.string().min(1),
+  }),
+});
+
+/**
+ * `delete-stash` — snapshot recorded at the moment of deletion. Items are
+ * moved to Recovered Loot first (each as its own `transfer` entry), then
+ * currency is rolled into Recovered Loot's holding (one `currency-change`
+ * entry with reason `'stash-deleted'` when the deleted stash held any),
+ * then the stash row + its `CurrencyHolding` row are removed and this
+ * entry is appended. The snapshot lets future log readers explain where
+ * everything went without replaying the full AppState.
+ *
+ * `itemCount` is the SUM of quantities, not the row count (matches the
+ * Storage tab card UI: "4 items" means 4 things, not 1 stack of 4).
+ *
+ * `currencyTotalCp` is the CP-equivalent of the deleted stash's holding
+ * at delete time (always 0 in M3 because currency editing arrives in M4;
+ * inline placeholder formula `cp + sp*10 + ep*50 + gp*100 + pp*1000` in
+ * the reducer — M4 extracts this to `packages/rules`).
+ */
+const deleteStashEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('delete-stash'),
+  payload: z.object({
+    stashId: z.string().min(1),
+    name: z.string().min(1),
+    itemCount: z.number().int().nonnegative(),
+    currencyTotalCp: z.number().int().nonnegative(),
+  }),
+});
+
+/**
+ * `currency-change` — additive denomination delta on a single stash's
+ * `CurrencyHolding`. Delta values may be negative (withdraw) or positive
+ * (deposit). The reason tag is for log readability; the OUTLINE §4 enum
+ * lists `deposit | withdraw | split-evenly | gameplay-drain | convert`,
+ * and M3 introduces `'stash-deleted'` for the delete-cascade synthetic
+ * entry (additive — to be reflected in OUTLINE §4 as a small spec
+ * follow-up at the end of M3, mirroring how M2.5 added `'catalog-add'`
+ * to `acquire.source`).
+ *
+ * In M3 the only emitter is `delete-stash` (and only when the deleted
+ * stash held non-zero currency, which is dormant in M3 since editing
+ * arrives in M4).
+ */
+const currencyChangeEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('currency-change'),
+  payload: z.object({
+    stashId: z.string().min(1),
+    delta: z.object({
+      cp: z.number().int(),
+      sp: z.number().int(),
+      ep: z.number().int(),
+      gp: z.number().int(),
+      pp: z.number().int(),
+    }),
+    reason: z
+      .enum(['deposit', 'withdraw', 'split-evenly', 'gameplay-drain', 'convert', 'stash-deleted'])
+      .optional(),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -132,6 +248,11 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   consumeEntry,
   seedCatalogEntry,
   editItemInstanceEntry,
+  transferEntry,
+  createStashEntry,
+  renameStashEntry,
+  deleteStashEntry,
+  currencyChangeEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

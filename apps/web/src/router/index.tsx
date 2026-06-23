@@ -6,6 +6,7 @@ import { CreateCharacter } from '@/screens/CreateCharacter';
 import { CharacterSheet } from '@/screens/CharacterSheet';
 import { CatalogBrowser } from '@/screens/CatalogBrowser';
 import { ItemDetail } from '@/screens/ItemDetail';
+import { StorageDetail } from '@/screens/StorageDetail';
 import { Settings } from '@/screens/Settings';
 
 /**
@@ -15,10 +16,8 @@ import { Settings } from '@/screens/Settings';
  *   /character/:id       — CharacterSheet with tab subroutes
  *   /catalog             — CatalogBrowser (M2)
  *   /item/:itemInstanceId — ItemDetail (M2.5)
- *   /settings            — Settings
- *
- * Future MVP screens nest under existing routes:
  *   /storage/:stashId    — StorageDetail (M3)
+ *   /settings            — Settings
  */
 export const router = createBrowserRouter([
   {
@@ -30,6 +29,7 @@ export const router = createBrowserRouter([
       { path: 'character/:id', Component: CharacterSheet },
       { path: 'catalog', Component: CatalogBrowser },
       { path: 'item/:itemInstanceId', Component: ItemDetail },
+      { path: 'storage/:stashId', Component: StorageDetail },
       { path: 'settings', Component: Settings },
       { path: '*', element: <Navigate to="/" replace /> },
     ],
