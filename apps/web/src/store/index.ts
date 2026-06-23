@@ -51,6 +51,7 @@ function resolveActor(
       };
     case 'acquire':
     case 'consume':
+    case 'edit-item-instance':
       // Player-initiated mutations. In MVP the sole user wears both hats;
       // R4 (multi-member parties) introduces the DM/player split + the
       // `'banker'` actorRole variant.

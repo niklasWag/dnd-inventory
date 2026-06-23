@@ -55,7 +55,12 @@ const acquireEntry = z.object({
     itemInstanceId: z.string().min(1),
     definitionId: z.string().min(1),
     quantity: z.number().int().positive(),
-    source: z.enum(['hoard', 'purchase', 'custom-create', 'duplicate']),
+    // OUTLINE §4 enum. `'catalog-add'` was added in M2.5 for the "user picked
+    // an item from the Catalog Browser" path (M2 had no clean fit and used
+    // `'custom-create'` — that semantic now belongs to M6 homebrew creation).
+    // `'custom-create'` is retained for back-compat with M2-vintage persisted
+    // log entries so existing Dexie blobs still rehydrate.
+    source: z.enum(['hoard', 'purchase', 'custom-create', 'duplicate', 'catalog-add']),
   }),
 });
 
@@ -96,6 +101,29 @@ const seedCatalogEntry = z.object({
   }),
 });
 
+/**
+ * `edit-item-instance` — generic per-instance editor for fields that don't
+ * have their own dedicated TxType (OUTLINE §4). Only `changedFields` is
+ * logged; the full new value lives on the instance itself.
+ *
+ * M2.5 scope is narrowed to `customName` + `notes` because the MVP
+ * `itemInstance` schema hard-codes `equipped`/`attuned`/`identified`/
+ * `currentCharges` as Zod literals (placeholders unlocked in R1/R2).
+ * The OUTLINE §4 enum is wider — widening this schema enum to match it
+ * is additive and needs no migration.
+ *
+ * `.min(1)` enforces the "no-op edit" reject rule at the schema boundary
+ * (the reducer is the primary defense; this is belt-and-braces).
+ */
+const editItemInstanceEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('edit-item-instance'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    changedFields: z.array(z.enum(['customName', 'notes'])).min(1),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -103,6 +131,7 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   acquireEntry,
   consumeEntry,
   seedCatalogEntry,
+  editItemInstanceEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

@@ -52,6 +52,8 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return consume(state, action.payload);
     case 'seed-catalog':
       return seedCatalog(state, action.payload);
+    case 'edit-item-instance':
+      return editItemInstance(state, action.payload);
   }
 }
 
@@ -396,6 +398,82 @@ function seedCatalog(
         seedVersion: payload.seedVersion,
         addedDefinitionIds: added,
         updatedDefinitionIds: updated,
+      },
+    },
+  };
+}
+
+// -------------------------------------------------------------------- //
+// edit-item-instance (M2.5)
+// -------------------------------------------------------------------- //
+
+/**
+ * Per-instance editor for the two MVP-mutable fields on `ItemInstance`:
+ * `customName` and `notes`. R1 (equip/attune) and R2 (identification +
+ * charges) will widen this allowlist as the `itemInstance` schema relaxes
+ * its `z.literal(...)` placeholders.
+ *
+ * Design (per M2.5 plan, user-locked):
+ *   - Payload carries a partial `patch`. Reducer iterates a CLOSED
+ *     allowlist (`customName`, `notes`) so unknown keys are dropped
+ *     silently — TS already gates the patch shape; this is defense.
+ *   - `changedFields` is derived from the actual diff against the row.
+ *     Keys present in the patch but identical to the current value are
+ *     NOT recorded.
+ *   - **No-op edits throw**: if no field actually changed (or the patch
+ *     was empty / all-allowlist-keys-absent), we reject. Matches the
+ *     CLAUDE.md store invariant "every dispatch appends one log entry"
+ *     — we don't paper over by logging `changedFields: []`.
+ *   - Empty-string `notes` is a valid distinct value from `undefined`.
+ *     The auto-stack key `(definitionId, notes ?? "")` already collapses
+ *     `''` and `undefined`, so this is invisible to `acquire`; the raw
+ *     row still records what the user typed.
+ *   - **No auto-merge on edit-induced auto-stack collision** (M2.5
+ *     decision #5). Editing notes such that `(definitionId, notes)`
+ *     would collide with another row leaves the rows separate. The
+ *     auto-stack invariant in M2 was scoped to `acquire`, not edits.
+ *     Surfaced as an M5 follow-up.
+ */
+function editItemInstance(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-item-instance' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-item-instance');
+  const row = s.items.find((i) => i.id === payload.itemInstanceId);
+  if (row === undefined) {
+    throw new Error(`edit-item-instance: unknown itemInstanceId ${payload.itemInstanceId}`);
+  }
+
+  // Closed allowlist of MVP-mutable fields. R1/R2 extend; widening here
+  // is additive — no migration required.
+  const allowed = ['customName', 'notes'] as const;
+  const changedFields: ('customName' | 'notes')[] = [];
+  const next: ItemInstance = { ...row };
+
+  for (const key of allowed) {
+    if (!(key in payload.patch)) continue;
+    const newVal = payload.patch[key];
+    if (newVal !== row[key]) {
+      changedFields.push(key);
+      // Cast: we know the key is in `allowed`, and the patch value type
+      // already matches `ItemInstance[key]` (TS enforced via Action union).
+      (next as Record<string, unknown>)[key] = newVal;
+    }
+  }
+
+  if (changedFields.length === 0) {
+    throw new Error('edit-item-instance: no fields changed');
+  }
+
+  const nextItems = s.items.map((i) => (i.id === row.id ? next : i));
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntry: {
+      type: 'edit-item-instance',
+      payload: {
+        itemInstanceId: row.id,
+        changedFields,
       },
     },
   };

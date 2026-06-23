@@ -5,6 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { CharacterSheet } from './CharacterSheet';
 import { Welcome } from './Welcome';
+import { ItemDetail } from './ItemDetail';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
@@ -18,12 +19,16 @@ beforeEach(async () => {
  * Component test for the M1 happy path: after dispatching create-character,
  * CharacterSheet renders the header from the store. Uses a memory router
  * pinned at /character/:id so we don't depend on jsdom history globals.
+ *
+ * ItemDetail is registered too so the M2.5 "row name → /item/:id"
+ * navigation test can verify the destination renders.
  */
 function renderAt(path: string): void {
   const router = createMemoryRouter(
     [
       { path: '/', Component: Welcome },
       { path: '/character/:id', Component: CharacterSheet },
+      { path: '/item/:itemInstanceId', Component: ItemDetail },
     ],
     { initialEntries: [path] },
   );
@@ -100,7 +105,7 @@ describe('CharacterSheet (M2)', () => {
         stashId: inventoryStashId,
         definitionId: torch.id,
         quantity: 3,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
 
@@ -123,7 +128,7 @@ describe('CharacterSheet (M2)', () => {
         stashId: inventoryStashId,
         definitionId: torch.id,
         quantity: 1,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
     dispatch({
@@ -132,7 +137,7 @@ describe('CharacterSheet (M2)', () => {
         stashId: inventoryStashId,
         definitionId: torch.id,
         quantity: 1,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
 
@@ -156,7 +161,7 @@ describe('CharacterSheet (M2)', () => {
         stashId: inventoryStashId,
         definitionId: torch.id,
         quantity: 2,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
 
@@ -176,5 +181,30 @@ describe('CharacterSheet (M2)', () => {
     await user.click(screen.getByRole('tab', { name: 'Storage' }));
 
     expect(screen.getByText(/Storage stash management arrives in M3/)).toBeInTheDocument();
+  });
+
+  it('clicking a row name navigates to /item/:id (M2.5)', async () => {
+    const user = userEvent.setup();
+    const { id, inventoryStashId } = bootstrap();
+    const torch = useStore
+      .getState()
+      .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    renderAt(`/character/${id}`);
+
+    // The row name renders as a button — click it.
+    await user.click(screen.getByRole('button', { name: /open details for torch/i }));
+
+    // After navigation the ItemDetail screen renders the same name as an h1.
+    expect(screen.getByRole('heading', { name: 'Torch' })).toBeInTheDocument();
   });
 });

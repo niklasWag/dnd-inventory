@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
@@ -25,6 +26,7 @@ interface StashItemsTableProps {
  * gets a clean "row gone" entry).
  */
 export function StashItemsTable({ stashId }: StashItemsTableProps): ReactElement {
+  const navigate = useNavigate();
   const items = useStore(
     useShallow((s) =>
       s.appState === null ? [] : s.appState.items.filter((i) => i.ownerId === stashId),
@@ -60,7 +62,18 @@ export function StashItemsTable({ stashId }: StashItemsTableProps): ReactElement
           const displayName = row.customName ?? def?.name ?? '(unknown item)';
           return (
             <tr key={row.id} className="border-b border-border/50 last:border-0">
-              <td className="py-2 pr-2">{displayName}</td>
+              <td className="py-2 pr-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigate(`/item/${row.id}`);
+                  }}
+                  className="text-left underline-offset-2 hover:underline focus:outline-none focus-visible:underline"
+                  aria-label={`Open details for ${displayName}`}
+                >
+                  {displayName}
+                </button>
+              </td>
               <td className="py-2 pr-2 text-muted-foreground">{def?.category ?? '—'}</td>
               <td className="py-2 pr-2 text-right tabular-nums">{row.quantity}</td>
               <td className="py-2 text-right">
@@ -93,7 +106,7 @@ export function StashItemsTable({ stashId }: StashItemsTableProps): ReactElement
                           stashId,
                           definitionId: row.definitionId,
                           quantity: 1,
-                          source: 'custom-create',
+                          source: 'catalog-add',
                           ...(row.notes !== undefined ? { notes: row.notes } : {}),
                         },
                       });

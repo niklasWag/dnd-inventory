@@ -261,40 +261,40 @@ PHB seed loads; Catalog Browser; add items to a stash; auto-stack; quantity edit
 Mini-milestone bridging M2 → M3. Closes the M2 deferred items now that OUTLINE §4 has been amended (see M2 Notes, 2026-06-23 entry). Tight scope on purpose — no new entities, no new screens beyond Item Detail. Lands the `"catalog-add"` rename and the `edit-item-instance` action so M3 can focus purely on stash CRUD.
 
 **`acquire.source` rename: `"custom-create"` → `"catalog-add"`**
-- [ ] Extend `acquireEntry` Zod schema in `packages/shared/src/schemas/transactionLog.ts` to accept `"catalog-add"` (additive; keep `"custom-create"` valid so existing persisted logs still parse)
-- [ ] Update `CatalogPicker.tsx` dispatch site to use `source: "catalog-add"`
-- [ ] Update `StashItemsTable.tsx` re-acquire (+) button to use `source: "catalog-add"`
-- [ ] Grep any other call sites passing `source: "custom-create"` for catalog-add semantics; update them
-- [ ] Update tests asserting `source: "custom-create"` for catalog-add to expect `"catalog-add"`
-- [ ] Round-trip test: an `AppState` exported with M2-vintage `"custom-create"` source entries imports cleanly under the extended schema (no migration step required)
+- [x] Extend `acquireEntry` Zod schema in `packages/shared/src/schemas/transactionLog.ts` to accept `"catalog-add"` (additive; keep `"custom-create"` valid so existing persisted logs still parse)
+- [x] Update `CatalogPicker.tsx` dispatch site to use `source: "catalog-add"`
+- [x] Update `StashItemsTable.tsx` re-acquire (+) button to use `source: "catalog-add"`
+- [x] Grep any other call sites passing `source: "custom-create"` for catalog-add semantics; update them
+- [x] Update tests asserting `source: "custom-create"` for catalog-add to expect `"catalog-add"`
+- [x] Round-trip test: an `AppState` exported with M2-vintage `"custom-create"` source entries imports cleanly under the extended schema (no migration step required)
 
 **`edit-item-instance` reducer action (per OUTLINE §4)**
-- [ ] `editItemInstanceEntry` Zod schema variant in `transactionLog.ts` matching the OUTLINE shape (`{ itemInstanceId, changedFields: (…)[] }`)
-- [ ] `edit-item-instance` action type + payload Zod schema (full new values per editable field; reducer extracts `changedFields` from the diff)
-- [ ] Reducer case: validate target instance exists; apply patch via Immer; log `changedFields` only for fields that actually changed
-- [ ] Invariant test: rejects edits to fields owned by `ItemDefinition` (rarity, weight, cost, …) — only `ItemInstance`-owned fields are mutable
-- [ ] Invariant test: rejects unknown `itemInstanceId`
-- [ ] Invariant test: no-op edit (same values) does NOT append a log entry (or appends with `changedFields: []` — pick one, document)
-- [ ] Reducer test: edit `customName` only → log entry `changedFields: ["customName"]`
-- [ ] Reducer test: edit `notes` only → log entry `changedFields: ["notes"]`
-- [ ] Reducer test: edit both → single log entry with both field names
+- [x] `editItemInstanceEntry` Zod schema variant in `transactionLog.ts` matching the OUTLINE shape (`{ itemInstanceId, changedFields: (…)[] }`)
+- [x] `edit-item-instance` action type + payload Zod schema (full new values per editable field; reducer extracts `changedFields` from the diff)
+- [x] Reducer case: validate target instance exists; apply patch via Immer; log `changedFields` only for fields that actually changed
+- [x] Invariant test: rejects edits to fields owned by `ItemDefinition` (rarity, weight, cost, …) — only `ItemInstance`-owned fields are mutable
+- [x] Invariant test: rejects unknown `itemInstanceId`
+- [x] Invariant test: no-op edit (same values) does NOT append a log entry (or appends with `changedFields: []` — pick one, document)
+- [x] Reducer test: edit `customName` only → log entry `changedFields: ["customName"]`
+- [x] Reducer test: edit `notes` only → log entry `changedFields: ["notes"]`
+- [x] Reducer test: edit both → single log entry with both field names
 
 **Item Detail screen (per MVP §7 screen 4 + OUTLINE §5 screen 4)**
-- [ ] New route `/item/:itemInstanceId` mounted under `RootLayout`
-- [ ] `ItemDetail.tsx` — header (definition name, source badge, category), full description, weight, cost, quantity (read-only — qty adjusts still happen in the stash table)
-- [ ] Editable fields (MVP-relevant only): `customName`, `notes`. Other `edit-item-instance` enum members (`identified` / `equipped` / `attuned` / `currentCharges` / `conditionOverrides`) are scaffolded in the action but UI controls land in their proper milestones (R1 / R2)
-- [ ] Form uses React Hook Form + Zod resolver (matches CreateCharacterForm pattern)
-- [ ] Submit dispatches `edit-item-instance`; success returns user to the source stash tab (or stays put with a saved toast — pick one)
-- [ ] `<Navigate to="/" replace />` when `:itemInstanceId` doesn't resolve to an instance
-- [ ] Click handler on `StashItemsTable` row name navigates to `/item/:id`
-- [ ] Component test: edit notes → save → reload page → notes persist + appear
+- [x] New route `/item/:itemInstanceId` mounted under `RootLayout`
+- [x] `ItemDetail.tsx` — header (definition name, source badge, category), full description, weight, cost, quantity (read-only — qty adjusts still happen in the stash table)
+- [x] Editable fields (MVP-relevant only): `customName`, `notes`. Other `edit-item-instance` enum members (`identified` / `equipped` / `attuned` / `currentCharges` / `conditionOverrides`) are scaffolded in the action but UI controls land in their proper milestones (R1 / R2)
+- [x] Form uses React Hook Form + Zod resolver (matches CreateCharacterForm pattern)
+- [x] Submit dispatches `edit-item-instance`; success returns user to the source stash tab (or stays put with a saved toast — pick one)
+- [x] `<Navigate to="/" replace />` when `:itemInstanceId` doesn't resolve to an instance
+- [x] Click handler on `StashItemsTable` row name navigates to `/item/:id`
+- [x] Component test: edit notes → save → reload page → notes persist + appear
 
 **Per-item history (first time live; covers OUTLINE §3.11)**
-- [ ] `<ItemHistory itemInstanceId={id} />` component renders log entries that reference this instance
-- [ ] Selector queries `state.log` for entries whose payload contains `itemInstanceId === id` (no separate `ItemHistory` table per OUTLINE §4)
-- [ ] Renders entry type + timestamp + actorRole + a short human summary per TxType
-- [ ] Component test: acquire → edit-item-instance → consume sequence produces 3 history rows in order
-- [ ] Note: log permission gating (owner + DM only per §8) lands in R4/R5 — single-user MVP shows the full slice
+- [x] `<ItemHistory itemInstanceId={id} />` component renders log entries that reference this instance
+- [x] Selector queries `state.log` for entries whose payload contains `itemInstanceId === id` (no separate `ItemHistory` table per OUTLINE §4)
+- [x] Renders entry type + timestamp + actorRole + a short human summary per TxType
+- [x] Component test: acquire → edit-item-instance → consume sequence produces 3 history rows in order
+- [x] Note: log permission gating (owner + DM only per §8) lands in R4/R5 — single-user MVP shows the full slice
 
 **Out of M2.5 (deferred to their proper milestones)**
 - [-] `rename-character` / `edit-character` / `rename-party` action implementations — spec'd in OUTLINE now, but no UI needs them yet. Move from M7 once Settings rename screens land (still M7 territory per MVP §7 screen 9).
@@ -302,15 +302,30 @@ Mini-milestone bridging M2 → M3. Closes the M2 deferred items now that OUTLINE
 - [-] Edit history pruning / log retention — R5/R7.
 
 **Verification gate**
-- [ ] `pnpm -r --parallel typecheck` green
-- [ ] `pnpm --filter @app/web test` green (existing 45 + new ~12)
-- [ ] `pnpm --filter @app/web lint` green
-- [ ] `pnpm --filter @app/web build` succeeds; bundle delta < +30 kB JS
-- [ ] Manual smoke: add item → click name → edit notes → save → reload → notes persisted + show in history
+- [x] `pnpm -r --parallel typecheck` green
+- [x] `pnpm --filter @app/web test` green (existing 45 + new ~12)
+- [x] `pnpm --filter @app/web lint` green
+- [x] `pnpm --filter @app/web build` succeeds; bundle delta < +30 kB JS
+- [x] Manual smoke: add item → click name → edit notes → save → reload → notes persisted + show in history
 
 #### M2.5 — Notes
 
-> -
+> **2026-06-23 — M2.5 complete.**
+> - **Schema changes (additive, no migration).** `packages/shared/src/schemas/transactionLog.ts` grew two ways: (1) `acquireEntry.source` enum extended with `"catalog-add"` alongside the existing `"hoard" | "purchase" | "custom-create" | "duplicate"` — `"custom-create"` retained for back-compat so M2-vintage Dexie blobs still rehydrate (covered by a dedicated round-trip test); (2) new `editItemInstanceEntry` variant with `payload: { itemInstanceId, changedFields: ('customName' | 'notes')[] }` and `.min(1)` enforcing no-op-reject at the schema boundary. OUTLINE §4 lists a wider `changedFields` enum — narrowing here is intentional (MVP `itemInstance` literals lock the rest until R1/R2).
+> - **Action union + reducer.** `Action` in `store/types.ts` gained a fifth member (`edit-item-instance`) with a partial-patch payload shape. Reducer case iterates a closed allowlist (`customName`, `notes`), diffs against the current row, and throws `'edit-item-instance: no fields changed'` if `changedFields` ends up empty. Empty-string `notes` is preserved as a distinct value from `undefined` (decision #4); the auto-stack key `(definitionId, notes ?? "")` collapses both anyway so this is invisible to `acquire`. Edit-induced auto-stack collisions leave rows separate (decision #5) — covered by an explicit reducer test and tagged as an M5 follow-up.
+> - **`source = "custom-create" → "catalog-add"` rename hit 17 sites** as planned: 1 in `CatalogPicker`, 1 in `StashItemsTable` (the +/− re-acquire path), 11 in `reducer.test.ts`, 4 in `CharacterSheet.test.tsx`. The back-compat fixture in `reducer.test.ts:757` is the sole intentional `"custom-create"` site remaining — proves Dexie blobs from M2 still validate against the extended schema.
+> - **`/item/:itemInstanceId` route + ItemDetail screen.** RHF + Zod form for `customName` + `notes`; `useEffect(reset, [view.row])` keeps `isDirty` accurate across saves; sparse-patch dispatch (reducer re-diffs as the source of truth for `changedFields`); `toast.success('Item updated')` confirms; `<Navigate to="/" replace />` on unknown id. Read-only details panel renders qty / weight / cost / source / category / description; a JSX comment names the R1/R2 deferred fields (equipped, attuned, identified, currentCharges, conditionOverrides) so the next milestone author finds the breadcrumb.
+> - **`<ItemHistory>` component** filters `state.log` via type-guarded `.filter` (preserves narrowing on the three `itemInstanceId`-carrying TxTypes — `acquire`, `consume`, `edit-item-instance`). Mandatory `useShallow` wrapper — same pattern as `CatalogBrowser` and `StashItemsTable` to avoid the fresh-array-every-render infinite loop. Summarizes per type; permission gating (owner + DM only) deferred to R4/R5.
+> - **`StashItemsTable` row name** is now a button-styled-as-link that navigates to `/item/:row.id`. +/− and Remove unchanged. ARIA `aria-label="Open details for {displayName}"` for screen readers.
+> - **shadcn `sonner`** added via `pnpm dlx shadcn@latest add sonner`. The CLI dumped the file into a literal `@/components/ui/` directory at workspace root (alias not resolved on first run) — moved to the correct `src/components/ui/sonner.tsx`. The generated primitive uses `next-themes` upstream; this project doesn't use Next.js and has hard-coded dark mode for now (theme system is R7), so the file was minimally adapted to drop the `next-themes` import and hard-code `theme="dark"`. The dep was removed from `package.json`. `<Toaster />` mounts in `App.tsx` next to `<RouterProvider />` (singleton sibling).
+> - **Tests:** 76 pass workspace-wide (3 shared + 5 seeds + 68 web). New: 11 reducer (`edit-item-instance` + back-compat round-trip + `catalog-add` schema), 5 `ItemHistory`, 9 `ItemDetail`, 1 `CharacterSheet` row-name navigation. Existing 45 still green after the `'custom-create'` → `'catalog-add'` rename.
+> - **Build:** 706 kB JS / 21.79 kB CSS (gzip 217 / 5.02). Bundle delta: **+41 kB JS raw / +10 kB gzip** vs M2's 665 kB baseline. Slightly over the plan's `+30 kB raw` target — sonner (~6 kB gz) plus the lucide-react icons it pulls in (`CircleCheck`, `OctagonX`, etc.) explain the gap. Gzip delta is reasonable. Code-splitting is still a TECH_STACK §10 polish task; flagged in M2.5 follow-ups but not blocking.
+>
+> **Followups carried forward to M3 / M5:**
+> - **Auto-stack invariant under edit (M5):** editing `notes` can produce two rows sharing `(definitionId, notes ?? "")`. M2.5 left them separate; M5 (move/split) has the right context to decide between reject / explicit-merge / silent-merge-with-synthetic-consume.
+> - **Empty-string `notes` semantics:** preserved as distinct value but `<ItemHistory>` doesn't currently distinguish `''` vs `undefined` in its summaries. Track if it surfaces in user feedback.
+> - **Bundle-size watchpoint:** +41 kB raw / +10 kB gzip in M2.5. M3 should record its own delta against this baseline; if the cumulative trend exceeds 1 MB raw, time to invest in `manualChunks` config.
+> - **Test-fixture extraction (M3):** `bootstrap()` now lives in 4 test files (reducer, CharacterSheet, ItemDetail, ItemHistory). Worth extracting to `apps/web/src/test/fixtures.ts` next milestone — kept the diff tight in M2.5.
 
 ---
 

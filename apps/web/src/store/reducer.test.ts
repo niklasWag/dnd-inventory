@@ -3,7 +3,11 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { useStore, flushPendingPersist } from './index';
 import { loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
-import { appStateSchema, type ItemDefinition } from '@app/shared';
+import {
+  appStateSchema,
+  transactionLogEntrySchema,
+  type ItemDefinition,
+} from '@app/shared';
 import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
 
 beforeEach(async () => {
@@ -283,7 +287,7 @@ describe('reducer: acquire (M2)', () => {
         stashId: inventoryStashId,
         definitionId: rope.id,
         quantity: 1,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
 
@@ -301,11 +305,11 @@ describe('reducer: acquire (M2)', () => {
 
     dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 2, source: 'custom-create' },
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 2, source: 'catalog-add' },
     });
     dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 3, source: 'custom-create' },
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 3, source: 'catalog-add' },
     });
 
     const items = useStore.getState().appState!.items;
@@ -331,7 +335,7 @@ describe('reducer: acquire (M2)', () => {
         stashId: inventoryStashId,
         definitionId: dagger.id,
         quantity: 1,
-        source: 'custom-create',
+        source: 'catalog-add',
         notes: 'given by Volo',
       },
     });
@@ -341,7 +345,7 @@ describe('reducer: acquire (M2)', () => {
         stashId: inventoryStashId,
         definitionId: dagger.id,
         quantity: 1,
-        source: 'custom-create',
+        source: 'catalog-add',
         notes: 'looted',
       },
     });
@@ -360,7 +364,7 @@ describe('reducer: acquire (M2)', () => {
         stashId: inventoryStashId,
         definitionId: torch.id,
         quantity: 1,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
     const last = useStore.getState().log.at(-1);
@@ -380,7 +384,7 @@ describe('reducer: acquire (M2)', () => {
           stashId: 'nope',
           definitionId: torch.id,
           quantity: 1,
-          source: 'custom-create',
+          source: 'catalog-add',
         },
       }),
     ).toThrow(/unknown stashId/);
@@ -392,7 +396,7 @@ describe('reducer: acquire (M2)', () => {
           stashId: inventoryStashId,
           definitionId: 'nope',
           quantity: 1,
-          source: 'custom-create',
+          source: 'catalog-add',
         },
       }),
     ).toThrow(/unknown definitionId/);
@@ -404,7 +408,7 @@ describe('reducer: acquire (M2)', () => {
           stashId: inventoryStashId,
           definitionId: torch.id,
           quantity: 0,
-          source: 'custom-create',
+          source: 'catalog-add',
         },
       }),
     ).toThrow(/quantity must be positive/);
@@ -419,7 +423,7 @@ describe('reducer: acquire (M2)', () => {
         stashId: inventoryStashId,
         definitionId: torch.id,
         quantity: 4,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
@@ -436,7 +440,7 @@ describe('reducer: consume (M2)', () => {
         stashId: inventoryStashId,
         definitionId: torch.id,
         quantity,
-        source: 'custom-create',
+        source: 'catalog-add',
       },
     });
     const row = useStore.getState().appState!.items[0]!;
@@ -486,5 +490,297 @@ describe('reducer: consume (M2)', () => {
         payload: { itemInstanceId: 'nope', quantity: 1 },
       }),
     ).toThrow(/unknown itemInstanceId/);
+  });
+});
+
+// -------------------------------------------------------------------- //
+// M2.5: edit-item-instance + back-compat
+// -------------------------------------------------------------------- //
+
+/**
+ * Bootstrap the store with a Torch row in inventory. Returns the row id +
+ * stash id so each edit-item-instance test starts from a clean baseline.
+ */
+function bootstrapWithItem(
+  initial: { customName?: string; notes?: string } = {},
+): { itemInstanceId: string; inventoryStashId: string; torchDefId: string } {
+  const { inventoryStashId, catalog } = bootstrap();
+  const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+  useStore.getState().dispatch({
+    type: 'acquire',
+    payload: {
+      stashId: inventoryStashId,
+      definitionId: torch.id,
+      quantity: 1,
+      source: 'catalog-add',
+      ...(initial.notes !== undefined ? { notes: initial.notes } : {}),
+    },
+  });
+  // customName isn't an acquire field — patch it directly into state for
+  // tests that need a pre-existing customName baseline.
+  if (initial.customName !== undefined) {
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          items: s.appState.items.map((i) => ({ ...i, customName: initial.customName })),
+        },
+      };
+    });
+  }
+  const row = useStore.getState().appState!.items[0]!;
+  return { itemInstanceId: row.id, inventoryStashId, torchDefId: torch.id };
+}
+
+describe('reducer: edit-item-instance (M2.5)', () => {
+  it('updates customName only and logs changedFields: [customName]', () => {
+    const { itemInstanceId } = bootstrapWithItem();
+    useStore.getState().dispatch({
+      type: 'edit-item-instance',
+      payload: { itemInstanceId, patch: { customName: 'Glamdring' } },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.customName).toBe('Glamdring');
+    expect(row.notes).toBeUndefined();
+    expect(row.id).toBe(itemInstanceId); // id is stable across edits
+
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('edit-item-instance');
+    if (last?.type === 'edit-item-instance') {
+      expect(last.payload.changedFields).toEqual(['customName']);
+      expect(last.payload.itemInstanceId).toBe(itemInstanceId);
+    }
+  });
+
+  it('updates notes only and logs changedFields: [notes]', () => {
+    const { itemInstanceId } = bootstrapWithItem({ notes: 'fragile' });
+    useStore.getState().dispatch({
+      type: 'edit-item-instance',
+      payload: { itemInstanceId, patch: { notes: 'broken' } },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.notes).toBe('broken');
+
+    const last = useStore.getState().log.at(-1);
+    if (last?.type === 'edit-item-instance') {
+      expect(last.payload.changedFields).toEqual(['notes']);
+    }
+  });
+
+  it('updates both fields in one dispatch and logs both in changedFields', () => {
+    const { itemInstanceId } = bootstrapWithItem();
+    useStore.getState().dispatch({
+      type: 'edit-item-instance',
+      payload: { itemInstanceId, patch: { customName: 'Sting', notes: 'moonsilver' } },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.customName).toBe('Sting');
+    expect(row.notes).toBe('moonsilver');
+
+    const last = useStore.getState().log.at(-1);
+    if (last?.type === 'edit-item-instance') {
+      expect(last.payload.changedFields).toEqual(['customName', 'notes']);
+    }
+    // Single log entry, not two
+    const edits = useStore.getState().log.filter((e) => e.type === 'edit-item-instance');
+    expect(edits).toHaveLength(1);
+  });
+
+  it('preserves empty-string notes as a distinct value (decision #4)', () => {
+    const { itemInstanceId } = bootstrapWithItem({ notes: 'something' });
+    useStore.getState().dispatch({
+      type: 'edit-item-instance',
+      payload: { itemInstanceId, patch: { notes: '' } },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    // Empty string is preserved, NOT coerced to undefined.
+    expect(row.notes).toBe('');
+
+    const last = useStore.getState().log.at(-1);
+    if (last?.type === 'edit-item-instance') {
+      expect(last.payload.changedFields).toEqual(['notes']);
+    }
+  });
+
+  it('throws when the patch contains values identical to the current row (no-op)', () => {
+    const { itemInstanceId } = bootstrapWithItem({ customName: 'Sting' });
+    const beforeLogLen = useStore.getState().log.length;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-item-instance',
+        payload: { itemInstanceId, patch: { customName: 'Sting' } },
+      }),
+    ).toThrow(/no fields changed/);
+    expect(useStore.getState().log).toHaveLength(beforeLogLen);
+  });
+
+  it('throws on an empty patch object', () => {
+    const { itemInstanceId } = bootstrapWithItem();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-item-instance',
+        payload: { itemInstanceId, patch: {} },
+      }),
+    ).toThrow(/no fields changed/);
+  });
+
+  it('throws on unknown itemInstanceId', () => {
+    bootstrapWithItem();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-item-instance',
+        payload: { itemInstanceId: 'nope', patch: { customName: 'X' } },
+      }),
+    ).toThrow(/unknown itemInstanceId/);
+  });
+
+  it('throws when AppState is null (no character yet)', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-item-instance',
+        payload: { itemInstanceId: 'whatever', patch: { customName: 'X' } },
+      }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('ignores keys outside the M2.5 allowlist (defensive)', () => {
+    // TS gates this at compile time; this runtime test documents intent.
+    // The reducer iterates a closed allowlist of [customName, notes], so
+    // extra keys on the patch are silently dropped — which means a patch
+    // containing ONLY non-allowlist keys collapses to "no fields changed".
+    const { itemInstanceId } = bootstrapWithItem();
+    const beforeLogLen = useStore.getState().log.length;
+    // Cast through `unknown` then to the correct payload shape. This is
+    // the no-`any` way to construct a deliberately-malformed payload for
+    // a defensive test (CLAUDE.md: "no `any`, validate at boundaries").
+    const bogusPatch = { equipped: true } as unknown as {
+      customName?: string;
+      notes?: string;
+    };
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-item-instance',
+        payload: { itemInstanceId, patch: bogusPatch },
+      }),
+    ).toThrow(/no fields changed/);
+    expect(useStore.getState().log).toHaveLength(beforeLogLen);
+  });
+
+  it('leaves two rows separate when an edit would collide on (definitionId, notes) — M5 follow-up', () => {
+    // Two Torch rows distinguished only by `notes`.
+    const { inventoryStashId, catalog } = bootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const { dispatch } = useStore.getState();
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        notes: 'A',
+      },
+    });
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        notes: 'B',
+      },
+    });
+
+    const rowB = useStore.getState().appState!.items.find((i) => i.notes === 'B')!;
+
+    // Edit row B's notes to 'A' — would collide with row A's auto-stack key.
+    // M2.5 decision #5: rows stay separate (no silent merge, no throw).
+    dispatch({
+      type: 'edit-item-instance',
+      payload: { itemInstanceId: rowB.id, patch: { notes: 'A' } },
+    });
+
+    const items = useStore.getState().appState!.items;
+    expect(items).toHaveLength(2);
+    expect(items.every((i) => i.notes === 'A')).toBe(true);
+    // Both rows still have distinct ids (no merge).
+    expect(new Set(items.map((i) => i.id)).size).toBe(2);
+  });
+
+  it('logs exactly one entry with actorRole=player and the correct ids', () => {
+    const { itemInstanceId } = bootstrapWithItem();
+    const beforeLen = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'edit-item-instance',
+      payload: { itemInstanceId, patch: { customName: 'X' } },
+    });
+    const after = useStore.getState();
+    expect(after.log).toHaveLength(beforeLen + 1);
+    const last = after.log.at(-1)!;
+    expect(last.type).toBe('edit-item-instance');
+    expect(last.actorRole).toBe('player');
+    expect(last.actorUserId).toBe(after.appState!.user.id);
+    expect(last.partyId).toBe(after.appState!.party.id);
+  });
+
+  it('produces AppState that still validates against the shared schema', () => {
+    const { itemInstanceId } = bootstrapWithItem();
+    useStore.getState().dispatch({
+      type: 'edit-item-instance',
+      payload: { itemInstanceId, patch: { customName: 'Sting', notes: 'moonsilver' } },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+});
+
+describe('schema back-compat: source = custom-create still validates (M2.5)', () => {
+  it('an M2-vintage acquire log entry with source: "custom-create" still parses', () => {
+    // M2 dispatches recorded `source: "custom-create"` for catalog-add.
+    // M2.5 renamed new dispatches to `"catalog-add"` but kept `"custom-create"`
+    // in the Zod enum so persisted Dexie blobs from M2 still rehydrate.
+    const legacy = {
+      id: '11111111-1111-1111-1111-111111111111',
+      partyId: '22222222-2222-2222-2222-222222222222',
+      sessionId: null,
+      timestamp: new Date().toISOString(),
+      actorUserId: '33333333-3333-3333-3333-333333333333',
+      actorRole: 'player' as const,
+      type: 'acquire' as const,
+      payload: {
+        stashId: '44444444-4444-4444-4444-444444444444',
+        itemInstanceId: '55555555-5555-5555-5555-555555555555',
+        definitionId: 'phb-2024:torch',
+        quantity: 1,
+        source: 'custom-create' as const,
+      },
+    };
+    expect(() => transactionLogEntrySchema.parse(legacy)).not.toThrow();
+  });
+
+  it('a fresh M2.5 acquire log entry with source: "catalog-add" parses', () => {
+    const fresh = {
+      id: '11111111-1111-1111-1111-111111111111',
+      partyId: '22222222-2222-2222-2222-222222222222',
+      sessionId: null,
+      timestamp: new Date().toISOString(),
+      actorUserId: '33333333-3333-3333-3333-333333333333',
+      actorRole: 'player' as const,
+      type: 'acquire' as const,
+      payload: {
+        stashId: '44444444-4444-4444-4444-444444444444',
+        itemInstanceId: '55555555-5555-5555-5555-555555555555',
+        definitionId: 'phb-2024:torch',
+        quantity: 1,
+        source: 'catalog-add' as const,
+      },
+    };
+    expect(() => transactionLogEntrySchema.parse(fresh)).not.toThrow();
   });
 });

@@ -120,7 +120,7 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
                       stashId,
                       definitionId: def.id,
                       quantity,
-                      source: 'custom-create',
+                      source: 'catalog-add',
                     },
                   });
                   onAdded?.();

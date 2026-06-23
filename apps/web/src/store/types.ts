@@ -44,7 +44,11 @@ export type Action =
         stashId: string;
         definitionId: string;
         quantity: number;
-        source: 'hoard' | 'purchase' | 'custom-create' | 'duplicate';
+        // 'catalog-add' is the M2.5 catalog-picker source. 'custom-create'
+        // stays in the union (back-compat with M2-vintage logs) but new
+        // dispatches use 'catalog-add'; M6 will use 'custom-create' for
+        // homebrew authorship.
+        source: 'hoard' | 'purchase' | 'custom-create' | 'duplicate' | 'catalog-add';
         notes?: string;
       };
     }
@@ -60,6 +64,20 @@ export type Action =
       payload: {
         seedVersion: number;
         entries: ItemDefinition[];
+      };
+    }
+  | {
+      // M2.5: per-instance editor for `customName` + `notes`. R1/R2 widen
+      // the patch shape as ItemInstance schema literals relax. The reducer
+      // diffs `patch` against the current row, derives `changedFields` from
+      // the actually-changed keys, and rejects no-op edits.
+      type: 'edit-item-instance';
+      payload: {
+        itemInstanceId: string;
+        patch: {
+          customName?: string;
+          notes?: string;
+        };
       };
     };
 
