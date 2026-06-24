@@ -91,6 +91,10 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return editHomebrew(state, action.payload);
     case 'delete-homebrew':
       return deleteHomebrew(state, action.payload);
+    case 'rename-character':
+      return renameCharacter(state, action.payload);
+    case 'rename-party':
+      return renameParty(state, action.payload);
   }
 }
 
@@ -1345,6 +1349,90 @@ function deleteHomebrew(
       {
         type: 'delete-homebrew',
         payload: { definitionId: row.id, name: row.name },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// rename-character / rename-party (M7)
+//
+// Both mirror `rename-stash` (M3) exactly: trim newName, reject empty,
+// reject same-name (no-op), capture the pre-mutation `oldName`, emit a
+// single log slice with `{ <id>, oldName, newName }`. Keeping the same
+// shape across all three rename actions means the future history-view
+// (R5) can render them with one component.
+// ---------------------------------------------------------------------------
+
+function renameCharacter(
+  state: AppState,
+  payload: Extract<Action, { type: 'rename-character' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'rename-character');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`rename-character: unknown characterId ${payload.characterId}`);
+  }
+
+  const newName = payload.newName.trim();
+  if (newName.length === 0) {
+    throw new Error('rename-character: newName is empty');
+  }
+  if (newName === character.name) {
+    // Matches the M3 rename-stash invariant: every dispatch appends one
+    // log entry — a no-op rename can't satisfy that, so we reject.
+    throw new Error('rename-character: name unchanged');
+  }
+
+  const oldName = character.name;
+  return {
+    state: {
+      ...s,
+      characters: s.characters.map((c) =>
+        c.id === character.id ? { ...c, name: newName } : c,
+      ),
+    },
+    logEntries: [
+      {
+        type: 'rename-character',
+        payload: { characterId: character.id, oldName, newName },
+      },
+    ],
+  };
+}
+
+function renameParty(
+  state: AppState,
+  payload: Extract<Action, { type: 'rename-party' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'rename-party');
+
+  // MVP has exactly one party — the lookup is `state.party.id`. R4
+  // (multi-party) keeps the same pattern; the reducer would still find
+  // the party by id, just from a multi-row collection.
+  if (payload.partyId !== s.party.id) {
+    throw new Error(`rename-party: unknown partyId ${payload.partyId}`);
+  }
+
+  const newName = payload.newName.trim();
+  if (newName.length === 0) {
+    throw new Error('rename-party: newName is empty');
+  }
+  if (newName === s.party.name) {
+    throw new Error('rename-party: name unchanged');
+  }
+
+  const oldName = s.party.name;
+  return {
+    state: {
+      ...s,
+      party: { ...s.party, name: newName },
+    },
+    logEntries: [
+      {
+        type: 'rename-party',
+        payload: { partyId: s.party.id, oldName, newName },
       },
     ],
   };

@@ -204,7 +204,8 @@ type TxType =
   | "currency-transfer"
   | "create-character"
   | "create-stash" | "rename-stash" | "delete-stash"
-  | "create-homebrew" | "edit-homebrew" | "delete-homebrew";
+  | "create-homebrew" | "edit-homebrew" | "delete-homebrew"
+  | "rename-character" | "rename-party";
 // Note: MVP captures a SUBSET of the outline's full TxType enum.
 // All MVP types are byte-compatible with the final schema.
 ```

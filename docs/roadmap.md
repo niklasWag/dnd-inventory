@@ -674,35 +674,66 @@ Homebrew create/edit/delete with live propagation; duplicate-to-edit for PHB.
 Export JSON; import with replace-all confirm. Log entries captured for all mutations.
 
 **Export / Import**
-- [ ] `src/io/export.ts` — serializes full AppState (including log) to a JSON blob
-- [ ] Export validates the AppState against root Zod schema before writing
-- [ ] Export attaches `version`, `seedVersion`, and an ISO timestamp
-- [ ] Export tests: round-trip (export → parse → re-validate) is identity
-- [ ] `src/io/import.ts` — parses file, validates against root Zod schema
-- [ ] Import rejects malformed input with a user-facing error
-- [ ] Import test: malformed JSON → error; valid JSON → state replaced wholesale
-- [ ] Settings UI: Export button → file download
-- [ ] Settings UI: Import button → file picker + replace-all confirm dialog
-- [ ] Settings UI shows current `version` and `seedVersion`
+- [x] `src/io/export.ts` — serializes full AppState (including log) to a JSON blob
+- [x] Export validates the AppState against root Zod schema before writing
+- [x] Export attaches `version`, `seedVersion`, and an ISO timestamp
+- [x] Export tests: round-trip (export → parse → re-validate) is identity
+- [x] `src/io/import.ts` — parses file, validates against root Zod schema
+- [x] Import rejects malformed input with a user-facing error
+- [x] Import test: malformed JSON → error; valid JSON → state replaced wholesale
+- [x] Settings UI: Export button → file download
+- [x] Settings UI: Import button → file picker + replace-all confirm dialog
+- [x] Settings UI shows current `version` and `seedVersion`
 
 **Character & party rename (per `MVP.md` §7 screen 9)**
-- [ ] `rename-character` action + payload schema (OUTLINE §4: `{ characterId, oldName, newName }`)
-- [ ] `rename-character` reducer case + test (name updates, id stable, log entry recorded)
-- [ ] `rename-party` action + payload schema (OUTLINE §4: `{ partyId, oldName, newName }`)
-- [ ] `rename-party` reducer case + test
-- [ ] Settings UI: Character name field with save
-- [ ] Settings UI: Party name field with save
+- [x] `rename-character` action + payload schema (OUTLINE §4: `{ characterId, oldName, newName }`)
+- [x] `rename-character` reducer case + test (name updates, id stable, log entry recorded)
+- [x] `rename-party` action + payload schema (OUTLINE §4: `{ partyId, oldName, newName }`)
+- [x] `rename-party` reducer case + test
+- [x] Settings UI: Character name field with save
+- [x] Settings UI: Party name field with save
 
 **Definition-of-Done for MVP** (per `MVP.md` §11)
-- [ ] Fresh user can: create character, add mundane items, create ≥1 Storage stash, deposit to Party Stash, move items between all four stash types
-- [ ] PHB seed populates on first launch (verified by manual smoke test)
-- [ ] JSON round-trip end-to-end: export → wipe → import restores state **including log** (bit-for-bit identical, asserted by a test)
-- [ ] Editing a homebrew item updates display in every stash holding it (smoke test)
-- [ ] Adding the same item twice yields one row, qty 2 (covered by M2 tests, smoke-verified)
+- [x] Fresh user can: create character, add mundane items, create ≥1 Storage stash, deposit to Party Stash, move items between all four stash types
+- [x] PHB seed populates on first launch (verified by manual smoke test)
+- [x] JSON round-trip end-to-end: export → wipe → import restores state **including log** (bit-for-bit identical, asserted by a test)
+- [x] Editing a homebrew item updates display in every stash holding it (smoke test)
+- [x] Adding the same item twice yields one row, qty 2 (covered by M2 tests, smoke-verified)
 
 #### M7 — Notes
 
-> -
+> **2026-06-24 — M7 complete. MVP closed.**
+>
+> - **Schema changes (additive, no migration).** Two new discriminated-union variants in `packages/shared/src/schemas/transactionLog.ts`: `renameCharacterEntry` (payload `{ characterId, oldName, newName }`) and `renamePartyEntry` (`{ partyId, oldName, newName }`). Both mirror the M3 `renameStashEntry` shape line-for-line so a future history-view (R5) renders all three rename types with one component. New file `packages/shared/src/schemas/exportEnvelope.ts` defines the v1 export wrapper (`{ schemaVersion: 1, exportedAt, appVersion, seedVersion, payload: { appState, log } }`) — re-exported from `packages/shared/src/schemas/index.ts`. AppState round-trip test extended with two new log fixtures. `docs/MVP.md` §6 `TxType` union extended with the two M7 entries (the OUTLINE already listed them).
+> - **Action union + reducer.** `apps/web/src/store/types.ts` Action union gained two members with UI-side payload subsets (`{ characterId, newName }` and `{ partyId, newName }`). The reducer captures `oldName` from the row before applying. Two new reducer cases (`renameCharacter`, `renameParty`) follow the M3 `renameStash` pattern verbatim: trim → reject empty → reject same-name → `.map` → emit single log slice. Middleware `resolveActor` adds both types to the M3+ player-driven arm; comment notes R4 widening (party-rename → DM-only when 2+ members per OUTLINE §8.1; character-rename stays owner-only).
+> - **IO module (NEW).** Two new files under `apps/web/src/io/`:
+>   - **`export.ts`** — small public surface: `buildExportEnvelope` (pure; validates output against `exportEnvelopeSchema`), `serializeExport` (`JSON.stringify` 2-space indent), `buildExportFilename` (slugifies first character name; falls back to `'empty'` for null appState; ISO date), `triggerDownload` (DOM-side Blob + `<a download>`), and `exportToFile` (composes them with an injectable `download` callback for tests). The injectable downloader is what made the export test trivial — no DOM monkey-patching needed beyond a single `vi.fn`.
+>   - **`import.ts`** — `importFromText(text): ImportResult`. Discriminated `{ ok: true, snapshot, meta } | { ok: false, error }` so callers don't have to wrap try/catch. Two layers of defense in depth: `JSON.parse` in try/catch for malformed input, then `exportEnvelopeSchema.safeParse` for shape validation. The friendly error surfaces the first Zod issue path + message — power users can still inspect the file directly for a full report.
+> - **`ReplaceAllConfirmDialog`** (NEW, `src/components/settings/`) — AlertDialog confirmation gated on `ImportResult.ok === true`. Shows a `dl` summary (character name, item count, log entries, exported-at, app version) so the user knows what they're about to overwrite. On confirm: `flushPendingPersist()` → `wipeAll()` → `saveAppState()` → `useStore.hydrate(snapshot)` → toast. The flush is cheap insurance against an in-flight debounced save racing the import.
+> - **`RenameField`** (NEW, `src/components/settings/`) — inline RHF + Zod rename form parameterized by `target: 'character' | 'party'`. One component handles both flows; saves dispatch the matching action and toast. The Save button is disabled when the input matches the current name (after trim), so the no-op reducer reject is unreachable from the UI. `useEffect` resets the input when `currentName` changes upstream (e.g. after a successful save round-trips through the store).
+> - **`Settings.tsx`** — replaces the M0 stub. Four sections: Backup (Export + Import buttons + hidden file input + ReplaceAllConfirmDialog), Character & Party (two RenameField rows), Wipe data (kept from M0), App info (header line displays APP_VERSION + seedVersion). Rename section is conditionally rendered — pre-bootstrap there's nothing to rename (Welcome owns that flow).
+> - **App version constant.** New `apps/web/src/lib/version.ts` re-exports a `__APP_VERSION__` global injected by both `vite.config.ts` and `vitest.config.ts` via `define`. Both configs read `package.json#version` at config-load time; the Settings header + the export envelope share one truth. `apps/web/src/globals.d.ts` declares the ambient global.
+> - **MVP DoD test (the round-trip).** `apps/web/src/io/import.test.ts` builds a non-trivial state (bootstrap + homebrew + acquire + currency-change), exports to text, re-imports, asserts deep-equality on `appState` AND `log`. Also asserts log entry ids + timestamps are preserved (exporting must not mint new ids on the way out). The Settings end-to-end import test (`Settings.test.tsx`) simulates a real File upload via `userEvent.upload` and clicks through to Replace, asserting the store now matches.
+> - **Tests:** **396 pass workspace-wide** (6 shared + 5 seeds + 45 rules + 340 web). Pre-M7 was 349 (3 + 5 + 45 + 296); M7 adds **+47 tests** — 20 reducer (10 rename-character + 10 rename-party) + 10 export + 6 import (incl. round-trip identity) + 8 settings + 3 envelope schema. The two MVP DoD checks — bit-for-bit round-trip and rename-on-Settings — are exercised by both unit and component tests so future regressions can't slip through one layer.
+> - **Build:** 765.88 kB JS / 22.89 kB CSS (gzip 230.66 kB / 5.22 kB). Bundle delta vs M6: **+8.74 kB JS raw / +2.06 kB gzip**. Under the +20 kB target. No new shadcn primitives (everything reuses Dialog / AlertDialog / Input / Label / Button). The new code splits across `export.ts`, `import.ts`, `ReplaceAllConfirmDialog.tsx`, `RenameField.tsx`, and the Settings rewrite — small files, no heavy deps.
+> - **Manual smoke test passed** end-to-end per the plan §verification checklist: Settings → Export → file downloads with `dnd-inv-thorin-2026-06-24.json` filename, pretty-printed JSON, full `payload` with appState + log. Settings → rename character "Thorin" → "Thorin Stonefist" → CharacterSheet header updates immediately. Settings → rename party → seedVersion display unchanged. Settings → Wipe → land on Welcome. Settings → Import → choose file → confirm dialog shows summary → Replace → state restored bit-for-bit including log entry ids and timestamps. Item Detail history on a pre-export row identical post-import.
+>
+> **Decisions captured in code:**
+> - **Export shape: wrapped with metadata** (not raw blob). Chose `{ schemaVersion: 1, exportedAt, appVersion, seedVersion, payload }` so a v2 file format can reject v1 files (and vice versa) at the wrapper parse step, before touching `payload`. Round-trip identity is on `payload`, not the full file (the wrapper carries non-stable fields like `exportedAt`).
+> - **Rename guards: reducer rejects empty + same-name** (mirrors M3 `rename-stash`). Throwing on no-op keeps the CLAUDE.md "every dispatch appends one log entry" invariant unambiguous. UI also disables Save when the input matches current-name after trim — defense in depth.
+> - **Export filename: `dnd-inv-<charname-slug>-<YYYY-MM-DD>.json`**. The slugifier collapses non-alphanumerics to `-`, lowercases, trims to 40 chars; empty result falls back to `'character'`; null appState uses `'empty'`. Easy to identify in a downloads folder.
+> - **Rename payload split** (UI sends `{ id, newName }`; reducer captures `oldName`). The log entry carries the full triple `{ id, oldName, newName }` per OUTLINE §4 — but the UI doesn't need to know the old name to dispatch. Matches the M3 `rename-stash` split.
+> - **Import is two-step** (parse → user-confirm → apply). The `importFromText` module never writes to Dexie or the store; the Settings dialog drives `wipeAll() → saveAppState() → hydrate()` only after the user confirms. Per `docs/SECURITY.md` §7.
+>
+> **Followups carried forward to R-tier:**
+> - **R4 actor-role widening** for the rename pair. `rename-character` stays player (owner-only) in R4 too — character names belong to the owning player. `rename-party` becomes DM-only in 2+-member parties per OUTLINE §8.1.
+> - **Exported-at strict parsing** (R5+). Currently `z.string()`; a stricter `z.string().datetime()` would catch some malformed clocks earlier. Not done in M7 because legitimate exports could come from clocks of varying accuracy and the field is informational only.
+> - **v2 envelope hook**. `import.ts` has a comment marking where v2 dispatch will land. Schema bump is the only blocker.
+> - **Bundle-size watchpoint:** M6 → 757 kB; M7 → 766 kB. Still under 1 MB raw. The Vite chunk-size warning fires at 500 kB — not new to M7. Code-splitting is an R7 polish item.
+> - **`exportedAt` not asserted in round-trip identity** because the test fixes a known `now`. If anyone adds a real-clock test path, remember the timestamp is non-deterministic.
+> - **No backup retention / autosave**. MVP's backup is user-triggered only. R3 (self-hosted) ships nightly snapshots per OUTLINE §3.13 / `SECURITY.md` §8.
+>
+> **MVP closed.** All seven milestones (M0 → M7) shipped. Next: R1 — Characters & encumbrance (per `OUTLINE.md` §10 M1).
 
 ---
 

@@ -376,6 +376,39 @@ const deleteHomebrewEntry = z.object({
   }),
 });
 
+/**
+ * `rename-character` — name update on an existing Character row.
+ * id / ownerUserId / partyId / abilityScores / level / inventoryStashId
+ * are stable. Mirrors `rename-stash`: reducer trims newName, rejects
+ * empty, rejects same-name (no-op), captures `oldName` from the row
+ * before applying. M7. Per OUTLINE §4 line 311.
+ */
+const renameCharacterEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('rename-character'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    oldName: z.string().min(1),
+    newName: z.string().min(1),
+  }),
+});
+
+/**
+ * `rename-party` — name update on the Party row. Same guards as
+ * `rename-character` / `rename-stash`. In MVP party-of-one this is
+ * always the sole party; R4 widens to DM-only in multi-member parties
+ * per OUTLINE §8.1. M7. Per OUTLINE §4 line 316.
+ */
+const renamePartyEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('rename-party'),
+  payload: z.object({
+    partyId: z.string().min(1),
+    oldName: z.string().min(1),
+    newName: z.string().min(1),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -394,6 +427,8 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   createHomebrewEntry,
   editHomebrewEntry,
   deleteHomebrewEntry,
+  renameCharacterEntry,
+  renamePartyEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

@@ -2714,4 +2714,263 @@ describe('reducer: delete-homebrew (M6)', () => {
   });
 });
 
+describe('reducer: rename-character (M7)', () => {
+  /**
+   * Mirrors `rename-stash` (M3): UI sends `{ characterId, newName }`;
+   * reducer trims, rejects empty + same-name, captures `oldName` from
+   * the row before applying. id / ownerUserId / partyId / abilityScores
+   * / level / inventoryStashId stay stable.
+   */
+  it('renames the character; id + ownerUserId + level + abilityScores stable', () => {
+    const { characterId } = localBootstrap();
+    const before = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+
+    useStore.getState().dispatch({
+      type: 'rename-character',
+      payload: { characterId, newName: 'Thorin Stonefist' },
+    });
+
+    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(after.name).toBe('Thorin Stonefist');
+    expect(after.id).toBe(before.id);
+    expect(after.ownerUserId).toBe(before.ownerUserId);
+    expect(after.partyId).toBe(before.partyId);
+    expect(after.level).toBe(before.level);
+    expect(after.abilityScores).toEqual(before.abilityScores);
+    expect(after.inventoryStashId).toBe(before.inventoryStashId);
+  });
+
+  it('logs a rename-character entry with oldName + newName', () => {
+    const { characterId } = localBootstrap();
+    const oldName = useStore.getState().appState!.characters.find((c) => c.id === characterId)!.name;
+
+    useStore.getState().dispatch({
+      type: 'rename-character',
+      payload: { characterId, newName: 'Bara of Waterdeep' },
+    });
+
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('rename-character');
+    if (last?.type === 'rename-character') {
+      expect(last.payload).toEqual({
+        characterId,
+        oldName,
+        newName: 'Bara of Waterdeep',
+      });
+      expect(last.actorRole).toBe('player');
+    }
+  });
+
+  it('trims leading/trailing whitespace from newName', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'rename-character',
+      payload: { characterId, newName: '  Aldric  ' },
+    });
+    const c = useStore.getState().appState!.characters.find((ch) => ch.id === characterId)!;
+    expect(c.name).toBe('Aldric');
+  });
+
+  it('throws on empty newName', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-character',
+        payload: { characterId, newName: '' },
+      }),
+    ).toThrow(/newName is empty/);
+  });
+
+  it('throws on whitespace-only newName', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-character',
+        payload: { characterId, newName: '   ' },
+      }),
+    ).toThrow(/newName is empty/);
+  });
+
+  it('throws on no-op rename (newName equals current after trim)', () => {
+    const { characterId } = localBootstrap();
+    const currentName = useStore.getState().appState!.characters.find((c) => c.id === characterId)!.name;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-character',
+        payload: { characterId, newName: `  ${currentName}  ` },
+      }),
+    ).toThrow(/name unchanged/);
+  });
+
+  it('throws on unknown characterId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-character',
+        payload: { characterId: 'does-not-exist', newName: 'X' },
+      }),
+    ).toThrow(/unknown characterId/);
+  });
+
+  it('throws when state is null', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-character',
+        payload: { characterId: 'foo', newName: 'bar' },
+      }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('produces AppState that still validates against the shared schema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'rename-character',
+      payload: { characterId, newName: 'Renamed Hero' },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('log entry parses against transactionLogEntrySchema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'rename-character',
+      payload: { characterId, newName: 'Logged' },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
+describe('reducer: rename-party (M7)', () => {
+  /**
+   * Same shape as rename-character: trim / reject-empty / reject-same /
+   * captures `oldName`. In MVP there is exactly one Party so the lookup
+   * is `payload.partyId === state.party.id`; mismatched ids throw to
+   * keep R4 (multi-party) honest.
+   */
+  it('renames the party; id + ownerUserId + inviteCode stable', () => {
+    localBootstrap();
+    const before = useStore.getState().appState!.party;
+
+    useStore.getState().dispatch({
+      type: 'rename-party',
+      payload: { partyId: before.id, newName: 'The Misfits' },
+    });
+
+    const after = useStore.getState().appState!.party;
+    expect(after.name).toBe('The Misfits');
+    expect(after.id).toBe(before.id);
+    expect(after.ownerUserId).toBe(before.ownerUserId);
+    expect(after.inviteCode).toBe(before.inviteCode);
+    expect(after.recoveredLootStashId).toBe(before.recoveredLootStashId);
+    expect(after.createdAt).toBe(before.createdAt);
+  });
+
+  it('logs a rename-party entry with oldName + newName', () => {
+    localBootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+    const oldName = useStore.getState().appState!.party.name;
+
+    useStore.getState().dispatch({
+      type: 'rename-party',
+      payload: { partyId, newName: 'New Campaign' },
+    });
+
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('rename-party');
+    if (last?.type === 'rename-party') {
+      expect(last.payload).toEqual({
+        partyId,
+        oldName,
+        newName: 'New Campaign',
+      });
+      expect(last.actorRole).toBe('player');
+    }
+  });
+
+  it('trims leading/trailing whitespace from newName', () => {
+    localBootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+    useStore.getState().dispatch({
+      type: 'rename-party',
+      payload: { partyId, newName: '  Heroes United  ' },
+    });
+    expect(useStore.getState().appState!.party.name).toBe('Heroes United');
+  });
+
+  it('throws on empty newName', () => {
+    localBootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-party',
+        payload: { partyId, newName: '' },
+      }),
+    ).toThrow(/newName is empty/);
+  });
+
+  it('throws on whitespace-only newName', () => {
+    localBootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-party',
+        payload: { partyId, newName: '   ' },
+      }),
+    ).toThrow(/newName is empty/);
+  });
+
+  it('throws on no-op rename (newName equals current after trim)', () => {
+    localBootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+    const currentName = useStore.getState().appState!.party.name;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-party',
+        payload: { partyId, newName: `  ${currentName}  ` },
+      }),
+    ).toThrow(/name unchanged/);
+  });
+
+  it('throws on unknown partyId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-party',
+        payload: { partyId: 'does-not-exist', newName: 'X' },
+      }),
+    ).toThrow(/unknown partyId/);
+  });
+
+  it('throws when state is null', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'rename-party',
+        payload: { partyId: 'foo', newName: 'bar' },
+      }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('produces AppState that still validates against the shared schema', () => {
+    localBootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+    useStore.getState().dispatch({
+      type: 'rename-party',
+      payload: { partyId, newName: 'Validated' },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('log entry parses against transactionLogEntrySchema', () => {
+    localBootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+    useStore.getState().dispatch({
+      type: 'rename-party',
+      payload: { partyId, newName: 'Schema OK' },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
 

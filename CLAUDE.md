@@ -111,7 +111,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 
 ## Quick reference
 
-### Commands (once `apps/web` exists)
+### Commands (for `apps/web`)
 
 ```
 pnpm install                              # install all workspace deps

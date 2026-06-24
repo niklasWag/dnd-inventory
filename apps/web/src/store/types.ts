@@ -206,6 +206,32 @@ export type Action =
       payload: {
         definitionId: string;
       };
+    }
+  | {
+      // M7: rename a Character. UI sends `{ characterId, newName }`; the
+      // reducer trims newName, rejects empty + same-name, captures the
+      // pre-mutation `oldName` from the row, and emits the full
+      // `{ characterId, oldName, newName }` log payload. Mirrors
+      // `rename-stash` (M3) exactly. In MVP party-of-one this is always
+      // the sole character; R4 widens to owner-only checks in multi-
+      // member parties per OUTLINE §8.1.
+      type: 'rename-character';
+      payload: {
+        characterId: string;
+        newName: string;
+      };
+    }
+  | {
+      // M7: rename the Party. Same split as `rename-character`: UI sends
+      // `{ partyId, newName }`; reducer captures `oldName` and emits
+      // `{ partyId, oldName, newName }`. In MVP this is the only party
+      // (matches `state.party.id`); R4 will restrict to DM in multi-
+      // member parties per OUTLINE §8.1.
+      type: 'rename-party';
+      payload: {
+        partyId: string;
+        newName: string;
+      };
     };
 
 /**

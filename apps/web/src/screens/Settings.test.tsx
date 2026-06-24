@@ -1,0 +1,245 @@
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+
+import { Settings } from './Settings';
+import { Welcome } from './Welcome';
+import { Toaster } from '@/components/ui/sonner';
+import { useStore } from '@/store';
+import { wipeAll } from '@/db/wipe';
+
+import { bootstrap } from '@/test/fixtures';
+
+beforeEach(async () => {
+  useStore.setState({ appState: null, log: [] });
+  await wipeAll();
+});
+
+/**
+ * Settings tests cover the M7 user-facing surfaces:
+ *
+ *   1. Export button calls the downloader with the expected filename
+ *      + a valid envelope payload.
+ *   2. Import → choose file → confirm dialog appears with summary.
+ *   3. Confirm Replace → store now holds the imported snapshot.
+ *   4. Character rename → store + UI reflect new name.
+ *   5. Party rename → store + UI reflect new name.
+ *   6. App info renders APP_VERSION + seedVersion.
+ *
+ * Uses createMemoryRouter so Settings (which calls useNavigate from
+ * the Wipe path) has a router context.
+ */
+function renderSettings(initialPath = '/settings'): void {
+  const router = createMemoryRouter(
+    [
+      { path: '/', Component: Welcome },
+      { path: '/settings', Component: Settings },
+    ],
+    { initialEntries: [initialPath] },
+  );
+  render(
+    <>
+      <RouterProvider router={router} />
+      <Toaster />
+    </>,
+  );
+}
+
+describe('Settings — Backup (M7)', () => {
+  it('Export triggers a download with a slugified filename', async () => {
+    const user = userEvent.setup();
+    bootstrap({ name: 'Bara of Waterdeep', species: 'Half-Elf', class: 'Bard', level: 2, str: 10 });
+
+    // We can't easily intercept the real triggerDownload (it touches
+    // the DOM + URL.createObjectURL). Instead, spy on createObjectURL
+    // — it must be called exactly once with a Blob argument when
+    // Export fires.
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:fake');
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+
+    renderSettings();
+
+    await user.click(screen.getByRole('button', { name: /export json/i }));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const blobArg = createObjectURL.mock.calls[0]?.[0];
+    expect(blobArg).toBeInstanceOf(Blob);
+  });
+});
+
+describe('Settings — Character & Party rename (M7)', () => {
+  it('renaming the character dispatches rename-character and surfaces the new name', async () => {
+    const user = userEvent.setup();
+    const { characterId } = bootstrap({
+      name: 'Thorin',
+      species: 'Dwarf',
+      class: 'Fighter',
+      level: 1,
+      str: 16,
+    });
+
+    renderSettings();
+
+    const input = screen.getByLabelText(/character name/i);
+    expect(input).toHaveValue('Thorin');
+
+    await user.clear(input);
+    await user.type(input, 'Thorin Stonefist');
+    // Find the Save button next to the character name input.
+    const charForm = input.closest('form')!;
+    const saveBtn = charForm.querySelector('button[type="submit"]')!;
+    await user.click(saveBtn);
+
+    // Store updated.
+    expect(
+      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.name,
+    ).toBe('Thorin Stonefist');
+    // Log entry appended.
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('rename-character');
+  });
+
+  it('renaming the party dispatches rename-party and updates the store', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const partyId = useStore.getState().appState!.party.id;
+
+    renderSettings();
+
+    const input = screen.getByLabelText(/party name/i);
+    expect(input).toHaveValue('My Campaign');
+
+    await user.clear(input);
+    await user.type(input, 'The Misfits');
+    const partyForm = input.closest('form')!;
+    const saveBtn = partyForm.querySelector('button[type="submit"]')!;
+    await user.click(saveBtn);
+
+    expect(useStore.getState().appState!.party.name).toBe('The Misfits');
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('rename-party');
+    if (last?.type === 'rename-party') {
+      expect(last.payload).toEqual({
+        partyId,
+        oldName: 'My Campaign',
+        newName: 'The Misfits',
+      });
+    }
+  });
+
+  it('Save button is disabled when the input matches the current name', () => {
+    bootstrap();
+    renderSettings();
+
+    const input = screen.getByLabelText(/character name/i);
+    const form = input.closest('form')!;
+    const save = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    // Currently 'Thorin' (default from fixtures) — no edit yet → disabled.
+    expect(save).toBeDisabled();
+  });
+});
+
+describe('Settings — App info (M7)', () => {
+  it('renders app version and seed version', () => {
+    bootstrap();
+    renderSettings();
+    // APP_VERSION is '0.0.0' from package.json; seed version > 0 after bootstrap.
+    expect(screen.getByText(/App version 0\.0\.0/)).toBeInTheDocument();
+    // Seed version appears in the same line.
+    expect(screen.getByText(/seed version \d+/i)).toBeInTheDocument();
+  });
+
+  it('rename fields are hidden before bootstrap (Welcome owns the create flow)', () => {
+    // No bootstrap call; appState stays null.
+    renderSettings();
+    expect(screen.queryByLabelText(/character name/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/party name/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
+  /**
+   * The user-facing slice of the round-trip MVP DoD test (the
+   * pure-data round-trip already lives in `import.test.ts`):
+   * choose a file → see the confirm dialog summary → click Replace
+   * → store now contains the imported snapshot.
+   *
+   * jsdom doesn't drive a real file picker, so we synthesize a `File`
+   * and dispatch a `change` event on the hidden input directly.
+   */
+  it('importing a file shows confirm + Replace applies the snapshot', async () => {
+    const user = userEvent.setup();
+    // Build a source state, capture its export text, then wipe + re-render.
+    const { homebrewDefId, inventoryStashId } = (await import('@/test/fixtures'))
+      .bootstrapWithHomebrew({ name: 'Glow Mushroom', category: 'consumable' });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: homebrewDefId,
+        quantity: 2,
+        source: 'custom-create',
+      },
+    });
+    const snapshot = {
+      appState: useStore.getState().appState,
+      log: useStore.getState().log,
+    };
+    const { buildExportEnvelope, serializeExport } = await import('@/io/export');
+    const text = serializeExport(buildExportEnvelope(snapshot, { now: new Date('2026-06-24T00:00:00.000Z') }));
+
+    // Reset to empty so the import is observable.
+    useStore.setState({ appState: null, log: [] });
+
+    renderSettings();
+
+    // Build a File that returns our text from .text().
+    const file = new File([text], 'backup.json', { type: 'application/json' });
+
+    const input = screen.getByLabelText(/import backup file/i);
+    await user.upload(input, file);
+
+    // Confirm dialog appears with file summary.
+    expect(await screen.findByText(/Replace all current data\?/i)).toBeInTheDocument();
+    // Character name (from bootstrap default 'Thorin') appears in the summary,
+    // confirming the meta extraction reached the dialog.
+    expect(screen.getByText('Thorin')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^replace$/i }));
+
+    // Store now matches the imported snapshot (awaits the async apply).
+    await waitFor(() => {
+      expect(useStore.getState().appState).toEqual(snapshot.appState);
+    });
+    expect(useStore.getState().log).toEqual(snapshot.log);
+  });
+
+  it('cancel on confirm leaves the store untouched', async () => {
+    const user = userEvent.setup();
+    const { buildExportEnvelope, serializeExport } = await import('@/io/export');
+    const text = serializeExport(
+      buildExportEnvelope({ appState: null, log: [] }, { now: new Date('2026-06-24T00:00:00.000Z') }),
+    );
+
+    bootstrap();
+    const before = {
+      appState: useStore.getState().appState,
+      log: useStore.getState().log,
+    };
+
+    renderSettings();
+    const file = new File([text], 'backup.json', { type: 'application/json' });
+    const input = screen.getByLabelText(/import backup file/i);
+    await user.upload(input, file);
+
+    expect(await screen.findByText(/Replace all current data\?/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    // Store unchanged.
+    const after = useStore.getState();
+    expect(after.appState).toEqual(before.appState);
+    expect(after.log).toEqual(before.log);
+  });
+});

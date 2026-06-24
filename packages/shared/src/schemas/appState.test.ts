@@ -198,6 +198,37 @@ describe('appStateSchema round-trip', () => {
           name: 'Glowing Mushroom',
         },
       },
+      {
+        // M7: rename-character round-trip. Same payload shape as
+        // rename-stash — oldName + newName recorded for history.
+        id: 'log-7',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T11:03:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'rename-character',
+        payload: {
+          characterId: 'char-1',
+          oldName: 'Bara',
+          newName: 'Bara of Waterdeep',
+        },
+      },
+      {
+        // M7: rename-party round-trip.
+        id: 'log-8',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T11:04:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'rename-party',
+        payload: {
+          partyId: 'party-1',
+          oldName: 'My Campaign',
+          newName: 'The Misfits',
+        },
+      },
     ],
   };
 
