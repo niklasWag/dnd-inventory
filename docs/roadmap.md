@@ -853,6 +853,10 @@ Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); 
 
 DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch recharge. Covers OUTLINE §3.7 (DMG catalog), §3.8 (full magic-item & charge tracking), §4 `ItemDefinition` extensions, §6 `charges.ts`.
 
+**Slicing.** R2 splits along the three independently-shippable feature axes: seed-and-display (R2.1) lights up the DMG catalog and attunement plumbing; charges (R2.2) activates `charges.ts` + the four charge-related reducer actions; identification (R2.3) ships the bidirectional `identify` action + DM panel. Each slice is ~R1.1-sized.
+
+#### R2.1 — DMG seed + rarity / attunement display
+
 **Seed (§7)**
 - [ ] `seed/dmg-2024.json` placed (private; same private-use disclaimer as PHB)
 - [ ] DMG seed Zod schema
@@ -864,8 +868,19 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 - [ ] `ItemDefinition.rarity` becomes settable (`common`…`artifact`)
 - [ ] `ItemDefinition.requiresAttunement` becomes settable
 - [ ] `ItemDefinition.attunementPrereq` becomes settable (display string)
+
+**UI (§5)**
+- [ ] Rarity color coding in catalog + item rows
+- [ ] Attunement prerequisite displayed as advisory text on item detail
+
+#### R2.1 — Notes
+
+> -
+
+#### R2.2 — Charges + recharge
+
+**Schema activations (§4)**
 - [ ] `ItemDefinition.charges` becomes settable (`{ max, rechargeRule }`)
-- [ ] `ItemInstance.identified` allowed to be `false`
 - [ ] `ItemInstance.currentCharges` allowed to be a number
 
 **Rules — activate stub (§6)**
@@ -877,18 +892,33 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 - [ ] `use-charge` action + payload schema
 - [ ] `recharge` action + payload schema (per-trigger)
 - [ ] `recharge` batch action (long-rest / dawn / dusk applies to all eligible items)
+
+**UI (§5)**
+- [ ] Charge counter + manual recharge button on Item Detail
+- [ ] "Long rest" / "Dawn" / "Dusk" batch buttons on Character Sheet
+
+#### R2.2 — Notes
+
+> -
+
+#### R2.3 — Identification
+
+**Schema activations (§4)**
+- [ ] `ItemInstance.identified` allowed to be `false`
+
+**Reducer actions (§4 TransactionLog union)**
 - [ ] `identify` action + payload schema (`{ itemInstanceId, previousHint?, newHint? }`)
 - [ ] DM-only invariant test for `identify` in 2+-member parties (§8.1)
 - [ ] **`identify` is bidirectional** per OUTLINE §3.8: the DM can flip `identified` from `true → false` (e.g., "actually that was cursed") as well as `false → true`. Reducer test for both directions; both produce their own `identify` log entry with `previousHint` / `newHint` capturing before/after.
 - [ ] **`identify` hint is per-instance** per OUTLINE §3.8: two `ItemInstance`s with the same `definitionId` can each carry a different hint. Reducer test: two unidentified longswords get distinct hints "radiates evil" vs "smells like lavender"; toggling `identified` on one doesn't affect the other.
 
 **UI (§5)**
-- [ ] Rarity color coding in catalog + item rows
-- [ ] Attunement prerequisite displayed as advisory text on item detail
-- [ ] Charge counter + manual recharge button on Item Detail
-- [ ] "Long rest" / "Dawn" / "Dusk" batch buttons on Character Sheet
 - [ ] Unidentified items render as "Unknown Magic Item" + DM-set hint (display invariant per §8)
 - [ ] DM identification panel (§5.13): toggle identified, edit hint text
+
+#### R2.3 — Notes
+
+> -
 
 #### R2 — Notes
 
@@ -900,24 +930,46 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 
 Self-hosted server, Discord OAuth, user model, sync of solo data, nightly snapshots. Covers OUTLINE §3.1 (Discord login), §3.13 (server backups), §9 (architecture: server-authoritative, websocket-ready), §4 `User` (discordId/avatarUrl) and `Metadata`.
 
-**Backend bootstrap (`apps/server`)**
+**Slicing.** R3 splits into infrastructure slices that each shrink the risk surface: R3.1 stands up Fastify + Postgres + Prisma + seed runner with NO auth (verifiable via curl + Prisma Studio); R3.2 layers Discord OAuth + sessions on top; R3.3 wires authoritative sync (server re-runs the reducer); R3.4 connects the web client. Each slice is independently deployable behind a flag, and any one of them is already R1.1-sized.
+
+#### R3.1 — Server scaffold + Postgres + Prisma + seed runner
+
 - [ ] `apps/server` Fastify + TypeScript scaffolded
 - [ ] Postgres + Prisma set up
 - [ ] Prisma schema mirrors `packages/shared/schemas` Zod definitions
 - [ ] Initial migration generated and applied
 - [ ] `Metadata` table tracking canonical `seedVersion` (§4)
 - [ ] PHB + DMG seed runner on server boot (upsert)
+- [ ] `infra/docker/` compose: web + server + postgres for local dev
+
+#### R3.1 — Notes
+
+> -
+
+#### R3.2 — Discord OAuth + sessions + User model
+
 - [ ] Auth.js + Discord provider wired (authorization code + PKCE, scope `identify`)
 - [ ] Session cookie issuance after token exchange
 - [ ] `User.id` linked via `discordId`; `avatarUrl` populated
+
+#### R3.2 — Notes
+
+> -
+
+#### R3.3 — Authoritative sync
+
 - [ ] Per-user AppState sync endpoint (push reducer actions)
 - [ ] Per-user AppState pull/snapshot endpoint
 - [ ] Authoritative validation: server re-runs reducer against incoming actions
 - [ ] Nightly snapshot job to disk (default 30-day retention; configurable per §11)
 - [ ] User-triggered JSON export still works client-side (parity with §3.13)
-- [ ] `infra/docker/` compose: web + server + postgres for local dev
 
-**Web integration**
+#### R3.3 — Notes
+
+> -
+
+#### R3.4 — Web integration
+
 - [ ] Login screen: "Sign in with Discord" button (§5.1)
 - [ ] Hub screen (§5.2): Create party / Join party / Create solo cards + existing parties list
 - [ ] Web sync client pushes reducer actions to server
@@ -926,6 +978,10 @@ Self-hosted server, Discord OAuth, user model, sync of solo data, nightly snapsh
 - [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
 - [ ] Settings: Account section shows Discord displayName + avatar (§5.17)
 - [ ] Settings: Logout button clears session cookie and returns to Login screen
+
+#### R3.4 — Notes
+
+> -
 
 #### R3 — Notes
 
@@ -937,8 +993,11 @@ Self-hosted server, Discord OAuth, user model, sync of solo data, nightly snapsh
 
 Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointment + distribution toolkit, DM/Player role split when 2+ members. Covers OUTLINE §3.1 (permissive-until-others-join), §3.2, §3.5 ("split evenly"), §3.10 (loot distribution), §3.14 (Banker), §8.1 (full permission matrix), §8.3 (leaving/kicking).
 
+**Slicing.** R4 is the largest milestone (~50 checkboxes). Splits along the feature axes that compose: R4.1 lights up multi-membership (invites, join, leave, kick) — once shipped, a party can have 2+ members; R4.2 adds the Banker role on top; R4.3 adds DM cross-character authority; R4.4 widens currency-transfer + homebrew visibility for the 2+-member world; R4.5 ships the DM Dashboard. Each slice is independently testable; R4.1 is the hard dependency for all later slices.
+
+#### R4.1 — Invites + join/leave/kick + multi-membership schema
+
 **Schema activations (§4)**
-- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP)
 - [ ] `Party.inviteCode` becomes user-visible / rotatable
 - [ ] `PartyMembership` supports count > 2
 - [ ] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24). The "solo" hub badge is derived from `memberCount === 1`. R4 migration: stop writing the field on newly-created parties (drop it from `create-character` reducer); MVP-vintage parties keep the `true` value but readers ignore it. Schema either drops the field entirely or marks it `.optional()` to accept legacy blobs.
@@ -948,41 +1007,71 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 **Reducer actions (§4 TransactionLog union)**
 - [ ] `join-party` action + payload schema
 - [ ] `leave-party` action: moves owned items + currency to Recovered Loot (§8.3)
-- [ ] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker
-- [ ] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
 - [ ] `kick-player` action: same Recovered Loot transfer (§8.3)
-- [ ] `kick-player` Banker auto-clear with `reason: "kicked"`
-- [ ] `appoint-banker` action + payload schema
-- [ ] `revoke-banker` action + payload schema
-- [ ] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "left-party" | "kicked" | "reassigned"`) still validate.
-- [ ] Invariant test: DM cannot self-appoint as Banker (§3.14)
-- [ ] Invariant test: Banker target must have active `role="player"` membership
-- [ ] Invariant test: Banker role only legal when `memberCount >= 2`
-- [ ] `dm-transfer` action + payload schema
-- [ ] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one `dm-transfer` entry + one `revoke-banker` entry with `reason: "dm-transfer"`. New DM must reappoint a Banker afterward.
-- [ ] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
-- [ ] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
 - [ ] `delete-character` action + payload schema (`{ characterId, name, lastSessionId? }` per §4)
 - [ ] `delete-character` reducer case: moves owned items + currency to Recovered Loot, clears `PartyMembership.characterId`
 - [ ] `delete-character` invariant test: owning user keeps their membership (can recreate a character)
 - [ ] `delete-character` log payload snapshots itemCount + currencyTotalCp (mirrors `delete-stash` pattern in §4)
+
+**Server-side**
+- [ ] Invite-code generation endpoint (DM-only, rotatable)
+- [ ] Invite-code redemption endpoint
+- [ ] Websocket join/leave channel per party (foundation for R5)
+- [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
+
+**UI**
+- [ ] Hub: Join party (paste code) flow wired
+- [ ] Party Settings screen (§5.15): invite code regenerate / revoke, kick player
+- [ ] Member list with role badges (DM / Player)
+
+#### R4.1 — Notes
+
+> -
+
+#### R4.2 — Banker role
+
+**Schema activations (§4)**
+- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP)
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] `appoint-banker` action + payload schema
+- [ ] `revoke-banker` action + payload schema
+- [ ] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker
+- [ ] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
+- [ ] `kick-player` Banker auto-clear with `reason: "kicked"`
+- [ ] Invariant test: DM cannot self-appoint as Banker (§3.14)
+- [ ] Invariant test: Banker target must have active `role="player"` membership
+- [ ] Invariant test: Banker role only legal when `memberCount >= 2`
 - [ ] `currency-change` extended `reason` values (`split-evenly`, `gameplay-drain`)
 - [ ] Action: split Party Stash currency evenly across characters
 - [ ] Action: Banker gives currency / items to a specific player from Party Stash
 - [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
 - [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
-- [ ] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash
-- [ ] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Test: with a Banker active, player A can push 5 gp to player B's Inventory and the entry surfaces in the party log (Banker has visibility but no veto).
-- [ ] `currency-transfer` invariant test: Banker-from-pool allowed always; DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1)
-- [ ] `currency-transfer` invariant test: when no Banker, players self-claim freely (including pushing to own character's Inventory)
-- [ ] Invariant test: when Banker active, DM cannot distribute to specific players (§8.1)
-- [ ] Invariant test: when Banker active, players cannot self-claim from Party Stash / Recovered Loot (§3.14)
-- [ ] Invariant test: when no Banker, players self-claim freely from both pools (§3.14)
-- [ ] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1)
-- [ ] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Catalog Browser filters definitions where `partyId === null` (PHB/DMG) OR `partyId === activePartyId` (this party's homebrew). Definitions belonging to other parties the same user is in are NOT visible from the active party's catalog.
-- [ ] Invariant test: user is a member of parties A + B; creates homebrew "Vorpal Spork" in party A; switches to party B's view → Catalog Browser doesn't list it. Switches back to party A → it's there again.
-- [ ] Invariant test: user creates homebrew in party A; another user joins party A later → the new member sees the homebrew (party-scoped, not user-scoped).
 - [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4)
+
+**Server-side**
+- [ ] Server authoritative checks for every Banker action above
+
+**UI**
+- [ ] Party Settings screen (§5.15): appoint / revoke Banker
+- [ ] Member list with role badges (DM / Player / Banker)
+- [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
+- [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
+- [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
+- [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
+
+#### R4.2 — Notes
+
+> -
+
+#### R4.3 — DM cross-character actions + DM transfer
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] `dm-transfer` action + payload schema
+- [ ] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "left-party" | "kicked" | "reassigned"`) still validate.
+- [ ] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one `dm-transfer` entry + one `revoke-banker` entry with `reason: "dm-transfer"`. New DM must reappoint a Banker afterward.
+- [ ] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
+- [ ] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
 
 **DM cross-character actions (§8.1 "Edit other players' inventory via explicit action")**
 - [ ] DM-issued `acquire` / `consume` against another player's character (logged with `actorRole: "dm"`)
@@ -997,29 +1086,49 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] Invariant test: no silent edits — UI never mutates another player's data without dispatching a logged action (§8 "DM principle")
 
 **Server-side**
-- [ ] Invite-code generation endpoint (DM-only, rotatable)
-- [ ] Invite-code redemption endpoint
-- [ ] Websocket join/leave channel per party (foundation for R5)
-- [ ] Server authoritative checks for every action above
-- [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
+- [ ] Server authoritative checks for every DM cross-character action above
 
 **UI**
-- [ ] Hub: Join party (paste code) flow wired
-- [ ] Party Settings screen (§5.15): invite code regenerate / revoke, kick player, appoint / revoke Banker, transfer DM
-- [ ] Member list with role badges (DM / Player / Banker)
-- [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
-- [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
-- [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
-- [ ] Offline banner activates for multi-member parties (§9)
-- [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
+- [ ] Party Settings screen (§5.15): transfer DM
 
-**DM Dashboard (§5.9)**
+#### R4.3 — Notes
+
+> -
+
+#### R4.4 — Cross-character currency + homebrew party scope + gating
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash
+- [ ] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Test: with a Banker active, player A can push 5 gp to player B's Inventory and the entry surfaces in the party log (Banker has visibility but no veto).
+- [ ] `currency-transfer` invariant test: Banker-from-pool allowed always; DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1)
+- [ ] `currency-transfer` invariant test: when no Banker, players self-claim freely (including pushing to own character's Inventory)
+- [ ] Invariant test: when Banker active, DM cannot distribute to specific players (§8.1)
+- [ ] Invariant test: when Banker active, players cannot self-claim from Party Stash / Recovered Loot (§3.14)
+- [ ] Invariant test: when no Banker, players self-claim freely from both pools (§3.14)
+- [ ] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1)
+- [ ] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Catalog Browser filters definitions where `partyId === null` (PHB/DMG) OR `partyId === activePartyId` (this party's homebrew). Definitions belonging to other parties the same user is in are NOT visible from the active party's catalog.
+- [ ] Invariant test: user is a member of parties A + B; creates homebrew "Vorpal Spork" in party A; switches to party B's view → Catalog Browser doesn't list it. Switches back to party A → it's there again.
+- [ ] Invariant test: user creates homebrew in party A; another user joins party A later → the new member sees the homebrew (party-scoped, not user-scoped).
+
+**UI**
+- [ ] Offline banner activates for multi-member parties (§9)
+
+#### R4.4 — Notes
+
+> -
+
+#### R4.5 — DM Dashboard (§5.9)
+
 - [ ] `DmDashboard.tsx` route (DM-only; desktop-only per §5 form factor)
 - [ ] At-a-glance grid: all characters with name + class + level + GP-equivalent
 - [ ] Party Stash + Recovered Loot summary cards on the dashboard
 - [ ] Total party gold (sum of all GP-equivalent across characters + pools)
 - [ ] Click-through from any row navigates to that character's sheet (DM read-all)
 - [ ] DM-only route guard (hidden from non-DM members)
+
+#### R4.5 — Notes
+
+> -
 
 #### R4 — Notes
 
@@ -1031,14 +1140,22 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 
 Websocket sync; per-item history; party log with session-tag filter; offline banner in party mode. Covers OUTLINE §3.11, §3.12, §4 `Session`, §5.8 (History/Log).
 
-**Sync**
+**Slicing.** Three independently testable surfaces: R5.1 ships the websocket plumbing + reconciliation; R5.2 adds the `Session` entity and `sessionId` log tagging; R5.3 builds the history UI on top. R5.3 depends on R5.2 (session filter) but not R5.1 (history reads from `TransactionLog` directly).
+
+#### R5.1 — Websocket sync + reconnect
+
 - [ ] Websocket party-room subscription (server pushes action diffs)
 - [ ] Optimistic UI: web applies action locally, reconciles on server ack
 - [ ] Conflict resolution policy documented and implemented (server is authoritative)
 - [ ] Reconnect flow replays missed events
 - [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
 
-**Sessions (§4 `Session`)**
+#### R5.1 — Notes
+
+> -
+
+#### R5.2 — Sessions entity + log tagging
+
 - [ ] `Session` entity (id, partyId, number, date, notes, isCurrent)
 - [ ] Invariant: at most one `isCurrent` session per party
 - [ ] Action: `start-session` (clears previous `isCurrent`)
@@ -1046,7 +1163,12 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [ ] `TransactionLog.sessionId` populated from current session at write time; **`null` when no session is current** per OUTLINE §3.12 amendment (2026-06-24) — no-session activity is allowed, not blocked.
 - [ ] Reducer test: dispatching `acquire` / `transfer` / `currency-transfer` etc. with no current session produces log entries with `sessionId: null`.
 
-**History UI**
+#### R5.2 — Notes
+
+> -
+
+#### R5.3 — History UI + permission rules
+
 - [ ] Party log timeline view (§5.8)
 - [ ] Filters: session / character / item / action type / actorRole
 - [ ] **Session filter has an explicit "Untagged" bucket** that surfaces entries with `sessionId: null` per OUTLINE §3.12. Component test: a no-session entry appears under "Untagged" in the filter dropdown and renders in the list when "Untagged" is selected.
@@ -1058,6 +1180,10 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [ ] Virtualized list / pagination for long histories
 - [ ] Banker actions tagged `actorRole: "banker"` visible to all members (§3.14)
 
+#### R5.3 — Notes
+
+> -
+
 #### R5 — Notes
 
 > -
@@ -1068,15 +1194,31 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 Loot distribution wizard (per-hoard mode), hoard generator, identification flow with hints, shop manager (static + modifiers). Covers OUTLINE §3.7 (search), §3.9, §3.10, §6 `hoard.ts` / `pricing.ts` / `search.ts`.
 
+**Slicing.** R6 is the second-largest milestone after R4 (~30+ checkboxes). Splits along the rules-engine + UI surface axes: R6.1 lights up `pricing.ts` + the per-party economy controls (prerequisite for any priced transaction); R6.2 adds `Shop` + `purchase`/`sale` on top; R6.3 ships the hoard generator + loot distribution wizard; R6.4 adds identification UI + batch-identify (the R2.3 reducer already exists by this point); R6.5 swaps the Catalog Browser to `search.ts`. R6.1 is the hard dependency for R6.2 and the catalog price display.
+
+#### R6.1 — Pricing + per-party economy
+
 **Rules — activate stubs (§6)**
-- [ ] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band)
-- [ ] `hoard.ts` tests cover representative CR bands
 - [ ] `packages/rules/pricing.ts` implemented (base price × party.priceModifier × shop.priceModifier; default 0.5× sell)
 - [ ] `pricing.ts:formatPrice(cp, baseCurrency)` — display canonicalizer per OUTLINE §3.5 (largest denomination ≤ baseCurrency that divides cleanly; no fractional coins; no rollup past ceiling; sub-cp rounds to nearest cp)
 - [ ] `pricing.ts` tests cover modifier composition, override, sell-to-merchant rate, AND every row of the OUTLINE §3.5 preset table (Gold / Silver / Copper / Electrum / Platinum)
 - [ ] `pricing.ts` tests cover the "no rollup past ceiling" rule explicitly (200 gp under `baseCurrency="gp"` stays "200 gp", never "20 pp")
-- [ ] `packages/rules/search.ts` implemented (fuzzy across name + description + tags)
-- [ ] `search.ts` tests cover ranking + filter combinations
+
+**Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
+- [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
+- [ ] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
+- [ ] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted
+- [ ] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
+- [ ] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
+- [ ] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
+- [ ] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
+- [ ] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
+
+#### R6.1 — Notes
+
+> -
+
+#### R6.2 — Shops + purchase / sale
 
 **Schema activations (§4 `Shop`)**
 - [ ] `Shop` entity activated (id, partyId, name, priceModifier, sellToMerchantRate, stock)
@@ -1088,19 +1230,24 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] **Shops have no `CurrencyHolding`** per OUTLINE §3.9 amendment (2026-06-24). `purchase` only debits the buyer's stash; `sale` only credits the buyer's stash. The shop side is bookkeeping-free — `Shop` deliberately omits a currency row.
 - [ ] Invariant test: `purchase` debits 50 cp from the buyer's Inventory when the priced item costs 50 cp; no other state changes.
 - [ ] Invariant test: `sale` credits the buyer's Inventory at the shop's `sellToMerchantRate × price`; no other state changes.
-
-**Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
-- [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
-- [ ] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
-- [ ] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted
 - [ ] `purchase` / `sale` reducer cases consult `party.priceModifier` × `shop.priceModifier` via `pricing.ts` when resolving the cost of a catalog row
 - [ ] Reducer test: PHB-sourced rows are scaled by `priceModifier`; homebrew-sourced rows skip the modifier (per `ItemDefinition.source` discriminator)
 - [ ] Reducer test: purchase under `priceModifier: 0.1` of a 5 gp PHB item charges 50 cp from the buyer's stash
-- [ ] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
-- [ ] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
-- [ ] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
-- [ ] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
-- [ ] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
+
+**Shops (§3.9, §5.12)**
+- [ ] Shop Manager screen: create / edit shops + stock + modifiers
+- [ ] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
+- [ ] Catalog Browser "Add to shop" picker
+
+#### R6.2 — Notes
+
+> -
+
+#### R6.3 — Hoard generator + loot distribution wizard
+
+**Rules — activate stub (§6)**
+- [ ] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band)
+- [ ] `hoard.ts` tests cover representative CR bands
 
 **Loot distribution (§3.10)**
 - [ ] Loot Distribution Wizard screen (§5.10) — per-hoard choice: shared pool vs direct assign
@@ -1112,6 +1259,12 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] Hoard Generator screen using `hoard.ts`
 - [ ] Output flows into the Loot Distribution Wizard
 
+#### R6.3 — Notes
+
+> -
+
+#### R6.4 — Identification panel + batch-identify
+
 **Identification (§3.8, §5.13)**
 - [ ] Identification Panel UI: list of unidentified instances in the party
 - [ ] DM toggles `identified`; players see real name update via sync
@@ -1120,16 +1273,25 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] **DM batch-identify action** per OUTLINE §3.8 amendment (2026-06-24): a dedicated DM toolkit affordance that toggles `identified` and optionally sets a shared hint across ALL instances of a given `definitionId` in the party (Inventory + Storage + Party Stash + Recovered Loot). Emits one `identify` log entry per affected instance (or a single batch entry — pick one and document). Useful because hints are per-instance (§3.8), so bulk-revealing several copies of "Sword of X" otherwise takes one-by-one clicks.
 - [ ] Batch-identify component test: 3 unidentified copies of the same definition → one batch click → all 3 reveal; 3 `identify` log entries (or one batch entry) recorded.
 
-**Shops (§3.9, §5.12)**
-- [ ] Shop Manager screen: create / edit shops + stock + modifiers
-- [ ] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
-- [ ] Catalog Browser "Add to shop" picker
+#### R6.4 — Notes
+
+> -
+
+#### R6.5 — Catalog search
+
+**Rules — activate stub (§6)**
+- [ ] `packages/rules/search.ts` implemented (fuzzy across name + description + tags)
+- [ ] `search.ts` tests cover ranking + filter combinations
 
 **Catalog search**
 - [ ] Catalog search wired to `search.ts` (replaces M2's simple search)
 - [ ] Filters by category, rarity, attunement-required, cost, source (§3.7)
 - [ ] Catalog source filter (PHB / DMG / homebrew / all) surfaced in `CatalogBrowser` alongside the category filter
 - [ ] Catalog source-filter test: with PHB + ≥1 homebrew loaded, selecting "homebrew" hides PHB rows; "all" restores them; combines with category filter (e.g. "homebrew" + "consumable" only).
+
+#### R6.5 — Notes
+
+> -
 
 #### R6 — Notes
 
@@ -1141,24 +1303,60 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 
 Light/dark theme, responsive player views (mobile), fuzzy multi-field search, accessibility pass. Covers OUTLINE §5 form factor, §5.17 Settings.
 
+**Slicing.** R7 is the smallest post-R1 milestone (~16 checkboxes) but the topics are independent enough that they're worth shipping as separate slices: each can land without blocking the others, and the a11y pass benefits from its own focused session.
+
+#### R7.1 — Theme + responsive layout
+
 - [ ] Theme system with light / dark / system-default toggle (§5.17)
 - [ ] Player views mobile-responsive: Character Sheet, Party Stash, Recovered Loot, Transfer Modal, Item Detail (§5)
 - [ ] DM tools remain desktop-only by design (§5) — verify layout doesn't claim otherwise
-- [ ] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6)
+
+#### R7.1 — Notes
+
+> -
+
+#### R7.2 — Accessibility pass
+
 - [ ] Accessibility: keyboard navigation across all interactive elements
 - [ ] Accessibility: ARIA labels on all icon-only buttons
 - [ ] Accessibility: color-contrast pass against WCAG AA
 - [ ] Accessibility: screen-reader audit on Character Sheet + Party Stash flows
-- [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
-- [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
-- [ ] Variant-rules toggle exposed in Settings (§5.17)
+
+#### R7.2 — Notes
+
+> -
+
+#### R7.3 — Bulk multi-select on stash tables
+
 - [ ] **Bulk multi-select for move / delete** on stash tables (§3.4) — checkbox column, bulk action bar
 - [ ] Bulk-move test: select N items, pick target stash, all transfer with one log entry each (or a single grouped entry — decide and document)
 - [ ] Bulk-delete test: select N items, confirm once, all removed
+
+#### R7.3 — Notes
+
+> -
+
+#### R7.4 — Bulk currency edit
+
 - [ ] **Bulk currency edit on `<CurrencyRow>`** — *promoted from Future / Stretch (2026-06-23); R7 is the natural home alongside other bulk-action UX*. M4's ±1 inline controls handle small tweaks; "loot drop: +300 sp" is painful. Plan: editable inline cells that accept signed integers (`+300`, `-50`, or an absolute target `=42`) and dispatch a single `currency-change` carrying the diff. Schema-additive — same action, richer UI on top. Keyboard ergonomic: tab through cells, type signed integer, Enter dispatches.
 - [ ] Bulk currency edit test: type `+300` into the sp cell, Enter, sp holding moves by exactly +300, one `currency-change` log entry with reason `'deposit'`
 - [ ] Bulk currency edit test: type `-50` into a cell with insufficient funds, submit-blocks (mirrors the existing `−` button's disabled-at-0 behavior)
 - [ ] Bulk currency edit test: absolute-target syntax (`=42`) dispatches the computed diff (e.g. holding 30, type `=42` → log entry with delta `+12`)
+
+#### R7.4 — Notes
+
+> -
+
+#### R7.5 — Misc polish
+
+- [ ] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6)
+- [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
+- [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
+- [ ] Variant-rules toggle exposed in Settings (§5.17)
+
+#### R7.5 — Notes
+
+> -
 
 #### R7 — Notes
 
