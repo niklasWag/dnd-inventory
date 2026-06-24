@@ -285,6 +285,36 @@ const currencyChangeEntry = z.object({
   }),
 });
 
+/**
+ * `currency-transfer` — atomic paired debit/credit logged as a single
+ * entry (OUTLINE §4). Replaces two separate `currency-change` entries
+ * in stash-to-stash transfer scenarios.
+ *
+ * MVP M5.5 uses this for: a player moving currency between any of
+ * their four stashes (Inventory, Storage, Party Stash, Recovered Loot).
+ * In solo (party-of-one) the user owns all four, so the rule is simply
+ * "any source \u2260 target with non-negative result". R4 adds:
+ *   - player pushing currency to another player's Inventory directly,
+ *   - Banker distributing from Party Stash / Recovered Loot to a
+ *     specific player's stash.
+ *
+ * The `delta` is the *positive* amount moving from `fromStashId` to
+ * `toStashId`; the reducer applies `currency.subtract` to the source
+ * and `currency.add` to the destination. Treating delta as signed-zero-
+ * net at the schema layer would force callers to spell out two
+ * mirror-image deltas, which is exactly the duplication this TxType
+ * exists to eliminate.
+ */
+const currencyTransferEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('currency-transfer'),
+  payload: z.object({
+    fromStashId: z.string().min(1),
+    toStashId: z.string().min(1),
+    delta: currencyDeltaSchema,
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -299,6 +329,7 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   renameStashEntry,
   deleteStashEntry,
   currencyChangeEntry,
+  currencyTransferEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

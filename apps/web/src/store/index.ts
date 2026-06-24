@@ -82,11 +82,13 @@ function resolveActor(
     case 'rename-stash':
     case 'delete-stash':
     case 'currency-change':
+    case 'currency-transfer':
       // M3 player-initiated stash CRUD + the synthetic transfer +
       // currency-change emitted from the delete-stash cascade. M5
       // adds user-initiated `transfer` + `split` (always player-driven
-      // in the MVP; R4 widens the role split). R4 (multi-member) will
-      // also let DM / Banker drive these.
+      // in the MVP; R4 widens the role split). M5.5 adds
+      // `currency-transfer` for atomic stash-to-stash currency moves.
+      // R4 (multi-member) will also let DM / Banker drive these.
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
       }

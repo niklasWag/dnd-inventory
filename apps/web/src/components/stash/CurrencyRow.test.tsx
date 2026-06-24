@@ -99,4 +99,16 @@ describe('CurrencyRow (M4)', () => {
     await user.click(screen.getByRole('button', { name: /convert/i }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
+
+  it('opens the Transfer modal when the Transfer button is clicked (M5.5)', async () => {
+    const user = userEvent.setup();
+    const { inventoryStashId } = bootstrap();
+    render(<CurrencyRow stashId={inventoryStashId} />);
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /^transfer$/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/transfer currency/i)).toBeInTheDocument();
+  });
 });

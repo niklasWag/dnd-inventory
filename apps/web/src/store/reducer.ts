@@ -83,6 +83,8 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return transfer(state, action.payload);
     case 'split':
       return split(state, action.payload);
+    case 'currency-transfer':
+      return currencyTransfer(state, action.payload);
   }
 }
 
@@ -1041,6 +1043,98 @@ function split(
           newInstanceId: newId,
           quantity: payload.quantity,
           stashId: source.ownerId,
+        },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// currency-transfer (M5.5)
+// -------------------------------------------------------------------- //
+
+/**
+ * Atomic stash-to-stash currency move (OUTLINE §4 `currency-transfer`).
+ * Replaces a paired debit/credit `currency-change` dispatch — readers of
+ * the log see a single entry with both endpoints + the moved delta.
+ *
+ * MVP (party-of-one, `bankerUserId === null`): any of the user's four
+ * stashes is a valid source / target. Same-stash and all-zero deltas
+ * throw. Negative-result is caught by `currency.subtract` (which throws
+ * if any denomination would go below zero). R4 widens the actor
+ * model — adds DM cross-character + Banker-from-pool variants.
+ *
+ * `delta` semantics: positive amounts being moved. Negative inputs are
+ * rejected up front (the schema allows signed values for the existing
+ * `currency-change` reason='convert' shape, but `currency-transfer`'s
+ * direction is encoded by `fromStashId` / `toStashId` — negative
+ * deltas would invert that and confuse log readers).
+ */
+function currencyTransfer(
+  state: AppState,
+  payload: Extract<Action, { type: 'currency-transfer' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'currency-transfer');
+
+  if (payload.fromStashId === payload.toStashId) {
+    throw new Error('currency-transfer: same stash (no-op)');
+  }
+
+  const { delta } = payload;
+  const allZero =
+    delta.cp === 0 && delta.sp === 0 && delta.ep === 0 && delta.gp === 0 && delta.pp === 0;
+  if (allZero) throw new Error('currency-transfer: no-op delta');
+
+  // Negative inputs rejected — direction lives on `from/to`, not on the
+  // sign of the delta.
+  if (delta.cp < 0 || delta.sp < 0 || delta.ep < 0 || delta.gp < 0 || delta.pp < 0) {
+    throw new Error('currency-transfer: delta values must be non-negative (use the from/to ids to encode direction)');
+  }
+
+  const fromStash = s.stashes.find((st) => st.id === payload.fromStashId);
+  if (fromStash === undefined) {
+    throw new Error(`currency-transfer: unknown fromStashId ${payload.fromStashId}`);
+  }
+  const toStash = s.stashes.find((st) => st.id === payload.toStashId);
+  if (toStash === undefined) {
+    throw new Error(`currency-transfer: unknown toStashId ${payload.toStashId}`);
+  }
+
+  const sourceHolding = s.currencies.find((c) => c.stashId === payload.fromStashId);
+  if (sourceHolding === undefined) {
+    throw new Error(
+      `currency-transfer: invariant violation — no CurrencyHolding for ${payload.fromStashId}`,
+    );
+  }
+  const destHolding = s.currencies.find((c) => c.stashId === payload.toStashId);
+  if (destHolding === undefined) {
+    throw new Error(
+      `currency-transfer: invariant violation — no CurrencyHolding for ${payload.toStashId}`,
+    );
+  }
+
+  // `currency.subtract` throws when any denomination would go negative.
+  // We let that error bubble — it's the "insufficient funds" boundary
+  // the M5.5 plan describes.
+  const nextSource: CurrencyHolding = { ...sourceHolding, ...currency.subtract(sourceHolding, delta) };
+  const nextDest: CurrencyHolding = { ...destHolding, ...currency.add(destHolding, delta) };
+
+  return {
+    state: {
+      ...s,
+      currencies: s.currencies.map((c) => {
+        if (c.stashId === payload.fromStashId) return nextSource;
+        if (c.stashId === payload.toStashId) return nextDest;
+        return c;
+      }),
+    },
+    logEntries: [
+      {
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: payload.fromStashId,
+          toStashId: payload.toStashId,
+          delta,
         },
       },
     ],

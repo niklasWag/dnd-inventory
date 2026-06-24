@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/store';
 import { currency } from '@app/rules';
 import { ConvertCurrencyModal } from './ConvertCurrencyModal';
+import { CurrencyTransferModal } from './CurrencyTransferModal';
 
 interface CurrencyRowProps {
   stashId: string;
@@ -32,6 +33,7 @@ const ZERO_HOLDING = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 } as const;
  */
 export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
   const [convertOpen, setConvertOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   const holding = useStore(
     useShallow((s) => {
@@ -64,16 +66,28 @@ export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Currency
         </h3>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            setConvertOpen(true);
-          }}
-        >
-          Convert
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setTransferOpen(true);
+            }}
+          >
+            Transfer
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setConvertOpen(true);
+            }}
+          >
+            Convert
+          </Button>
+        </div>
       </div>
 
       <ul className="grid grid-cols-5 gap-2">
@@ -121,6 +135,11 @@ export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
         stashId={stashId}
         open={convertOpen}
         onOpenChange={setConvertOpen}
+      />
+      <CurrencyTransferModal
+        stashId={stashId}
+        open={transferOpen}
+        onOpenChange={setTransferOpen}
       />
     </section>
   );

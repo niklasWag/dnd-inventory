@@ -2080,4 +2080,279 @@ describe('reducer: split (M5)', () => {
   });
 });
 
+describe('reducer: currency-transfer (M5.5)', () => {
+  /**
+   * `currency-transfer` is the atomic stash-to-stash currency move that
+   * replaces a paired debit/credit `currency-change` dispatch (OUTLINE §4).
+   * In MVP (party-of-one, `bankerUserId === null`) the rule is simply
+   * "any source \u2260 target with non-negative result" — the Banker-mediated
+   * branch arrives in R4.
+   *
+   * Reducer:
+   *   - Validates both stashes exist.
+   *   - Rejects same-stash transfers (no-op).
+   *   - Rejects all-zero deltas.
+   *   - Subtracts from source via `currency.subtract` (throws on negative).
+   *   - Adds to destination via `currency.add`.
+   *   - Emits one log entry. Per-cascade actor / timestamp consistency
+   *     is inherited from the M3 multi-entry middleware contract.
+   */
+
+  function seedHolding(stashId: string, delta: { cp?: number; sp?: number; ep?: number; gp?: number; pp?: number }): void {
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          currencies: s.appState.currencies.map((c) =>
+            c.stashId === stashId
+              ? {
+                  ...c,
+                  cp: c.cp + (delta.cp ?? 0),
+                  sp: c.sp + (delta.sp ?? 0),
+                  ep: c.ep + (delta.ep ?? 0),
+                  gp: c.gp + (delta.gp ?? 0),
+                  pp: c.pp + (delta.pp ?? 0),
+                }
+              : c,
+          ),
+        },
+      };
+    });
+  }
+
+  it('moves currency from source to destination atomically (Inventory → Storage)', () => {
+    const base = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    seedHolding(base.inventoryStashId, { gp: 10 });
+
+    useStore.getState().dispatch({
+      type: 'currency-transfer',
+      payload: {
+        fromStashId: base.inventoryStashId,
+        toStashId: storageStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 3, pp: 0 },
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    const src = s.currencies.find((c) => c.stashId === base.inventoryStashId)!;
+    const dst = s.currencies.find((c) => c.stashId === storageStashId)!;
+    expect(src.gp).toBe(7);
+    expect(dst.gp).toBe(3);
+  });
+
+  it('moves currency from Inventory → Party Stash (deposit into shared pool)', () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 5 });
+
+    useStore.getState().dispatch({
+      type: 'currency-transfer',
+      payload: {
+        fromStashId: inventoryStashId,
+        toStashId: partyStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    expect(s.currencies.find((c) => c.stashId === inventoryStashId)!.gp).toBe(0);
+    expect(s.currencies.find((c) => c.stashId === partyStashId)!.gp).toBe(5);
+  });
+
+  it('moves currency from Party Stash → Inventory (no Banker → self-claim allowed)', () => {
+    // MVP `bankerUserId === null` so a player can self-claim freely
+    // from the Party Stash (OUTLINE §3.14).
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(partyStashId, { gp: 10 });
+
+    useStore.getState().dispatch({
+      type: 'currency-transfer',
+      payload: {
+        fromStashId: partyStashId,
+        toStashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 4, pp: 0 },
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    expect(s.currencies.find((c) => c.stashId === partyStashId)!.gp).toBe(6);
+    expect(s.currencies.find((c) => c.stashId === inventoryStashId)!.gp).toBe(4);
+  });
+
+  it('handles mixed multi-denomination deltas', () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { cp: 50, sp: 10, gp: 2 });
+
+    useStore.getState().dispatch({
+      type: 'currency-transfer',
+      payload: {
+        fromStashId: inventoryStashId,
+        toStashId: partyStashId,
+        delta: { cp: 25, sp: 5, ep: 0, gp: 1, pp: 0 },
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    const src = s.currencies.find((c) => c.stashId === inventoryStashId)!;
+    const dst = s.currencies.find((c) => c.stashId === partyStashId)!;
+    expect(src).toMatchObject({ cp: 25, sp: 5, gp: 1 });
+    expect(dst).toMatchObject({ cp: 25, sp: 5, gp: 1 });
+  });
+
+  it('emits one currency-transfer log entry with the dispatched delta', () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 5 });
+    const beforeLogLen = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'currency-transfer',
+      payload: {
+        fromStashId: inventoryStashId,
+        toStashId: partyStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 3, pp: 0 },
+      },
+    });
+
+    const newEntries = useStore.getState().log.slice(beforeLogLen);
+    expect(newEntries).toHaveLength(1);
+    const e = newEntries[0]!;
+    expect(e.type).toBe('currency-transfer');
+    if (e.type !== 'currency-transfer') return;
+    expect(e.payload.fromStashId).toBe(inventoryStashId);
+    expect(e.payload.toStashId).toBe(partyStashId);
+    expect(e.payload.delta).toEqual({ cp: 0, sp: 0, ep: 0, gp: 3, pp: 0 });
+    expect(e.actorRole).toBe('player');
+  });
+
+  it('rejects same-stash transfer (no-op)', () => {
+    const { inventoryStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 5 });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: inventoryStashId,
+          toStashId: inventoryStashId,
+          delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        },
+      }),
+    ).toThrow(/same stash|no-op/i);
+  });
+
+  it('rejects all-zero delta (no-op)', () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: inventoryStashId,
+          toStashId: partyStashId,
+          delta: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+        },
+      }),
+    ).toThrow(/no-op/i);
+  });
+
+  it('rejects negative delta values (delta is the positive amount being moved)', () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 5 });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: inventoryStashId,
+          toStashId: partyStashId,
+          delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 },
+        },
+      }),
+    ).toThrow(/negative|positive/i);
+  });
+
+  it('rejects unknown fromStashId', () => {
+    const { partyStashId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: 'nope',
+          toStashId: partyStashId,
+          delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        },
+      }),
+    ).toThrow(/unknown.*stash/i);
+  });
+
+  it('rejects unknown toStashId', () => {
+    const { inventoryStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 5 });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: inventoryStashId,
+          toStashId: 'nope',
+          delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        },
+      }),
+    ).toThrow(/unknown.*stash/i);
+  });
+
+  it('rejects when source would go negative on any denomination', () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 2 });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: inventoryStashId,
+          toStashId: partyStashId,
+          delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
+        },
+      }),
+    ).toThrow(/negative|insufficient/i);
+    // State is unchanged.
+    const s = useStore.getState().appState!;
+    expect(s.currencies.find((c) => c.stashId === inventoryStashId)!.gp).toBe(2);
+    expect(s.currencies.find((c) => c.stashId === partyStashId)!.gp).toBe(0);
+  });
+
+  it('produces an AppState that still validates against the shared schema', () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 5 });
+    useStore.getState().dispatch({
+      type: 'currency-transfer',
+      payload: {
+        fromStashId: inventoryStashId,
+        toStashId: partyStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 3, pp: 0 },
+      },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('round-trips through Dexie persistence', async () => {
+    const { inventoryStashId, partyStashId } = localBootstrap();
+    seedHolding(inventoryStashId, { gp: 5 });
+    useStore.getState().dispatch({
+      type: 'currency-transfer',
+      payload: {
+        fromStashId: inventoryStashId,
+        toStashId: partyStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 3, pp: 0 },
+      },
+    });
+    await flushPendingPersist();
+    const loaded = await loadAppState();
+    expect(loaded).not.toBeNull();
+    const wrapped = loaded as { appState: unknown; log: unknown };
+    expect(wrapped.appState).toEqual(useStore.getState().appState);
+  });
+});
+
 

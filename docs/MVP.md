@@ -197,6 +197,7 @@ type TxType =
   | "acquire"
   | "consume"
   | "currency-change"
+  | "currency-transfer"
   | "create-character"
   | "create-stash" | "rename-stash" | "delete-stash"
   | "create-homebrew" | "edit-homebrew" | "delete-homebrew";

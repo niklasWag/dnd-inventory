@@ -153,6 +153,21 @@ export type Action =
         itemInstanceId: string;
         quantity: number;
       };
+    }
+  | {
+      // M5.5: atomic stash-to-stash currency move. Replaces a paired
+      // debit/credit `currency-change` dispatch. `delta` is the positive
+      // amount moving from source to destination; the reducer applies
+      // `currency.subtract` to the source (throws on negative result)
+      // and `currency.add` to the destination. In MVP (party-of-one,
+      // `bankerUserId === null`) any pair of the user's four stashes
+      // is a valid source/target. R4 adds Banker-mediated branches.
+      type: 'currency-transfer';
+      payload: {
+        fromStashId: string;
+        toStashId: string;
+        delta: { cp: number; sp: number; ep: number; gp: number; pp: number };
+      };
     };
 
 export type TransactionLogEntry = LogEntry;

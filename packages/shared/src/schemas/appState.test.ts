@@ -136,6 +136,22 @@ describe('appStateSchema round-trip', () => {
           stashId: 'stash-inv',
         },
       },
+      {
+        // M5.5: currency-transfer round-trip. Atomic paired debit/credit
+        // between two stashes; delta is the positive amount moved.
+        id: 'log-3',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T10:00:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'currency-transfer',
+        payload: {
+          fromStashId: 'stash-inv',
+          toStashId: 'stash-party',
+          delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
+        },
+      },
     ],
   };
 

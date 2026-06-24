@@ -518,24 +518,53 @@ Move-all between any stashes; split action. Deleted-stash items flow through Rec
 
 ### M5.5 — Currency self-transfer
 
-Mini-milestone bridging M5 → M6. M5 shipped item move/split but never covered currency transfer between a player's own stashes (Inventory ↔ Storage). The `currency-transfer` log type was added to OUTLINE §4 on 2026-06-24 — this milestone closes the gap before M6 adds homebrew.
+Mini-milestone bridging M5 → M6. M5 shipped item move/split but never covered currency transfer between stashes. The `currency-transfer` log type was added to OUTLINE §4 on 2026-06-24 — this milestone closes the gap before M6 adds homebrew.
+
+**Scope decision (2026-06-24):** OUTLINE §3.14 says players self-claim from Party Stash / Recovered Loot freely when no Banker is appointed. MVP is party-of-one (`bankerUserId === null` always), so the rule reduces to: **any pair of the user's four stashes** (Inventory, Storage, Party Stash, Recovered Loot) is a valid source/target. The Banker-mediated branch (R4) gates outflow from the shared pools to a specific player only when a Banker is appointed; until then everyone (including the DM-as-player) can self-claim. The original "same-character invariant" wording in the M5.5 plan was an MVP-only shortcut that didn't survive contact with the §3.14 spec — the wider rule is captured in code instead.
 
 **Reducer**
-- [ ] `currency-transfer` action + payload schema (`{ fromStashId, toStashId, delta: CurrencyDelta }`)
-- [ ] `currency-transfer` reducer case: validates both stashes exist and are owned by the same character (solo invariant), subtracts from source via `currency.subtract`, adds to destination via `currency.add`, emits a single atomic `currency-transfer` log entry
-- [ ] Invariant test: refuses if source would go negative on any denomination
-- [ ] Invariant test: refuses same-stash transfer (no-op)
-- [ ] Invariant test: refuses transfer between stashes belonging to different characters (cross-character currency transfer is an R4 Banker action, not a self-service move)
-- [ ] Reducer test: Inventory → Storage moves correct denominations; log entry shape matches schema
+- [x] `currency-transfer` action + payload schema (`{ fromStashId, toStashId, delta: CurrencyDelta }`)
+- [x] `currency-transfer` reducer case: validates both stashes exist, subtracts from source via `currency.subtract`, adds to destination via `currency.add`, emits a single atomic `currency-transfer` log entry
+- [x] Invariant test: refuses if source would go negative on any denomination (via `currency.subtract` throw)
+- [x] Invariant test: refuses same-stash transfer (no-op)
+- [x] Invariant test: refuses all-zero delta (no-op)
+- [x] Invariant test: refuses negative delta values (direction lives on the `from/to` ids, not on the sign of the delta)
+- [x] Invariant test: refuses unknown `fromStashId` / `toStashId`
+- [x] Reducer test: Inventory → Storage moves correct denominations; log entry shape matches schema
+- [x] Reducer test: Inventory → Party Stash (deposit into shared pool)
+- [x] Reducer test: Party Stash → Inventory (no-Banker self-claim, per §3.14)
+- [x] Reducer test: mixed multi-denomination delta
+- [x] AppState round-trips through Dexie persistence post-transfer
 
 **UI**
-- [ ] `CurrencyTransferModal.tsx` — source stash (pre-selected from context), target stash picker (own stashes only), denomination inputs with max-bound per denomination
-- [ ] "Transfer" button in `<CurrencyRow>` opens `CurrencyTransferModal`
-- [ ] Component test: transfer 10 gp from Inventory to Storage → both `<CurrencyRow>` components update
+- [x] `CurrencyTransferModal.tsx` — source stash (pre-selected from context), target stash picker (every other stash), denomination inputs with max-bound per denomination + insufficient-funds indicator
+- [x] "Transfer" button in `<CurrencyRow>` opens `CurrencyTransferModal`
+- [x] Component test: Transfer button opens the modal
+- [x] Component test: transfer N gp from Inventory to Party Stash → both holdings update
+- [x] Component test: insufficient-funds path disables submit + shows reason
+- [x] Component test: multi-denomination submit dispatches one entry
 
 #### M5.5 — Notes
 
-> -
+> **2026-06-24 — M5.5 complete.**
+>
+> - **Schema (additive).** New `currencyTransferEntry` variant on the `transactionLog` discriminated union with payload `{ fromStashId, toStashId, delta: CurrencyDelta }`. Reuses the M4 `currencyDeltaSchema`. AppState round-trip test extended to include a `currency-transfer` entry alongside the M5 `split` entry.
+> - **MVP.md `TxType` list updated** to include `"currency-transfer"` (per the CLAUDE.md "docs first" rule, since MVP's TxType list is documented as a strict subset of OUTLINE §4).
+> - **Reducer (13 new tests).** `currencyTransfer` lives next to `transfer` / `split` in `apps/web/src/store/reducer.ts`. Uses `currency.subtract` for the source side (which throws on negative result — the "insufficient funds" boundary) and `currency.add` for the destination. The `currency.subtract` shipping-but-unused note from M4's notes is now fulfilled — M5.5 is its first call site. `resolveActor` extended to recognize `currency-transfer` (player role in MVP).
+> - **Delta semantics.** The schema's `currencyDeltaSchema` accepts signed integers (for back-compat with `currency-change` reason='convert', whose delta has negative source-side values). `currency-transfer` rejects negative inputs explicitly — direction lives on the `from/to` ids, and a negative delta would invert the meaning of those fields and confuse log readers. The reducer error message spells this out.
+> - **Same-stash / all-zero / unknown-stash rejections.** Match the existing `currency-change` pattern (M4) plus an explicit same-stash check (mirrors `transfer` from M5).
+> - **`CurrencyTransferModal.tsx`** (9 component tests). RHF + Zod with the now-familiar pattern (static schema + inline upper-bound checks for the per-denomination max, since the bounds depend on the live holding — same trick as M5's `MoveItemModal`). Five denomination `<Input>`s arranged in a `grid-cols-5` row beneath the target `<select>`. Per-denom "have N" footer + a `role="status"` line that flips between "Enter at least one coin", "Insufficient X" (with values), and "Sending N gp equivalent". The "Transfer" button gates on `targets.length > 0 && insufficient === undefined && totalCoinsRequested > 0`. Plain native `<select>` for the same jsdom-friendliness reason as `ConvertCurrencyModal`.
+> - **`<CurrencyRow>` gets a Transfer button** alongside the existing Convert button, opening the new modal. The +/− inline controls and Convert flow are unchanged. The flex bar in the header is now a `flex items-center gap-1` for two buttons — same right-aligned layout.
+> - **Reuses `buildStashLabels`** (extracted in M5) for the target picker — character-scope rows render `"{Character} \u2014 {Stash}"`, party/recovered-loot render bare. Third consumer of that helper now (after `<ItemHistory>` + `<MoveItemModal>`), confirming the M5 extraction was the right call.
+> - **`<ItemHistory>` deliberately not extended.** `currency-transfer` doesn't carry an `itemInstanceId`, so the per-item history filter is untouched. Currency-side history will surface in the future Party Log view (R5).
+> - **Tests:** **303 pass workspace-wide** (3 shared + 5 seeds + 45 rules + 250 web). M5 ended at 281; M5.5 adds **+22 tests** (13 reducer + 8 CurrencyTransferModal + 1 CurrencyRow wiring + extended AppState round-trip).
+> - **Build:** 745.84 kB JS / 22.63 kB CSS (gzip 225.64 kB / 5.17 kB). Bundle delta vs M5: **+6.00 kB JS raw / +1.04 kB gzip** — no new shadcn primitive, modal reuses the M5 `Dialog` / `Input` / `Label` / `Button` set + native `<select>`.
+> - **Manual smoke path validated:** Inventory seeded with 10 gp + 25 cp → Transfer button → pick Party Stash → enter 3 gp + 10 cp → submit → toast "Currency transferred" → Inventory holding now 7 gp / 15 cp; Party Stash holding 3 gp / 10 cp; one `currency-transfer` log entry recorded; Dexie round-trip preserves the result.
+>
+> **Followups carried forward to R4 / R5:**
+> - **Banker-mediated branches** of `currency-transfer` (player→player push, Banker pool distribution) are R4 work. The reducer's player-only `actorRole` resolution will need to widen there.
+> - **Party Log view (R5)** is the natural home for the currency-side history. Today `currency-transfer` entries are recorded but invisible to the user — Item Detail filters them out (they don't reference an `itemInstanceId`).
+> - **`currency-transfer` for cross-character self-service** (player pushes to another player's Inventory) is the R4 "(b)" branch of the OUTLINE §4 description. MVP enforces no character separation — there's only one character — so the M5.5 reducer didn't have to check character ownership. R4 will add `actorRole === 'player'` + `targetCharacter === actorCharacter || sourceScope === 'party' || sourceScope === 'recovered-loot'`-style guards.
 
 ---
 
