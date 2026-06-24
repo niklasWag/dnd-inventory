@@ -10,6 +10,7 @@ A **D&D 5e (2024 rules) inventory management web app**, intended for private use
 - `docs/OUTLINE.md` — full product scope, data model, permissions, milestones.
 - `docs/MVP.md` — MVP scope (single-user, browser-local). The MVP `AppState` is a strict subset of the final outline.
 - `docs/TECH_STACK.md` — all technology choices with rationale.
+- `docs/SECURITY.md` — security concerns and required mitigations across local and self-hosted modes. **Read before any work on auth, permissions, validation, server endpoints, WebSocket, JSON import/export, or anything touching user-controlled input.**
 
 If you find anything in code that contradicts these docs, **the docs win** — update the code or surface the conflict.
 
@@ -62,6 +63,19 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - When a Banker is active, Party Stash & Recovered Loot become Banker-mediated (players can't self-claim). When no Banker exists, players claim freely.
 - Identification is a display invariant, not a permission: unidentified items show as "Unknown Magic Item" + DM hint.
 
+### Security rules (see `docs/SECURITY.md`)
+
+- **Server is authoritative (M3+).** The client rules engine runs only for optimistic UI. Every mutation is re-validated server-side: actor identity from the session cookie, role from `PartyMembership`, permission from the §8.1 matrix. Never trust `actorUserId` / `actorRole` from a request body.
+- **Zod at every boundary.** API request bodies, IndexedDB I/O, JSON import — all parsed through `packages/shared/schemas/` with `.strict()`. Discriminated unions for `TransactionLog.type`. No `unknown` makes it past the boundary unvalidated.
+- **No silent mutations.** Every state change appends a typed `TransactionLog` entry via the service layer. No route handler writes data directly. If you add a mutation, add the corresponding log type (see `docs/OUTLINE.md` §4 + the existing reducer-action 1:1 rule).
+- **Currency math is integer CP only.** Never store a float in `CurrencyHolding`. `priceModifier` is applied and rounded once at the seed-price boundary (§3.5). Pre-commit check: no resulting balance goes negative. `convert` deltas must net-zero in CP.
+- **Stash & item invariants** (see `SECURITY.md` §3.4) are enforced on every write — `scope` ↔ ownership fields, single `isCarried` per character, single recovered-loot stash per party, `ownerType ∈ {stash, shop}`, equip/attune flags only on Inventory items.
+- **XSS hygiene.** All user text fields (`customName`, `notes`, `description`, character `name`, DM `hint`, party `name`, homebrew descriptions) are plain text — rendered as JSX children, never via `dangerouslySetInnerHTML`. No markdown rendering in v1; if added later, sanitize with a strict allowlist.
+- **Auth surface.** Discord OAuth with PKCE, scope `identify` only. Session cookies are `HttpOnly`, `Secure`, `SameSite=Lax`. Discord tokens are never persisted (only `discordId` / `displayName` / `avatarUrl`).
+- **Invite codes** are ≥ 128 bits of entropy, redeemed via `POST` (never `GET`), rate-limited per IP and account.
+- **WebSocket is broadcast-only** (M5+). Subscriptions are scoped server-side from `PartyMembership` — clients never name the room. All mutations go through HTTP, not the socket.
+- **JSON import**: full Zod parse before any write; `partyId` comes from the URL/session, never the payload; explicit user confirm step (§3.13).
+
 ### Testing — TDD where it pays off
 
 - **Always TDD** for:
@@ -84,10 +98,14 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - **Don't** create parallel "solo" entities. Solo is a party-of-one — same model.
 - **Don't** commit secrets, OAuth client IDs, or PHB/DMG content files to git history.
 - **Don't** add error handling for cases that can't happen. Trust internal invariants; validate at boundaries only.
+- **Don't** trust `actorUserId` / `actorRole` from a client request body. Derive identity from the session cookie and role from `PartyMembership` server-side.
+- **Don't** use `dangerouslySetInnerHTML` with any user-controlled value. All user text is plain text (see `docs/SECURITY.md` §4).
+- **Don't** write a mutation route that bypasses the service layer / skips the `TransactionLog` entry. Silent writes are forbidden by `docs/OUTLINE.md` §8.
+- **Don't** store currency as a float or apply `priceModifier` outside the seed-price boundary. CP-integer only (see `docs/SECURITY.md` §3.2).
 
 ### When in doubt
 
-- If a decision isn't in `docs/OUTLINE.md`, `docs/MVP.md`, or `docs/TECH_STACK.md`, **ask the user** rather than guessing.
+- If a decision isn't in `docs/OUTLINE.md`, `docs/MVP.md`, `docs/TECH_STACK.md`, or `docs/SECURITY.md`, **ask the user** rather than guessing.
 - If a request would contradict one of these docs, surface the conflict before implementing.
 - Prefer the simpler approach. The right amount of complexity is the minimum needed for the current task.
 
