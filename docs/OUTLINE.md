@@ -84,13 +84,16 @@ No HP, spells, AC, proficiencies in v1.
 - **Attune / unattune** — tracked with warnings; DM can raise the slot cap per character.
 - Adjust quantity; identical items **auto-stack** (same definition + same notes).
 - **Move item** between any two stashes the actor has permission for: Inventory ↔ Storage, Inventory ↔ Party Stash, character ↔ character, ↔ Recovered Loot.
+- **Equip / attune / charge state auto-clears on leaving Inventory.** When a `transfer` moves an item from a character's Inventory (`scope=character, isCarried=true`) to ANY other stash (Storage / Party Stash / Recovered Loot / Shop), the reducer atomically sets `equipped: false`, `attuned: false`, and `currentCharges: null` as part of the same dispatch. Otherwise those fields would persist as zombie state since §4 declares them "only meaningful" in Inventory. The transfer cascade emits one extra `edit-item-instance` entry alongside the `transfer` so the audit trail captures the field reset.
+- **Container contents follow the container.** When a `transfer` moves an item whose `id` is the `containerInstanceId` of one or more other instances, those contained instances move with it atomically (their `containerInstanceId` stays pointing at the same parent; only the parent's `ownerId` changes — and by extension, the contents' effective location). One-level-deep is still enforced (§3.6): a container cannot become the content of another container, so `transfer` rejects "move container A into container B" combinations.
 - Bulk multi-select for move/delete.
 - Notes per item instance (e.g., "given by Volo").
-- **Per-item history** — owner and DM see who held the item and when it changed hands.
+- **Per-item history** — every party member (in 2+-member parties) and the DM can see who held the item and when it changed hands. In a party-of-one the sole user obviously sees their own data. For items currently in **Party Stash** or **Recovered Loot**, history is visible to **every party member** — matches §3.15's "visible to all members" transparency rule for the shared pools.
 
 ### 3.5 Currency & Treasure
 - Track CP, SP, EP, GP, PP **on every stash** — Inventory, Storage, Party Stash, Recovered Loot — uniformly.
 - Currency conversion helper.
+- **Lossy conversions are refused, not rounded.** `packages/rules/currency.ts:convert` throws when the requested `qty × source-multiplier` doesn't divide cleanly into the target denomination (e.g. `9 sp → gp` would yield 0.9 gp; refused). The Convert modal disables submit on lossy combos with an inline explanation so the user picks a divisible quantity. Rationale: silent rounding would lose coins without the user noticing; storing fractional coins would break the CP-integer invariant from `SECURITY.md` §3.2. The user can always do a two-step (`9 sp → 90 cp` first, then `cp → gp` only when divisible).
 - **Treasure hoard generator** (2024 DMG tables by CR/level band).
 - "Split evenly" for Party Stash gold (Banker action; falls back to DM when no Banker).
 - **Bulk currency entry** (post-MVP). MVP M4 ships ±1 inline +/− controls plus a Convert modal — sufficient for tweaks but painful for hoard drops ("loot +300 sp"). R7 iteration (see roadmap.md): editable cells that accept signed integers (`+300`, `-50`) and absolute targets (`=42`), each dispatching a single `currency-change` carrying the computed diff. Schema-unchanged.
@@ -121,6 +124,7 @@ No HP, spells, AC, proficiencies in v1.
 - **Encumbered** at > 5×STR (variant rule); **heavily encumbered** at > 10×STR.
 - **Encumbrance applies ONLY to the character's Inventory stash.** Storage stashes (chests, vaults, etc.) do not count toward carrying capacity.
 - **Containers**: **one level deep** within a stash (item-in-bag, no bag-in-bag). **Bag of Holding** and similar handled as flat-weight exceptions.
+- **Flat-weight discriminator.** `ItemDefinition` carries a `flatWeight: boolean` field (default `false`). Bag of Holding, Handy Haversack, Portable Hole, etc. ship with `flatWeight: true` in the DMG 2024 seed; `weight.ts` stops descending into contents whenever a container's definition has the flag set. Homebrew opts in via the same field, so the DM can mint a custom "Big Sack" with the BoH behavior without touching the rules engine.
 - Visual capacity bar on the Inventory screen; warning states.
 - Enforcement level configurable per character (see 3.3).
 
@@ -132,6 +136,7 @@ No HP, spells, AC, proficiencies in v1.
 - **Custom-item authorship**:
   - When a party has **only one member** (party-of-one / solo): that user can create custom items freely.
   - When a party has **2+ members**: only the **DM** can create custom items (party-scoped catalog), to prevent griefing and keep the shared catalog curated.
+- **Homebrew visibility is party-scoped.** `ItemDefinition.partyId` (§4) is the discriminator: a homebrew entry created in party A is invisible to users browsing the catalog in party B, even if the same user is a member of both. PHB / DMG entries (with `partyId === null`) are universal. Rationale: prevents homebrew "leaks" between unrelated campaigns and keeps each party's catalog scoped to its own DM curation. If a DM wants the same homebrew in two parties, they create it in each (or — post-MVP — export/import via the existing JSON flow).
 - **Search**: fuzzy across name + description + tags; filter by category/rarity/attunement-required/cost/source.
 - "Add to character" / "Add to party stash" actions.
 
@@ -141,12 +146,16 @@ No HP, spells, AC, proficiencies in v1.
 - **Full charge tracking**: current/max, recharge rule (dawn / dusk / long rest / short rest / custom).
 - "Long rest" / "Dawn" / "Dusk" buttons batch-recharge applicable items.
 - **Identification state**: DM toggles "identified". Unidentified items appear to players as "Unknown Magic Item" with a **DM-set hint**.
+- **Identification is bidirectional.** The DM can flip `identified` from `true → false` as well as `false → true` — useful for "actually that was cursed all along" retcons. Each direction emits its own `identify` log entry (the payload's `previousHint` / `newHint` capture before/after state). The display rule from §8 still applies: while `identified === false` players see "Unknown Magic Item" + hint.
+- **Hint scope is per-instance.** The `identify` action's `newHint?` mutates only the targeted `ItemInstance` — two copies of the same magic item (same `definitionId`, different `itemInstanceId`) can each have their own hint ("radiates evil" vs "smells like lavender"). This matches the §4 payload shape (the hint isn't on `ItemDefinition`). DM bulk-identification across all unidentified instances of a given definition lands as an explicit batch action in R6 (DM tools) rather than via shared-state magic — keeps every state change explicit and logged.
+- **Force-use-charge scope.** §8.1's "Use charge on any item via force-action" applies only to items currently in someone's Inventory (`scope=character, isCarried=true`). Items in Storage / Party Stash / Recovered Loot / Shop have `currentCharges: null` per §4 — there's nothing to decrement. If the DM wants to force a charge consumption on a stashed item, they move it into a character's Inventory first via `transfer`, then force-use-charge. (Force-RECHARGE, by contrast, is meaningful regardless of location because it sets a value rather than reading one.)
 
 ### 3.9 Shop & Vendor Module
 - **Static catalog** per shop: item list + per-item override price (or shop-wide multiplier).
 - Items show base PHB price; shop applies modifier (e.g., 1.2×) or fixed override.
 - "Sell to merchant" defaults to **50%** of base.
 - **Manual purchase flow**: DM resolves each buy/sell as an explicit transfer (no live shopping session in v1).
+- **Shops have no purse.** Unlike a `Stash`, a `Shop` does NOT own a `CurrencyHolding` row. `purchase` deducts coins from the buyer's stash; `sale` adds coins to the buyer's stash. The shop side is bookkeeping-free — only `stock` (item availability) matters. Rationale: keeps the spec simple for the common case (a shop is a narrative fixture, not an entity with a finite budget). If a future homebrew DM wants "the shopkeeper ran out of gold" stories, that's a post-v1 extension (add `Shop.currency` optional + toggle).
 
 ### 3.10 Loot Distribution (DM)
 - **Per-hoard choice** at distribution time:
@@ -162,6 +171,7 @@ No HP, spells, AC, proficiencies in v1.
 - **Lightweight session tags**: DM marks the current session; transactions are tagged with it.
 - "Distribute loot" wizard tags items to the active session.
 - Per-session filter on history view.
+- **No-session activity is allowed.** When the DM hasn't started a session (or has ended the last one without starting a new one), reducer dispatches still succeed — the resulting `TransactionLog` entries carry `sessionId: null` per the §4 schema. The party log's session filter exposes a special **"Untagged"** bucket that surfaces these entries. Rationale: forcing a session before play creates friction for solo / casual use; the audit trail still captures everything, just under the explicit "Untagged" label.
 
 ### 3.13 Backups
 - **Self-hosted server takes nightly snapshots** to disk; retention policy configurable.
@@ -185,6 +195,8 @@ No HP, spells, AC, proficiencies in v1.
 - **Auditing**: every Banker action is logged with `actorUserId` plus `actorRole: "banker"` and is **visible to all party members** in the party log.
 - **Role transitions**: if the Banker leaves or is kicked, the role **auto-clears**; the DM must reappoint someone to restore Banker-only operations (otherwise direct DM distribution resumes).
 - **Self-appointment**: the DM cannot appoint themselves as Banker; the role is for delegating to a player.
+- **DM-transfer with Banker conflict**: when `dm-transfer` is dispatched and the incoming DM is the current Banker, `Party.bankerUserId` is **auto-cleared** as part of the same dispatch and a `revoke-banker` log entry is emitted with `reason: "dm-transfer"` (a new value added to the §4 reason enum alongside `"manual" | "left-party" | "kicked" | "reassigned"`). The new DM must reappoint a Banker if they want one; until then, direct DM distribution resumes per the "no Banker" rules. Preserves the "DM cannot be Banker" invariant on `Party` without blocking the DM-transfer itself.
+- **The Banker mediates the SHARED POOLS only, not character-to-character moves.** Players in 2+-member parties can always directly push currency from their own stashes to another player's Inventory via `currency-transfer` (§8.1 "Transfer currency directly to another player's Inventory stash" row, ✅ regardless of Banker state). Rationale: the Banker's job is to gate distribution OF THE PARTY POOLS, not to regulate how players spend their own purses. The `currency-transfer` log entry still surfaces in the party log, so the Banker has full visibility even when not the actor.
 
 ### 3.15 User-Facing Terminology
 - **Inventory** — a character's carried stash (encumbrance applies).
@@ -206,8 +218,9 @@ No HP, spells, AC, proficiencies in v1.
 ### `Party`
 - id, name, ownerUserId (the current DM; transferable), inviteCode (rotatable; generated at party creation), createdAt
 - recoveredLootStashId — direct FK to the per-party Recovered Loot stash, **auto-created on party creation**.
-- **bankerUserId** (nullable) — the currently-appointed Banker. Must reference a user with an active `PartyMembership` (role = `player`) in this party, and **must not equal `ownerUserId`** (DM can't be Banker). Auto-cleared when that membership ends. Only legal when `memberCount >= 2`.
-- isSoloShortcut (bool) — marks parties created via "Create solo (party-of-one)". Purely a display hint for the hub; behavior is otherwise identical to any other party.
+- **bankerUserId** (nullable) — the currently-appointed Banker. Must reference a user with an active `PartyMembership` (role = `player`) in this party, and **must not equal `ownerUserId`** (DM can't be Banker). Auto-cleared when that membership ends, and also auto-cleared by `dm-transfer` when the incoming DM is the current Banker (§3.14). Only legal when `memberCount >= 2`.
+
+> **`isSoloShortcut` removed (2026-06-24).** Earlier drafts carried a `Party.isSoloShortcut: boolean` field set true on solo-creation. It's now derived: the hub renders a "solo" badge purely from `memberCount === 1` regardless of how the party was created. Reasoning: the flag's only consumer was display, it became stale the moment a second member joined, and "purely a display hint" data is better not stored at all. The MVP's `Party.isSoloShortcut: true` literal is a placeholder for forward-compat — MVP code keeps writing it so existing Dexie blobs validate, but the field reads as "derived → ignore" once R4 ships multi-member parties.
 
 ### `PartyMembership`
 - **Primary key**: composite `(userId, partyId, role)` — a single user can hold multiple roles in the same party (e.g., the creator is both `dm` and `player`).
@@ -239,12 +252,13 @@ No HP, spells, AC, proficiencies in v1.
 - id, name, source (`PHB` | `DMG` | `homebrew`)
 - category (weapon, armor, gear, tool, magic, consumable, currency, container)
 - weight, cost (in cp, base price), rarity (`common` … `artifact` | null)
+- **flatWeight** (bool, default `false`) — when `true`, the rules engine treats the container as a §3.6 flat-weight exception: `weight.ts` does NOT descend into the container's contents when computing encumbrance. Bag of Holding, Handy Haversack, Portable Hole, etc. ship with `flatWeight: true` in the DMG 2024 seed. Homebrew can opt in via the same field.
 - requiresAttunement, attunementPrereq (display string)
 - properties (damageDice, damageType, AC, range, …)
 - charges (max, rechargeRule), description, tags
 - duplicatedFromId (for PHB/DMG duplicates)
 - createdBy (userId; for homebrew authorship)
-- partyId (nullable; set for party-scoped homebrew entries — null for PHB/DMG)
+- partyId (nullable; set for party-scoped homebrew entries — null for PHB/DMG). **Visibility is party-scoped per §3.7**: a homebrew definition with `partyId === A` is invisible to users browsing the catalog in party `B`, even if the same user belongs to both parties. PHB / DMG entries (with `partyId === null`) are universal.
 
 ### `ItemInstance`
 - id, definitionId
@@ -291,7 +305,7 @@ No HP, spells, AC, proficiencies in v1.
   - `dm-transfer` → `{ fromUserId, toUserId }`
   - `kick-player` → `{ kickedUserId }`
   - `appoint-banker` → `{ bankerUserId }`
-  - `revoke-banker` → `{ formerBankerUserId, reason: "manual" | "left-party" | "kicked" | "reassigned" }`
+  - `revoke-banker` → `{ formerBankerUserId, reason: "manual" | "left-party" | "kicked" | "reassigned" | "dm-transfer" }` — `"dm-transfer"` is emitted when `dm-transfer` makes the current Banker the new DM, auto-clearing the role per §3.14.
   - `create-character` → `{ characterId, name }`
   - `delete-character` → `{ characterId, name, lastSessionId? }`
   - `rename-character` → `{ characterId, oldName, newName }` — dedicated type for the most common character edit; mirrors `rename-stash` / `rename-party`.
@@ -518,6 +532,23 @@ When the **DM** leaves:
 - **DM-as-player on creation** → the party-creation flow **prompts the user explicitly**: *"Do you also play a character in this party?"* with yes / no. Defaults to yes for convenience but is not silent — the user's choice determines whether the second `PartyMembership` row (`role="player"`, with a character) is created alongside the `role="dm"` row. See §3.1 and §4 `PartyMembership`.
 - **Default Storage stashes on character creation** → **start with zero Storage stashes**. Only the auto-created Inventory stash (§3.3, the single `isCarried=true` stash referenced by `Character.inventoryStashId`) exists at character-creation time. The user adds Storage stashes on demand via the Storage tab (§5.3). Rationale: storage is opt-in scenery (a chest at home, a vault in Waterdeep) that not every character needs; auto-creating a "Storage" stash with no narrative purpose adds noise.
 - **History detail level** → **ownership-transition filter by default on per-item history; full filtered party log for everything else.** Per §4 there is no separate `ItemHistory` table — per-item history is a filtered view over `TransactionLog`. The Item Detail screen (§5.4) defaults to showing types that change ownership or identity (`acquire`, `transfer`, `purchase`, `sale`, `consume`, `identify`, `attune`, `unattune`, `equip`, `unequip`) and offers a "Show all events" toggle that expands to the full set (including `use-charge`, `recharge`, `edit-item-instance`). Everything is still logged; the default filter just keeps the focused view from drowning in charge-tick rows.
+
+### Resolved 2026-06-24 (review batch after M5 / M5.5)
+
+- **Per-item history visibility on shared pools** → For items currently in **Party Stash** or **Recovered Loot**, history is visible to **every party member**, matching §3.15's "visible to all members" transparency for shared pools. See §3.4 last bullet.
+- **Equip / attune / charge state on cross-stash transfer** → Auto-cleared on leaving Inventory (`equipped: false`, `attuned: false`, `currentCharges: null`) as part of the same `transfer` dispatch. Emits one extra `edit-item-instance` entry alongside the `transfer` for audit. See §3.4.
+- **Container contents on transfer** → Contents follow the container (the parent's `ownerId` changes; children's `containerInstanceId` stays). One-level-deep is preserved: `transfer` rejects "move container A into container B". See §3.4.
+- **Identification reversibility** → Bidirectional. The DM can flip `identified` from `true → false` (e.g., "actually that was cursed") and vice versa; each toggle emits its own `identify` log entry. See §3.8.
+- **Identification hint scope** → Per-instance (matches the §4 payload shape). Bulk-identify across all unidentified instances of a definition lands as an explicit DM batch action in R6 rather than via shared-state magic. See §3.8.
+- **DM force-use-charge target** → Inventory-only items (`scope=character, isCarried=true`). Force-recharge remains "any item, any location" per §8.1 because it sets a value rather than reading one. See §3.8.
+- **Lossy currency convert** → Refused (not silently rounded). The Convert modal disables submit on lossy combos with an inline reason. See §3.5.
+- **Homebrew visibility** → Party-scoped via `ItemDefinition.partyId` (already the schema field). A user in party A cannot see homebrew created in party B even if a member of both. PHB/DMG remains universal. See §3.7 + §4 `ItemDefinition`.
+- **No-session activity** → Allowed. Resulting `TransactionLog` entries carry `sessionId: null`; the party log surfaces them under an "Untagged" filter bucket. See §3.12.
+- **Shop currency** → Shops have no `CurrencyHolding`. `purchase` deducts from the buyer's stash, `sale` adds to the buyer's stash; the shop side is bookkeeping-free. See §3.9.
+- **DM-transfer with Banker conflict** → Auto-clears `Party.bankerUserId` and emits `revoke-banker` with the new `reason: "dm-transfer"`. New DM must reappoint. Preserves the "DM cannot be Banker" invariant. See §3.14 + §4 `revoke-banker` enum.
+- **Player → player currency push under Banker** → Always allowed. The Banker mediates the shared pools (Party Stash + Recovered Loot), not character-to-character moves; players retain control of their own purses. See §3.14.
+- **`Party.isSoloShortcut` lifecycle** → Field removed. The "solo" badge is derived from `memberCount === 1`. MVP code keeps writing `isSoloShortcut: true` as a placeholder for forward-compat with existing Dexie blobs, but R4 multi-member work treats it as "derived, ignored". See §4 `Party`.
+- **Bag of Holding identification** → `ItemDefinition.flatWeight: boolean` (default `false`). DMG 2024 seed sets `flatWeight: true` on BoH-class entries; `weight.ts` stops descending into contents when the flag is set. Homebrew opts in via the same field. See §3.6 + §4 `ItemDefinition`.
 
 ---
 

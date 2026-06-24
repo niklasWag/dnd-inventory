@@ -650,7 +650,8 @@ Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); 
 - [ ] `Character.encumbranceRule` accepts `"advisory" | "hard"` (in addition to `"off"`)
 - [ ] `Character.maxAttunement` becomes DM-editable (was display-only in MVP)
 - [ ] `ItemInstance.containerInstanceId` becomes settable (single-level only)
-- [ ] Migration test: MVP exports import cleanly with all placeholders preserved
+- [ ] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2) ships `flatWeight: true` on BoH-class entries.
+- [ ] Migration test: MVP exports import cleanly with all placeholders preserved (including `flatWeight: false` defaulted on M2-vintage definitions)
 
 **Reducer actions (§4 TransactionLog union)**
 - [ ] `equip` action + payload schema (`{ itemInstanceId, characterId, slot? }`)
@@ -661,14 +662,22 @@ Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); 
 - [ ] Attunement slot-cap invariant test (uses `Character.maxAttunement`)
 - [ ] Action to set `Character.maxAttunement` (DM-only when 2+ members; per §8.1)
 - [ ] Action to set `Character.encumbranceRule` (DM-only when 2+ members; per §8.1)
+- [ ] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values.
+- [ ] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract.
+- [ ] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character.
+- [ ] Invariant test: charged item (currentCharges = 3) transferred Inventory → Storage → `currentCharges: null` after.
+- [ ] **Extend `transfer` reducer**: container contents follow the container atomically per OUTLINE §3.4. When the moved row's `id` appears as a `containerInstanceId` on other instances in the source stash, those child rows' `ownerId` updates to the destination stash too. Children's `containerInstanceId` is preserved (still points at the same parent).
+- [ ] Invariant test: backpack with 3 rations moved Inventory → Storage → all 4 rows now in Storage; children still point at the backpack's id.
+- [ ] Invariant test: `transfer` rejects moving a container row INTO another container (would create two-level nesting; OUTLINE §3.6 one-level-deep rule).
+- [ ] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document).
 
 **Rules — activate stubs (§6)**
 - [ ] `packages/rules/capacity.ts` implemented (STR × 15; encumbered > 5×STR; heavily > 10×STR)
 - [ ] `capacity.ts` tests cover boundaries + `off` / `advisory` / `hard` enforcement
 - [ ] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string)
 - [ ] `attunement.ts` tests
-- [ ] `packages/rules/weight.ts` implemented (single-level container + Bag-of-Holding flat-weight exception)
-- [ ] `weight.ts` tests cover normal containers and BoH-style exceptions
+- [ ] `packages/rules/weight.ts` implemented (single-level container + Bag-of-Holding flat-weight exception). Reads `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stops descending into contents.
+- [ ] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests.
 - [ ] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.)
 - [ ] `validation.ts` tests
 
@@ -696,6 +705,7 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 - [ ] DMG seed Zod schema
 - [ ] DMG seed loader + tests
 - [ ] `seedVersion` bumped; re-seed test: PHB+DMG upsert, homebrew untouched
+- [ ] DMG seed entries for Bag of Holding, Handy Haversack, Portable Hole, and any other "extradimensional storage" item ship with `flatWeight: true` per OUTLINE §3.6 (the rules-engine discriminator added in R1). Seed test: at least one BoH-class entry parses with `flatWeight: true`; non-container DMG entries default to `false`.
 
 **Schema activations (§4)**
 - [ ] `ItemDefinition.rarity` becomes settable (`common`…`artifact`)
@@ -716,6 +726,8 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 - [ ] `recharge` batch action (long-rest / dawn / dusk applies to all eligible items)
 - [ ] `identify` action + payload schema (`{ itemInstanceId, previousHint?, newHint? }`)
 - [ ] DM-only invariant test for `identify` in 2+-member parties (§8.1)
+- [ ] **`identify` is bidirectional** per OUTLINE §3.8: the DM can flip `identified` from `true → false` (e.g., "actually that was cursed") as well as `false → true`. Reducer test for both directions; both produce their own `identify` log entry with `previousHint` / `newHint` capturing before/after.
+- [ ] **`identify` hint is per-instance** per OUTLINE §3.8: two `ItemInstance`s with the same `definitionId` can each carry a different hint. Reducer test: two unidentified longswords get distinct hints "radiates evil" vs "smells like lavender"; toggling `identified` on one doesn't affect the other.
 
 **UI (§5)**
 - [ ] Rarity color coding in catalog + item rows
@@ -776,7 +788,8 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP)
 - [ ] `Party.inviteCode` becomes user-visible / rotatable
 - [ ] `PartyMembership` supports count > 2
-- [ ] New parties default `isSoloShortcut: false`; legacy solo parties keep `true`
+- [ ] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24). The "solo" hub badge is derived from `memberCount === 1`. R4 migration: stop writing the field on newly-created parties (drop it from `create-character` reducer); MVP-vintage parties keep the `true` value but readers ignore it. Schema either drops the field entirely or marks it `.optional()` to accept legacy blobs.
+- [ ] Migration test: an M0 / M1 / M2 / M3 / M4 / M5 / M5.5 AppState (with `isSoloShortcut: true`) imports cleanly under R4 schema; the hub renders the "solo" badge based purely on `memberCount`.
 - [ ] Composite-key invariant test: `(userId, partyId, role)` allows DM+player for creator
 
 **Reducer actions (§4 TransactionLog union)**
@@ -788,10 +801,14 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] `kick-player` Banker auto-clear with `reason: "kicked"`
 - [ ] `appoint-banker` action + payload schema
 - [ ] `revoke-banker` action + payload schema
+- [ ] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "left-party" | "kicked" | "reassigned"`) still validate.
 - [ ] Invariant test: DM cannot self-appoint as Banker (§3.14)
 - [ ] Invariant test: Banker target must have active `role="player"` membership
 - [ ] Invariant test: Banker role only legal when `memberCount >= 2`
 - [ ] `dm-transfer` action + payload schema
+- [ ] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one `dm-transfer` entry + one `revoke-banker` entry with `reason: "dm-transfer"`. New DM must reappoint a Banker afterward.
+- [ ] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
+- [ ] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
 - [ ] `delete-character` action + payload schema (`{ characterId, name, lastSessionId? }` per §4)
 - [ ] `delete-character` reducer case: moves owned items + currency to Recovered Loot, clears `PartyMembership.characterId`
 - [ ] `delete-character` invariant test: owning user keeps their membership (can recreate a character)
@@ -802,12 +819,16 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
 - [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
 - [ ] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash
-- [ ] `currency-transfer` invariant test: player-to-player push allowed for any player; Banker-from-pool allowed always; DM blocked from distributing to specific players while Banker active (§8.1)
+- [ ] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Test: with a Banker active, player A can push 5 gp to player B's Inventory and the entry surfaces in the party log (Banker has visibility but no veto).
+- [ ] `currency-transfer` invariant test: Banker-from-pool allowed always; DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1)
 - [ ] `currency-transfer` invariant test: when no Banker, players self-claim freely (including pushing to own character's Inventory)
 - [ ] Invariant test: when Banker active, DM cannot distribute to specific players (§8.1)
 - [ ] Invariant test: when Banker active, players cannot self-claim from Party Stash / Recovered Loot (§3.14)
 - [ ] Invariant test: when no Banker, players self-claim freely from both pools (§3.14)
 - [ ] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1)
+- [ ] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Catalog Browser filters definitions where `partyId === null` (PHB/DMG) OR `partyId === activePartyId` (this party's homebrew). Definitions belonging to other parties the same user is in are NOT visible from the active party's catalog.
+- [ ] Invariant test: user is a member of parties A + B; creates homebrew "Vorpal Spork" in party A; switches to party B's view → Catalog Browser doesn't list it. Switches back to party A → it's there again.
+- [ ] Invariant test: user creates homebrew in party A; another user joins party A later → the new member sees the homebrew (party-scoped, not user-scoped).
 - [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4)
 
 **DM cross-character actions (§8.1 "Edit other players' inventory via explicit action")**
@@ -815,7 +836,9 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] DM-issued `transfer` between any two stashes in the party
 - [ ] DM-issued `equip` / `unequip` on another player's character
 - [ ] DM-issued `attune` / `unattune` (bypasses cap with explicit confirm; cap-override still logs)
-- [ ] DM-issued `use-charge` / `recharge` on another player's item (force-recharge per §3.8)
+- [ ] DM-issued `recharge` on another player's item (force-recharge — any item, any location, per §3.8)
+- [ ] **DM-issued `use-charge` (force-use-charge) is restricted to items currently in someone's Inventory** per OUTLINE §3.8 amendment (2026-06-24). Items in Storage / Party Stash / Recovered Loot / Shop have `currentCharges: null` per §4 — there's nothing to decrement. If the DM needs to force a charge consumption on a stashed item, they `transfer` it into a character's Inventory first.
+- [ ] Invariant test: DM force-use-charge on an item in Party Stash → rejected with a clear "not in Inventory" message. The same item moved to a character's Inventory + force-used → succeeds; one `use-charge` entry recorded.
 - [ ] DM-issued character-field edits (name, species, class, level, STR) via explicit action — separate from owner self-edits
 - [ ] Invariant test: every DM cross-character action writes a log entry that the affected owner can see in the party log
 - [ ] Invariant test: no silent edits — UI never mutates another player's data without dispatching a logged action (§8 "DM principle")
@@ -867,13 +890,18 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [ ] Invariant: at most one `isCurrent` session per party
 - [ ] Action: `start-session` (clears previous `isCurrent`)
 - [ ] Action: `end-session`
-- [ ] `TransactionLog.sessionId` populated from current session at write time
+- [ ] `TransactionLog.sessionId` populated from current session at write time; **`null` when no session is current** per OUTLINE §3.12 amendment (2026-06-24) — no-session activity is allowed, not blocked.
+- [ ] Reducer test: dispatching `acquire` / `transfer` / `currency-transfer` etc. with no current session produces log entries with `sessionId: null`.
 
 **History UI**
 - [ ] Party log timeline view (§5.8)
 - [ ] Filters: session / character / item / action type / actorRole
+- [ ] **Session filter has an explicit "Untagged" bucket** that surfaces entries with `sessionId: null` per OUTLINE §3.12. Component test: a no-session entry appears under "Untagged" in the filter dropdown and renders in the list when "Untagged" is selected.
 - [ ] Per-item history queried directly from log (no separate table, per §4)
-- [ ] Permission rule: per-item history visible to current owner + DM (§3.11, §8)
+- [ ] **Permission rule** per OUTLINE §3.4 amendment (2026-06-24): per-item history is visible to (a) the current owner + DM for items in a character's Inventory or Storage, and (b) **every party member** for items currently in **Party Stash** or **Recovered Loot** (matches §3.15 transparency on shared pools).
+- [ ] Component test: player A's Inventory item history is hidden from player B (only A + DM see it).
+- [ ] Component test: an item currently in Party Stash has its history visible to every party member.
+- [ ] Component test: an item moved from a player's Inventory → Party Stash → back to a different player's Inventory has each segment of its history visible to the right audience at the time it was held there (the visibility rule reads the item's CURRENT `ownerId` for the gating decision; the history rows themselves are immutable).
 - [ ] Virtualized list / pagination for long histories
 - [ ] Banker actions tagged `actorRole: "banker"` visible to all members (§3.14)
 
@@ -904,6 +932,9 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] Action: `purchase` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
 - [ ] Action: `sale` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
 - [ ] Purchase decrements finite shop stock; unlimited stock untouched
+- [ ] **Shops have no `CurrencyHolding`** per OUTLINE §3.9 amendment (2026-06-24). `purchase` only debits the buyer's stash; `sale` only credits the buyer's stash. The shop side is bookkeeping-free — `Shop` deliberately omits a currency row.
+- [ ] Invariant test: `purchase` debits 50 cp from the buyer's Inventory when the priced item costs 50 cp; no other state changes.
+- [ ] Invariant test: `sale` credits the buyer's Inventory at the shop's `sellToMerchantRate × price`; no other state changes.
 
 **Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
 - [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
@@ -932,6 +963,9 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] Identification Panel UI: list of unidentified instances in the party
 - [ ] DM toggles `identified`; players see real name update via sync
 - [ ] DM-set hint editable
+- [ ] **Bidirectional toggle** per OUTLINE §3.8 amendment (2026-06-24): the DM can flip an item BACK to `identified: false` (e.g., "actually that was cursed all along"). Component test: identified → unidentified flip produces an `identify` log entry; the item reverts to "Unknown Magic Item" + hint display per the §8 display invariant.
+- [ ] **DM batch-identify action** per OUTLINE §3.8 amendment (2026-06-24): a dedicated DM toolkit affordance that toggles `identified` and optionally sets a shared hint across ALL instances of a given `definitionId` in the party (Inventory + Storage + Party Stash + Recovered Loot). Emits one `identify` log entry per affected instance (or a single batch entry — pick one and document). Useful because hints are per-instance (§3.8), so bulk-revealing several copies of "Sword of X" otherwise takes one-by-one clicks.
+- [ ] Batch-identify component test: 3 unidentified copies of the same definition → one batch click → all 3 reveal; 3 `identify` log entries (or one batch entry) recorded.
 
 **Shops (§3.9, §5.12)**
 - [ ] Shop Manager screen: create / edit shops + stock + modifiers
@@ -981,17 +1015,19 @@ Light/dark theme, responsive player views (mobile), fuzzy multi-field search, ac
 
 Track resolution before the relevant milestone ships. Each is a decision, not an implementation task — check once decided + linked in code.
 
-- [ ] **Snapshot retention** — decide: hard-coded 30 days vs admin-settings-exposed (impacts R3)
-- [ ] **Discord outage fallback** — decide: session validity window (N days) if OAuth unreachable (impacts R3)
-- [ ] **Invite code lifetime** — decide: single-use vs reusable, time-bounded or not (impacts R4)
-- [ ] **Recovered-loot pruning** — decide: grow forever vs auto-expire stale items (impacts R4/R5)
-- [ ] **History detail level** — decide: ownership transitions only vs every edit on per-item history (impacts R5)
-- [x] **Default Storage stash on character creation** — decide: auto-create one vs zero (impacts MVP M1 / R1 polish). **Resolved 2026-06-23: zero.** Characters land with Inventory + Party Stash + Recovered Loot only; Storage tab is opt-in via M3's "New Storage stash". Matches MVP §5.2 wording.
-- [ ] **DM-as-player on creation** — decide: explicit prompt vs auto-add deletable player membership (impacts R4)
+> **2026-06-24 — All historical open questions resolved.** OUTLINE §11 reads "Currently no open questions remain." This section is now a synced mirror of the resolved-and-moved-into-spec-body list there. New open questions surfaced by future milestones will be added here and to OUTLINE §11 simultaneously.
+
+- [x] **Snapshot retention** — Resolved: default **30 days**, **operator-configurable** in admin settings. See OUTLINE §9 and `SECURITY.md` §8. Impacts R3.
+- [x] **Discord outage fallback** — Resolved: existing valid session cookies remain accepted without contacting Discord; only new logins fail during an outage. See `SECURITY.md` §1.1. Impacts R3.
+- [x] **Invite code lifetime** — Resolved: reusable until the DM rotates; no time limit. See OUTLINE §3.2 + `SECURITY.md` §1.2. Impacts R4. (R3 also adds **Session TTL** → **30 days idle expiry** with sliding expiry on activity per `SECURITY.md` §1.1 — tuned for private campaigns that may go weeks between sessions.)
+- [x] **Recovered-loot pruning** — Resolved: **never auto-purges**. The pile only shrinks when items/currency are explicitly claimed (player self-claim when no Banker, Banker distribution when one is active, or DM action) or when the DM explicitly removes items/currency for gameplay reasons. See OUTLINE §3.10 / §3.15 / §8.1. No time-based or size-based eviction. Impacts R4/R5.
+- [x] **History detail level** — Resolved: **ownership-transition filter by default on per-item history; full filtered party log for everything else.** Per OUTLINE §4 there is no separate `ItemHistory` table — per-item history is a filtered view over `TransactionLog`. The Item Detail screen defaults to types that change ownership/identity (`acquire`, `transfer`, `purchase`, `sale`, `consume`, `identify`, `attune`, `unattune`, `equip`, `unequip`); a "Show all events" toggle expands to the full set. Impacts R5.
+- [x] **Default Storage stash on character creation** — Resolved 2026-06-23: **zero**. Characters land with Inventory + Party Stash + Recovered Loot only; Storage tab is opt-in via M3's "New Storage stash". Matches MVP §5.2 wording.
+- [x] **DM-as-player on creation** — Resolved: the party-creation flow **prompts the user explicitly**: *"Do you also play a character in this party?"* with yes / no (default yes for convenience but not silent). User's choice determines whether the second `PartyMembership` row (`role="player"`, with a character) is created alongside the `role="dm"` row. See OUTLINE §3.1 and §4 `PartyMembership`. Impacts R4.
 
 #### Open Questions — Notes
 
-> -
+> **2026-06-24 — Roadmap synced to OUTLINE §11.** All seven historical open questions now show as resolved here, matching OUTLINE §11's "Resolved (moved into spec body)" block. No new open questions surfaced through M5 / M5.5. Future milestones that uncover a new decision-point should add the row to BOTH this checklist AND OUTLINE §11 (with whatever resolution gets agreed) so the two stay in sync.
 
 ---
 
@@ -1030,4 +1066,23 @@ Not milestone-specific; revisit each release.
 
 #### Cross-cutting — Notes
 
-> -
+> **2026-06-24 — OUTLINE §11 review batch propagated to roadmap.** Fourteen ambiguities surfaced in a full OUTLINE.md re-read got resolved in the spec body (see OUTLINE §11 "Resolved 2026-06-24" rollup). Mapped to roadmap milestones below; each new checkbox in R1–R6 references the OUTLINE clause that authorized it.
+>
+> | # | Decision | Roadmap touchpoint(s) |
+> |---|---|---|
+> | History visibility on shared pools = every party member | R5 — "Permission rule" + 3 new component tests |
+> | Auto-clear `equipped` / `attuned` / `currentCharges` on leaving Inventory | R1 — `transfer` reducer extension + 3 invariant tests |
+> | Container contents follow on transfer; reject A-into-B | R1 — `transfer` reducer extension + 3 invariant tests |
+> | Lossy `convert` refused (not rounded) | ✅ already shipped in M4; no roadmap action |
+> | `ItemDefinition.flatWeight: boolean` field | R1 — schema activation + `weight.ts` tests; R2 — DMG seed entries |
+> | Homebrew party-scoped visibility | R4 — Catalog Browser filter + 2 invariant tests |
+> | Identification bidirectional | R2 — `identify` reducer bidirectional test; R6 — UI bidirectional toggle test |
+> | Hint per-instance + DM batch action | R2 — per-instance test; R6 — batch-identify affordance + test |
+> | DM force-use-charge Inventory-only | R4 — DM cross-character action gating + 1 invariant test |
+> | Shops have no purse | R6 — `Shop` schema (no currency row) + 2 invariant tests |
+> | No-session activity allowed; "Untagged" bucket | R5 — `sessionId: null` reducer test + "Untagged" filter component test |
+> | `dm-transfer` auto-clears Banker; new enum value `"dm-transfer"` | R4 — cascade reducer + 2 invariant tests; `revoke-banker` enum extension |
+> | Player→player currency push unaffected by Banker | R4 — `currency-transfer` invariant test made explicit |
+> | `Party.isSoloShortcut` removed | R4 — schema migration + 1 migration test; MVP keeps writing the literal |
+>
+> All future spec changes should follow the same pattern: amend OUTLINE.md first, then add roadmap checkboxes in the affected milestone(s), then code. The roadmap is a tracker, not a source of truth — if it disagrees with OUTLINE, OUTLINE wins (per CLAUDE.md).

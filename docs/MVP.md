@@ -106,7 +106,10 @@ type Party = {
   inviteCode: string;              // generated but unused in MVP
   recoveredLootStashId: string;
   bankerUserId: null;              // always null in MVP (no Banker in party-of-one)
-  isSoloShortcut: true;            // MVP always sets true
+  isSoloShortcut: true;            // MVP always sets true. NOTE: removed from OUTLINE §4 on 2026-06-24
+                                   // — "solo" badge is now derived from memberCount === 1.
+                                   // MVP keeps writing the literal `true` so existing Dexie
+                                   // blobs validate; R4 treats it as "derived, ignored".
   createdAt: string;
 };
 
