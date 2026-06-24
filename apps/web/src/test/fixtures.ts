@@ -31,6 +31,7 @@ import type { HomebrewDefinitionInput } from '@/store/types';
 export const VALID_CREATE_CHARACTER_PAYLOAD = {
   name: 'Thorin',
   species: 'Dwarf',
+  size: 'medium',
   class: 'Fighter',
   level: 3,
   str: 16,
@@ -39,6 +40,7 @@ export const VALID_CREATE_CHARACTER_PAYLOAD = {
 export interface CreateCharacterPayload {
   name: string;
   species: string;
+  size: 'tiny' | 'small' | 'medium' | 'large' | 'huge' | 'gargantuan';
   class: string;
   level: number;
   str: number;

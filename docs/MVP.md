@@ -128,11 +128,13 @@ type Character = {
   ownerUserId: string;
   name: string;
   species: string;
+  size: "tiny" | "small" | "medium" | "large" | "huge" | "gargantuan"; // R1.1: drives capacity multiplier per PHB 2024 p. 366
   class: string;
   level: number;
   abilityScores: { STR: number };  // STR only in MVP
   maxAttunement: number;           // default 3; not enforced in MVP UI
-  encumbranceRule: "off";          // MVP hard-codes "off"; field present for forward-compat
+  encumbranceRule: "off" | "phb" | "variant"; // R1.1 widened (was z.literal('off') in MVP)
+  enforceEncumbrance: boolean;     // R1.1 added; default false. R1.2 wires reducer rejection.
   inventoryStashId: string;
 };
 
@@ -205,7 +207,8 @@ type TxType =
   | "create-character"
   | "create-stash" | "rename-stash" | "delete-stash"
   | "create-homebrew" | "edit-homebrew" | "delete-homebrew"
-  | "rename-character" | "rename-party";
+  | "rename-character" | "rename-party"
+  | "set-encumbrance";
 // Note: MVP captures a SUBSET of the outline's full TxType enum.
 // All MVP types are byte-compatible with the final schema.
 ```

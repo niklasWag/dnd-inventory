@@ -1,6 +1,8 @@
 import type {
   AppState as AppStateShape,
+  CreatureSize,
   CurrencyDenomination,
+  EncumbranceRule,
   ItemCategory,
   ItemDefinition,
   TransactionLogEntry as LogEntry,
@@ -35,6 +37,7 @@ export type Action =
       payload: {
         name: string;
         species: string;
+        size: CreatureSize;
         class: string;
         level: number;
         str: number;
@@ -231,6 +234,24 @@ export type Action =
       payload: {
         partyId: string;
         newName: string;
+      };
+    }
+  | {
+      // R1.1: flip a Character's encumbrance configuration. Two
+      // orthogonal fields covered in one dispatch:
+      //   - `rule`    — off | phb | variant — which math to apply.
+      //   - `enforce` — orthogonal boolean — does Hard-mode rejection
+      //                 apply? R1.1 stores the flag; R1.2 wires the
+      //                 actual `acquire` / `transfer` rejection.
+      // Reducer captures pre-mutation `oldRule` + `oldEnforce` from the
+      // row and rejects no-op (both unchanged) dispatches. UI may set
+      // both fields at once or just one; if a caller only wants to
+      // touch one, they read the current value and resend it.
+      type: 'set-encumbrance';
+      payload: {
+        characterId: string;
+        rule: EncumbranceRule;
+        enforce: boolean;
       };
     };
 

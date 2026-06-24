@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { encumbranceRuleSchema } from './character';
+
 /**
  * TransactionLog — MVP captures a strict SUBSET of the OUTLINE §4 full
  * union. Every action that mutates state appends one entry; the discriminant
@@ -409,6 +411,32 @@ const renamePartyEntry = z.object({
   }),
 });
 
+/**
+ * `set-encumbrance` — per-character encumbrance configuration
+ * (OUTLINE §3.3 + §3.6). R1.1 widens `Character.encumbranceRule` from
+ * the MVP literal `'off'` to `'off' | 'phb' | 'variant'`, and adds the
+ * orthogonal `enforceEncumbrance` boolean. This single entry records
+ * any change to EITHER field (or both at once) so a "switch to variant
+ * + turn on enforcement" flip stays one dispatch / one log row per the
+ * CLAUDE.md "every mutation logs once" invariant.
+ *
+ * Reducer guards: unknown characterId rejects; no-op rejects when both
+ * `newRule === oldRule` AND `newEnforce === oldEnforce`. In MVP
+ * party-of-one this is owner-only (player); R4 makes it DM-only in 2+-
+ * member parties per OUTLINE §8.1.
+ */
+const setEncumbranceEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('set-encumbrance'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    oldRule: encumbranceRuleSchema,
+    newRule: encumbranceRuleSchema,
+    oldEnforce: z.boolean(),
+    newEnforce: z.boolean(),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -429,6 +457,7 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   deleteHomebrewEntry,
   renameCharacterEntry,
   renamePartyEntry,
+  setEncumbranceEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

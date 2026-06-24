@@ -70,7 +70,7 @@ describe('importFromText (M7)', () => {
   });
 
   it('extracts meta for a populated export', () => {
-    bootstrap({ name: 'Bara', species: 'Elf', class: 'Bard', level: 2, str: 10 });
+    bootstrap({ name: 'Bara', species: 'Elf', size: 'medium', class: 'Bard', level: 2, str: 10 });
     const text = serializeExport(
       buildExportEnvelope(snapshotFromStore(), { now: FIXED_NOW, appVersion: '0.0.0' }),
     );

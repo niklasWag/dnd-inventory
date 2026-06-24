@@ -44,7 +44,7 @@ describe('CatalogBrowser', () => {
   it('renders the full PHB list when the catalog is seeded', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
     });
     useStore.getState().dispatch({
       type: 'seed-catalog',

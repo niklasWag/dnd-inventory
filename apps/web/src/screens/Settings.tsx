@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { RenameField } from '@/components/settings/RenameField';
+import { EncumbranceRuleField } from '@/components/settings/EncumbranceRuleField';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
 import { wipeAll } from '@/db/wipe';
 import { exportToFile, type ExportSnapshot } from '@/io/export';
@@ -163,6 +164,25 @@ export function Settings(): ReactElement {
             entityId={party.id}
             currentName={party.name}
             label="Party name"
+          />
+        </section>
+      ) : null}
+
+      {/* R1.1: per-character encumbrance rule selector. Same pre-
+          bootstrap gate as the rename section — nothing to configure
+          until a character exists. */}
+      {character !== null ? (
+        <section className="space-y-4 rounded-lg border border-border p-4">
+          <div>
+            <h2 className="font-semibold">Encumbrance</h2>
+            <p className="text-sm text-muted-foreground">
+              Pick how the Inventory tab handles carrying capacity.
+            </p>
+          </div>
+          <EncumbranceRuleField
+            characterId={character.id}
+            currentRule={character.encumbranceRule}
+            currentEnforce={character.enforceEncumbrance}
           />
         </section>
       ) : null}

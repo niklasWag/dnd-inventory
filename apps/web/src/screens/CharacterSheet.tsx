@@ -3,6 +3,7 @@ import { Navigate, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
+import { CapacityBar } from '@/components/inventory/CapacityBar';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
@@ -103,6 +104,7 @@ export function CharacterSheet(): ReactElement {
         ) : (
           <div className="space-y-4">
             <CurrencyRow stashId={targetStash} />
+            {tab === 'inventory' ? <CapacityBar characterId={character.id} /> : null}
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-muted-foreground">
                 {labelForTab(tab)}

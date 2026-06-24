@@ -95,6 +95,8 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return renameCharacter(state, action.payload);
     case 'rename-party':
       return renameParty(state, action.payload);
+    case 'set-encumbrance':
+      return setEncumbrance(state, action.payload);
   }
 }
 
@@ -192,11 +194,13 @@ function createCharacter(
         ownerUserId: userId,
         name: payload.name,
         species: payload.species,
+        size: payload.size,
         class: payload.class,
         level: payload.level,
         abilityScores: { STR: payload.str },
         maxAttunement: 3,
         encumbranceRule: 'off',
+        enforceEncumbrance: false,
         inventoryStashId,
       },
     ],
@@ -1433,6 +1437,72 @@ function renameParty(
       {
         type: 'rename-party',
         payload: { partyId: s.party.id, oldName, newName },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// set-encumbrance (R1.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flip a Character's encumbrance configuration:
+ *   - `rule`    — `off | phb | variant` — which math the CapacityBar
+ *                 and (R1.2) the reducer cascade use. `phb` is the
+ *                 standard PHB 2024 rule: at-or-under `STR × 15` is
+ *                 fine; above is over-capacity. `variant` is the
+ *                 sidebar rule on PHB p. 366 with bands at 5×/10×STR.
+ *   - `enforce` — orthogonal boolean. R1.2 will reject `acquire` /
+ *                 `transfer` that pushes weight over the rule's upper
+ *                 band only when this flag is `true`. R1.1 stores the
+ *                 flag; behavior is display-only.
+ *
+ * Guards: unknown characterId rejects; no-op rejects only when BOTH
+ * fields match the current row (a caller dispatching the current rule
+ * with a new enforce value is a real change).
+ *
+ * Per the CLAUDE.md "every mutation logs once" invariant, the single
+ * log entry captures `{ oldRule, newRule, oldEnforce, newEnforce }`
+ * so the history view can render either / both transitions.
+ */
+function setEncumbrance(
+  state: AppState,
+  payload: Extract<Action, { type: 'set-encumbrance' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'set-encumbrance');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`set-encumbrance: unknown characterId ${payload.characterId}`);
+  }
+  const ruleUnchanged = payload.rule === character.encumbranceRule;
+  const enforceUnchanged = payload.enforce === character.enforceEncumbrance;
+  if (ruleUnchanged && enforceUnchanged) {
+    throw new Error('set-encumbrance: nothing changed');
+  }
+
+  const oldRule = character.encumbranceRule;
+  const oldEnforce = character.enforceEncumbrance;
+  return {
+    state: {
+      ...s,
+      characters: s.characters.map((c) =>
+        c.id === character.id
+          ? { ...c, encumbranceRule: payload.rule, enforceEncumbrance: payload.enforce }
+          : c,
+      ),
+    },
+    logEntries: [
+      {
+        type: 'set-encumbrance',
+        payload: {
+          characterId: character.id,
+          oldRule,
+          newRule: payload.rule,
+          oldEnforce,
+          newEnforce: payload.enforce,
+        },
       },
     ],
   };

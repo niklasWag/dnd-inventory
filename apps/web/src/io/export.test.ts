@@ -62,13 +62,13 @@ describe('buildExportEnvelope (M7)', () => {
 
 describe('buildExportFilename (M7)', () => {
   it('slugifies the first character name + appends ISO date', () => {
-    bootstrap({ name: 'Bara of Waterdeep', species: 'Half-Elf', class: 'Rogue', level: 1, str: 12 });
+    bootstrap({ name: 'Bara of Waterdeep', species: 'Half-Elf', size: 'medium', class: 'Rogue', level: 1, str: 12 });
     const filename = buildExportFilename(snapshotFromStore(), { now: FIXED_NOW });
     expect(filename).toBe('dnd-inv-bara-of-waterdeep-2026-06-24.json');
   });
 
   it('collapses non-alphanumerics and lowercases', () => {
-    bootstrap({ name: "Thorin & 'Iron-Fist'!", species: 'Dwarf', class: 'Fighter', level: 1, str: 16 });
+    bootstrap({ name: "Thorin & 'Iron-Fist'!", species: 'Dwarf', size: 'medium', class: 'Fighter', level: 1, str: 16 });
     const filename = buildExportFilename(snapshotFromStore(), { now: FIXED_NOW });
     expect(filename).toBe('dnd-inv-thorin-iron-fist-2026-06-24.json');
   });
@@ -80,7 +80,7 @@ describe('buildExportFilename (M7)', () => {
 
   it('caps the slug at 40 chars', () => {
     const long = 'a'.repeat(80);
-    bootstrap({ name: long, species: 'Human', class: 'Wizard', level: 1, str: 8 });
+    bootstrap({ name: long, species: 'Human', size: 'medium', class: 'Wizard', level: 1, str: 8 });
     const filename = buildExportFilename(snapshotFromStore(), { now: FIXED_NOW });
     // 'dnd-inv-' + 40 'a's + '-YYYY-MM-DD.json'
     expect(filename).toBe(`dnd-inv-${'a'.repeat(40)}-2026-06-24.json`);

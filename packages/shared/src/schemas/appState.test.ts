@@ -56,11 +56,13 @@ describe('appStateSchema round-trip', () => {
         ownerUserId: 'user-1',
         name: 'Thorin',
         species: 'Dwarf',
+        size: 'medium',
         class: 'Fighter',
         level: 1,
         abilityScores: { STR: 16 },
         maxAttunement: 3,
         encumbranceRule: 'off',
+        enforceEncumbrance: false,
         inventoryStashId: 'stash-inv',
       },
     ],
@@ -227,6 +229,26 @@ describe('appStateSchema round-trip', () => {
           partyId: 'party-1',
           oldName: 'My Campaign',
           newName: 'The Misfits',
+        },
+      },
+      {
+        // R1.1: set-encumbrance round-trip. Per-character flip of the
+        // rule + the orthogonal `enforce` boolean. Mirrors the rename
+        // pair: { characterId, oldRule, newRule, oldEnforce, newEnforce }
+        // recorded.
+        id: 'log-9',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T11:05:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'set-encumbrance',
+        payload: {
+          characterId: 'char-1',
+          oldRule: 'off',
+          newRule: 'variant',
+          oldEnforce: false,
+          newEnforce: false,
         },
       },
     ],

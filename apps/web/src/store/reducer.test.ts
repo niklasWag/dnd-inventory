@@ -22,6 +22,7 @@ beforeEach(async () => {
 const validPayload = {
   name: 'Thorin',
   species: 'Dwarf',
+  size: 'medium',
   class: 'Fighter',
   level: 1,
   str: 16,
@@ -2967,6 +2968,166 @@ describe('reducer: rename-party (M7)', () => {
     useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId, newName: 'Schema OK' },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
+describe('reducer: set-encumbrance (R1.1)', () => {
+  /**
+   * R1.1 introduces two orthogonal fields:
+   *   - `encumbranceRule: 'off' | 'phb' | 'variant'`
+   *   - `enforceEncumbrance: boolean`
+   * One reducer action covers both. Guards mirror `rename-character`:
+   * unknown characterId rejects; no-op rejects only when BOTH fields
+   * match the current row.
+   */
+  it('flips rule from off → variant; STR + level + name stable', () => {
+    const { characterId } = localBootstrap();
+    const before = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(before.encumbranceRule).toBe('off');
+    expect(before.enforceEncumbrance).toBe(false);
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+
+    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(after.encumbranceRule).toBe('variant');
+    expect(after.enforceEncumbrance).toBe(false);
+    expect(after.id).toBe(before.id);
+    expect(after.name).toBe(before.name);
+    expect(after.level).toBe(before.level);
+    expect(after.abilityScores).toEqual(before.abilityScores);
+    expect(after.inventoryStashId).toBe(before.inventoryStashId);
+  });
+
+  it('flips through off → phb → variant → off', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'phb', enforce: false },
+    });
+    expect(
+      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
+    ).toBe('phb');
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+    expect(
+      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
+    ).toBe('variant');
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'off', enforce: false },
+    });
+    expect(
+      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
+    ).toBe('off');
+  });
+
+  it('flips enforce independently of rule', () => {
+    const { characterId } = localBootstrap();
+    // First set the rule so enforce flipping makes sense.
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+    // Now flip ONLY enforce.
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: true },
+    });
+    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(after.encumbranceRule).toBe('variant');
+    expect(after.enforceEncumbrance).toBe(true);
+  });
+
+  it('logs a set-encumbrance entry with old/new for both fields', () => {
+    const { characterId } = localBootstrap();
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: true },
+    });
+
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('set-encumbrance');
+    if (last?.type === 'set-encumbrance') {
+      expect(last.payload).toEqual({
+        characterId,
+        oldRule: 'off',
+        newRule: 'variant',
+        oldEnforce: false,
+        newEnforce: true,
+      });
+      expect(last.actorRole).toBe('player');
+    }
+  });
+
+  it('throws on no-op (rule AND enforce both unchanged)', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId, rule: 'off', enforce: false },
+      }),
+    ).toThrow(/nothing changed/);
+  });
+
+  it('does NOT throw when only enforce changes (rule stays)', () => {
+    const { characterId } = localBootstrap();
+    // off → variant first (so the no-op flip below isn't bookending an off-with-enforce state which is meaningless).
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId, rule: 'variant', enforce: true },
+      }),
+    ).not.toThrow();
+  });
+
+  it('throws on unknown characterId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId: 'does-not-exist', rule: 'variant', enforce: false },
+      }),
+    ).toThrow(/unknown characterId/);
+  });
+
+  it('throws when state is null', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId: 'foo', rule: 'variant', enforce: false },
+      }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('produces AppState that still validates against the shared schema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: true },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('log entry parses against transactionLogEntrySchema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'phb', enforce: false },
     });
     const entry = useStore.getState().log.at(-1)!;
     expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();

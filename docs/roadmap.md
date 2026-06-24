@@ -750,7 +750,7 @@ Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); 
 **Schema activations (§4)**
 - [ ] `ItemInstance.equipped` allowed to be `true`
 - [ ] `ItemInstance.attuned` allowed to be `true`
-- [ ] `Character.encumbranceRule` accepts `"advisory" | "hard"` (in addition to `"off"`)
+- [x] `Character.encumbranceRule` accepts `"advisory" | "hard"` (in addition to `"off"`) — **R1.1**
 - [ ] `Character.maxAttunement` becomes DM-editable (was display-only in MVP)
 - [ ] `ItemInstance.containerInstanceId` becomes settable (single-level only)
 - [ ] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2) ships `flatWeight: true` on BoH-class entries.
@@ -764,7 +764,7 @@ Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); 
 - [ ] `unattune` action + payload schema
 - [ ] Attunement slot-cap invariant test (uses `Character.maxAttunement`)
 - [ ] Action to set `Character.maxAttunement` (DM-only when 2+ members; per §8.1)
-- [ ] Action to set `Character.encumbranceRule` (DM-only when 2+ members; per §8.1)
+- [x] Action to set `Character.encumbranceRule` (DM-only when 2+ members; per §8.1) — **R1.1** shipped `set-encumbrance-rule` (dedicated, not catch-all); player-role in MVP, R4 widens to DM-only.
 - [ ] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values.
 - [ ] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract.
 - [ ] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character.
@@ -775,25 +775,75 @@ Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); 
 - [ ] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document).
 
 **Rules — activate stubs (§6)**
-- [ ] `packages/rules/capacity.ts` implemented (STR × 15; encumbered > 5×STR; heavily > 10×STR)
-- [ ] `capacity.ts` tests cover boundaries + `off` / `advisory` / `hard` enforcement
+- [x] `packages/rules/capacity.ts` implemented (STR × 15; encumbered > 5×STR; heavily > 10×STR) — **R1.1**
+- [x] `capacity.ts` tests cover boundaries + `off` / `advisory` / `hard` enforcement — **R1.1** (8 tests; strict `>` boundaries pinned at 5×STR and 10×STR)
 - [ ] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string)
 - [ ] `attunement.ts` tests
-- [ ] `packages/rules/weight.ts` implemented (single-level container + Bag-of-Holding flat-weight exception). Reads `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stops descending into contents.
-- [ ] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests.
+- [ ] `packages/rules/weight.ts` implemented (single-level container + Bag-of-Holding flat-weight exception). Reads `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stops descending into contents. — **R1.1** ships the flat-row aggregator (`weight × quantity` summed); container + flatWeight branch deferred to R1.2 where the §3.4 cascade is also being added.
+- [ ] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests. — **R1.1** shipped 7 tests for the flat-row sum (empty list, single row, quantity multiplier, multi-row sum, zero-weight, fractional weight, all-zero-quantity). Container + flatWeight tests deferred to R1.2.
 - [ ] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.)
 - [ ] `validation.ts` tests
 
 **UI (§5)**
-- [ ] Capacity bar on Inventory tab (per-character; warning states matching enforcement level)
+- [x] Capacity bar on Inventory tab (per-character; warning states matching enforcement level) — **R1.1** (hidden under `'off'`; amber at encumbered; destructive at heavily-encumbered; Progress primitive)
 - [ ] Equipped-slots panel on Inventory tab
 - [ ] Attunement counter (X/max) on Inventory tab
 - [ ] Equip toggle on Inventory rows
 - [ ] Attune toggle on Inventory rows
 - [ ] One-level container view inside Inventory
-- [ ] Encumbrance-rule selector on Character settings
+- [x] Encumbrance-rule selector on Character settings — **R1.1** (Settings page, native `<select>`, per-character; helper text flags R1.2 enforcement)
 
 #### R1 — Notes
+
+> **2026-06-24 — R1.1 (encumbrance display) complete.** First slice of R1 per the plan; R1.2 (equip/attune + transfer cascade + Hard enforcement) is the next chunk.
+>
+> - **Schema (additive, no migration).** `packages/shared/src/schemas/character.ts` widens `encumbranceRule` from `z.literal('off')` to `z.enum(['off','advisory','hard'])`; the literal is a strict subset so MVP-vintage exports parse unchanged. New shared type `EncumbranceRule` re-exported via the schemas barrel. `transactionLog.ts` gains a `setEncumbranceRuleEntry` variant (`{ characterId, oldRule, newRule }`) extending the discriminated union to 18 types. `appState.test.ts` round-trip fixture extended with log-9 (set-encumbrance-rule). `docs/MVP.md` §6 `TxType` union extended.
+> - **Reducer action.** Dedicated `set-encumbrance-rule` (not catch-all `edit-character` — the OUTLINE-named catch-all lands later when R1.2 needs to edit `maxAttunement` and friends, so all character-edit churn rides one TxType). Guards mirror M7 `rename-character` verbatim: `requireState` → unknown-id → no-op → `.map` → single log slice. Middleware `resolveActor` adds the type to the M3+ player-driven arm with the R4 widening note attached (DM-only in 2+-member parties per OUTLINE §8.1).
+> - **Rules engine.** `capacity.ts` and `weight.ts` flipped from "not implemented (R1)" stubs to real impls. `carryCapacity(str) = str × 15`. `encumbranceState(weight, str, rule)` uses STRICT `>` thresholds (5×STR, 10×STR) per the 2024 PHB variant — equal-to does NOT trip the next state. `rule === 'off'` short-circuits to `'unencumbered'` so callers don't have to special-case a null return. `totalWeight` is the flat-row aggregator (`Σ weight × quantity`). Container + flatWeight intentionally deferred to R1.2 where the §3.4 cascade widens the signature to take `ItemInstance` + `ItemDefinition` pairs.
+> - **shadcn Progress primitive.** Added via `pnpm dlx shadcn@latest add progress` (CLI; do not hand-edit `ui/`). The CLI initially placed the file under a literal `@/components/ui/` directory (the project's `@` alias is a TS path, not a filesystem one — components.json's "ui": "@/components/ui" was interpreted literally on this run). Moved manually into `apps/web/src/components/ui/progress.tsx` and cleaned up the stray top-level `@/` folder. `@radix-ui/react-progress@^1.1.10` was recorded in package.json by the CLI.
+> - **`CapacityBar`** (NEW, `src/components/inventory/`). Reads `{ str, rule, currentWeight }` from the store via `useShallow` — `currentWeight` is aggregated INSIDE the selector so the returned shape is all primitives (returning a fresh `rows: T[]` would shallow-compare false every render → infinite loop; the first implementation tripped this with React 19 + Zustand's `useSyncExternalStore` and the test suite caught it immediately). Returns `null` for `rule === 'off'` and for null appState. Three color states map to text classes (`text-muted-foreground` / `text-amber-600` / `text-destructive`) and inner-fill classes via Tailwind's `[&>div]:bg-*` arbitrary descendant selector targeting the Radix Progress Indicator div.
+> - **`EncumbranceRuleField`** (NEW, `src/components/settings/`). Native `<select>` rather than the shadcn Radix Select because (a) three options fit cleanly in the OS dropdown, (b) Radix Select uses a portal that's awkward to drive under jsdom (existing Radix Select usages in CatalogBrowser / CatalogPicker have no component tests to crib from). Save button disabled when draft === currentRule. `useEffect` resets the draft on upstream changes (e.g. after a successful round-trip or an import). Helper text reads "Hard enforcement activates in R1.2" — removable when R1.2 actually wires the reducer rejection.
+> - **`Settings.tsx`** gains an Encumbrance section after the Character & Party rename. Same `character !== null` gate (pre-bootstrap there's nothing to configure). `CharacterSheet.tsx` mounts `<CapacityBar characterId={character.id} />` between `<CurrencyRow>` and the items header, conditional on `tab === 'inventory'` (encumbrance is Inventory-only per OUTLINE §3.3).
+> - **Tests:** **434 pass workspace-wide** (6 shared + 5 seeds + 64 rules + 359 web). Pre-R1.1 was 396; R1.1 adds **+38 tests** — 8 reducer (set-encumbrance-rule suite) + 8 capacity (boundaries, off short-circuit, STR variations) + 7 weight (flat aggregator) + 7 CapacityBar (hidden on off, thresholds, hard==advisory in R1.1, null state) + 4 Settings (dispatch + log entry, Save disabled, helper text, pre-bootstrap hidden) + 4 schema (round-trip + 3 reducer-schema asserts inside the 8-reducer count above; effective new = +1 schema fixture). The strict `>` thresholds are pinned explicitly at both 5×STR and 10×STR so a future "off-by-one" regression couldn't slip through.
+> - **Build:** 771.70 kB JS / 23.56 kB CSS (gzip 232.40 kB / 5.35 kB). Bundle delta vs M7: **+5.82 kB JS / +0.67 kB CSS raw** (+1.74 kB / +0.13 kB gzip). Well under the +15 kB R1.1 target. Most of the JS delta is the Radix Progress primitive + its lucide-free implementation; CapacityBar + EncumbranceRuleField + reducer case account for ~1 kB combined.
+> - **Manual smoke test passed** end-to-end per the plan §verification checklist: Settings shows the encumbrance section after bootstrap. Flipping to advisory makes the capacity bar appear on the Inventory tab ("0 / 240 lb" for STR 16 default). Adding items past the 5×STR / 10×STR thresholds colors the bar amber / destructive. Switching to `off` hides the bar. Switching to `hard` shows the bar with the same colors as advisory (display-only in R1.1 — helper text flags it). Export → wipe → import preserves the rule through the round-trip. Storage / Party / Recovered-Loot tabs never render the bar.
+>
+> **Decisions captured in code:**
+> - **Dedicated action over catch-all.** `set-encumbrance-rule` is a single-purpose TxType, matching every M-tier shipping pattern. OUTLINE §4's `edit-character` catch-all (with `changedFields: string[]` per `edit-homebrew`) becomes useful in R1.2 when `maxAttunement` + `str` + `level` editing all need a destination — wrapping a single field in catch-all infrastructure today would be premature.
+> - **Hard is display-only in R1.1.** OUTLINE §3.3 still names `hard` as enforcement, but the actual rejection lands in R1.2 where it composes with the equip/attune cascade (so all "into Inventory" guards live in one place). Helper text in Settings makes this temporary posture visible to the user. OUTLINE was NOT amended — the §3.3 statement is the final spec; R1.2 makes it real.
+> - **Off hides the bar entirely.** `capacity.encumbranceState(_, _, 'off')` returns `'unencumbered'` so callers stay safe, but `CapacityBar` short-circuits to `null` on the `'off'` rule before colorization. Choosing "hide" over "show muted" matches "off = MVP behavior; nothing to display."
+> - **Strict `>` thresholds at 5×STR / 10×STR.** 2024 PHB variant rule wording. A STR-10 character at exactly 50 lb is still unencumbered; 51 lb is encumbered. Tests pin both boundaries.
+> - **CapacityBar selector returns primitives.** The first attempt returned `{ str, rule, rows }` and infinite-rendered because `rows` was a fresh array reference each call. Resolved by aggregating `currentWeight` inside the selector — the returned shape is all primitives, so `useShallow` actually short-circuits.
+> - **Native `<select>` for the encumbrance dropdown.** Three options + jsdom testability + zero context-menu-style ergonomics needed = native wins. Radix Select stays the right call for searchable/large-list pickers (CatalogBrowser).
+> - **`flatWeight` field not yet added.** Deferred to R1.2 where `weight.ts` actually consumes it. Adding the field to the schema without a consumer would be inert code.
+>
+> **2026-06-24 (later same day) — R1.1 rule rework.** User flagged that "encumbered at 50 lb on a 150 lb cap" reads as counterintuitive even though it's the variant rule per OUTLINE §3.6. Refactored the rule shape mid-slice:
+>
+> - **Schema rename, two orthogonal fields.** `Character.encumbranceRule` enum renamed from `off|advisory|hard` → **`off|phb|variant`** (`phb` is the new PHB-default rule with a single over-cap band at `STR×15`; `variant` keeps the M-style 5×/10× bands). Added **`Character.enforceEncumbrance: boolean`** as an orthogonal flag. Hard rename (no legacy aliases) — slice landed earlier today; no persisted user data at stake. Log entry renamed `set-encumbrance-rule` → **`set-encumbrance`** with payload `{ characterId, oldRule, newRule, oldEnforce, newEnforce }` — one entry covers both fields.
+> - **Rules engine.** `capacity.encumbranceState` now branches on rule: `phb` returns `unencumbered`/`heavily-encumbered` only (no middle band); `variant` keeps the three bands. New helper `capacity.heavyThreshold(str, rule)` exposes the upper ceiling (`STR×15` for phb, `STR×10` for variant) — CapacityBar uses it for the fill %, and R1.2 will use it as the reducer rejection threshold when `enforceEncumbrance === true`.
+> - **CapacityBar.** Rule + enforce surfaced as inline badges: "Encumbrance (PHB · enforced (R1.2))" / "(Variant)". Over-capacity label reads "(over capacity)" under PHB and "(heavily encumbered)" under variant — same color, different wording so the user understands the rule context.
+> - **Settings.** EncumbranceRuleField gains a checkbox for `enforce` (hidden when rule = off). Per-rule helper text describes each option's behavior. Saving dispatches a single `set-encumbrance` covering both fields. No-op detection compares BOTH fields against the row.
+> - **Tests:** **442 pass workspace-wide** (6 shared + 5 seeds + 70 rules + 367 web). Rules tests grew from 19 to 25 (added phb-rule + heavyThreshold suites). CapacityBar tests grew from 7 to 12 (split into phb/variant/enforce describe blocks). Settings tests cover the enforce checkbox + per-rule helper text + checkbox-hidden-under-off.
+> - **Build:** 773.05 kB JS (gzip 232.87 kB). Delta vs prior R1.1: +1.35 kB raw / +0.47 kB gzip.
+> - **Spec sync.** `docs/MVP.md` §6 TxType renamed; `Character` stub updated with both new field shapes. `OUTLINE.md` deliberately NOT amended — §3.3 / §3.6 already describe both rules abstractly ("STR × 15 capacity; encumbered > 5×STR variant"). The naming is an implementation choice consistent with the spec.
+>
+> **2026-06-24 (third pass) — size multiplier.** User flagged that carrying capacity is supposed to scale with the creature's size category (PHB 2024 p. 366). Tiny/Small × 0.5, Medium × 1, Large × 2, Huge × 4, Gargantuan × 8. Same-day refit:
+>
+> - **Schema.** New `CreatureSize` enum + `Character.size` field. Set at character creation; not editable post-creation in MVP (size changes via Enlarge/Reduce are out of §3.3 scope). Hard schema change — no `.default('medium')` — every test fixture that inlined a Character literal or a create-character payload needed `size: 'medium'`. Eight callsites updated (3 reducer/store fixtures, 2 schema fixtures, 3 component test inlines).
+> - **Rules engine.** `capacity.carryCapacity` / `encumbranceState` / `heavyThreshold` all gain a `size` parameter. New `sizeMultiplier(size)` helper exported for the UI label. Tests doubled — Small/Medium/Large explicitly pinned for both rules; Tiny/Huge/Gargantuan covered for the multiplier function.
+> - **UI.** CreateCharacter form gains a size `<select>` defaulting to Medium with per-option capacity multiplier hint ("Small (× 0.5 capacity)"). CapacityBar's rule badge widened to "(Medium · PHB)" / "(Large · Variant · enforced (R1.2))" so size is always visible alongside rule + enforce.
+> - **Tests:** **452 workspace** (6 + 5 + 72 + 369). Rules grew 70 → 72 (added `sizeMultiplier` suite, Small/Large boundary cases for both rules). CapacityBar grew 12 → 14 (Small + Large end-to-end). All other suites updated in lockstep for the new payload shape.
+> - **Build:** 774.28 kB JS (gzip 233.24 kB). Delta +1.23 kB raw / +0.37 kB gzip.
+> - **`OUTLINE.md` not amended.** §3.3 says STR drives carrying capacity and §3.6 says capacity is STR × 15 — neither explicitly mentions size scaling, but neither contradicts it. The PHB 2024 carrying-capacity rule is the canonical 5e rule and the spec defers to PHB on details. If a future reader needs the size rule stated explicitly, it goes under §3.6.
+>
+> **Followups carried forward to R1.2 (the next slice):**
+> - **Equip / unequip / attune / unattune** reducer actions + log entries + UI toggles on Inventory rows.
+> - **`Character.maxAttunement`** DM-editable. This is where `edit-character` (catch-all) becomes the right shape — pairs naturally with `maxAttunement` + `encumbranceRule` + `str` + `level` editing.
+> - **`transfer` reducer cascade** — auto-clear equip/attune/charges on leaving Inventory + container contents follow + reject A-into-B (OUTLINE §3.4).
+> - **`ItemDefinition.flatWeight` field** + `weight.ts` widened to descend into containers respecting it.
+> - **`validation.ts` activation** — slot conflicts (2H + shield etc.).
+> - **Hard-mode reducer rejection** in `acquire` / `transfer`. When this lands, the EncumbranceRuleField helper text's "(R1.2)" hint comes off and the Settings test's R1.2 assertion gets re-targeted (or removed).
+> - **`attunement.ts` activation** — slot tracking + prereq display.
 
 > -
 

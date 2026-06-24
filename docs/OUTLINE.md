@@ -71,9 +71,11 @@ Each character has:
 
 Character data stored (inventory-only minimum):
 - name, species, class, level
+- **size** — one of `tiny | small | medium | large | huge | gargantuan`; set at character creation, drives the carrying-capacity multiplier (§3.6). Not editable post-creation in v1 (size-changing effects like *Enlarge/Reduce* are out of scope; revisit in a later release if needed).
 - **STR** (used by encumbrance)
 - **max attunement slots** — defaults to 3, **DM-overridable per character**
-- encumbrance enforcement: **off / advisory / hard** (per-character; DM-controlled when 2+ members)
+- **encumbrance rule** — one of `off | phb | variant` (per-character; DM-controlled when 2+ members). `off` hides the capacity bar entirely; `phb` uses the standard PHB 2024 rule (single over-capacity band at `STR × 15 × size`); `variant` uses the PHB 2024 sidebar rule with intermediate `encumbered` (`> 5×STR×size`) and `heavily encumbered` (`> 10×STR×size`) bands.
+- **enforce encumbrance** — orthogonal boolean (per-character; DM-controlled when 2+ members). When `true`, reducer rejects `acquire` / `transfer` that would push Inventory weight past the rule's upper band. When `false`, the rule is display-only. The flag is meaningful only when `encumbranceRule !== "off"`.
 
 No HP, spells, AC, proficiencies in v1.
 
@@ -120,13 +122,16 @@ No HP, spells, AC, proficiencies in v1.
   - Exposed via the §5.17 "Variant-rules toggle" surface in Party Settings (§5.15). See §12.
 
 ### 3.6 Encumbrance (2024 rules)
-- Carrying capacity = STR × 15.
-- **Encumbered** at > 5×STR (variant rule); **heavily encumbered** at > 10×STR.
+- **Carrying capacity = `STR × 15 × sizeMultiplier`** per PHB 2024 p. 366. The multiplier is `0.5` for Tiny/Small, `1` for Medium, `2` for Large, `4` for Huge, `8` for Gargantuan. So a Medium STR 10 character carries 150 lb; a Small STR 10 character carries 75 lb; a Large STR 10 mount carries 300 lb.
+- Two rules selectable per character via `Character.encumbranceRule` (§3.3 + §4):
+  - **`phb`** — single band: at-or-under capacity is unencumbered; above is over-capacity (treated as heavily encumbered for display + enforcement purposes).
+  - **`variant`** — PHB 2024 sidebar rule (three bands). **Encumbered** at `> 5×STR×size`; **heavily encumbered** at `> 10×STR×size`. Both bands use strict `>` — equal-to does not trip the next state.
+  - **`off`** — capacity bar hidden, no math, no enforcement. The "MVP-era" default until the user explicitly opts in.
+- **Enforcement is orthogonal** to the rule choice. `Character.enforceEncumbrance: boolean` gates whether the reducer rejects `acquire` / `transfer` that pushes weight past the upper band. A character can be on `variant` with `enforce: false` (display-only warnings) or `enforce: true` (reducer-rejected overloads). The CapacityBar labels both states.
 - **Encumbrance applies ONLY to the character's Inventory stash.** Storage stashes (chests, vaults, etc.) do not count toward carrying capacity.
 - **Containers**: **one level deep** within a stash (item-in-bag, no bag-in-bag). **Bag of Holding** and similar handled as flat-weight exceptions.
 - **Flat-weight discriminator.** `ItemDefinition` carries a `flatWeight: boolean` field (default `false`). Bag of Holding, Handy Haversack, Portable Hole, etc. ship with `flatWeight: true` in the DMG 2024 seed; `weight.ts` stops descending into contents whenever a container's definition has the flag set. Homebrew opts in via the same field, so the DM can mint a custom "Big Sack" with the BoH behavior without touching the rules engine.
-- Visual capacity bar on the Inventory screen; warning states.
-- Enforcement level configurable per character (see 3.3).
+- Visual capacity bar on the Inventory screen; warning states. Bar is hidden when `encumbranceRule === "off"`. Bar fill caps at 100% once weight reaches the rule's upper band; the lb count keeps growing past the cap so the user sees exactly how over they are.
 
 ### 3.7 Item Catalog
 - **PHB 2024**: weapons, armor, adventuring gear, tools, ammunition.
@@ -232,9 +237,11 @@ No HP, spells, AC, proficiencies in v1.
 
 ### `Character`
 - id, partyId (required — every character lives in a party), ownerUserId, name, species, class, level
+- size (`tiny` | `small` | `medium` | `large` | `huge` | `gargantuan`) — set at creation; drives the carrying-capacity multiplier per §3.6. Not editable post-creation in v1.
 - abilityScores.STR
 - maxAttunement (default 3; DM-overridable)
-- encumbranceRule (`off` | `advisory` | `hard`; DM-overridable when 2+ members)
+- encumbranceRule (`off` | `phb` | `variant`; DM-overridable when 2+ members) — see §3.6 for the math.
+- enforceEncumbrance (boolean; default `false`; DM-overridable when 2+ members) — orthogonal to `encumbranceRule`. When `true`, reducer rejects moves that would push Inventory weight past the rule's upper band. Meaningful only when `encumbranceRule !== "off"`.
 - inventoryStashId — direct FK to the character's auto-created **Inventory** stash (the carried one).
 
 ### `Stash`
@@ -309,7 +316,8 @@ No HP, spells, AC, proficiencies in v1.
   - `create-character` → `{ characterId, name }`
   - `delete-character` → `{ characterId, name, lastSessionId? }`
   - `rename-character` → `{ characterId, oldName, newName }` — dedicated type for the most common character edit; mirrors `rename-stash` / `rename-party`.
-  - `edit-character` → `{ characterId, changedFields: ("species" | "class" | "level" | "str" | "maxAttunement" | "encumbranceRule")[] }` — catch-all for the remaining mutable character fields per §3.3 + §8.1.
+  - `set-encumbrance` → `{ characterId, oldRule, newRule, oldEnforce, newEnforce }` — dedicated type for the encumbrance pair (rule + enforce flag); R1.1 ships it alongside the schema widening. One entry covers either-or-both field flips so the "every dispatch logs once" invariant stays clean.
+  - `edit-character` → `{ characterId, changedFields: ("species" | "class" | "level" | "str" | "maxAttunement")[] }` — catch-all for the remaining mutable character fields per §3.3 + §8.1. `encumbranceRule` and `enforceEncumbrance` have their own dedicated `set-encumbrance` TxType (above); `size` is creation-only in v1 and therefore not editable.
   - `create-stash` → `{ stashId, scope, name, ownerCharacterId? }`
   - `rename-stash` → `{ stashId, oldName, newName }`
   - `delete-stash` → `{ stashId, name, itemCount, currencyTotalCp, ownerCharacterId? }` — `delete-stash` records the snapshot at deletion time so the audit trail explains where items went (they're moved to Recovered Loot or the owning character's Inventory before deletion; the move is its own `transfer` log entry). `ownerCharacterId` is present iff the deleted stash was character-scope (Storage) — captured so post-delete history views can render the original owner alongside the stash name (added in M3 after the initial cut).
@@ -366,7 +374,7 @@ No HP, spells, AC, proficiencies in v1.
 
 Pure / deterministic / unit-testable:
 
-- `capacity.ts` — STR-based limits; encumbrance state; enforcement-level handling.
+- `capacity.ts` — carrying capacity (`STR × 15 × sizeMultiplier`); encumbrance state for both `phb` (single over-cap band) and `variant` (5×/10× three-band) rules; heavy threshold for reducer enforcement when `Character.enforceEncumbrance === true`.
 - `attunement.ts` — slot tracking with DM-overridable cap; prereq display (advisory).
 - `currency.ts` — conversion, GP-equivalent, "split evenly", normalize.
 - `charges.ts` — recharge rules (dawn/dusk/long/short rest/custom); batch recharge.
@@ -417,7 +425,7 @@ Pure / deterministic / unit-testable:
 | Edit own character name / species / class / level | ✅ | ❌ | ✅ | ✅ (any character, via explicit action) |
 | Edit own character STR | ✅ (logged) | ❌ | ✅ | ✅ (any character, via explicit action) |
 | Edit any character max attunement | ❌ | ❌ | ❌ | ✅ |
-| Edit any character encumbrance rule | ❌ | ❌ | ❌ | ✅ |
+| Edit any character encumbrance rule + enforce flag | ❌ | ❌ | ❌ | ✅ |
 | Transfer item to another player directly (own → other) | ✅ | (receiver — auto-accepts) | ✅ | ✅ |
 | **Transfer currency between own stashes (Inventory ↔ Storage)** | ✅ (M0+) | — | ✅ | ✅ |
 | **Transfer currency directly to another player's Inventory stash** | ✅ (M4+, direct/immediate) | (receiver — auto-accepts) | ✅ | ✅ |
@@ -508,7 +516,7 @@ When the **DM** leaves:
 | Milestone | Deliverable |
 |---|---|
 | **M0 — MVP (already scoped)** | Local-only solo tracker: stashes, currency, PHB mundane catalog, custom items, JSON export. See `MVP.md`. |
-| **M1 — Characters & encumbrance** | Character entity (inventory-only data); equip; encumbrance with toggle (off/advisory/hard); single-level containers + Bag of Holding. |
+| **M1 — Characters & encumbrance** | Character entity (inventory-only data, includes `size` for capacity scaling); equip; encumbrance (`off / phb / variant`) with orthogonal `enforceEncumbrance` flag; single-level containers + Bag of Holding. |
 | **M2 — Magic items** | DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch recharge buttons. |
 | **M3 — Backend skeleton** | Self-hosted server, Discord OAuth, user model, sync of solo data; nightly snapshots. |
 | **M4 — Multi-member parties** | Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointment + distribution toolkit, DM/Player role split when 2+ members. |
@@ -549,6 +557,13 @@ When the **DM** leaves:
 - **Player → player currency push under Banker** → Always allowed. The Banker mediates the shared pools (Party Stash + Recovered Loot), not character-to-character moves; players retain control of their own purses. See §3.14.
 - **`Party.isSoloShortcut` lifecycle** → Field removed. The "solo" badge is derived from `memberCount === 1`. MVP code keeps writing `isSoloShortcut: true` as a placeholder for forward-compat with existing Dexie blobs, but R4 multi-member work treats it as "derived, ignored". See §4 `Party`.
 - **Bag of Holding identification** → `ItemDefinition.flatWeight: boolean` (default `false`). DMG 2024 seed sets `flatWeight: true` on BoH-class entries; `weight.ts` stops descending into contents when the flag is set. Homebrew opts in via the same field. See §3.6 + §4 `ItemDefinition`.
+
+### Resolved 2026-06-24 (R1.1 encumbrance slice)
+
+- **Carrying capacity scales by size** → `capacity = STR × 15 × sizeMultiplier` per PHB 2024 p. 366. Multipliers: Tiny/Small × 0.5, Medium × 1, Large × 2, Huge × 4, Gargantuan × 8. Variant-rule thresholds scale by the same multiplier. See §3.6.
+- **`Character.size` field** → enum `tiny | small | medium | large | huge | gargantuan`. Set at character creation; not editable post-creation in v1 (Enlarge/Reduce and similar size-changing effects are out of scope). Decoupled from `Character.species` (which is a free-form string) because 2024 rules let several species pick from a size range, and size is the canonical carrying-capacity driver. See §3.3 + §4 `Character`.
+- **Encumbrance rule renamed + split into two fields.** Earlier draft used a single `encumbranceRule: 'off' | 'advisory' | 'hard'` enum that conflated "which math" with "is enforcement active". Renamed to `encumbranceRule: 'off' | 'phb' | 'variant'` (which math: PHB default single-band vs. variant three-band) and added an orthogonal `enforceEncumbrance: boolean` (does the reducer reject over-capacity moves?). The CapacityBar surfaces both via inline badges. See §3.3 + §3.6 + §4 `Character`.
+- **`set-encumbrance` TxType** → single log entry covers both fields in one dispatch with payload `{ characterId, oldRule, newRule, oldEnforce, newEnforce }`. Mirrors the `rename-*` pattern. Replaces the earlier short-lived `set-encumbrance-rule` entry. See §4 `TransactionLog`.
 
 ---
 

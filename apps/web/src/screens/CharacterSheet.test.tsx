@@ -40,7 +40,7 @@ describe('CharacterSheet (M1)', () => {
   it('renders the character header after create-character', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'Thorin', species: 'Dwarf', class: 'Fighter', level: 3, str: 16 },
+      payload: { name: 'Thorin', species: 'Dwarf', size: 'medium', class: 'Fighter', level: 3, str: 16 },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
 
@@ -54,7 +54,7 @@ describe('CharacterSheet (M1)', () => {
   it('renders all four tabs', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
 
@@ -215,7 +215,7 @@ describe('CharacterSheet (M4)', () => {
   it('renders a CurrencyRow on the Inventory tab', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
     renderAt(`/character/${id}`);
@@ -232,7 +232,7 @@ describe('CharacterSheet (M4)', () => {
     const user = userEvent.setup();
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
     renderAt(`/character/${id}`);
