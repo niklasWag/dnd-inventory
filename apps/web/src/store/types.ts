@@ -1,5 +1,7 @@
 import type {
   AppState as AppStateShape,
+  CurrencyDenomination,
+  ItemCategory,
   ItemDefinition,
   TransactionLogEntry as LogEntry,
   TxType,
@@ -168,7 +170,85 @@ export type Action =
         toStashId: string;
         delta: { cp: number; sp: number; ep: number; gp: number; pp: number };
       };
+    }
+  | {
+      // M6: create a homebrew `ItemDefinition`. The reducer mints
+      // `definitionId`, stamps `source: 'homebrew'`, `partyId`, and
+      // `createdBy`. `duplicatedFromId` is set when the homebrew was
+      // created via the Catalog Browser's Duplicate flow against a PHB
+      // row (the user's homebrew clone-with-edits). Reducer requires
+      // post-bootstrap state (party + user already provisioned).
+      type: 'create-homebrew';
+      payload: HomebrewDefinitionInput & { duplicatedFromId?: string };
+    }
+  | {
+      // M6: edit a homebrew `ItemDefinition`. PHB rows are immutable
+      // (OUTLINE §3.7) — the reducer rejects edits where the target
+      // `source !== 'homebrew'`. The reducer diffs the patch against
+      // the current row, derives `changedFields`, and rejects no-op
+      // edits (mirrors M2.5 `edit-item-instance`). Each optional field
+      // accepts an explicit `undefined` (= "clear this field") which
+      // is distinct from absent (= "don't touch this field"), so the
+      // patch type uses `T | undefined` rather than `Partial<T>` (which
+      // under `exactOptionalPropertyTypes` would forbid the undefined).
+      type: 'edit-homebrew';
+      payload: {
+        definitionId: string;
+        patch: HomebrewDefinitionPatch;
+      };
+    }
+  | {
+      // M6: delete a homebrew `ItemDefinition`. Reducer rejects when
+      // any `ItemInstance.definitionId` references it (delete policy
+      // for M6: reject, not cascade). UI surfaces the reference count
+      // and disables the delete button until items are removed.
+      type: 'delete-homebrew';
+      payload: {
+        definitionId: string;
+      };
     };
+
+/**
+ * User-supplied subset of `ItemDefinition` editable via the M6
+ * HomebrewForm. The reducer fills in `id`, `source: 'homebrew'`,
+ * `partyId`, `createdBy`, and (when applicable) `duplicatedFromId`.
+ *
+ * `category` is required so every homebrew row has a stable filter
+ * bucket in the catalog browser; everything else is optional.
+ */
+export interface HomebrewDefinitionInput {
+  name: string;
+  category: ItemCategory;
+  weight?: number;
+  cost?: {
+    amount: number;
+    currency: CurrencyDenomination;
+  };
+  description?: string;
+  tags?: string[];
+}
+
+/**
+ * Patch shape for `edit-homebrew`. Every field is optional AND may be
+ * explicitly `undefined` to mean "clear this optional field". The
+ * reducer's diff loop treats "key absent" and "key present with
+ * undefined value" as distinct — the latter clears, the former is
+ * a no-op for that field. Under `exactOptionalPropertyTypes: true`
+ * this requires explicit `| undefined` on each union member.
+ */
+export interface HomebrewDefinitionPatch {
+  name?: string | undefined;
+  category?: ItemCategory | undefined;
+  weight?: number | undefined;
+  cost?:
+    | {
+        amount: number;
+        currency: CurrencyDenomination;
+      }
+    | undefined;
+  description?: string | undefined;
+  tags?: string[] | undefined;
+}
 
 export type TransactionLogEntry = LogEntry;
 export type { TxType };

@@ -83,11 +83,18 @@ function resolveActor(
     case 'delete-stash':
     case 'currency-change':
     case 'currency-transfer':
+    case 'create-homebrew':
+    case 'edit-homebrew':
+    case 'delete-homebrew':
       // M3 player-initiated stash CRUD + the synthetic transfer +
       // currency-change emitted from the delete-stash cascade. M5
       // adds user-initiated `transfer` + `split` (always player-driven
       // in the MVP; R4 widens the role split). M5.5 adds
       // `currency-transfer` for atomic stash-to-stash currency moves.
+      // M6 adds the homebrew CRUD trio — in MVP party-of-one these
+      // are player-role; R4 will restrict create/edit/delete to DM
+      // when the party has 2+ members per OUTLINE §8.1 (custom-item
+      // creation is DM-only in multi-member parties).
       // R4 (multi-member) will also let DM / Banker drive these.
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);

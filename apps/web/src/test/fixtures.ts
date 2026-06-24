@@ -6,6 +6,7 @@ import {
 import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
 
 import { useStore } from '@/store';
+import type { HomebrewDefinitionInput } from '@/store/types';
 
 /**
  * Shared test fixtures for the M3 milestone forward.
@@ -122,6 +123,30 @@ export function bootstrapWithItem(
 
   const row = useStore.getState().appState!.items[0]!;
   return { ...base, itemInstanceId: row.id, torchDefId: torch.id };
+}
+
+export interface BootstrapWithHomebrewResult extends BootstrapResult {
+  homebrewDefId: string;
+}
+
+/**
+ * Bootstrap the store with one homebrew `ItemDefinition` already in the
+ * catalog (M6). Returns the bootstrap result plus the homebrew row's id.
+ * Callers override defaults via the `overrides` param — `name` and
+ * `category` have sensible test defaults.
+ */
+export function bootstrapWithHomebrew(
+  overrides: Partial<HomebrewDefinitionInput> = {},
+): BootstrapWithHomebrewResult {
+  const base = bootstrap();
+  const payload: HomebrewDefinitionInput = {
+    name: 'Test Homebrew',
+    category: 'gear',
+    ...overrides,
+  };
+  useStore.getState().dispatch({ type: 'create-homebrew', payload });
+  const homebrewDefId = useStore.getState().appState!.catalog.at(-1)!.id;
+  return { ...base, homebrewDefId };
 }
 
 /**

@@ -315,6 +315,67 @@ const currencyTransferEntry = z.object({
   }),
 });
 
+/**
+ * `create-homebrew` — a user-authored `ItemDefinition` is added to the
+ * catalog (M6). The reducer mints the `definitionId` and stamps
+ * `source: 'homebrew'`, `partyId`, `createdBy`. `name` is captured on
+ * the log entry so future readers don't have to lookup the (possibly
+ * later-renamed) definition just to render history.
+ *
+ * The `duplicatedFromId` lineage — set when the homebrew was created
+ * via the Catalog Browser's Duplicate flow against a PHB row — lives
+ * on the `ItemDefinition` row, not on the log entry; replay readers
+ * can join from `definitionId` if they care.
+ */
+const createHomebrewEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('create-homebrew'),
+  payload: z.object({
+    definitionId: z.string().min(1),
+    name: z.string().min(1),
+  }),
+});
+
+/**
+ * `edit-homebrew` — generic per-definition editor for the user-editable
+ * subset of `ItemDefinition` (M6: `name`, `category`, `weight`, `cost`,
+ * `description`, `tags`). Mirrors `edit-item-instance`: only the field
+ * names are logged; full new values live on the definition row.
+ *
+ * OUTLINE §4 declares `changedFields: string[]` (no closed enum) because
+ * the editable surface widens as R1+ activate more fields (`rarity`,
+ * `requiresAttunement`, `charges`, etc). MVP keeps the schema open so
+ * future milestones don't need a schema migration. `.min(1)` enforces
+ * no-op-edit rejection at the boundary.
+ *
+ * Reducer rejects edits to PHB rows (immutable per OUTLINE §3.7) so an
+ * `edit-homebrew` entry only ever references a homebrew `definitionId`.
+ */
+const editHomebrewEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('edit-homebrew'),
+  payload: z.object({
+    definitionId: z.string().min(1),
+    changedFields: z.array(z.string().min(1)).min(1),
+  }),
+});
+
+/**
+ * `delete-homebrew` — a homebrew `ItemDefinition` is removed from the
+ * catalog. The reducer refuses the delete when any `ItemInstance` still
+ * references the definition (delete policy chosen for M6: reject, not
+ * cascade — see roadmap M6 Notes). `name` is the snapshot at delete time
+ * so log readers can render history after the row is gone.
+ */
+const deleteHomebrewEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('delete-homebrew'),
+  payload: z.object({
+    definitionId: z.string().min(1),
+    name: z.string().min(1),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -330,6 +391,9 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   deleteStashEntry,
   currencyChangeEntry,
   currencyTransferEntry,
+  createHomebrewEntry,
+  editHomebrewEntry,
+  deleteHomebrewEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

@@ -1,4 +1,4 @@
-import { type ReactElement, useState } from 'react';
+import { type ReactElement, useEffect, useState } from 'react';
 
 import {
   Dialog,
@@ -7,6 +7,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { HomebrewForm } from '@/components/catalog/HomebrewForm';
+import { useStore } from '@/store';
 
 import { CatalogPicker } from './CatalogPicker';
 
@@ -22,11 +24,21 @@ type Tab = 'catalog' | 'custom';
 /**
  * Modal for adding items to a stash (MVP §7 screen 5). Two tabs:
  *   - **Catalog** — search PHB + homebrew, set qty, "Add to [stash]". M2.
- *   - **Custom** — stubbed; the homebrew form lands in M6.
+ *   - **Custom** — opens the M6 HomebrewForm in create mode. On save, the
+ *     newly-created homebrew row is immediately acquired into the
+ *     current stash (`source: 'custom-create'`).
  *
  * Closing after add is deliberately the parent's decision (the user can
  * add multiple items in one sitting). `CatalogPicker` calls `onAdded` to
  * give the modal a chance to react, but we leave it open by default.
+ *
+ * **Tab navigation invariants:**
+ *   - Every fresh open resets to the Catalog tab — Catalog is the
+ *     default. A previously-open Custom tab state does not survive
+ *     a close/reopen cycle.
+ *   - Cancelling out of the Custom tab's HomebrewForm switches back to
+ *     the Catalog tab (it does NOT close the parent modal). Only a
+ *     successful homebrew create closes the parent, via `onCreated`.
  */
 export function AddItemModal({
   open,
@@ -35,6 +47,32 @@ export function AddItemModal({
   stashLabel,
 }: AddItemModalProps): ReactElement {
   const [tab, setTab] = useState<Tab>('catalog');
+  const dispatch = useStore((s) => s.dispatch);
+
+  // Reset to Catalog every time the modal opens. Without this, a user
+  // who left on the Custom tab last time would see it again — confusing
+  // because Catalog is the canonical default per MVP §7 screen 5.
+  useEffect(() => {
+    if (open) {
+      setTab('catalog');
+    }
+  }, [open]);
+
+  function handleHomebrewCreated(definitionId: string): void {
+    // Custom tab semantics (MVP §5 flow #5): saves to catalog AND adds
+    // to the current stash. Two log entries result (create-homebrew +
+    // acquire) — that's the desired audit trail per OUTLINE §3.4.
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId,
+        definitionId,
+        quantity: 1,
+        source: 'custom-create',
+      },
+    });
+    onOpenChange(false);
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -42,7 +80,7 @@ export function AddItemModal({
         <DialogHeader>
           <DialogTitle>Add item to {stashLabel}</DialogTitle>
           <DialogDescription>
-            Pick from the catalog or, in M6, build a custom item.
+            Pick from the catalog or build a custom homebrew item.
           </DialogDescription>
         </DialogHeader>
 
@@ -75,9 +113,25 @@ export function AddItemModal({
         {tab === 'catalog' ? (
           <CatalogPicker stashId={stashId} stashLabel={stashLabel} />
         ) : (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            Custom item creation arrives in M6.
-          </p>
+          <div className="py-2 text-sm text-muted-foreground">
+            <p className="mb-2">
+              Build a homebrew item. It joins the catalog and is added to{' '}
+              <strong>{stashLabel}</strong>.
+            </p>
+            <HomebrewForm
+              open={true}
+              onOpenChange={(formOpen) => {
+                // Cancelling the HomebrewForm should return the user to
+                // the Catalog tab — NOT close the parent AddItemModal.
+                // A successful create closes the parent via
+                // `onCreated -> handleHomebrewCreated`; cancellation is
+                // the only path through this branch.
+                if (!formOpen) setTab('catalog');
+              }}
+              mode="create"
+              onCreated={handleHomebrewCreated}
+            />
+          </div>
         )}
       </DialogContent>
     </Dialog>

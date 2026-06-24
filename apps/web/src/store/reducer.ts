@@ -85,6 +85,12 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return split(state, action.payload);
     case 'currency-transfer':
       return currencyTransfer(state, action.payload);
+    case 'create-homebrew':
+      return createHomebrew(state, action.payload);
+    case 'edit-homebrew':
+      return editHomebrew(state, action.payload);
+    case 'delete-homebrew':
+      return deleteHomebrew(state, action.payload);
   }
 }
 
@@ -1136,6 +1142,209 @@ function currencyTransfer(
           toStashId: payload.toStashId,
           delta,
         },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// create-homebrew / edit-homebrew / delete-homebrew (M6)
+// -------------------------------------------------------------------- //
+
+/**
+ * Editable fields on a homebrew `ItemDefinition` per the M6 plan. The
+ * reducer accepts these on `create-homebrew` payload (with `name` and
+ * `category` required) and on `edit-homebrew.patch` (all optional;
+ * keys present in the patch are diffed against the current row).
+ *
+ * `id`, `source`, `partyId`, `createdBy`, `duplicatedFromId` are NOT
+ * in this set — they're either reducer-stamped (id, source, partyId,
+ * createdBy) or set once at creation only (duplicatedFromId).
+ */
+const HOMEBREW_EDITABLE_FIELDS = [
+  'name',
+  'category',
+  'weight',
+  'cost',
+  'description',
+  'tags',
+] as const;
+type HomebrewEditableField = (typeof HOMEBREW_EDITABLE_FIELDS)[number];
+
+/**
+ * Create a homebrew `ItemDefinition`. The reducer:
+ *   - validates the name (trimmed, non-empty),
+ *   - mints `definitionId` via `crypto.randomUUID()`,
+ *   - stamps `source: 'homebrew'`, `partyId`, `createdBy` from the
+ *     post-bootstrap state,
+ *   - preserves the optional `duplicatedFromId` lineage from the
+ *     Catalog Browser's Duplicate flow.
+ *
+ * Per the M6 plan + OUTLINE §3.7, every homebrew row carries
+ * `partyId = state.party.id` so future R4 multi-party visibility is a
+ * pure filter against the existing schema field — no migration.
+ */
+function createHomebrew(
+  state: AppState,
+  payload: Extract<Action, { type: 'create-homebrew' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'create-homebrew');
+
+  const name = payload.name.trim();
+  if (name.length === 0) {
+    throw new Error('create-homebrew: name is empty');
+  }
+
+  const definitionId = crypto.randomUUID();
+  const newDef: ItemDefinition = {
+    id: definitionId,
+    name,
+    source: 'homebrew',
+    category: payload.category,
+    partyId: s.party.id,
+    createdBy: s.user.id,
+    ...(payload.weight !== undefined ? { weight: payload.weight } : {}),
+    ...(payload.cost !== undefined ? { cost: payload.cost } : {}),
+    ...(payload.description !== undefined ? { description: payload.description } : {}),
+    ...(payload.tags !== undefined ? { tags: payload.tags } : {}),
+    ...(payload.duplicatedFromId !== undefined
+      ? { duplicatedFromId: payload.duplicatedFromId }
+      : {}),
+  };
+
+  return {
+    state: { ...s, catalog: [...s.catalog, newDef] },
+    logEntries: [
+      {
+        type: 'create-homebrew',
+        payload: { definitionId, name },
+      },
+    ],
+  };
+}
+
+/**
+ * Edit a homebrew `ItemDefinition` per the M6 plan. Mirrors
+ * `edit-item-instance`:
+ *   - validate the target exists and is homebrew (PHB rows are
+ *     immutable per OUTLINE §3.7),
+ *   - diff the patch against the current row over the
+ *     `HOMEBREW_EDITABLE_FIELDS` allowlist,
+ *   - reject no-op edits (`changedFields.length === 0`),
+ *   - apply the diff and log only the changed field names.
+ *
+ * Patch values can be `undefined` to explicitly clear an optional
+ * field (e.g. setting `cost: undefined` removes the cost entry — the
+ * UI uses this when the user blanks the cost-amount input). The
+ * diff considers `undefined` distinct from "key absent in patch".
+ */
+function editHomebrew(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-homebrew' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-homebrew');
+
+  const row = s.catalog.find((d) => d.id === payload.definitionId);
+  if (row === undefined) {
+    throw new Error(`edit-homebrew: unknown definitionId ${payload.definitionId}`);
+  }
+  if (row.source !== 'homebrew') {
+    throw new Error(
+      `edit-homebrew: definition ${payload.definitionId} is not homebrew (source=${row.source}); PHB rows are immutable`,
+    );
+  }
+
+  const changedFields: HomebrewEditableField[] = [];
+  const next: ItemDefinition = { ...row };
+
+  for (const key of HOMEBREW_EDITABLE_FIELDS) {
+    if (!(key in payload.patch)) continue;
+    // `JSON.stringify` round-trip detects nested-object changes on
+    // `cost` (the only nested-shape field in the allowlist). For
+    // primitive fields it degenerates to value equality.
+    const newVal = payload.patch[key];
+    const currentVal = row[key];
+    const changed = JSON.stringify(newVal) !== JSON.stringify(currentVal);
+    if (changed) {
+      changedFields.push(key);
+      if (newVal === undefined) {
+        // Distinguish "explicitly clear optional field" from "key absent".
+        // Build a record without the key.
+        delete (next as Record<string, unknown>)[key];
+      } else {
+        (next as Record<string, unknown>)[key] = newVal;
+      }
+    }
+  }
+
+  if (changedFields.length === 0) {
+    throw new Error('edit-homebrew: no fields changed');
+  }
+
+  return {
+    state: {
+      ...s,
+      catalog: s.catalog.map((d) => (d.id === row.id ? next : d)),
+    },
+    logEntries: [
+      {
+        type: 'edit-homebrew',
+        payload: {
+          definitionId: row.id,
+          changedFields,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Delete a homebrew `ItemDefinition` per the M6 plan. Delete policy is
+ * **reject when referenced**: if any `ItemInstance.definitionId` points
+ * at the definition, throw. The UI surfaces the reference count and
+ * disables the delete button until the user manually removes the items.
+ *
+ * Rejects deletion of PHB rows for symmetry with `edit-homebrew` (the
+ * PHB catalog is read-only per OUTLINE §3.7). The error message names
+ * the count + the affected stashIds so the UI can render a friendlier
+ * "X stashes hold this — remove items first" message.
+ */
+function deleteHomebrew(
+  state: AppState,
+  payload: Extract<Action, { type: 'delete-homebrew' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'delete-homebrew');
+
+  const row = s.catalog.find((d) => d.id === payload.definitionId);
+  if (row === undefined) {
+    throw new Error(`delete-homebrew: unknown definitionId ${payload.definitionId}`);
+  }
+  if (row.source !== 'homebrew') {
+    throw new Error(
+      `delete-homebrew: definition ${payload.definitionId} is not homebrew (source=${row.source}); PHB rows cannot be deleted`,
+    );
+  }
+
+  const referencing = s.items.filter((i) => i.definitionId === payload.definitionId);
+  if (referencing.length > 0) {
+    // Count distinct stashes for the human-readable message; the UI
+    // counts itself for the disabled-button tooltip, but the reducer
+    // error stays informative for non-UI consumers / tests.
+    const stashCount = new Set(referencing.map((i) => i.ownerId)).size;
+    throw new Error(
+      `delete-homebrew: definition is in use (${stashCount} stash${stashCount === 1 ? '' : 'es'} hold this); remove items first`,
+    );
+  }
+
+  return {
+    state: {
+      ...s,
+      catalog: s.catalog.filter((d) => d.id !== row.id),
+    },
+    logEntries: [
+      {
+        type: 'delete-homebrew',
+        payload: { definitionId: row.id, name: row.name },
       },
     ],
   };

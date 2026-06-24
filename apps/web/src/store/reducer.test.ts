@@ -2355,4 +2355,363 @@ describe('reducer: currency-transfer (M5.5)', () => {
   });
 });
 
+// -------------------------------------------------------------------- //
+// M6: create-homebrew / edit-homebrew / delete-homebrew
+// -------------------------------------------------------------------- //
+
+describe('reducer: create-homebrew (M6)', () => {
+  it('adds a homebrew ItemDefinition to the catalog with full stamping', () => {
+    localBootstrap();
+    const catalogBefore = useStore.getState().appState!.catalog.length;
+    const userId = useStore.getState().appState!.user.id;
+    const partyId = useStore.getState().appState!.party.id;
+
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: {
+        name: 'Glowing Mushroom',
+        category: 'consumable',
+        weight: 0.1,
+        cost: { amount: 5, currency: 'gp' },
+        description: 'A small mushroom that glows in the dark.',
+        tags: ['light', 'underdark'],
+      },
+    });
+
+    const catalog = useStore.getState().appState!.catalog;
+    expect(catalog).toHaveLength(catalogBefore + 1);
+    const created = catalog.at(-1)!;
+    expect(created.name).toBe('Glowing Mushroom');
+    expect(created.source).toBe('homebrew');
+    expect(created.category).toBe('consumable');
+    expect(created.weight).toBe(0.1);
+    expect(created.cost).toEqual({ amount: 5, currency: 'gp' });
+    expect(created.description).toBe('A small mushroom that glows in the dark.');
+    expect(created.tags).toEqual(['light', 'underdark']);
+    expect(created.partyId).toBe(partyId);
+    expect(created.createdBy).toBe(userId);
+    expect(created.duplicatedFromId).toBeUndefined();
+    expect(created.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('records a create-homebrew log entry with name snapshot', () => {
+    localBootstrap();
+    const beforeLog = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: { name: 'Foobar', category: 'gear' },
+    });
+
+    const log = useStore.getState().log;
+    expect(log.length).toBe(beforeLog + 1);
+    const entry = log.at(-1)!;
+    expect(entry.type).toBe('create-homebrew');
+    if (entry.type !== 'create-homebrew') return;
+    expect(entry.payload.name).toBe('Foobar');
+    const created = useStore.getState().appState!.catalog.at(-1)!;
+    expect(entry.payload.definitionId).toBe(created.id);
+    expect(entry.actorRole).toBe('player');
+  });
+
+  it('preserves duplicatedFromId for the Duplicate flow', () => {
+    const { catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: {
+        name: 'Glowing Torch',
+        category: 'gear',
+        duplicatedFromId: torch.id,
+      },
+    });
+
+    const created = useStore.getState().appState!.catalog.at(-1)!;
+    expect(created.duplicatedFromId).toBe(torch.id);
+    expect(created.source).toBe('homebrew');
+  });
+
+  it('rejects an empty / whitespace-only name', () => {
+    localBootstrap();
+    const { dispatch } = useStore.getState();
+    expect(() =>
+      dispatch({ type: 'create-homebrew', payload: { name: '', category: 'gear' } }),
+    ).toThrow(/name/i);
+    expect(() =>
+      dispatch({ type: 'create-homebrew', payload: { name: '   ', category: 'gear' } }),
+    ).toThrow(/name/i);
+  });
+
+  it('rejects when no AppState exists (must run after create-character)', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'create-homebrew',
+        payload: { name: 'Foo', category: 'gear' },
+      }),
+    ).toThrow(/create-character must run first/);
+  });
+
+  it('trims name before storing', () => {
+    localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: { name: '  Trimmed  ', category: 'gear' },
+    });
+    expect(useStore.getState().appState!.catalog.at(-1)!.name).toBe('Trimmed');
+  });
+
+  it('persisted state validates against appStateSchema', () => {
+    localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: { name: 'Foo', category: 'gear' },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+});
+
+describe('reducer: edit-homebrew (M6)', () => {
+  function bootstrapWithLocalHomebrew(): {
+    homebrewDefId: string;
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    recoveredLootStashId: string;
+    catalog: ReturnType<typeof localBootstrap>['catalog'];
+  } {
+    const base = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: { name: 'Glowing Mushroom', category: 'consumable' },
+    });
+    const homebrewDefId = useStore.getState().appState!.catalog.at(-1)!.id;
+    return { ...base, homebrewDefId };
+  }
+
+  it('updates name on the catalog row', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'edit-homebrew',
+      payload: { definitionId: homebrewDefId, patch: { name: 'Bazqux' } },
+    });
+    const def = useStore.getState().appState!.catalog.find((d) => d.id === homebrewDefId)!;
+    expect(def.name).toBe('Bazqux');
+  });
+
+  it('logs only the changed field names in changedFields', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    const beforeLog = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'edit-homebrew',
+      payload: { definitionId: homebrewDefId, patch: { name: 'New' } },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(entry.type).toBe('edit-homebrew');
+    if (entry.type !== 'edit-homebrew') return;
+    expect(entry.payload.changedFields).toEqual(['name']);
+    expect(useStore.getState().log.length).toBe(beforeLog + 1);
+  });
+
+  it('logs multiple changed fields in one entry', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'edit-homebrew',
+      payload: {
+        definitionId: homebrewDefId,
+        patch: {
+          name: 'New',
+          description: 'Now with description.',
+          weight: 2,
+        },
+      },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    if (entry.type !== 'edit-homebrew') throw new Error('expected edit-homebrew entry');
+    expect([...entry.payload.changedFields].sort()).toEqual(['description', 'name', 'weight']);
+  });
+
+  it('rejects no-op edits (same value as current)', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-homebrew',
+        payload: { definitionId: homebrewDefId, patch: { name: 'Glowing Mushroom' } },
+      }),
+    ).toThrow(/no fields changed|no-op/i);
+  });
+
+  it('rejects empty patch', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-homebrew',
+        payload: { definitionId: homebrewDefId, patch: {} },
+      }),
+    ).toThrow(/no fields changed|no-op/i);
+  });
+
+  it('rejects edits to PHB rows (immutable per OUTLINE §3.7)', () => {
+    const { catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-homebrew',
+        payload: { definitionId: torch.id, patch: { name: 'Hacked Torch' } },
+      }),
+    ).toThrow(/PHB|immutable|homebrew/i);
+  });
+
+  it('rejects unknown definitionId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-homebrew',
+        payload: { definitionId: 'nope-id', patch: { name: 'X' } },
+      }),
+    ).toThrow(/unknown definitionId/i);
+  });
+
+  it('clearing optional cost via undefined removes the field', () => {
+    localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: { name: 'X', category: 'gear', cost: { amount: 5, currency: 'gp' } },
+    });
+    const defId = useStore.getState().appState!.catalog.at(-1)!.id;
+    useStore.getState().dispatch({
+      type: 'edit-homebrew',
+      payload: { definitionId: defId, patch: { cost: undefined } },
+    });
+    const after = useStore.getState().appState!.catalog.find((d) => d.id === defId)!;
+    expect(after.cost).toBeUndefined();
+  });
+
+  it('Inventory rows reflect the new name via definitionId lookup', () => {
+    // The store doesn't denormalize the definition name onto the
+    // instance — components read by `definitionId` join. This test
+    // confirms the join surface (the catalog row name) updates and
+    // the instance keeps the link.
+    const { homebrewDefId, inventoryStashId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: homebrewDefId,
+        quantity: 1,
+        source: 'custom-create',
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'edit-homebrew',
+      payload: { definitionId: homebrewDefId, patch: { name: 'Renamed' } },
+    });
+    const def = useStore.getState().appState!.catalog.find((d) => d.id === homebrewDefId)!;
+    expect(def.name).toBe('Renamed');
+    const item = useStore.getState().appState!.items.find((i) => i.definitionId === homebrewDefId)!;
+    expect(item.definitionId).toBe(homebrewDefId);
+  });
+});
+
+describe('reducer: delete-homebrew (M6)', () => {
+  function bootstrapWithLocalHomebrew(): {
+    homebrewDefId: string;
+    inventoryStashId: string;
+    characterId: string;
+    partyStashId: string;
+    recoveredLootStashId: string;
+    catalog: ReturnType<typeof localBootstrap>['catalog'];
+  } {
+    const base = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: { name: 'Glowing Mushroom', category: 'consumable' },
+    });
+    const homebrewDefId = useStore.getState().appState!.catalog.at(-1)!.id;
+    return { ...base, homebrewDefId };
+  }
+
+  it('removes the homebrew row when no instances reference it', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'delete-homebrew',
+      payload: { definitionId: homebrewDefId },
+    });
+    const def = useStore.getState().appState!.catalog.find((d) => d.id === homebrewDefId);
+    expect(def).toBeUndefined();
+  });
+
+  it('emits a delete-homebrew log entry with name snapshot', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'delete-homebrew',
+      payload: { definitionId: homebrewDefId },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(entry.type).toBe('delete-homebrew');
+    if (entry.type !== 'delete-homebrew') return;
+    expect(entry.payload).toEqual({ definitionId: homebrewDefId, name: 'Glowing Mushroom' });
+  });
+
+  it('rejects deletion when one or more ItemInstances reference it', () => {
+    const { homebrewDefId, inventoryStashId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: homebrewDefId,
+        quantity: 2,
+        source: 'custom-create',
+      },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'delete-homebrew',
+        payload: { definitionId: homebrewDefId },
+      }),
+    ).toThrow(/1 stash|reference|in use|held/i);
+    expect(useStore.getState().appState!.catalog.find((d) => d.id === homebrewDefId)).toBeDefined();
+  });
+
+  it('rejects deletion of PHB rows', () => {
+    const { catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'delete-homebrew',
+        payload: { definitionId: torch.id },
+      }),
+    ).toThrow(/PHB|immutable|homebrew/i);
+  });
+
+  it('rejects unknown definitionId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'delete-homebrew',
+        payload: { definitionId: 'nope-id' },
+      }),
+    ).toThrow(/unknown definitionId/i);
+  });
+
+  it('persisted state validates against appStateSchema after delete', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'delete-homebrew',
+      payload: { definitionId: homebrewDefId },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('log entry parses against transactionLogEntrySchema', () => {
+    const { homebrewDefId } = bootstrapWithLocalHomebrew();
+    useStore.getState().dispatch({
+      type: 'delete-homebrew',
+      payload: { definitionId: homebrewDefId },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
 

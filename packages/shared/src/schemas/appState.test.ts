@@ -152,6 +152,52 @@ describe('appStateSchema round-trip', () => {
           delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
         },
       },
+      {
+        // M6: create-homebrew round-trip. New homebrew definition added
+        // to the catalog. `name` is snapshot at write time so future
+        // readers don't have to lookup the (possibly renamed) row.
+        id: 'log-4',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T11:00:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'create-homebrew',
+        payload: {
+          definitionId: 'def-homebrew-1',
+          name: 'Glowing Mushroom',
+        },
+      },
+      {
+        // M6: edit-homebrew round-trip. Mirrors edit-item-instance —
+        // only changed field names are logged.
+        id: 'log-5',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T11:01:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'edit-homebrew',
+        payload: {
+          definitionId: 'def-homebrew-1',
+          changedFields: ['name', 'description'],
+        },
+      },
+      {
+        // M6: delete-homebrew round-trip. Name snapshot lets history
+        // render after the row is gone from the catalog.
+        id: 'log-6',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T11:02:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'delete-homebrew',
+        payload: {
+          definitionId: 'def-homebrew-1',
+          name: 'Glowing Mushroom',
+        },
+      },
     ],
   };
 

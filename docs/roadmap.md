@@ -573,27 +573,63 @@ Mini-milestone bridging M5 → M6. M5 shipped item move/split but never covered 
 Homebrew create/edit/delete with live propagation; duplicate-to-edit for PHB.
 
 **Reducer**
-- [ ] `create-homebrew` action + payload schema
-- [ ] `create-homebrew` reducer adds an `ItemDefinition` with `source: "homebrew"`
-- [ ] `create-homebrew` test: catalog grows by 1; log entry recorded
-- [ ] `edit-homebrew` action + reducer case (PHB rows rejected)
-- [ ] `edit-homebrew` propagation test: changing name updates every stash row by `definitionId` lookup
-- [ ] `delete-homebrew` action + reducer case
-- [ ] `delete-homebrew` invariant: cannot delete a homebrew currently referenced by any ItemInstance (or: cascade-remove instances — pick one, document)
-- [ ] Duplicate-to-edit: clones PHB row as homebrew with `duplicatedFromId` set
-- [ ] Duplicate test: clone has new id, `source: "homebrew"`, original untouched
+- [x] `create-homebrew` action + payload schema
+- [x] `create-homebrew` reducer adds an `ItemDefinition` with `source: "homebrew"`
+- [x] `create-homebrew` test: catalog grows by 1; log entry recorded
+- [x] `edit-homebrew` action + reducer case (PHB rows rejected)
+- [x] `edit-homebrew` propagation test: changing name updates every stash row by `definitionId` lookup
+- [x] `delete-homebrew` action + reducer case
+- [x] `delete-homebrew` invariant: cannot delete a homebrew currently referenced by any ItemInstance — **reject-when-referenced** chosen (M6 decision; surfaces a "X stash(es) hold this — remove items first" message). Cascade-remove was considered and rejected as too destructive.
+- [x] Duplicate-to-edit: clones PHB row as homebrew with `duplicatedFromId` set
+- [x] Duplicate test: clone has new id, `source: "homebrew"`, original untouched
 
 **UI**
-- [ ] `HomebrewForm.tsx` — all `ItemDefinition` fields, Zod-validated
-- [ ] AddItemModal "Custom" tab wired to `HomebrewForm`
-- [ ] Catalog Browser: PHB row shows Duplicate; homebrew row shows Edit + Delete
-- [ ] Edit flow opens `HomebrewForm` pre-filled
-- [ ] Delete flow has confirm; surfaces "X stashes hold this item" count
-- [ ] Component test: edit homebrew name → all stash rows reflect new name
+- [x] `HomebrewForm.tsx` — all `ItemDefinition` fields, Zod-validated
+- [x] AddItemModal "Custom" tab wired to `HomebrewForm`
+- [x] Catalog Browser: PHB row shows Duplicate; homebrew row shows Edit + Delete
+- [x] Edit flow opens `HomebrewForm` pre-filled
+- [x] Delete flow has confirm; surfaces "X stashes hold this item" count
+- [x] Component test: edit homebrew name → all stash rows reflect new name
 
 #### M6 — Notes
 
-> -
+> **2026-06-24 — M6 complete.**
+>
+> - **Schema changes (additive, no migration).** `packages/shared/src/schemas/transactionLog.ts` gained three new discriminated-union variants: `createHomebrewEntry` (payload `{ definitionId, name }`), `editHomebrewEntry` (`{ definitionId, changedFields: string[] }`), `deleteHomebrewEntry` (`{ definitionId, name }`). The `changedFields` array on `edit-homebrew` is intentionally `string[]` (not a closed enum) per OUTLINE §4 — homebrew definitions have a wider editable surface than `ItemInstance` and the looser type avoids a schema change every time R1+ unlocks more fields. `.min(1)` enforces no-op-edit rejection at the boundary, mirroring `editItemInstanceEntry`. AppState round-trip test extended with three new log fixtures.
+> - **Action union + reducer.** `Action` in `store/types.ts` gained three new members. Two new helper types live next to them: `HomebrewDefinitionInput` (the user-controlled subset for create) and `HomebrewDefinitionPatch` (the edit-mode shape where every field accepts `T | undefined` so callers can distinguish "set" from "explicitly cleared"). The latter is load-bearing under `exactOptionalPropertyTypes: true` — `Partial<HomebrewDefinitionInput>` was the first cut but TS rejects an explicit `undefined` assignment on a `T?` field.
+> - **Three new reducer cases.** All player-driven in MVP party-of-one; R4 will restrict create/edit/delete to DM only when the party has 2+ members per OUTLINE §8.1. Each follows the established M3+ shape (validate-then-apply, return `{ state, logEntries: [...] }`).
+>   - **`create-homebrew`** trims the name, mints `definitionId` via `crypto.randomUUID()`, stamps `source: 'homebrew'`, `partyId: state.party.id`, `createdBy: state.user.id`. Preserves the optional `duplicatedFromId` lineage from the Catalog Browser's Duplicate flow. Spread-style optional-field assignment keeps the row clean (no explicit `undefined` keys) which matters under `exactOptionalPropertyTypes`.
+>   - **`edit-homebrew`** validates target exists + is homebrew (PHB rows are immutable per OUTLINE §3.7), diffs the patch over a closed allowlist (`name`, `category`, `weight`, `cost`, `description`, `tags`) using `JSON.stringify` for nested-shape equality on `cost`, rejects no-op edits with `'no fields changed'`. Patch values of `undefined` collapse via `delete next[key]` rather than `next[key] = undefined` so the persisted row honors `exactOptionalPropertyTypes`.
+>   - **`delete-homebrew`** rejects when any `ItemInstance.definitionId` references the definition (M6 delete policy — reject not cascade). Error message names the distinct-stash count for non-UI consumers; the UI computes its own count for the dialog copy + the disabled-button guard.
+> - **`partyId` stamping decision** (per the pre-implementation question): every homebrew row carries `partyId: state.party.id` so OUTLINE §3.7's party-scoped visibility rule is a pure filter against the existing schema field. Future R4 multi-party visibility needs no schema migration. M2/M3-vintage Dexie blobs (no homebrew rows yet) still validate identically.
+> - **`HomebrewForm.tsx`** (NEW, `src/components/catalog/`) — RHF + Zod + reset-on-open + toast + try/catch following the M3+ modal pattern. Three modes via a `mode: 'create' | 'edit' | 'duplicate'` prop:
+>   - **create** — fresh defaults; submit dispatches `create-homebrew`. `onCreated?(definitionId)` callback lets parents chain follow-ups (used by AddItemModal's Custom tab).
+>   - **edit** — pre-fills from a passed `definition`; submit dispatches `edit-homebrew` with a `HomebrewDefinitionPatch` (every field explicitly present so the reducer's diff sees both "set" and "cleared").
+>   - **duplicate** — variant of create: pre-fills from a PHB row, stamps `duplicatedFromId: definition.id` on the resulting homebrew.
+>   - Plain native `<select>` for category + currency (same jsdom-friendliness reason as `ConvertCurrencyModal` / `MoveItemModal`). String-based weight + cost-amount fields with Zod `.refine` validators (empty → undefined; otherwise non-negative numeric).
+> - **`DeleteHomebrewDialog.tsx`** (NEW, `src/components/catalog/`) — `AlertDialog` confirmation gated by a `referenceStashCount` prop. When > 0, the Delete action is disabled with the message "X stash(es) hold this item — remove every instance from those stashes before deleting". The reducer's reject-when-referenced policy is the source of truth; the dialog is purely a friendlier surface.
+> - **CatalogBrowser** (`src/screens/CatalogBrowser.tsx`) — replaced the M2 placeholder buttons. PHB rows now expose an enabled Duplicate action; homebrew rows expose Edit + Delete. Added a header-level "New homebrew" button that opens HomebrewForm in create mode with no source row. Stable `EMPTY_CATALOG` + `EMPTY_ITEMS` references for the pre-bootstrap selector (Zustand requires Object.is equality on the returned slice; fresh `[]` would loop). `useShallow` wraps the multi-slice selector.
+> - **AddItemModal Custom tab** (`src/components/stash/AddItemModal.tsx`) — replaced the M2 stubbed `<p>` with `<HomebrewForm mode="create">`. On successful create, the modal's `onCreated` handler dispatches a follow-up `acquire` with `source: 'custom-create'` against the modal's `stashId`. Two log entries per submit (one create-homebrew, one acquire) — the desired audit trail per OUTLINE §3.4 and the M2 source-enum rationale.
+> - **`bootstrapWithHomebrew()`** added to `apps/web/src/test/fixtures.ts`. Returns `BootstrapResult + homebrewDefId`. Used across HomebrewForm, CatalogBrowser, AddItemModal tests.
+> - **Spec sync.** OUTLINE §4 already listed all three new TxTypes (`create-homebrew | edit-homebrew | delete-homebrew`) from earlier work; MVP.md §6's `TxType` list also includes them (line 206). No spec change required this milestone.
+> - **Tests:** **346 pass workspace-wide** (3 shared + 5 seeds + 45 rules + 293 web). M5.5 ended at 303; M6 adds **+43 tests** — 23 reducer (7 create-homebrew + 9 edit-homebrew + 7 delete-homebrew) + 10 HomebrewForm + 8 new CatalogBrowser + 2 new AddItemModal. The first cut of HomebrewForm.test.tsx and CatalogBrowser.test.tsx used `(getByLabelText(/name/i) as HTMLInputElement).value` for input assertions; eslint --fix flagged the cast as unnecessary (TS narrows it sometimes — `screen` types vary by config), and switching to `toHaveValue(...)` from jest-dom is the cleaner pattern, already used in `MoveItemModal.test.tsx`. Adopt it going forward.
+> - **Build:** 757.14 kB JS / 22.72 kB CSS (gzip 228.60 kB / 5.19 kB). Bundle delta vs M5.5: **+11.30 kB JS raw / +2.96 kB gzip** — well under the plan's +35 kB target. No new shadcn primitives needed (HomebrewForm + DeleteHomebrewDialog reuse the existing `Dialog` / `AlertDialog` / `Input` / `Label` / `Button` set; native `<select>` for category + currency). Cumulative bundle still under 1 MB raw.
+> - **Manual smoke test passed** end-to-end per the plan §9 checklist: Catalog → Duplicate Hempen Rope → rename Adamantine Rope, weight 15 → Save → both rows visible (PHB read-only, homebrew editable). Inventory → AddItemModal → Custom tab → Glowing Mushroom → Save → Mushroom appears in Inventory row. Catalog → Edit Glowing Mushroom → description change → reload → description persists, Inventory label still "Glowing Mushroom" (definitionId lookup). Catalog → Delete Glowing Mushroom → dialog "1 stash holds this — remove items first", Delete disabled. Inventory → Remove Mushroom → Catalog → Delete now confirms cleanly, row gone. Item Detail history shows the create-homebrew + acquire entries.
+>
+> **Decisions captured in code:**
+> - **Delete policy: reject when referenced** (not cascade). User explicitly chose this in the pre-implementation questions. Cascade-remove was rejected as too destructive — one click could wipe items across multiple stashes.
+> - **Duplicate UX: open HomebrewForm pre-filled** (not silent clone). Matches OUTLINE §3.7's "Duplicate to edit" wording. The user always commits the clone — no surprise catalog rows.
+> - **`partyId` stamped on every homebrew** (not nullable). Forward-compat with R4 multi-party visibility per OUTLINE §3.7; MVP filter treats both `null` (PHB) and `partyId === state.party.id` (homebrew) as visible, so no behavior change today.
+> - **`edit-homebrew.changedFields` is `string[]`** (not enum). OUTLINE §4's signature. The editable surface grows with R1+; closed enum would force schema bumps.
+> - **Patch shape uses `T | undefined`** under `exactOptionalPropertyTypes`. `Partial<T>` would forbid explicit `undefined` assignments; the patch needs to distinguish "key absent" (no-op for that field) from "key present, value undefined" (explicitly clear).
+> - **Reducer rejects no-op edits** (matches M2.5 edit-item-instance). Throw rather than silently log `changedFields: []` — keeps the CLAUDE.md "every dispatch appends one log entry" invariant unambiguous.
+>
+> **Followups carried forward to M7 / R-tier:**
+> - **R4 actor-role widening** for the homebrew trio. Today every dispatch is `actorRole: 'player'`; R4 will set `'dm'` on `create-homebrew` / `edit-homebrew` / `delete-homebrew` in 2+-member parties (OUTLINE §8.1 makes them DM-only there).
+> - **Duplicate UX polish (R-tier).** The dialog currently pre-fills the source name verbatim; users will typically tweak before saving. A "Copy of {original}" prefix or inline name-edit reminder could reduce the chance of accidentally creating two rows with identical names.
+> - **Auto-stack on Inventory after acquire-from-Custom** is fine today because the user is creating a brand-new homebrew row — no existing instance to collide with. If the user later does a second `acquire` against the same homebrew with empty notes, M2's auto-stack key collapses them (covered by existing tests). No new edge case.
+> - **`fixtures.bootstrapWithHomebrew()`** has overrides for `name` and `category` only because tests don't yet need to baseline weight/cost/description/tags. Widen ergonomically when an R1+ test needs those fields.
+> - **Bundle-size watchpoint:** M5.5 → 745 kB; M6 → 757 kB. Cumulative still well under 1 MB raw. The +11.30 kB delta is mostly the new modal + dialog + the small text fields; HomebrewForm's RHF schema is in the same chunk as the existing modal forms.
 
 ---
 
