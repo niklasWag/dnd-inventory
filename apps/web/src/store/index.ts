@@ -88,6 +88,12 @@ function resolveActor(
     case 'delete-homebrew':
     case 'rename-character':
     case 'rename-party':
+    case 'set-encumbrance':
+    case 'equip':
+    case 'unequip':
+    case 'attune':
+    case 'unattune':
+    case 'edit-character':
       // M3 player-initiated stash CRUD + the synthetic transfer +
       // currency-change emitted from the delete-stash cascade. M5
       // adds user-initiated `transfer` + `split` (always player-driven
@@ -101,6 +107,14 @@ function resolveActor(
       // owner-only in R4 too — character names belong to the owning
       // player) and `rename-party` (player-role in MVP; R4 widens to
       // DM-only when the party has 2+ members per OUTLINE §8.1).
+      // R1.1 adds `set-encumbrance` — owner-only in MVP; R4 will
+      // restrict to DM in 2+-member parties per OUTLINE §8.1 ("Edit
+      // any character encumbrance rule" DM-only row).
+      // R1.2 adds `equip` / `unequip` / `attune` / `unattune` — all
+      // owner-only (the row must live in the character's own Inventory
+      // per the reducer's `resolveInventoryRow` guard). `edit-character`
+      // is logged as player-role in MVP; R4 will route `maxAttunement`
+      // edits through the DM role per OUTLINE §8.1.
       // R4 (multi-member) will also let DM / Banker drive these.
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);

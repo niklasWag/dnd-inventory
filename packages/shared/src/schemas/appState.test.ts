@@ -56,11 +56,13 @@ describe('appStateSchema round-trip', () => {
         ownerUserId: 'user-1',
         name: 'Thorin',
         species: 'Dwarf',
+        size: 'medium',
         class: 'Fighter',
         level: 1,
         abilityScores: { STR: 16 },
         maxAttunement: 3,
         encumbranceRule: 'off',
+        enforceEncumbrance: false,
         inventoryStashId: 'stash-inv',
       },
     ],
@@ -229,6 +231,26 @@ describe('appStateSchema round-trip', () => {
           newName: 'The Misfits',
         },
       },
+      {
+        // R1.1: set-encumbrance round-trip. Per-character flip of the
+        // rule + the orthogonal `enforce` boolean. Mirrors the rename
+        // pair: { characterId, oldRule, newRule, oldEnforce, newEnforce }
+        // recorded.
+        id: 'log-9',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-24T11:05:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'set-encumbrance',
+        payload: {
+          characterId: 'char-1',
+          oldRule: 'off',
+          newRule: 'variant',
+          oldEnforce: false,
+          newEnforce: false,
+        },
+      },
     ],
   };
 
@@ -246,5 +268,172 @@ describe('appStateSchema round-trip', () => {
     const bad = structuredClone(fixture) as unknown as Record<string, unknown>;
     (bad['stashes'] as Array<Record<string, unknown>>)[0]!['scope'] = 'solo';
     expect(() => appStateSchema.parse(bad)).toThrow();
+  });
+
+  it('R1.3 migration — imports a pre-R1.3 export without flatWeight or container fields', () => {
+    // Pre-R1.3-vintage shape: definitions omit `flatWeight`, item rows
+    // carry `containerInstanceId: null` (was a Zod literal pre-R1.3).
+    // The schema relaxations land additively — older exports parse
+    // cleanly with no migration step required.
+    const aged = structuredClone(fixture);
+    aged.catalog = [
+      {
+        id: 'phb-2024:backpack',
+        name: 'Backpack',
+        source: 'PHB',
+        category: 'container',
+        weight: 5,
+        // NOTE: no `flatWeight` field — pre-R1.3 exports never wrote it.
+      },
+    ];
+    aged.items = [
+      {
+        id: 'item-backpack',
+        definitionId: 'phb-2024:backpack',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+    ];
+    expect(() => appStateSchema.parse(aged)).not.toThrow();
+  });
+
+  it('R1.3 — accepts an item with a non-null containerInstanceId', () => {
+    const withContainer = structuredClone(fixture);
+    withContainer.catalog = [
+      {
+        id: 'phb-2024:backpack',
+        name: 'Backpack',
+        source: 'PHB',
+        category: 'container',
+        weight: 5,
+      },
+    ];
+    withContainer.items = [
+      {
+        id: 'item-backpack',
+        definitionId: 'phb-2024:backpack',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+      {
+        id: 'item-rations',
+        definitionId: 'phb-2024:backpack', // catalog id reused for test brevity
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: 'item-backpack', // now a non-null id
+        quantity: 3,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+    ];
+    const parsed = appStateSchema.parse(withContainer);
+    expect(parsed.items[1]!.containerInstanceId).toBe('item-backpack');
+  });
+
+  it('R1.3 — accepts an ItemDefinition with flatWeight: true', () => {
+    const dmgFlavoured = structuredClone(fixture);
+    dmgFlavoured.catalog = [
+      {
+        id: 'dmg-2024:bag-of-holding',
+        name: 'Bag of Holding',
+        source: 'PHB', // M2 schema still gates `source` to PHB|homebrew; DMG seed lands in R2.1
+        category: 'container',
+        weight: 15,
+        flatWeight: true,
+      },
+    ];
+    const parsed = appStateSchema.parse(dmgFlavoured);
+    expect(parsed.catalog[0]!.flatWeight).toBe(true);
+  });
+
+  it('R1.5 migration — imports a pre-R1.5 transfer entry without toContainerInstanceId', () => {
+    // Pre-R1.5 transfer log entries don't carry `toContainerInstanceId`.
+    // The R1.5 schema widening is additive — older entries parse cleanly.
+    const aged = structuredClone(fixture);
+    aged.log = [
+      {
+        id: 'log-1',
+        partyId: aged.party.id,
+        sessionId: null,
+        timestamp: '2026-06-20T12:00:00.000Z',
+        actorUserId: aged.user.id,
+        actorRole: 'player',
+        type: 'transfer',
+        payload: {
+          itemInstanceId: 'item-x',
+          quantity: 1,
+          fromStashId: 'stash-a',
+          toStashId: 'stash-b',
+          // NOTE: no `toContainerInstanceId` field — pre-R1.5 entries never wrote it.
+        },
+      },
+    ];
+    expect(() => appStateSchema.parse(aged)).not.toThrow();
+  });
+
+  it('R1.5 — accepts a transfer entry with toContainerInstanceId as a string (pack)', () => {
+    const packEntry = structuredClone(fixture);
+    packEntry.log = [
+      {
+        id: 'log-1',
+        partyId: packEntry.party.id,
+        sessionId: null,
+        timestamp: '2026-06-25T12:00:00.000Z',
+        actorUserId: packEntry.user.id,
+        actorRole: 'player',
+        type: 'transfer',
+        payload: {
+          itemInstanceId: 'item-torch',
+          quantity: 1,
+          fromStashId: 'stash-inv',
+          toStashId: 'stash-inv',
+          toContainerInstanceId: 'item-backpack',
+        },
+      },
+    ];
+    const parsed = appStateSchema.parse(packEntry);
+    const entry = parsed.log[0]!;
+    if (entry.type !== 'transfer') throw new Error('expected transfer entry');
+    expect(entry.payload.toContainerInstanceId).toBe('item-backpack');
+  });
+
+  it('R1.5 — accepts a transfer entry with toContainerInstanceId: null (take-out)', () => {
+    const takeOutEntry = structuredClone(fixture);
+    takeOutEntry.log = [
+      {
+        id: 'log-1',
+        partyId: takeOutEntry.party.id,
+        sessionId: null,
+        timestamp: '2026-06-25T12:00:00.000Z',
+        actorUserId: takeOutEntry.user.id,
+        actorRole: 'player',
+        type: 'transfer',
+        payload: {
+          itemInstanceId: 'item-torch',
+          quantity: 1,
+          fromStashId: 'stash-inv',
+          toStashId: 'stash-inv',
+          toContainerInstanceId: null,
+        },
+      },
+    ];
+    const parsed = appStateSchema.parse(takeOutEntry);
+    const entry = parsed.log[0]!;
+    if (entry.type !== 'transfer') throw new Error('expected transfer entry');
+    expect(entry.payload.toContainerInstanceId).toBeNull();
   });
 });

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { encumbranceRuleSchema } from './character';
+
 /**
  * TransactionLog — MVP captures a strict SUBSET of the OUTLINE §4 full
  * union. Every action that mutates state appends one entry; the discriminant
@@ -106,11 +108,12 @@ const seedCatalogEntry = z.object({
  * have their own dedicated TxType (OUTLINE §4). Only `changedFields` is
  * logged; the full new value lives on the instance itself.
  *
- * M2.5 scope is narrowed to `customName` + `notes` because the MVP
- * `itemInstance` schema hard-codes `equipped`/`attuned`/`identified`/
- * `currentCharges` as Zod literals (placeholders unlocked in R1/R2).
- * The OUTLINE §4 enum is wider — widening this schema enum to match it
- * is additive and needs no migration.
+ * R1.2 widens the enum from `customName | notes` (M2.5) to also include
+ * `equipped` and `attuned`. The dedicated `equip`/`unequip`/`attune`/
+ * `unattune` TxTypes (below) cover the explicit reducer actions; this
+ * widened enum exists for the future Item Detail screen edit path that
+ * mass-edits a row at once. R2 will widen further to include
+ * `identified` and `currentCharges`.
  *
  * `.min(1)` enforces the "no-op edit" reject rule at the schema boundary
  * (the reducer is the primary defense; this is belt-and-braces).
@@ -120,7 +123,9 @@ const editItemInstanceEntry = z.object({
   type: z.literal('edit-item-instance'),
   payload: z.object({
     itemInstanceId: z.string().min(1),
-    changedFields: z.array(z.enum(['customName', 'notes'])).min(1),
+    changedFields: z
+      .array(z.enum(['customName', 'notes', 'equipped', 'attuned']))
+      .min(1),
   }),
 });
 
@@ -133,6 +138,16 @@ const editItemInstanceEntry = z.object({
  *
  * M3 emits these synthetically as part of `delete-stash`. M5 user-
  * initiated transfers will dispatch this directly.
+ *
+ * R1.5 — `toContainerInstanceId` is optional + nullable to express three
+ * intents per OUTLINE §3.4 / §3.6:
+ *   - `undefined` (or absent): "transfer did not change container parent"
+ *     — every pre-R1.5 log entry has this shape and stays valid.
+ *   - `null`: explicit take-out — the moved row's `containerInstanceId`
+ *     is cleared to `null` (re-emerges at top level of the destination
+ *     stash).
+ *   - `string`: pack-into — the moved row's `containerInstanceId` is set
+ *     to the supplied id (one-level-deep, same-stash-only in v1).
  */
 const transferEntry = z.object({
   ...baseLogFields,
@@ -142,6 +157,7 @@ const transferEntry = z.object({
     quantity: z.number().int().positive(),
     fromStashId: z.string().min(1),
     toStashId: z.string().min(1),
+    toContainerInstanceId: z.string().min(1).nullable().optional(),
   }),
 });
 
@@ -409,6 +425,119 @@ const renamePartyEntry = z.object({
   }),
 });
 
+/**
+ * `set-encumbrance` — per-character encumbrance configuration
+ * (OUTLINE §3.3 + §3.6). R1.1 widens `Character.encumbranceRule` from
+ * the MVP literal `'off'` to `'off' | 'phb' | 'variant'`, and adds the
+ * orthogonal `enforceEncumbrance` boolean. This single entry records
+ * any change to EITHER field (or both at once) so a "switch to variant
+ * + turn on enforcement" flip stays one dispatch / one log row per the
+ * CLAUDE.md "every mutation logs once" invariant.
+ *
+ * Reducer guards: unknown characterId rejects; no-op rejects when both
+ * `newRule === oldRule` AND `newEnforce === oldEnforce`. In MVP
+ * party-of-one this is owner-only (player); R4 makes it DM-only in 2+-
+ * member parties per OUTLINE §8.1.
+ */
+const setEncumbranceEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('set-encumbrance'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    oldRule: encumbranceRuleSchema,
+    newRule: encumbranceRuleSchema,
+    oldEnforce: z.boolean(),
+    newEnforce: z.boolean(),
+  }),
+});
+
+/**
+ * `equip` / `unequip` — set / clear the `equipped` flag on an item that
+ * lives in a character's Inventory stash (OUTLINE §3.4 + §4 line 304).
+ * The reducer enforces:
+ *   - the item is in a `scope=character, isCarried=true` stash,
+ *   - the stash's `ownerCharacterId === characterId`,
+ *   - the new state is actually different (no-op rejects).
+ *
+ * `slot?` is reserved for R2.x equip-slot tracking (mainhand / offhand /
+ * armor / shield). R1.2 ships the flag without a slot model — the field
+ * is optional and unused by the reducer for now. Per OUTLINE §4 line 304.
+ */
+const equipEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('equip'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    characterId: z.string().min(1),
+    slot: z.string().min(1).optional(),
+  }),
+});
+
+const unequipEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('unequip'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    characterId: z.string().min(1),
+    slot: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * `attune` / `unattune` — set / clear the `attuned` flag on an item that
+ * lives in a character's Inventory stash (OUTLINE §3.4 + §4 line 303).
+ * The reducer enforces:
+ *   - the item is in a `scope=character, isCarried=true` stash,
+ *   - the stash's `ownerCharacterId === characterId`,
+ *   - `attune` only fires when `attunement.hasFreeSlot(currentlyAttuned,
+ *     character.maxAttunement) === true`,
+ *   - the new state is actually different (no-op rejects).
+ */
+const attuneEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('attune'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    characterId: z.string().min(1),
+  }),
+});
+
+const unattuneEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('unattune'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    characterId: z.string().min(1),
+  }),
+});
+
+/**
+ * `edit-character` — catch-all editor for the mutable Character fields
+ * that compose naturally as a single dispatch (OUTLINE §4 line 320). The
+ * R1.1 dedicated `set-encumbrance` action stays single-purpose; `size` is
+ * creation-only in v1 and is therefore NOT in the editable enum. The
+ * R1.2 entry covers:
+ *   - `species`, `class`, `level`, `str` — owner-editable in MVP party-of-
+ *     one; per OUTLINE §8.1 these are the player's own (DM may also edit
+ *     in 2+-member parties via the same TxType).
+ *   - `maxAttunement` — DM-only per OUTLINE §8.1 line 427. In MVP party-
+ *     of-one the sole user wears both hats.
+ *
+ * Mirrors `edit-homebrew`: only `changedFields` are logged; the full new
+ * values live on the Character row. `.min(1)` enforces no-op rejection at
+ * the schema boundary.
+ */
+const editCharacterEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('edit-character'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    changedFields: z
+      .array(z.enum(['species', 'class', 'level', 'str', 'maxAttunement']))
+      .min(1),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -429,6 +558,12 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   deleteHomebrewEntry,
   renameCharacterEntry,
   renamePartyEntry,
+  setEncumbranceEntry,
+  equipEntry,
+  unequipEntry,
+  attuneEntry,
+  unattuneEntry,
+  editCharacterEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

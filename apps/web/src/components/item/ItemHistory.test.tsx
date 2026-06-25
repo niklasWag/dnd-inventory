@@ -272,11 +272,13 @@ describe('ItemHistory', () => {
             ownerUserId: 'u',
             name: 'Thorin',
             species: 'Dwarf',
+            size: 'medium',
             class: 'Fighter',
             level: 3,
             abilityScores: { STR: 16 },
             maxAttunement: 3,
             encumbranceRule: 'off',
+            enforceEncumbrance: false,
             inventoryStashId: 'some-inventory-id',
           },
         ],
@@ -414,5 +416,116 @@ describe('ItemHistory', () => {
 
     rerender(<ItemHistory itemInstanceId="item-new" />);
     expect(screen.getByText(/Split off from another stack \(×2\)/i)).toBeInTheDocument();
+  });
+
+  it('R1.5 — summarizes a pack as "Packed ×N into {container} ({stash})"', () => {
+    // Pack = same-stash transfer with `toContainerInstanceId` set to a
+    // container row's id. The renderer needs to surface what was packed
+    // and into WHICH container — the bare "from X to X" is uninformative
+    // (and identical for every pack/take-out, see GitHub user report).
+    const { inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    useStore.setState({
+      log: [
+        makeEntry('transfer', {
+          itemInstanceId: 'item-torch',
+          quantity: 1,
+          fromStashId: inventoryStashId,
+          toStashId: inventoryStashId,
+          toContainerInstanceId: backpackId,
+        }),
+      ],
+    });
+
+    render(<ItemHistory itemInstanceId="item-torch" />);
+    // The container's synthesized "#1" notes (Approach B) show up in the
+    // label so two backpacks are distinguishable in the log.
+    expect(screen.getByText(/Packed ×1 into Backpack \(#1\)/i)).toBeInTheDocument();
+    // The stash name is also visible so the user can tell where this happened.
+    expect(screen.getByText(/Thorin — Inventory/i)).toBeInTheDocument();
+  });
+
+  it('R1.5 — summarizes a take-out as "Took ×N out of container in {stash}"', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.setState({
+      log: [
+        makeEntry('transfer', {
+          itemInstanceId: 'item-torch',
+          quantity: 1,
+          fromStashId: inventoryStashId,
+          toStashId: inventoryStashId,
+          toContainerInstanceId: null,
+        }),
+      ],
+    });
+
+    render(<ItemHistory itemInstanceId="item-torch" />);
+    expect(screen.getByText(/Took ×1 out of container/i)).toBeInTheDocument();
+    expect(screen.getByText(/Thorin — Inventory/i)).toBeInTheDocument();
+  });
+
+  it('R1.5 — cross-stash transfer with orphan-drop renders as a plain cross-stash move', () => {
+    // The reducer's R1.5 orphan-drop fires when a contained row is moved
+    // cross-stash without the container coming along — `containerInstanceId`
+    // is cleared and the log entry surfaces it via `toContainerInstanceId:
+    // null`. The display intentionally renders this as a normal "from X
+    // to Y" line WITHOUT a "(removed from container)" annotation: the
+    // suffix made the line too long to fit on one row in the log
+    // timeline, and the source/destination labels already tell the story.
+    const { characterId, recoveredLootStashId } = bootstrap();
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+    });
+    const fromStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    useStore.setState({
+      log: [
+        makeEntry('transfer', {
+          itemInstanceId: 'item-torch',
+          quantity: 2,
+          fromStashId,
+          toStashId: recoveredLootStashId,
+          toContainerInstanceId: null,
+        }),
+      ],
+    });
+
+    render(<ItemHistory itemInstanceId="item-torch" />);
+    expect(
+      screen.getByText(/Transferred ×2 from Thorin — Chest at home to Recovered Loot/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/removed from container/i)).not.toBeInTheDocument();
+  });
+
+  it('R1.5 — falls back to "container" label when the parent row has been deleted', () => {
+    // Defensive: the user packed something, then deleted the container
+    // (via subsequent moves / consumes). The pack log entry still exists
+    // and references the now-gone parent id. Render falls back to the
+    // generic "container" word rather than crashing or rendering a UUID.
+    const { inventoryStashId } = bootstrap();
+    useStore.setState({
+      log: [
+        makeEntry('transfer', {
+          itemInstanceId: 'item-torch',
+          quantity: 1,
+          fromStashId: inventoryStashId,
+          toStashId: inventoryStashId,
+          toContainerInstanceId: 'phantom-backpack-id',
+        }),
+      ],
+    });
+
+    render(<ItemHistory itemInstanceId="item-torch" />);
+    expect(screen.getByText(/Packed ×1 into container/i)).toBeInTheDocument();
   });
 });

@@ -46,11 +46,13 @@ function makeChar(id: string, name: string): Character {
     ownerUserId: 'u',
     name,
     species: 'Dwarf',
+    size: 'medium',
     class: 'Fighter',
     level: 1,
     abilityScores: { STR: 10 },
     maxAttunement: 3,
     encumbranceRule: 'off',
+    enforceEncumbrance: false,
     inventoryStashId: 's',
   };
 }

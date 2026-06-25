@@ -5,7 +5,7 @@ import type {
   Stash,
   TransactionLogEntry,
 } from '@app/shared';
-import { currency, inventory } from '@app/rules';
+import { attunement, capacity, currency, inventory, weight as weightRules } from '@app/rules';
 
 import type { Action, AppState } from './types';
 
@@ -95,6 +95,16 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return renameCharacter(state, action.payload);
     case 'rename-party':
       return renameParty(state, action.payload);
+    case 'set-encumbrance':
+      return setEncumbrance(state, action.payload);
+    case 'equip':
+    case 'unequip':
+      return equipOrUnequip(state, action.type, action.payload);
+    case 'attune':
+    case 'unattune':
+      return attuneOrUnattune(state, action.type, action.payload);
+    case 'edit-character':
+      return editCharacter(state, action.payload);
   }
 }
 
@@ -111,6 +121,67 @@ function requireState(
     throw new Error(`${action}: no AppState (create-character must run first)`);
   }
   return state;
+}
+
+/**
+ * R1.4 — hard-mode encumbrance guard. Called by `acquire` and `transfer`
+ * BEFORE committing `nextItems`. Speculative: `nextItems` already reflects
+ * the proposed mutation (so the §3.4 cascade has already cleared flags on
+ * cross-stash moves). Reads the destination stash; if it's a character's
+ * Inventory AND the character has `enforceEncumbrance: true` AND
+ * `encumbranceRule !== 'off'`, computes the container-aware weight of the
+ * post-write Inventory rows and rejects when over `heavyThreshold`.
+ *
+ * Composition with R1.3: passing `nextItems` (post-cascade) means a
+ * leave-Inventory transfer ALWAYS lowers the source's weight (the row
+ * left) and never trips the guard. The entering-Inventory case is the
+ * one that matters; the destination's flatWeight-container exception
+ * applies via `containerAwareWeight` so packing into a Bag of Holding
+ * doesn't add weight (R1.5 packing UI will land on the same call).
+ *
+ * Throws with a `<action>: would exceed carrying capacity ...` message
+ * carrying the post-write weight + the threshold so toasts can surface
+ * the numbers. The action label is prefixed for log-style consistency
+ * with the rest of the reducer's rejection messages.
+ */
+function checkHardMode(
+  action: string,
+  s: NonNullable<AppState>,
+  nextItems: ReadonlyArray<ItemInstance>,
+  destinationStashId: string,
+): void {
+  const stash = s.stashes.find((st) => st.id === destinationStashId);
+  if (stash === undefined) return;
+  if (stash.scope !== 'character' || !stash.isCarried) return;
+  if (stash.ownerCharacterId === null) return;
+  const character = s.characters.find((c) => c.id === stash.ownerCharacterId);
+  if (character === undefined) return;
+  if (!character.enforceEncumbrance) return;
+  if (character.encumbranceRule === 'off') return;
+
+  const defsById = new Map(
+    s.catalog.map(
+      (d) =>
+        [
+          d.id,
+          d.flatWeight === undefined
+            ? { weight: d.weight ?? 0 }
+            : { weight: d.weight ?? 0, flatWeight: d.flatWeight },
+        ] as const,
+    ),
+  );
+  const inventoryRows = nextItems.filter((i) => i.ownerId === stash.id);
+  const postWeight = weightRules.containerAwareWeight(inventoryRows, defsById);
+  const threshold = capacity.heavyThreshold(
+    character.abilityScores.STR,
+    character.size,
+    character.encumbranceRule,
+  );
+  if (postWeight > threshold) {
+    throw new Error(
+      `${action}: would exceed carrying capacity (${String(postWeight)} > ${String(threshold)} lb)`,
+    );
+  }
 }
 
 // -------------------------------------------------------------------- //
@@ -192,11 +263,13 @@ function createCharacter(
         ownerUserId: userId,
         name: payload.name,
         species: payload.species,
+        size: payload.size,
         class: payload.class,
         level: payload.level,
         abilityScores: { STR: payload.str },
         maxAttunement: 3,
         encumbranceRule: 'off',
+        enforceEncumbrance: false,
         inventoryStashId,
       },
     ],
@@ -283,12 +356,29 @@ function acquire(
   if (!s.stashes.some((st) => st.id === payload.stashId)) {
     throw new Error(`acquire: unknown stashId ${payload.stashId}`);
   }
-  if (!s.catalog.some((d) => d.id === payload.definitionId)) {
+  const definition = s.catalog.find((d) => d.id === payload.definitionId);
+  if (definition === undefined) {
     throw new Error(`acquire: unknown definitionId ${payload.definitionId}`);
   }
 
+  // R1.5 Approach B — synthesize a distinguishing `notes` value when the
+  // acquired definition is a container AND the caller didn't pass an
+  // explicit notes value. Each container instance gets its own per-stash
+  // `#1`, `#2`, … tag so the auto-stack key `(definitionId, notes ?? "")`
+  // never collides (two backpacks stay as two rows). Counter strategy is
+  // "highest existing + 1" rather than "count + 1" so deletes don't
+  // recycle ids: deleting `#1` then acquiring yields `#3`, not `#1` again.
+  // The user can rename the tag via the existing M2.5 Item Detail edit
+  // path (`edit-item-instance` with `changedFields: ["notes"]`).
+  const effectiveNotes =
+    payload.notes !== undefined
+      ? payload.notes
+      : definition.category === 'container'
+        ? nextContainerNotes(s.items, payload.definitionId, payload.stashId)
+        : undefined;
+
   // Auto-stack key: (definitionId, notes ?? "").
-  const notesKey = payload.notes ?? '';
+  const notesKey = effectiveNotes ?? '';
   const existing = s.items.find(
     (i) =>
       i.ownerId === payload.stashId &&
@@ -318,9 +408,14 @@ function acquire(
       identified: true,
       currentCharges: null,
     };
-    if (payload.notes !== undefined) newRow.notes = payload.notes;
+    if (effectiveNotes !== undefined) newRow.notes = effectiveNotes;
     nextItems = [...s.items, newRow];
   }
+
+  // R1.4 — hard-mode threshold check on the post-write items. Guard
+  // short-circuits when the destination isn't a character's Inventory
+  // OR the character has `enforceEncumbrance: false` / `rule === 'off'`.
+  checkHardMode('acquire', s, nextItems, payload.stashId);
 
   return {
     state: { ...s, items: nextItems },
@@ -335,6 +430,35 @@ function acquire(
       },
     }],
   };
+}
+
+/**
+ * R1.5 Approach B helper — derive the next synthesized `notes` value
+ * for a container `acquire` in `stashId`. Scans existing instances of
+ * `definitionId` in the same stash for `#N` tags and returns `#<max+1>`
+ * (or `#1` if none exist). Per-stash scope: acquiring the same backpack
+ * definition in Inventory and Party Stash yields `#1` in each.
+ *
+ * Non-matching notes (user-set or imported) are ignored by the regex
+ * so the counter doesn't trip on `"Volo's backpack"` or similar.
+ */
+function nextContainerNotes(
+  items: ReadonlyArray<ItemInstance>,
+  definitionId: string,
+  stashId: string,
+): string {
+  const SYNTH_RE = /^#(\d+)$/;
+  let max = 0;
+  for (const row of items) {
+    if (row.definitionId !== definitionId) continue;
+    if (row.ownerId !== stashId) continue;
+    if (row.notes === undefined) continue;
+    const m = SYNTH_RE.exec(row.notes);
+    if (m === null) continue;
+    const n = Number.parseInt(m[1]!, 10);
+    if (n > max) max = n;
+  }
+  return `#${String(max + 1)}`;
 }
 
 // -------------------------------------------------------------------- //
@@ -922,57 +1046,207 @@ function transfer(
   if (toStash === undefined) {
     throw new Error(`transfer: unknown toStashId ${payload.toStashId}`);
   }
-  if (source.ownerId === payload.toStashId) {
+
+  // R1.5 — `toContainerInstanceId` adds pack / take-out / no-op semantics.
+  //   - `undefined`: parent unchanged (every pre-R1.5 dispatch).
+  //   - `null`: take-out — clear `containerInstanceId` on the moved row.
+  //   - `string`: pack-into — set `containerInstanceId` to the supplied id.
+  // The same-stash transfer rule (was unconditional reject) now allows
+  // same-stash dispatches when the caller is explicitly changing the
+  // container parent — that's the entire R1.5 surface. A same-stash
+  // dispatch WITHOUT an explicit `toContainerInstanceId` change is still
+  // a no-op and reject.
+  const changingContainerParent =
+    payload.toContainerInstanceId !== undefined &&
+    payload.toContainerInstanceId !== source.containerInstanceId;
+  if (source.ownerId === payload.toStashId && !changingContainerParent) {
     throw new Error('transfer: same stash (no-op)');
   }
+
+  // R1.5 guards on the destination container, if any:
+  if (
+    payload.toContainerInstanceId !== undefined &&
+    payload.toContainerInstanceId !== null
+  ) {
+    // Self-reference: a row can't contain itself.
+    if (payload.toContainerInstanceId === payload.itemInstanceId) {
+      throw new Error('transfer: cannot pack a row into itself (self-reference)');
+    }
+    const parent = s.items.find((i) => i.id === payload.toContainerInstanceId);
+    if (parent === undefined) {
+      throw new Error(
+        `transfer: unknown toContainerInstanceId ${payload.toContainerInstanceId}`,
+      );
+    }
+    // One-level-deep (OUTLINE §3.6): the destination container itself
+    // must be top-level (no parent), otherwise this pack would create
+    // two-level nesting.
+    if (parent.containerInstanceId !== null) {
+      throw new Error(
+        'transfer: destination container is already nested (one level deep only)',
+      );
+    }
+    // Same-stash (v1): destination container must live in the same stash
+    // as the moved row's destination. Cross-stash pack is a 2-step (move
+    // then pack) per the R1.5 scope.
+    if (parent.ownerId !== payload.toStashId) {
+      throw new Error(
+        'transfer: destination container must live in the same stash as toStashId',
+      );
+    }
+  }
+
   inventory.validateTransfer(source, payload.quantity);
 
   const fromStashId = source.ownerId;
   const isFullMove = payload.quantity === source.quantity;
-  const target = inventory.findAutoStackTarget(
-    s.items,
-    payload.toStashId,
-    source.definitionId,
-    source.notes,
-  );
+  // Auto-stack on arrival is gated on "actually changing stash" — a same-
+  // stash pack/take-out dispatch must NOT auto-stack onto a matching row
+  // (it'd merge the packed/unpacked row into a sibling and lose the
+  // container parent change). The R1.5 Approach B synthesized notes
+  // generally prevent collisions already, but the guard is defensive.
+  const target =
+    source.ownerId === payload.toStashId
+      ? undefined
+      : inventory.findAutoStackTarget(
+          s.items,
+          payload.toStashId,
+          source.definitionId,
+          source.notes,
+        );
+
+  // R1.3 — leave-Inventory cascade (OUTLINE §3.4): when the source row
+  // lives in a character's Inventory stash and the destination is
+  // anything else, clear `equipped` / `attuned` / `currentCharges`
+  // atomically. The cascade is a no-op when the source row was already
+  // at the MVP-placeholder values (un-equipped, un-attuned, no charges)
+  // — in that case we don't emit the paired `edit-item-instance` entry
+  // because nothing actually changed.
+  const fromStash = s.stashes.find((st) => st.id === fromStashId);
+  const leavingInventory =
+    fromStash !== undefined &&
+    fromStash.scope === 'character' &&
+    fromStash.isCarried === true &&
+    payload.toStashId !== fromStashId;
+  const clearedFields: ('equipped' | 'attuned')[] = [];
+  if (leavingInventory) {
+    if (source.equipped) clearedFields.push('equipped');
+    if (source.attuned) clearedFields.push('attuned');
+    // `currentCharges` is still null-locked (R2.2 widens it); the cascade
+    // has nothing to clear there yet, but the structure is in place.
+  }
+  // Cross-stash container-orphan check (OUTLINE §3.4 invariant: parent
+  // and contents live in the same stash). When the moved row is itself
+  // a CHILD (`containerInstanceId !== null`) and we're changing stash,
+  // AND the parent isn't following along (the parent row's `ownerId`
+  // stays put because we're moving the child, not the parent), the
+  // moved row's `containerInstanceId` would dangle — pointing at a row
+  // in a different stash. Drop the reference atomically so the UI's
+  // "is this row contained?" check stays accurate post-move.
+  //
+  // Skips when an explicit `toContainerInstanceId` is set on the payload
+  // (the user is re-parenting in the destination — `applyMovedRowMutations`
+  // already handles that case via the R1.5 branch below).
+  const droppingParent =
+    payload.toContainerInstanceId === undefined &&
+    source.containerInstanceId !== null &&
+    payload.toStashId !== fromStashId;
+
+  // Helper: apply the cascade clear-fields + R1.5 parent change + cross-
+  // stash orphan-drop to a row (used in every branch below where we
+  // either move or split the source row). Container-parent re-assignment
+  // is part of the same atomic write so the §3.4 cascade and R1.5
+  // pack/take-out compose cleanly.
+  function applyMovedRowMutations(row: ItemInstance): ItemInstance {
+    let next = row;
+    if (clearedFields.length > 0) {
+      next = { ...next, equipped: false, attuned: false };
+    }
+    if (payload.toContainerInstanceId !== undefined) {
+      next = { ...next, containerInstanceId: payload.toContainerInstanceId };
+    } else if (droppingParent) {
+      next = { ...next, containerInstanceId: null };
+    }
+    return next === row ? row : next;
+  }
 
   let nextItems: ItemInstance[];
   let survivingId: string;
 
+  // R1.3 — container-contents-follow cascade (OUTLINE §3.4): when the
+  // moved row's `id` is referenced as `containerInstanceId` by other
+  // rows in the SAME source stash, those child rows' `ownerId` updates
+  // to the destination stash atomically. Children's `containerInstanceId`
+  // is preserved so the (parent, contents) hierarchy survives the move.
+  // The cascade is implicit in the state diff — no per-child log entry
+  // is emitted (cf. M3's delete-stash cascade which IS per-child).
+  //
+  // Only meaningful on a full move (`isFullMove === true`); a partial
+  // move would split the container into two rows, which the OUTLINE
+  // §3.6 one-level-deep rule has nothing to say about and the M5 split
+  // path already rejects via `validateSplit` rules. For R1.3 we follow
+  // children only on full moves.
+  //
+  // Same-stash transfers (R1.5 pack/take-out) never need this cascade
+  // — children stay in the same stash regardless — so we short-circuit
+  // when the destination matches the source stash.
+  const childRows =
+    isFullMove && target === undefined && source.ownerId !== payload.toStashId
+      ? s.items.filter(
+          (i) => i.containerInstanceId === source.id && i.ownerId === fromStashId,
+        )
+      : [];
+
   if (target !== undefined) {
     // Auto-stack onto target. Target row absorbs the moved quantity;
     // source row either disappears (full move) or stays decremented.
+    // The cascade's flag clears apply to the TARGET because that's the
+    // surviving row carrying the moved quantity. (The source row, if it
+    // remains, stays in Inventory — its flags don't change.)
     survivingId = target.id;
     if (isFullMove) {
       nextItems = s.items
         .filter((i) => i.id !== source.id)
         .map((i) =>
-          i.id === target.id ? { ...i, quantity: i.quantity + payload.quantity } : i,
+          i.id === target.id
+            ? applyMovedRowMutations({ ...i, quantity: i.quantity + payload.quantity })
+            : i,
         );
     } else {
       nextItems = s.items.map((i) => {
         if (i.id === source.id) return { ...i, quantity: i.quantity - payload.quantity };
-        if (i.id === target.id) return { ...i, quantity: i.quantity + payload.quantity };
+        if (i.id === target.id)
+          return applyMovedRowMutations({ ...i, quantity: i.quantity + payload.quantity });
         return i;
       });
     }
   } else if (isFullMove) {
-    // Re-point source to the new stash; id preserved.
+    // Re-point source to the new stash; id preserved. Cascade applies
+    // directly to the moved row. Plus R1.3: any child rows in the
+    // source stash whose `containerInstanceId === source.id` follow the
+    // parent atomically (their `containerInstanceId` stays unchanged;
+    // only their `ownerId` re-points to the destination).
     survivingId = source.id;
-    nextItems = s.items.map((i) =>
-      i.id === source.id ? { ...i, ownerId: payload.toStashId } : i,
-    );
+    const childIds = new Set(childRows.map((c) => c.id));
+    nextItems = s.items.map((i) => {
+      if (i.id === source.id)
+        return applyMovedRowMutations({ ...i, ownerId: payload.toStashId });
+      if (childIds.has(i.id)) return { ...i, ownerId: payload.toStashId };
+      return i;
+    });
   } else {
     // Partial move with no auto-stack target: clone source into a fresh
-    // row in the destination, decrement source.
+    // row in the destination, decrement source. The cascade applies to
+    // the NEW row (it's the one that left Inventory). Source row stays
+    // in Inventory — flags untouched.
     const newId = crypto.randomUUID();
     survivingId = newId;
-    const newRow: ItemInstance = {
+    const newRow: ItemInstance = applyMovedRowMutations({
       ...source,
       id: newId,
       ownerId: payload.toStashId,
       quantity: payload.quantity,
-    };
+    });
     nextItems = [
       ...s.items.map((i) =>
         i.id === source.id ? { ...i, quantity: i.quantity - payload.quantity } : i,
@@ -981,19 +1255,56 @@ function transfer(
     ];
   }
 
+  const transferPayload: {
+    itemInstanceId: string;
+    quantity: number;
+    fromStashId: string;
+    toStashId: string;
+    toContainerInstanceId?: string | null;
+  } = {
+    itemInstanceId: survivingId,
+    quantity: payload.quantity,
+    fromStashId,
+    toStashId: payload.toStashId,
+  };
+  if (payload.toContainerInstanceId !== undefined) {
+    transferPayload.toContainerInstanceId = payload.toContainerInstanceId;
+  } else if (droppingParent) {
+    // Surface the implicit orphan-drop in the audit trail so a log
+    // reader can explain why a row's `containerInstanceId` flipped to
+    // null on a cross-stash move without an explicit take-out dispatch.
+    transferPayload.toContainerInstanceId = null;
+  }
+  const logEntries: LogEntrySlice[] = [
+    {
+      type: 'transfer',
+      payload: transferPayload,
+    },
+  ];
+  // Paired `edit-item-instance` entry per OUTLINE §3.4: only emitted
+  // when the cascade actually changed something. Same `actorUserId` /
+  // `partyId` / `timestamp` because both entries resolve off the same
+  // pre-mutation snapshot in `index.ts` (M3 cascade contract).
+  if (clearedFields.length > 0) {
+    logEntries.push({
+      type: 'edit-item-instance',
+      payload: {
+        itemInstanceId: survivingId,
+        changedFields: clearedFields,
+      },
+    });
+  }
+
+  // R1.4 — hard-mode threshold check on the destination side. Composes
+  // with the §3.4 cascade above: `nextItems` already has flags cleared,
+  // so the guard sees the true post-write Inventory weight. The
+  // leave-Inventory direction always lowers source weight; only the
+  // entering-Inventory case can trip the guard.
+  checkHardMode('transfer', s, nextItems, payload.toStashId);
+
   return {
     state: { ...s, items: nextItems },
-    logEntries: [
-      {
-        type: 'transfer',
-        payload: {
-          itemInstanceId: survivingId,
-          quantity: payload.quantity,
-          fromStashId,
-          toStashId: payload.toStashId,
-        },
-      },
-    ],
+    logEntries,
   };
 }
 
@@ -1433,6 +1744,307 @@ function renameParty(
       {
         type: 'rename-party',
         payload: { partyId: s.party.id, oldName, newName },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// set-encumbrance (R1.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flip a Character's encumbrance configuration:
+ *   - `rule`    — `off | phb | variant` — which math the CapacityBar
+ *                 and (R1.2) the reducer cascade use. `phb` is the
+ *                 standard PHB 2024 rule: at-or-under `STR × 15` is
+ *                 fine; above is over-capacity. `variant` is the
+ *                 sidebar rule on PHB p. 366 with bands at 5×/10×STR.
+ *   - `enforce` — orthogonal boolean. R1.2 will reject `acquire` /
+ *                 `transfer` that pushes weight over the rule's upper
+ *                 band only when this flag is `true`. R1.1 stores the
+ *                 flag; behavior is display-only.
+ *
+ * Guards: unknown characterId rejects; no-op rejects only when BOTH
+ * fields match the current row (a caller dispatching the current rule
+ * with a new enforce value is a real change).
+ *
+ * Per the CLAUDE.md "every mutation logs once" invariant, the single
+ * log entry captures `{ oldRule, newRule, oldEnforce, newEnforce }`
+ * so the history view can render either / both transitions.
+ */
+function setEncumbrance(
+  state: AppState,
+  payload: Extract<Action, { type: 'set-encumbrance' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'set-encumbrance');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`set-encumbrance: unknown characterId ${payload.characterId}`);
+  }
+  const ruleUnchanged = payload.rule === character.encumbranceRule;
+  const enforceUnchanged = payload.enforce === character.enforceEncumbrance;
+  if (ruleUnchanged && enforceUnchanged) {
+    throw new Error('set-encumbrance: nothing changed');
+  }
+
+  const oldRule = character.encumbranceRule;
+  const oldEnforce = character.enforceEncumbrance;
+  return {
+    state: {
+      ...s,
+      characters: s.characters.map((c) =>
+        c.id === character.id
+          ? { ...c, encumbranceRule: payload.rule, enforceEncumbrance: payload.enforce }
+          : c,
+      ),
+    },
+    logEntries: [
+      {
+        type: 'set-encumbrance',
+        payload: {
+          characterId: character.id,
+          oldRule,
+          newRule: payload.rule,
+          oldEnforce,
+          newEnforce: payload.enforce,
+        },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// equip / unequip / attune / unattune (R1.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves an `(itemInstanceId, characterId)` pair to the row + the
+ * character + the character's Inventory stash. Throws with the action's
+ * label if any of the following invariants fail:
+ *   - unknown `itemInstanceId`
+ *   - unknown `characterId`
+ *   - the row's owning stash is not the character's Inventory (the
+ *     `scope=character, isCarried=true` stash referenced by
+ *     `Character.inventoryStashId`).
+ *
+ * Shared by `equip` / `unequip` / `attune` / `unattune` per OUTLINE §3.4
+ * ("equip/attune are only meaningful on items in a character's Inventory
+ * stash"). The Inventory-only guard is the schema's `ownerCharacterId`
+ * check expressed at the reducer level.
+ */
+function resolveInventoryRow(
+  s: NonNullable<AppState>,
+  action: string,
+  itemInstanceId: string,
+  characterId: string,
+): { row: ItemInstance; character: NonNullable<AppState>['characters'][number] } {
+  const character = s.characters.find((c) => c.id === characterId);
+  if (character === undefined) {
+    throw new Error(`${action}: unknown characterId ${characterId}`);
+  }
+  const row = s.items.find((i) => i.id === itemInstanceId);
+  if (row === undefined) {
+    throw new Error(`${action}: unknown itemInstanceId ${itemInstanceId}`);
+  }
+  if (row.ownerId !== character.inventoryStashId) {
+    throw new Error(
+      `${action}: item ${itemInstanceId} is not in character ${characterId}'s Inventory stash`,
+    );
+  }
+  return { row, character };
+}
+
+/**
+ * Flips `ItemInstance.equipped` on an Inventory row. One reducer for
+ * both `equip` (target = true) and `unequip` (target = false) — the
+ * shape is identical apart from the discriminant. Rejects no-ops so the
+ * "every dispatch logs exactly one entry" invariant holds.
+ *
+ * R1.2 does NOT enforce slot conflicts (2H + shield etc.) at the reducer
+ * layer — `packages/rules/validation.ts` flags those as advisory issues
+ * for the UI to render. R2.x revisits this when `ItemDefinition` gains
+ * the `properties` shape and the reducer can read the conflict set.
+ */
+function equipOrUnequip(
+  state: AppState,
+  type: 'equip' | 'unequip',
+  payload: Extract<Action, { type: 'equip' | 'unequip' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, type);
+  const { row } = resolveInventoryRow(s, type, payload.itemInstanceId, payload.characterId);
+
+  const target = type === 'equip';
+  if (row.equipped === target) {
+    throw new Error(`${type}: row ${payload.itemInstanceId} already equipped=${target}`);
+  }
+
+  return {
+    state: {
+      ...s,
+      items: s.items.map((i) => (i.id === row.id ? { ...i, equipped: target } : i)),
+    },
+    logEntries: [
+      {
+        type,
+        payload: {
+          itemInstanceId: row.id,
+          characterId: payload.characterId,
+          ...(payload.slot !== undefined ? { slot: payload.slot } : {}),
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Flips `ItemInstance.attuned` on an Inventory row. Mirrors
+ * `equipOrUnequip`; additionally enforces the attunement slot cap on
+ * the `attune` direction via `attunement.hasFreeSlot`. The cap is read
+ * from `Character.maxAttunement` (default 3, DM-overridable via
+ * `edit-character` per OUTLINE §8.1).
+ *
+ * `unattune` always succeeds (modulo no-op) — un-attuning can only free
+ * a slot, never exceed the cap.
+ */
+function attuneOrUnattune(
+  state: AppState,
+  type: 'attune' | 'unattune',
+  payload: Extract<Action, { type: 'attune' | 'unattune' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, type);
+  const { row, character } = resolveInventoryRow(
+    s,
+    type,
+    payload.itemInstanceId,
+    payload.characterId,
+  );
+
+  const target = type === 'attune';
+  if (row.attuned === target) {
+    throw new Error(`${type}: row ${payload.itemInstanceId} already attuned=${target}`);
+  }
+
+  if (type === 'attune') {
+    // Slot cap is the character's `maxAttunement` (OUTLINE §3.3, default
+    // 3). Counted against the character's currently-attuned rows in
+    // Inventory — items in Storage / Party Stash / Recovered Loot / Shop
+    // cannot be attuned (the Inventory-only invariant above already
+    // rejects those rows before we get here).
+    const attunedCount = s.items.filter(
+      (i) => i.ownerId === character.inventoryStashId && i.attuned,
+    ).length;
+    if (!attunement.hasFreeSlot(attunedCount, character.maxAttunement)) {
+      throw new Error(
+        `attune: character ${character.id} has no free attunement slot (${attunedCount}/${character.maxAttunement})`,
+      );
+    }
+  }
+
+  return {
+    state: {
+      ...s,
+      items: s.items.map((i) => (i.id === row.id ? { ...i, attuned: target } : i)),
+    },
+    logEntries: [
+      {
+        type,
+        payload: {
+          itemInstanceId: row.id,
+          characterId: payload.characterId,
+        },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// edit-character (R1.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Editable Character-field allowlist per OUTLINE §4 line 320.
+ * `encumbranceRule` and `enforceEncumbrance` have their own dedicated
+ * `set-encumbrance` TxType (single-field actions stay single-purpose
+ * per the R1.1 design note); `size` is creation-only in v1; `name` has
+ * its own `rename-character` TxType.
+ */
+const EDIT_CHARACTER_FIELDS = ['species', 'class', 'level', 'str', 'maxAttunement'] as const;
+type EditCharacterField = (typeof EDIT_CHARACTER_FIELDS)[number];
+
+/**
+ * Catch-all Character editor for the fields that compose naturally
+ * (OUTLINE §4 line 320). Diffs the patch against the current row,
+ * derives `changedFields`, and rejects no-op edits — mirrors
+ * `edit-homebrew` and `edit-item-instance`.
+ *
+ * `str` is carried on the payload as `str` but the Character row stores
+ * it under `abilityScores.STR`. The reducer hides the shape difference
+ * at the storage layer; the log entry's `changedFields` names `str` to
+ * match the user-facing field name.
+ */
+function editCharacter(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-character' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-character');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`edit-character: unknown characterId ${payload.characterId}`);
+  }
+
+  const changedFields: EditCharacterField[] = [];
+  const next = { ...character, abilityScores: { ...character.abilityScores } };
+
+  for (const key of EDIT_CHARACTER_FIELDS) {
+    if (!(key in payload.patch)) continue;
+    const newVal = payload.patch[key];
+    if (newVal === undefined) continue; // explicit-undefined treated as "key absent"
+
+    switch (key) {
+      case 'species':
+      case 'class':
+        if (newVal !== character[key]) {
+          changedFields.push(key);
+          (next as Record<string, unknown>)[key] = newVal;
+        }
+        break;
+      case 'level':
+        if (newVal !== character.level) {
+          changedFields.push('level');
+          next.level = newVal as number;
+        }
+        break;
+      case 'str':
+        if (newVal !== character.abilityScores.STR) {
+          changedFields.push('str');
+          next.abilityScores.STR = newVal as number;
+        }
+        break;
+      case 'maxAttunement':
+        if (newVal !== character.maxAttunement) {
+          changedFields.push('maxAttunement');
+          next.maxAttunement = newVal as number;
+        }
+        break;
+    }
+  }
+
+  if (changedFields.length === 0) {
+    throw new Error('edit-character: no fields changed');
+  }
+
+  return {
+    state: {
+      ...s,
+      characters: s.characters.map((c) => (c.id === character.id ? next : c)),
+    },
+    logEntries: [
+      {
+        type: 'edit-character',
+        payload: { characterId: character.id, changedFields },
       },
     ],
   };

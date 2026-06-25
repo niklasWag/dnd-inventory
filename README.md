@@ -19,7 +19,15 @@ See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut,
 - M6 — Custom items + duplicate (homebrew CRUD)
 - M7 — Backup (JSON export/import + character/party rename)
 
-**Next:** R1 — Characters & encumbrance (post-MVP; see `docs/OUTLINE.md` §10 M1).
+**R1 in progress** (post-MVP) — Characters & encumbrance per `docs/OUTLINE.md` §10 M1.
+
+- R1.1 — Encumbrance display (rules `off | phb | variant`, `STR × 15 × sizeMultiplier`, CapacityBar UI) ✅
+- R1.2 — Equip / Attune toggles + `edit-character` catch-all + cap pre-disable ✅
+- R1.3 — One-level containers (`containerInstanceId`, `flatWeight`), §3.4 leave-Inventory cascade, container-aware weight ✅
+- R1.4 — Hard-mode enforcement (reducer rejects acquire / transfer that exceed the carrying-capacity ceiling when `enforceEncumbrance: true`) ✅
+- R1.5 — Packing UI (pack/take-out actions on container rows) — next
+
+See `docs/roadmap.md` for the full slice history.
 
 ## Requirements
 

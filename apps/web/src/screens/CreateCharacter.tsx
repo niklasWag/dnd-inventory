@@ -20,6 +20,7 @@ import { seedCatalogIfNeeded } from '@/store/seed';
 const formSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(60),
   species: z.string().trim().min(1, 'Species is required').max(40),
+  size: z.enum(['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan']),
   class: z.string().trim().min(1, 'Class is required').max(40),
   level: z.coerce.number().int().min(1, 'Level must be at least 1').max(20),
   str: z.coerce.number().int().min(1).max(30),
@@ -43,6 +44,7 @@ export function CreateCharacter(): ReactElement {
     defaultValues: {
       name: '',
       species: '',
+      size: 'medium',
       class: '',
       level: 1,
       str: 10,
@@ -96,6 +98,21 @@ export function CreateCharacter(): ReactElement {
 
         <Field id="species" label="Species" error={errors.species?.message}>
           <Input id="species" placeholder="e.g. Dwarf" {...register('species')} />
+        </Field>
+
+        <Field id="size" label="Size" error={errors.size?.message}>
+          <select
+            id="size"
+            {...register('size')}
+            className="flex h-10 w-full items-center rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+          >
+            <option value="tiny">Tiny (× 0.5 capacity)</option>
+            <option value="small">Small (× 0.5 capacity)</option>
+            <option value="medium">Medium (× 1 capacity)</option>
+            <option value="large">Large (× 2 capacity)</option>
+            <option value="huge">Huge (× 4 capacity)</option>
+            <option value="gargantuan">Gargantuan (× 8 capacity)</option>
+          </select>
         </Field>
 
         <Field id="class" label="Class" error={errors.class?.message}>

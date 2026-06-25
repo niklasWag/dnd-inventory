@@ -22,6 +22,7 @@ beforeEach(async () => {
 const validPayload = {
   name: 'Thorin',
   species: 'Dwarf',
+  size: 'medium',
   class: 'Fighter',
   level: 1,
   str: 16,
@@ -2970,6 +2971,1557 @@ describe('reducer: rename-party (M7)', () => {
     });
     const entry = useStore.getState().log.at(-1)!;
     expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
+describe('reducer: set-encumbrance (R1.1)', () => {
+  /**
+   * R1.1 introduces two orthogonal fields:
+   *   - `encumbranceRule: 'off' | 'phb' | 'variant'`
+   *   - `enforceEncumbrance: boolean`
+   * One reducer action covers both. Guards mirror `rename-character`:
+   * unknown characterId rejects; no-op rejects only when BOTH fields
+   * match the current row.
+   */
+  it('flips rule from off → variant; STR + level + name stable', () => {
+    const { characterId } = localBootstrap();
+    const before = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(before.encumbranceRule).toBe('off');
+    expect(before.enforceEncumbrance).toBe(false);
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+
+    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(after.encumbranceRule).toBe('variant');
+    expect(after.enforceEncumbrance).toBe(false);
+    expect(after.id).toBe(before.id);
+    expect(after.name).toBe(before.name);
+    expect(after.level).toBe(before.level);
+    expect(after.abilityScores).toEqual(before.abilityScores);
+    expect(after.inventoryStashId).toBe(before.inventoryStashId);
+  });
+
+  it('flips through off → phb → variant → off', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'phb', enforce: false },
+    });
+    expect(
+      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
+    ).toBe('phb');
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+    expect(
+      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
+    ).toBe('variant');
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'off', enforce: false },
+    });
+    expect(
+      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
+    ).toBe('off');
+  });
+
+  it('flips enforce independently of rule', () => {
+    const { characterId } = localBootstrap();
+    // First set the rule so enforce flipping makes sense.
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+    // Now flip ONLY enforce.
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: true },
+    });
+    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(after.encumbranceRule).toBe('variant');
+    expect(after.enforceEncumbrance).toBe(true);
+  });
+
+  it('logs a set-encumbrance entry with old/new for both fields', () => {
+    const { characterId } = localBootstrap();
+
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: true },
+    });
+
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('set-encumbrance');
+    if (last?.type === 'set-encumbrance') {
+      expect(last.payload).toEqual({
+        characterId,
+        oldRule: 'off',
+        newRule: 'variant',
+        oldEnforce: false,
+        newEnforce: true,
+      });
+      expect(last.actorRole).toBe('player');
+    }
+  });
+
+  it('throws on no-op (rule AND enforce both unchanged)', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId, rule: 'off', enforce: false },
+      }),
+    ).toThrow(/nothing changed/);
+  });
+
+  it('does NOT throw when only enforce changes (rule stays)', () => {
+    const { characterId } = localBootstrap();
+    // off → variant first (so the no-op flip below isn't bookending an off-with-enforce state which is meaningless).
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId, rule: 'variant', enforce: true },
+      }),
+    ).not.toThrow();
+  });
+
+  it('throws on unknown characterId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId: 'does-not-exist', rule: 'variant', enforce: false },
+      }),
+    ).toThrow(/unknown characterId/);
+  });
+
+  it('throws when state is null', () => {
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'set-encumbrance',
+        payload: { characterId: 'foo', rule: 'variant', enforce: false },
+      }),
+    ).toThrow(/no AppState/);
+  });
+
+  it('produces AppState that still validates against the shared schema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: true },
+    });
+    expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
+  });
+
+  it('log entry parses against transactionLogEntrySchema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'phb', enforce: false },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
+describe('reducer: equip / unequip (R1.2)', () => {
+  /**
+   * R1.2 flips `ItemInstance.equipped` on Inventory rows. Invariants:
+   *   - row must be in the character's Inventory stash (OUTLINE §3.4);
+   *   - no-ops reject so the "one dispatch = one log entry" invariant holds;
+   *   - rejections leave the row + log untouched.
+   * The Inventory-only check IS the schema-level "equip is only meaningful
+   * when scope=character & isCarried=true" rule expressed at the reducer.
+   */
+  function bootstrapWithTorchInInventory(): {
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    itemInstanceId: string;
+  } {
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    return { characterId, inventoryStashId, partyStashId, itemInstanceId };
+  }
+
+  it('flips equipped=false → true on an Inventory row', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({
+      type: 'equip',
+      payload: { characterId, itemInstanceId },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.equipped).toBe(true);
+  });
+
+  it('flips equipped=true → false via unequip', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    useStore.getState().dispatch({
+      type: 'unequip',
+      payload: { characterId, itemInstanceId },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.equipped).toBe(false);
+  });
+
+  it('appends a typed equip log entry with the characterId payload', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('equip');
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+    if (last.type === 'equip') {
+      expect(last.payload.itemInstanceId).toBe(itemInstanceId);
+      expect(last.payload.characterId).toBe(characterId);
+    }
+  });
+
+  it('rejects equip of a row that lives in the Party Stash (Inventory-only invariant)', () => {
+    const { characterId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: partyStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    const logLenBefore = useStore.getState().log.length;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId, itemInstanceId },
+      }),
+    ).toThrow(/not in character .* Inventory/);
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('rejects no-op equip (already equipped)', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId, itemInstanceId },
+      }),
+    ).toThrow(/already equipped=true/);
+  });
+
+  it('rejects unknown itemInstanceId', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId, itemInstanceId: 'nope' },
+      }),
+    ).toThrow(/unknown itemInstanceId/);
+  });
+
+  it('rejects unknown characterId', () => {
+    const { itemInstanceId } = bootstrapWithTorchInInventory();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId: 'nope', itemInstanceId },
+      }),
+    ).toThrow(/unknown characterId/);
+  });
+});
+
+describe('reducer: attune / unattune (R1.2)', () => {
+  /**
+   * Slot-cap invariant uses `Character.maxAttunement` (default 3, OUTLINE
+   * §3.3). The reducer counts currently-attuned rows in the character's
+   * Inventory before allowing `attune`; `unattune` always succeeds (modulo
+   * no-op). Inventory-only / ownership guards mirror equip/unequip.
+   */
+  function bootstrapWithAttunables(count: number): {
+    characterId: string;
+    ids: string[];
+  } {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    for (let i = 0; i < count; i += 1) {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: torch.id,
+          quantity: 1,
+          source: 'catalog-add',
+          notes: `slot-${i}`,
+        },
+      });
+    }
+    const ids: string[] = [];
+    for (const it of useStore.getState().appState!.items) {
+      if (it.ownerId === inventoryStashId) ids.push(it.id);
+    }
+    return { characterId, ids };
+  }
+
+  it('flips attuned=false → true', () => {
+    const { characterId, ids } = bootstrapWithAttunables(1);
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === ids[0])!;
+    expect(row.attuned).toBe(true);
+  });
+
+  it('respects the slot cap — 4th attune rejects when maxAttunement = 3 (default)', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[3]! },
+      }),
+    ).toThrow(/no free attunement slot/);
+    expect(useStore.getState().appState!.items.find((i) => i.id === ids[3])!.attuned).toBe(false);
+  });
+
+  it('un-attuning frees a slot for the next attune', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    useStore.getState().dispatch({
+      type: 'unattune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[3]! },
+    });
+    expect(useStore.getState().appState!.items.find((i) => i.id === ids[3])!.attuned).toBe(true);
+  });
+
+  it('rejects attune of a row in Party Stash (Inventory-only invariant)', () => {
+    const { characterId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: partyStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId },
+      }),
+    ).toThrow(/not in character .* Inventory/);
+  });
+
+  it('rejects no-op attune / unattune', () => {
+    const { characterId, ids } = bootstrapWithAttunables(1);
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[0]! },
+      }),
+    ).toThrow(/already attuned=true/);
+    useStore.getState().dispatch({
+      type: 'unattune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'unattune',
+        payload: { characterId, itemInstanceId: ids[0]! },
+      }),
+    ).toThrow(/already attuned=false/);
+  });
+
+  it('logs typed attune entries that round-trip through the schema', () => {
+    const { characterId, ids } = bootstrapWithAttunables(1);
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('attune');
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+});
+
+describe('reducer: edit-character (R1.2)', () => {
+  /**
+   * Catch-all editor per OUTLINE §4 line 320. Mirrors `edit-homebrew`:
+   * diff the patch, derive `changedFields`, reject no-ops. `str` is
+   * stored under `abilityScores.STR` but logged + carried as `str`.
+   */
+  it('updates species and class in one dispatch; log records both fields', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { species: 'Elf', class: 'Wizard' } },
+    });
+    const after = useStore.getState().appState!.characters[0]!;
+    expect(after.species).toBe('Elf');
+    expect(after.class).toBe('Wizard');
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('edit-character');
+    if (last.type === 'edit-character') {
+      expect([...last.payload.changedFields].sort()).toEqual(['class', 'species']);
+    }
+  });
+
+  it('updates str (stored on abilityScores.STR) and logs as str', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { str: 18 } },
+    });
+    const after = useStore.getState().appState!.characters[0]!;
+    expect(after.abilityScores.STR).toBe(18);
+    const last = useStore.getState().log.at(-1)!;
+    if (last.type === 'edit-character') {
+      expect(last.payload.changedFields).toEqual(['str']);
+    }
+  });
+
+  it('updates maxAttunement (the DM-editable field per §8.1)', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { maxAttunement: 5 } },
+    });
+    expect(useStore.getState().appState!.characters[0]!.maxAttunement).toBe(5);
+  });
+
+  it('rejects no-op edits (every field unchanged)', () => {
+    const { characterId } = localBootstrap();
+    const before = useStore.getState().appState!.characters[0]!;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-character',
+        payload: {
+          characterId,
+          patch: {
+            species: before.species,
+            class: before.class,
+            level: before.level,
+            str: before.abilityScores.STR,
+            maxAttunement: before.maxAttunement,
+          },
+        },
+      }),
+    ).toThrow(/no fields changed/);
+  });
+
+  it('rejects unknown characterId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-character',
+        payload: { characterId: 'nope', patch: { level: 5 } },
+      }),
+    ).toThrow(/unknown characterId/);
+  });
+
+  it('logs an edit-character entry that round-trips through the schema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { level: 4 } },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+});
+
+describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned (R1.3)', () => {
+  /**
+   * OUTLINE §3.4: when a `transfer` moves an item from a character's
+   * Inventory (`scope=character, isCarried=true`) to ANY other stash,
+   * the reducer atomically sets `equipped: false`, `attuned: false`,
+   * `currentCharges: null` as part of the same dispatch — and emits ONE
+   * paired `edit-item-instance` log entry capturing the cleared fields.
+   *
+   * `currentCharges` is still null-locked in R1.3 (R2.2 widens it), so
+   * the cascade has nothing to clear there yet — the test scaffolding
+   * is here so R2.2 doesn't have to re-discover the contract.
+   */
+
+  function setupEquippedTorch(): {
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    itemInstanceId: string;
+  } {
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    useStore
+      .getState()
+      .dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    return { characterId, inventoryStashId, partyStashId, itemInstanceId };
+  }
+
+  it('clears equipped on Inventory → Party Stash transfer + emits paired edit-item-instance entry', () => {
+    const { partyStashId, itemInstanceId } = setupEquippedTorch();
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+    });
+
+    const moved = useStore.getState().appState!.items.find((i) => i.ownerId === partyStashId);
+    expect(moved).toBeDefined();
+    expect(moved!.equipped).toBe(false);
+
+    // Two log entries appended: one `transfer`, one `edit-item-instance`.
+    const log = useStore.getState().log;
+    const added = log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['transfer', 'edit-item-instance']);
+    const edit = added[1]!;
+    if (edit.type === 'edit-item-instance') {
+      expect(edit.payload.changedFields).toEqual(['equipped']);
+      expect(edit.payload.itemInstanceId).toBe(moved!.id);
+    }
+    // Both entries share actor/party/timestamp per the M3 cascade contract.
+    expect(added[0]!.actorUserId).toBe(added[1]!.actorUserId);
+    expect(added[0]!.partyId).toBe(added[1]!.partyId);
+    expect(added[0]!.timestamp).toBe(added[1]!.timestamp);
+  });
+
+  it('clears attuned on Inventory → Storage transfer + frees slot on source character', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    useStore
+      .getState()
+      .dispatch({ type: 'attune', payload: { characterId, itemInstanceId } });
+    // Create a Storage stash to transfer into.
+    useStore
+      .getState()
+      .dispatch({ type: 'create-stash', payload: { ownerCharacterId: characterId, name: 'Vault' } });
+    const storageStashId = useStore
+      .getState()
+      .appState!.stashes.find((st) => st.name === 'Vault')!.id;
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId, toStashId: storageStashId, quantity: 1 },
+    });
+
+    const moved = useStore.getState().appState!.items.find((i) => i.ownerId === storageStashId);
+    expect(moved!.attuned).toBe(false);
+
+    // Slot is free again — attuning a fresh row succeeds without rejection.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        notes: 'fresh-row',
+      },
+    });
+    const freshId = useStore
+      .getState()
+      .appState!.items.find((i) => i.notes === 'fresh-row')!.id;
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: freshId } }),
+    ).not.toThrow();
+  });
+
+  it('does NOT emit edit-item-instance when source row had no flags to clear', () => {
+    // A plain Inventory → Party Stash transfer of an un-equipped, un-attuned
+    // row should still emit only ONE log entry (`transfer`) — the cascade
+    // is a no-op when the source is already at the placeholder values.
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+    });
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['transfer']);
+  });
+
+  it('does NOT cascade on a stash-to-stash transfer that does NOT leave Inventory', () => {
+    // Equip a row, then run a same-stash split-then-merge scenario via a
+    // dest that ISN'T the character's Inventory but the source already
+    // wasn't either: Party Stash → Recovered Loot. equipped should never
+    // have been true on a Party Stash row (the reducer would've rejected
+    // equip there) — so this is the cascade-doesn't-fire case.
+    const { partyStashId, recoveredLootStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: partyStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId, toStashId: recoveredLootStashId, quantity: 1 },
+    });
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['transfer']);
+  });
+
+  it('clears BOTH equipped and attuned on the same transfer in ONE paired entry', () => {
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId } });
+
+    const logLenBefore = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+    });
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    // Just two entries — `transfer` + ONE `edit-item-instance` covering both fields.
+    expect(added.map((e) => e.type)).toEqual(['transfer', 'edit-item-instance']);
+    const edit = added[1]!;
+    if (edit.type === 'edit-item-instance') {
+      expect([...edit.payload.changedFields].sort()).toEqual(['attuned', 'equipped']);
+    }
+  });
+});
+
+describe('reducer: transfer cascade — container contents follow (R1.3)', () => {
+  /**
+   * OUTLINE §3.4: when a `transfer` moves an item whose `id` is the
+   * `containerInstanceId` of one or more other instances in the SAME
+   * source stash, those child rows' `ownerId` updates to the destination
+   * stash too. The children's `containerInstanceId` is preserved (still
+   * points at the same parent), so the (parent, contents) hierarchy
+   * stays intact across the move.
+   *
+   * R1.3 wires the rule at the reducer; the UI path for packing items
+   * INTO a container lands later (no `set-container` action yet, so the
+   * "transfer rejects A-into-B" guard is moot at the reducer level for
+   * R1.3 — it'd only trigger when packing is wired). These tests use
+   * `useStore.setState` to construct the nested fixture so we can
+   * exercise the cascade without a packing UI.
+   */
+
+  function bootstrapWithBackpackAndRations(): {
+    inventoryStashId: string;
+    partyStashId: string;
+    backpackId: string;
+    rationIds: string[];
+  } {
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack');
+    const rations = catalog.find((d) => d.id === 'phb-2024:rations-1day');
+    if (backpack === undefined || rations === undefined) {
+      throw new Error('PHB seed missing backpack or rations definition');
+    }
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const backpackId = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === backpack.id,
+    )!.id;
+    // Three separate ration rows so we can verify the cascade catches
+    // each child independently. Distinct `notes` keeps them as 3 rows.
+    const rationIds: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: rations.id,
+          quantity: 1,
+          source: 'catalog-add',
+          notes: `day-${i}`,
+        },
+      });
+    }
+    // Patch the three rows to point at the backpack as their container.
+    useStore.setState((curr) => {
+      if (curr.appState === null) return curr;
+      const nextItems = curr.appState.items.map((row) => {
+        if (row.definitionId === rations.id && row.ownerId === inventoryStashId) {
+          rationIds.push(row.id);
+          return { ...row, containerInstanceId: backpackId };
+        }
+        return row;
+      });
+      return { ...curr, appState: { ...curr.appState, items: nextItems } };
+    });
+    return { inventoryStashId, partyStashId, backpackId, rationIds };
+  }
+
+  it('moves child rows when the parent container is transferred', () => {
+    const { partyStashId, backpackId } = bootstrapWithBackpackAndRations();
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+    });
+
+    // All 4 rows (backpack + 3 rations) now live in the Party Stash.
+    const rowsInParty = useStore
+      .getState()
+      .appState!.items.filter((i) => i.ownerId === partyStashId);
+    expect(rowsInParty).toHaveLength(4);
+
+    // Children still reference the backpack via containerInstanceId.
+    const childRows = rowsInParty.filter((r) => r.containerInstanceId === backpackId);
+    expect(childRows).toHaveLength(3);
+  });
+
+  it('emits ONE transfer log entry (cascade does not double-log per child)', () => {
+    const { partyStashId, backpackId } = bootstrapWithBackpackAndRations();
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+    });
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    // Just one entry — the cascade is implicit in the state diff and
+    // doesn't emit a per-child synthetic transfer. (M3's delete-stash
+    // cascade does emit per-row, but that's a different contract.)
+    expect(added.map((e) => e.type)).toEqual(['transfer']);
+  });
+
+  it('does NOT move sibling rows that are not children of the moved container', () => {
+    const { inventoryStashId, partyStashId, backpackId } = bootstrapWithBackpackAndRations();
+    const rope = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft');
+    if (rope === undefined) {
+      // PHB seed doesn't ship hempen rope under that exact id — skip.
+      return;
+    }
+    // Add a loose rope row to Inventory (not a child of the backpack).
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+    });
+
+    // Rope stays in Inventory.
+    const ropeRow = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === rope.id);
+    expect(ropeRow!.ownerId).toBe(inventoryStashId);
+  });
+
+  it('clears equipped/attuned on container parent if it was equipped (cascade composes)', () => {
+    // Container could be equipped (Wand of magic missiles in a holster,
+    // etc.). The leave-Inventory cascade still fires on the parent. The
+    // children are non-Inventory-flag carriers (rations); they don't
+    // trip the cascade themselves.
+    const { partyStashId, backpackId } = bootstrapWithBackpackAndRations();
+    const characterId = useStore.getState().appState!.characters[0]!.id;
+    useStore
+      .getState()
+      .dispatch({ type: 'equip', payload: { characterId, itemInstanceId: backpackId } });
+
+    const logLenBefore = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+    });
+
+    const moved = useStore.getState().appState!.items.find((i) => i.id === backpackId);
+    expect(moved!.equipped).toBe(false);
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['transfer', 'edit-item-instance']);
+  });
+});
+
+describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject when over carrying capacity', () => {
+  /**
+   * R1.4 — when a character has `enforceEncumbrance: true` and a
+   * non-`off` rule, the reducer rejects `acquire` / `transfer` that
+   * would push the destination Inventory's container-aware weight
+   * past `heavyThreshold(str, size, rule)`. Composes with the R1.3
+   * cascade: cascade adjusts the moved row first (clears flags); the
+   * threshold check runs on the post-cascade weight. A leave-Inventory
+   * transfer never trips the guard (it lowers source weight); the
+   * entering-Inventory case is the one that matters.
+   *
+   * The fixtures use the default STR 16 Medium → variant ceiling
+   * 160 lb, phb ceiling 240 lb. `phb-2024:greatclub` is 10 lb/row so
+   * the math reads cleanly (16 greatclubs = 160 lb at-cap; 17 = 170 lb
+   * over). All tests start from `localBootstrap()` which auto-stacks
+   * via `(definitionId, notes ?? "")` per the M2 acquire contract.
+   */
+
+  function enableEnforce(characterId: string, rule: 'phb' | 'variant'): void {
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule, enforce: true },
+    });
+  }
+
+  it('rejects acquire when post-write weight exceeds variant 10×STR×size (enforced)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    enableEnforce(characterId, 'variant');
+
+    // Pre-load to 160 lb (16 × 10) — exactly at cap, no reject.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 16,
+        source: 'catalog-add',
+      },
+    });
+
+    const itemsBefore = useStore.getState().appState!.items.slice();
+    const logLenBefore = useStore.getState().log.length;
+
+    // Adding one more pushes to 170 lb > 160 — must reject.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 1,
+          source: 'catalog-add',
+        },
+      });
+    }).toThrow(/carrying capacity/i);
+
+    // State unchanged — no row mutation, no log entry.
+    expect(useStore.getState().appState!.items).toEqual(itemsBefore);
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('rejects transfer-into-Inventory when post-write weight exceeds phb STR×15×size (enforced)', () => {
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    enableEnforce(characterId, 'phb');
+
+    // Stage 240 lb worth (24 × 10) in the Party Stash; Inventory empty.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: partyStashId,
+        definitionId: greatclub.id,
+        quantity: 24,
+        source: 'catalog-add',
+      },
+    });
+    // Pre-load Inventory to 230 lb so any incoming over 10 lb rejects.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        // notes differ so this is a separate row (avoids auto-stack
+        // colliding with the transfer target row below).
+        notes: 'pre-loaded',
+        quantity: 23,
+        source: 'catalog-add',
+      },
+    });
+
+    // Find the row in the party stash; transfer 2 (= 20 lb) into Inventory.
+    const partyRow = useStore
+      .getState()
+      .appState!.items.find((i) => i.ownerId === partyStashId && i.definitionId === greatclub.id)!;
+    const itemsBefore = useStore.getState().appState!.items.slice();
+    const logLenBefore = useStore.getState().log.length;
+
+    // Post-write would be 230 + 20 = 250 > 240 phb ceiling → reject.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: { itemInstanceId: partyRow.id, toStashId: inventoryStashId, quantity: 2 },
+      });
+    }).toThrow(/carrying capacity/i);
+
+    expect(useStore.getState().appState!.items).toEqual(itemsBefore);
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('allows acquire when rule = off even if enforce flag is true (off short-circuits)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // Hand-write the enforce flag while leaving rule = off (the reducer
+    // wouldn't accept this via `set-encumbrance` no-op check, but the
+    // schema permits the combo and the guard must respect it).
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: s.appState.characters.map((c) =>
+            c.id === characterId ? { ...c, enforceEncumbrance: true } : c,
+          ),
+        },
+      };
+    });
+
+    // Push way over any threshold — must succeed under rule = off.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 100, // 1000 lb
+          source: 'catalog-add',
+        },
+      });
+    }).not.toThrow();
+  });
+
+  it('allows acquire over threshold when enforceEncumbrance = false (display-only path)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // Rule on, enforce off — CapacityBar will paint red but reducer allows.
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 20, // 200 lb > 160 variant ceiling
+          source: 'catalog-add',
+        },
+      });
+    }).not.toThrow();
+    const row = useStore
+      .getState()
+      .appState!.items.find((i) => i.ownerId === inventoryStashId);
+    expect(row!.quantity).toBe(20);
+  });
+
+  it('respects size multiplier (Small character: phb ceiling halves to STR × 15 × 0.5)', () => {
+    // Small + STR 10 → phb ceiling = 10 × 15 × 0.5 = 75 lb.
+    const { characterId, inventoryStashId, catalog } = bootstrap({
+      name: 'Pip',
+      species: 'Halfling',
+      size: 'small',
+      class: 'Rogue',
+      level: 1,
+      str: 10,
+    });
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    enableEnforce(characterId, 'phb');
+
+    // 7 greatclubs = 70 lb → under, OK.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 7,
+        source: 'catalog-add',
+      },
+    });
+    // 8th greatclub = 80 lb > 75 ceiling → reject.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 1,
+          source: 'catalog-add',
+        },
+      });
+    }).toThrow(/carrying capacity/i);
+  });
+
+  it('allows transfer OUT of Inventory regardless of source-side weight (leave-Inventory always lowers)', () => {
+    // The §3.4 cascade test composes here: even if the SOURCE inventory
+    // is over-cap and enforce is on, moving items OUT can only lower
+    // the inventory weight — must succeed.
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // First load Inventory to 230 lb with enforce OFF (so the load itself
+    // doesn't trip the guard), then flip enforce on.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 23,
+        source: 'catalog-add',
+      },
+    });
+    enableEnforce(characterId, 'phb'); // ceiling = 240 — fine, but a future
+    // hypothetical "edit-character to lower STR" path could leave the row
+    // over-cap; this test pins the leave-Inventory direction as always-safe.
+
+    const row = useStore.getState().appState!.items[0]!;
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: { itemInstanceId: row.id, toStashId: partyStashId, quantity: 23 },
+      });
+    }).not.toThrow();
+  });
+});
+
+describe('reducer: transfer — pack & take out (R1.5)', () => {
+  /**
+   * R1.5 — same-stash packing UI. Extends `transfer` with optional
+   * `toContainerInstanceId`:
+   *   - `undefined`: parent unchanged (every pre-R1.5 dispatch).
+   *   - `null`: take-out — clears `containerInstanceId` on the moved row.
+   *   - `string`: pack-into — sets `containerInstanceId` to the supplied id.
+   *
+   * Guards: self-ref, one-level-deep, same-stash, unknown-id. The hard-
+   * mode (R1.4) check composes on post-pack weight, so packing into a
+   * `flatWeight: true` container LOWERS effective weight (it just works
+   * via the existing `containerAwareWeight` rule).
+   *
+   * Approach B for container auto-stack policy (acquire side): every
+   * `acquire` of a `category === 'container'` definition synthesizes a
+   * distinguishing `notes` value so two backpacks never collide on the
+   * `(definitionId, notes ?? "")` key.
+   */
+
+  function acquireRow(
+    stashId: string,
+    definitionId: string,
+    quantity = 1,
+    notes?: string,
+  ): string {
+    const before = new Set(useStore.getState().appState!.items.map((i) => i.id));
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId,
+        definitionId,
+        quantity,
+        source: 'catalog-add',
+        ...(notes !== undefined ? { notes } : {}),
+      },
+    });
+    const fresh = useStore.getState().appState!.items.find((i) => !before.has(i.id));
+    return fresh!.id;
+  }
+
+  function enableEnforce(characterId: string, rule: 'phb' | 'variant'): void {
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule, enforce: true },
+    });
+  }
+
+  it('packs a torch into a backpack in the same stash', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: backpackId,
+      },
+    });
+
+    const torchRow = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(torchRow.containerInstanceId).toBe(backpackId);
+    expect(torchRow.ownerId).toBe(inventoryStashId);
+  });
+
+  it('rejects pack when destination container has a non-null containerInstanceId (two-level nesting)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    // Backpack A (top-level), Backpack B (will be nested), torch.
+    const backpackAId = acquireRow(inventoryStashId, backpack.id, 1, 'A');
+    const backpackBId = acquireRow(inventoryStashId, backpack.id, 1, 'B');
+    const torchId = acquireRow(inventoryStashId, torch.id);
+    // Manually nest backpack B inside A so it has containerInstanceId !== null.
+    useStore.setState((curr) => {
+      const next = curr.appState!.items.map((i) =>
+        i.id === backpackBId ? { ...i, containerInstanceId: backpackAId } : i,
+      );
+      return { ...curr, appState: { ...curr.appState!, items: next } };
+    });
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: torchId,
+          toStashId: inventoryStashId,
+          quantity: 1,
+          toContainerInstanceId: backpackBId, // already nested inside A
+        },
+      });
+    }).toThrow(/one level|two-level|nested|already in a container/i);
+  });
+
+  it('rejects pack with self-reference (row.id === toContainerInstanceId)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: backpackId,
+          toStashId: inventoryStashId,
+          quantity: 1,
+          toContainerInstanceId: backpackId, // pack into self
+        },
+      });
+    }).toThrow(/self|itself|same row/i);
+  });
+
+  it('rejects pack when destination container lives in a different stash than toStashId', () => {
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    // Backpack lives in party stash; torch lives in inventory.
+    const partyBackpackId = acquireRow(partyStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: torchId,
+          toStashId: inventoryStashId, // moving to inventory
+          quantity: 1,
+          toContainerInstanceId: partyBackpackId, // ... but container is in party stash
+        },
+      });
+    }).toThrow(/same stash|different stash/i);
+  });
+
+  it('rejects pack when toContainerInstanceId references an unknown id', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: torchId,
+          toStashId: inventoryStashId,
+          quantity: 1,
+          toContainerInstanceId: 'bogus-container-id',
+        },
+      });
+    }).toThrow(/unknown|not found/i);
+  });
+
+  it('takes a row out of a container via toContainerInstanceId: null (same stash)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+    // Pack first.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: backpackId,
+      },
+    });
+    // Take out.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: null,
+      },
+    });
+
+    const torchRow = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(torchRow.containerInstanceId).toBeNull();
+    expect(torchRow.ownerId).toBe(inventoryStashId);
+  });
+
+  it('hard-mode allows packing into a flatWeight container at-cap (effective weight drops)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // Create a homebrew "Big Sack" container, then patch its `flatWeight`
+    // via setState (the M6 homebrew payload doesn't expose flatWeight in
+    // R1.5 — DMG seed lands in R2.1; for now we exercise the reducer rule
+    // against a manually-flagged row).
+    const bigSackName = 'Big Sack of Plenty';
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: {
+        name: bigSackName,
+        category: 'container',
+        weight: 5,
+        cost: { amount: 1, currency: 'gp' },
+        description: 'A magical sack that ignores its contents weight.',
+        tags: [],
+      },
+    });
+    useStore.setState((curr) => {
+      const nextCatalog = curr.appState!.catalog.map((d) =>
+        d.name === bigSackName ? { ...d, flatWeight: true } : d,
+      );
+      return { ...curr, appState: { ...curr.appState!, catalog: nextCatalog } };
+    });
+    const sackDef = useStore.getState().appState!.catalog.find((d) => d.name === bigSackName)!;
+    const sackId = acquireRow(inventoryStashId, sackDef.id);
+    // Pre-load Inventory near the PHB cap (16 × 15 = 240 lb).
+    // 23 greatclubs × 10 lb = 230 lb + 5 lb sack = 235 lb total (under 240).
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 23,
+        source: 'catalog-add',
+      },
+    });
+    enableEnforce(characterId, 'phb'); // ceiling = 240 lb
+    const greatclubRow = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === greatclub.id)!;
+
+    // Packing the 230 lb greatclub stack into the flat-weight sack should
+    // LOWER effective weight (sack still contributes 5 lb, contents free).
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: greatclubRow.id,
+          toStashId: inventoryStashId,
+          quantity: greatclubRow.quantity,
+          toContainerInstanceId: sackId,
+        },
+      });
+    }).not.toThrow();
+  });
+
+  it('Approach B: two acquires of the same container definition produce two rows with distinct synthesized notes', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    const backpackRows = useStore
+      .getState()
+      .appState!.items.filter((i) => i.definitionId === backpack.id);
+    expect(backpackRows).toHaveLength(2);
+    const notesA = backpackRows[0]!.notes;
+    const notesB = backpackRows[1]!.notes;
+    expect(notesA).toBeDefined();
+    expect(notesB).toBeDefined();
+    expect(notesA).not.toBe(notesB);
+    // Conventional synthesis pattern: '#1', '#2'.
+    expect([notesA, notesB].sort()).toEqual(['#1', '#2']);
+  });
+
+  it('Approach B: user-provided notes on container acquire are used verbatim (no synthesis)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+        notes: "Volo's backpack",
+      },
+    });
+
+    const row = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!;
+    expect(row.notes).toBe("Volo's backpack");
+  });
+
+  it('Approach B: synthesis uses "highest existing + 1" so deletes do not recycle ids', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const def = backpack.id;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+    });
+    // Consume #1 fully.
+    const row1 = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === def && i.notes === '#1')!;
+    useStore.getState().dispatch({
+      type: 'consume',
+      payload: { itemInstanceId: row1.id, quantity: 1 },
+    });
+    // Next acquire must synth '#3', not recycle '#1'.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+    });
+
+    const liveRows = useStore
+      .getState()
+      .appState!.items.filter((i) => i.definitionId === def);
+    const notes = liveRows.map((r) => r.notes).sort();
+    expect(notes).toEqual(['#2', '#3']);
+  });
+
+  it('synthesized notes are scoped per-stash (acquiring the same container in two stashes yields #1 in each)', () => {
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: partyStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    const invBackpack = useStore
+      .getState()
+      .appState!.items.find(
+        (i) => i.definitionId === backpack.id && i.ownerId === inventoryStashId,
+      )!;
+    const partyBackpack = useStore
+      .getState()
+      .appState!.items.find(
+        (i) => i.definitionId === backpack.id && i.ownerId === partyStashId,
+      )!;
+    expect(invBackpack.notes).toBe('#1');
+    expect(partyBackpack.notes).toBe('#1');
+  });
+
+  it('non-container acquire is unchanged (no synthesis on weapons / gear)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    // Should auto-stack on `(definitionId, notes ?? "")` per the M2 contract.
+    const torchRows = useStore
+      .getState()
+      .appState!.items.filter((i) => i.definitionId === torch.id);
+    expect(torchRows).toHaveLength(1);
+    expect(torchRows[0]!.quantity).toBe(2);
+    expect(torchRows[0]!.notes).toBeUndefined();
+  });
+
+  it('cross-stash transfer of a contained row clears its containerInstanceId (no dangling parent)', () => {
+    // Bug repro: pack a torch into a backpack (Inventory), then Move the
+    // torch (NOT the backpack) to the Party Stash. The moved torch must
+    // NOT carry its old `containerInstanceId` — the parent backpack
+    // stayed in Inventory, so the reference would dangle. Without this
+    // fix the UI's `isContained` check renders a Take-out button on the
+    // moved row in the new stash, even though there's no parent there.
+    //
+    // Note: this is the inverse of the OUTLINE §3.4 contents-follow rule.
+    // §3.4 handles "move the PARENT, children come along". This test
+    // covers "move a CHILD out of the container by cross-stash Move",
+    // which must drop the parent reference.
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    // Pack torch into backpack.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: backpackId,
+      },
+    });
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === torchId)!
+        .containerInstanceId,
+    ).toBe(backpackId);
+
+    // Now move JUST the torch cross-stash. The backpack stays in Inventory.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: partyStashId,
+        quantity: 1,
+      },
+    });
+
+    const torchAfter = useStore
+      .getState()
+      .appState!.items.find((i) => i.id === torchId)!;
+    expect(torchAfter.ownerId).toBe(partyStashId);
+    // The fix: containerInstanceId must be cleared because the parent
+    // isn't in the destination stash.
+    expect(torchAfter.containerInstanceId).toBeNull();
   });
 });
 

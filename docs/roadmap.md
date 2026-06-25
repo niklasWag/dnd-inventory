@@ -745,63 +745,334 @@ Sections mirror **`OUTLINE.md` §10** (M1–M7). Each release milestone adds **p
 
 ### R1 — Characters & encumbrance (outline §10 M1)
 
-Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); single-level containers + Bag of Holding. Covers OUTLINE §3.3, §3.4 (equip), §3.6, §3.8 (attune slot tracking foundation), §4 `Character` / `Stash` / `ItemInstance` activations, §6 capacity/attunement/weight/validation modules.
+Character entity (inventory-only data); equip; encumbrance (off/phb/variant + enforce); single-level containers + Bag of Holding. Covers OUTLINE §3.3, §3.4 (equip), §3.6, §3.8 (attune slot tracking foundation), §4 `Character` / `Stash` / `ItemInstance` activations, §6 capacity/attunement/weight/validation modules.
+
+**Slicing.** R1 splits along five independently-shippable feature axes. R1.1 (shipped) lit up encumbrance display — capacity rule (`off | phb | variant`), enforce flag, size multiplier, capacity bar. R1.2 ships equip / attune plumbing — reducer actions, slot rules, validation. R1.3 ships container modelling + the §3.4 transfer cascade — `containerInstanceId`, `flatWeight`, auto-clear of equip/attune/charges leaving Inventory. R1.4 closes the loop by activating Hard-mode enforcement (reducer rejection in `acquire` / `transfer` when over-threshold). R1.5 ships the packing UI — the user-facing action to actually put items into containers (R1.3 ships the data model + the move cascade; R1.5 makes containers usable). Each slice is ~R1.1-sized.
+
+#### R1.1 — Encumbrance display (rule + size + enforce flag)
 
 **Schema activations (§4)**
-- [ ] `ItemInstance.equipped` allowed to be `true`
-- [ ] `ItemInstance.attuned` allowed to be `true`
-- [ ] `Character.encumbranceRule` accepts `"advisory" | "hard"` (in addition to `"off"`)
-- [ ] `Character.maxAttunement` becomes DM-editable (was display-only in MVP)
-- [ ] `ItemInstance.containerInstanceId` becomes settable (single-level only)
-- [ ] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2) ships `flatWeight: true` on BoH-class entries.
-- [ ] Migration test: MVP exports import cleanly with all placeholders preserved (including `flatWeight: false` defaulted on M2-vintage definitions)
+- [x] `Character.encumbranceRule` accepts `"phb" | "variant"` (in addition to `"off"`) — **R1.1** (renamed mid-slice from `advisory|hard`; hard rename, no legacy aliases)
+- [x] `Character.enforceEncumbrance: boolean` added as orthogonal flag — **R1.1**
+- [x] `Character.size: CreatureSize` added (`tiny|small|medium|large|huge|gargantuan`); set at create, not editable post-creation in MVP — **R1.1**
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `equip` action + payload schema (`{ itemInstanceId, characterId, slot? }`)
-- [ ] `unequip` action + payload schema
-- [ ] Invariant test: equip only from `scope=character, isCarried=true` stash
-- [ ] `attune` action + payload schema (`{ itemInstanceId, characterId }`)
-- [ ] `unattune` action + payload schema
-- [ ] Attunement slot-cap invariant test (uses `Character.maxAttunement`)
-- [ ] Action to set `Character.maxAttunement` (DM-only when 2+ members; per §8.1)
-- [ ] Action to set `Character.encumbranceRule` (DM-only when 2+ members; per §8.1)
-- [ ] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values.
-- [ ] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract.
-- [ ] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character.
-- [ ] Invariant test: charged item (currentCharges = 3) transferred Inventory → Storage → `currentCharges: null` after.
-- [ ] **Extend `transfer` reducer**: container contents follow the container atomically per OUTLINE §3.4. When the moved row's `id` appears as a `containerInstanceId` on other instances in the source stash, those child rows' `ownerId` updates to the destination stash too. Children's `containerInstanceId` is preserved (still points at the same parent).
-- [ ] Invariant test: backpack with 3 rations moved Inventory → Storage → all 4 rows now in Storage; children still point at the backpack's id.
-- [ ] Invariant test: `transfer` rejects moving a container row INTO another container (would create two-level nesting; OUTLINE §3.6 one-level-deep rule).
-- [ ] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document).
+- [x] `set-encumbrance` action + payload (`{ characterId, oldRule, newRule, oldEnforce, newEnforce }`) — **R1.1** (single entry covers both fields; player-role in MVP, R4 widens to DM-only)
 
 **Rules — activate stubs (§6)**
-- [ ] `packages/rules/capacity.ts` implemented (STR × 15; encumbered > 5×STR; heavily > 10×STR)
-- [ ] `capacity.ts` tests cover boundaries + `off` / `advisory` / `hard` enforcement
-- [ ] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string)
-- [ ] `attunement.ts` tests
-- [ ] `packages/rules/weight.ts` implemented (single-level container + Bag-of-Holding flat-weight exception). Reads `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stops descending into contents.
-- [ ] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests.
-- [ ] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.)
-- [ ] `validation.ts` tests
+- [x] `packages/rules/capacity.ts` implemented — **R1.1**: `carryCapacity(str, size) = str × 15 × sizeMultiplier(size)`; `encumbranceState(weight, str, size, rule)` branches on rule (`phb` → unencumbered/heavily only; `variant` → strict `>` thresholds at 5×STR and 10×STR); `heavyThreshold(str, size, rule)` exposes the upper ceiling; `sizeMultiplier(size)` is `0.5 / 0.5 / 1 / 2 / 4 / 8`
+- [x] `capacity.ts` tests cover boundaries + `off`/`phb`/`variant`; Small/Medium/Large pinned for both rules — **R1.1** (25 tests)
+- [x] `packages/rules/weight.ts` flat-row aggregator (`Σ weight × quantity`) — **R1.1**; container + flatWeight branch deferred to **R1.3**
+- [x] `weight.ts` tests for the flat-row sum — **R1.1** (7 tests); container + flatWeight tests deferred to **R1.3**
 
 **UI (§5)**
-- [ ] Capacity bar on Inventory tab (per-character; warning states matching enforcement level)
-- [ ] Equipped-slots panel on Inventory tab
-- [ ] Attunement counter (X/max) on Inventory tab
-- [ ] Equip toggle on Inventory rows
-- [ ] Attune toggle on Inventory rows
-- [ ] One-level container view inside Inventory
-- [ ] Encumbrance-rule selector on Character settings
+- [x] Capacity bar on Inventory tab (per-character; PHB/Variant + size + enforce surfaced as inline badges) — **R1.1** (hidden under `'off'`; amber/destructive thresholds; Progress primitive)
+- [x] Encumbrance-rule selector on Character settings (rule `<select>` + enforce checkbox + per-rule helper text) — **R1.1**
+- [x] CreateCharacter size `<select>` (default Medium; per-option capacity multiplier hint) — **R1.1**
+
+#### R1.1 — Notes
+
+> **2026-06-24 — R1.1 (encumbrance display) complete.** First slice of R1 per the plan; R1.2 (equip/attune + transfer cascade + Hard enforcement) is the next chunk.
+>
+> - **Schema (additive, no migration).** `packages/shared/src/schemas/character.ts` widens `encumbranceRule` from `z.literal('off')` to `z.enum(['off','advisory','hard'])`; the literal is a strict subset so MVP-vintage exports parse unchanged. New shared type `EncumbranceRule` re-exported via the schemas barrel. `transactionLog.ts` gains a `setEncumbranceRuleEntry` variant (`{ characterId, oldRule, newRule }`) extending the discriminated union to 18 types. `appState.test.ts` round-trip fixture extended with log-9 (set-encumbrance-rule). `docs/MVP.md` §6 `TxType` union extended.
+> - **Reducer action.** Dedicated `set-encumbrance-rule` (not catch-all `edit-character` — the OUTLINE-named catch-all lands later when R1.2 needs to edit `maxAttunement` and friends, so all character-edit churn rides one TxType). Guards mirror M7 `rename-character` verbatim: `requireState` → unknown-id → no-op → `.map` → single log slice. Middleware `resolveActor` adds the type to the M3+ player-driven arm with the R4 widening note attached (DM-only in 2+-member parties per OUTLINE §8.1).
+> - **Rules engine.** `capacity.ts` and `weight.ts` flipped from "not implemented (R1)" stubs to real impls. `carryCapacity(str) = str × 15`. `encumbranceState(weight, str, rule)` uses STRICT `>` thresholds (5×STR, 10×STR) per the 2024 PHB variant — equal-to does NOT trip the next state. `rule === 'off'` short-circuits to `'unencumbered'` so callers don't have to special-case a null return. `totalWeight` is the flat-row aggregator (`Σ weight × quantity`). Container + flatWeight intentionally deferred to R1.2 where the §3.4 cascade widens the signature to take `ItemInstance` + `ItemDefinition` pairs.
+> - **shadcn Progress primitive.** Added via `pnpm dlx shadcn@latest add progress` (CLI; do not hand-edit `ui/`). The CLI initially placed the file under a literal `@/components/ui/` directory (the project's `@` alias is a TS path, not a filesystem one — components.json's "ui": "@/components/ui" was interpreted literally on this run). Moved manually into `apps/web/src/components/ui/progress.tsx` and cleaned up the stray top-level `@/` folder. `@radix-ui/react-progress@^1.1.10` was recorded in package.json by the CLI.
+> - **`CapacityBar`** (NEW, `src/components/inventory/`). Reads `{ str, rule, currentWeight }` from the store via `useShallow` — `currentWeight` is aggregated INSIDE the selector so the returned shape is all primitives (returning a fresh `rows: T[]` would shallow-compare false every render → infinite loop; the first implementation tripped this with React 19 + Zustand's `useSyncExternalStore` and the test suite caught it immediately). Returns `null` for `rule === 'off'` and for null appState. Three color states map to text classes (`text-muted-foreground` / `text-amber-600` / `text-destructive`) and inner-fill classes via Tailwind's `[&>div]:bg-*` arbitrary descendant selector targeting the Radix Progress Indicator div.
+> - **`EncumbranceRuleField`** (NEW, `src/components/settings/`). Native `<select>` rather than the shadcn Radix Select because (a) three options fit cleanly in the OS dropdown, (b) Radix Select uses a portal that's awkward to drive under jsdom (existing Radix Select usages in CatalogBrowser / CatalogPicker have no component tests to crib from). Save button disabled when draft === currentRule. `useEffect` resets the draft on upstream changes (e.g. after a successful round-trip or an import). Helper text reads "Hard enforcement activates in R1.2" — removable when R1.2 actually wires the reducer rejection.
+> - **`Settings.tsx`** gains an Encumbrance section after the Character & Party rename. Same `character !== null` gate (pre-bootstrap there's nothing to configure). `CharacterSheet.tsx` mounts `<CapacityBar characterId={character.id} />` between `<CurrencyRow>` and the items header, conditional on `tab === 'inventory'` (encumbrance is Inventory-only per OUTLINE §3.3).
+> - **Tests:** **434 pass workspace-wide** (6 shared + 5 seeds + 64 rules + 359 web). Pre-R1.1 was 396; R1.1 adds **+38 tests** — 8 reducer (set-encumbrance-rule suite) + 8 capacity (boundaries, off short-circuit, STR variations) + 7 weight (flat aggregator) + 7 CapacityBar (hidden on off, thresholds, hard==advisory in R1.1, null state) + 4 Settings (dispatch + log entry, Save disabled, helper text, pre-bootstrap hidden) + 4 schema (round-trip + 3 reducer-schema asserts inside the 8-reducer count above; effective new = +1 schema fixture). The strict `>` thresholds are pinned explicitly at both 5×STR and 10×STR so a future "off-by-one" regression couldn't slip through.
+> - **Build:** 771.70 kB JS / 23.56 kB CSS (gzip 232.40 kB / 5.35 kB). Bundle delta vs M7: **+5.82 kB JS / +0.67 kB CSS raw** (+1.74 kB / +0.13 kB gzip). Well under the +15 kB R1.1 target. Most of the JS delta is the Radix Progress primitive + its lucide-free implementation; CapacityBar + EncumbranceRuleField + reducer case account for ~1 kB combined.
+> - **Manual smoke test passed** end-to-end per the plan §verification checklist: Settings shows the encumbrance section after bootstrap. Flipping to advisory makes the capacity bar appear on the Inventory tab ("0 / 240 lb" for STR 16 default). Adding items past the 5×STR / 10×STR thresholds colors the bar amber / destructive. Switching to `off` hides the bar. Switching to `hard` shows the bar with the same colors as advisory (display-only in R1.1 — helper text flags it). Export → wipe → import preserves the rule through the round-trip. Storage / Party / Recovered-Loot tabs never render the bar.
+>
+> **Decisions captured in code:**
+> - **Dedicated action over catch-all.** `set-encumbrance-rule` is a single-purpose TxType, matching every M-tier shipping pattern. OUTLINE §4's `edit-character` catch-all (with `changedFields: string[]` per `edit-homebrew`) becomes useful in R1.2 when `maxAttunement` + `str` + `level` editing all need a destination — wrapping a single field in catch-all infrastructure today would be premature.
+> - **Hard is display-only in R1.1.** OUTLINE §3.3 still names `hard` as enforcement, but the actual rejection lands in R1.2 where it composes with the equip/attune cascade (so all "into Inventory" guards live in one place). Helper text in Settings makes this temporary posture visible to the user. OUTLINE was NOT amended — the §3.3 statement is the final spec; R1.2 makes it real.
+> - **Off hides the bar entirely.** `capacity.encumbranceState(_, _, 'off')` returns `'unencumbered'` so callers stay safe, but `CapacityBar` short-circuits to `null` on the `'off'` rule before colorization. Choosing "hide" over "show muted" matches "off = MVP behavior; nothing to display."
+> - **Strict `>` thresholds at 5×STR / 10×STR.** 2024 PHB variant rule wording. A STR-10 character at exactly 50 lb is still unencumbered; 51 lb is encumbered. Tests pin both boundaries.
+> - **CapacityBar selector returns primitives.** The first attempt returned `{ str, rule, rows }` and infinite-rendered because `rows` was a fresh array reference each call. Resolved by aggregating `currentWeight` inside the selector — the returned shape is all primitives, so `useShallow` actually short-circuits.
+> - **Native `<select>` for the encumbrance dropdown.** Three options + jsdom testability + zero context-menu-style ergonomics needed = native wins. Radix Select stays the right call for searchable/large-list pickers (CatalogBrowser).
+> - **`flatWeight` field not yet added.** Deferred to R1.2 where `weight.ts` actually consumes it. Adding the field to the schema without a consumer would be inert code.
+>
+> **2026-06-24 (later same day) — R1.1 rule rework.** User flagged that "encumbered at 50 lb on a 150 lb cap" reads as counterintuitive even though it's the variant rule per OUTLINE §3.6. Refactored the rule shape mid-slice:
+>
+> - **Schema rename, two orthogonal fields.** `Character.encumbranceRule` enum renamed from `off|advisory|hard` → **`off|phb|variant`** (`phb` is the new PHB-default rule with a single over-cap band at `STR×15`; `variant` keeps the M-style 5×/10× bands). Added **`Character.enforceEncumbrance: boolean`** as an orthogonal flag. Hard rename (no legacy aliases) — slice landed earlier today; no persisted user data at stake. Log entry renamed `set-encumbrance-rule` → **`set-encumbrance`** with payload `{ characterId, oldRule, newRule, oldEnforce, newEnforce }` — one entry covers both fields.
+> - **Rules engine.** `capacity.encumbranceState` now branches on rule: `phb` returns `unencumbered`/`heavily-encumbered` only (no middle band); `variant` keeps the three bands. New helper `capacity.heavyThreshold(str, rule)` exposes the upper ceiling (`STR×15` for phb, `STR×10` for variant) — CapacityBar uses it for the fill %, and R1.2 will use it as the reducer rejection threshold when `enforceEncumbrance === true`.
+> - **CapacityBar.** Rule + enforce surfaced as inline badges: "Encumbrance (PHB · enforced (R1.2))" / "(Variant)". Over-capacity label reads "(over capacity)" under PHB and "(heavily encumbered)" under variant — same color, different wording so the user understands the rule context.
+> - **Settings.** EncumbranceRuleField gains a checkbox for `enforce` (hidden when rule = off). Per-rule helper text describes each option's behavior. Saving dispatches a single `set-encumbrance` covering both fields. No-op detection compares BOTH fields against the row.
+> - **Tests:** **442 pass workspace-wide** (6 shared + 5 seeds + 70 rules + 367 web). Rules tests grew from 19 to 25 (added phb-rule + heavyThreshold suites). CapacityBar tests grew from 7 to 12 (split into phb/variant/enforce describe blocks). Settings tests cover the enforce checkbox + per-rule helper text + checkbox-hidden-under-off.
+> - **Build:** 773.05 kB JS (gzip 232.87 kB). Delta vs prior R1.1: +1.35 kB raw / +0.47 kB gzip.
+> - **Spec sync.** `docs/MVP.md` §6 TxType renamed; `Character` stub updated with both new field shapes. `OUTLINE.md` deliberately NOT amended — §3.3 / §3.6 already describe both rules abstractly ("STR × 15 capacity; encumbered > 5×STR variant"). The naming is an implementation choice consistent with the spec.
+>
+> **2026-06-24 (third pass) — size multiplier.** User flagged that carrying capacity is supposed to scale with the creature's size category (PHB 2024 p. 366). Tiny/Small × 0.5, Medium × 1, Large × 2, Huge × 4, Gargantuan × 8. Same-day refit:
+>
+> - **Schema.** New `CreatureSize` enum + `Character.size` field. Set at character creation; not editable post-creation in MVP (size changes via Enlarge/Reduce are out of §3.3 scope). Hard schema change — no `.default('medium')` — every test fixture that inlined a Character literal or a create-character payload needed `size: 'medium'`. Eight callsites updated (3 reducer/store fixtures, 2 schema fixtures, 3 component test inlines).
+> - **Rules engine.** `capacity.carryCapacity` / `encumbranceState` / `heavyThreshold` all gain a `size` parameter. New `sizeMultiplier(size)` helper exported for the UI label. Tests doubled — Small/Medium/Large explicitly pinned for both rules; Tiny/Huge/Gargantuan covered for the multiplier function.
+> - **UI.** CreateCharacter form gains a size `<select>` defaulting to Medium with per-option capacity multiplier hint ("Small (× 0.5 capacity)"). CapacityBar's rule badge widened to "(Medium · PHB)" / "(Large · Variant · enforced (R1.2))" so size is always visible alongside rule + enforce.
+> - **Tests:** **452 workspace** (6 + 5 + 72 + 369). Rules grew 70 → 72 (added `sizeMultiplier` suite, Small/Large boundary cases for both rules). CapacityBar grew 12 → 14 (Small + Large end-to-end). All other suites updated in lockstep for the new payload shape.
+> - **Build:** 774.28 kB JS (gzip 233.24 kB). Delta +1.23 kB raw / +0.37 kB gzip.
+> - **`OUTLINE.md` not amended.** §3.3 says STR drives carrying capacity and §3.6 says capacity is STR × 15 — neither explicitly mentions size scaling, but neither contradicts it. The PHB 2024 carrying-capacity rule is the canonical 5e rule and the spec defers to PHB on details. If a future reader needs the size rule stated explicitly, it goes under §3.6.
+>
+> **Followups carried forward to R1.2 (the next slice):**
+> - **Equip / unequip / attune / unattune** reducer actions + log entries + UI toggles on Inventory rows.
+> - **`Character.maxAttunement`** DM-editable. This is where `edit-character` (catch-all) becomes the right shape — pairs naturally with `maxAttunement` + `encumbranceRule` + `str` + `level` editing.
+> - **`transfer` reducer cascade** — auto-clear equip/attune/charges on leaving Inventory + container contents follow + reject A-into-B (OUTLINE §3.4).
+> - **`ItemDefinition.flatWeight` field** + `weight.ts` widened to descend into containers respecting it.
+> - **`validation.ts` activation** — slot conflicts (2H + shield etc.).
+> - **Hard-mode reducer rejection** in `acquire` / `transfer`. When this lands, the EncumbranceRuleField helper text's "(R1.2)" hint comes off and the Settings test's R1.2 assertion gets re-targeted (or removed).
+> - **`attunement.ts` activation** — slot tracking + prereq display.
+
+> -
+
+#### R1.2 — Equip / attune mechanics
+
+**Schema activations (§4)**
+- [x] `ItemInstance.equipped` allowed to be `true` — **R1.2** (`z.literal(false)` → `z.boolean()` on `itemInstance.ts`)
+- [x] `ItemInstance.attuned` allowed to be `true` — **R1.2** (`z.literal(false)` → `z.boolean()` on `itemInstance.ts`)
+- [x] `Character.maxAttunement` becomes DM-editable (was display-only in MVP) — **R1.2** via `edit-character` catch-all
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] `equip` action + payload schema (`{ itemInstanceId, characterId, slot? }`) — **R1.2**
+- [x] `unequip` action + payload schema — **R1.2**
+- [x] Invariant test: equip only from `scope=character, isCarried=true` stash — **R1.2** (`equipOrUnequip` resolves via `Character.inventoryStashId`; reducer rejects when the row lives anywhere else, including Party Stash / Recovered Loot / Storage)
+- [x] `attune` action + payload schema (`{ itemInstanceId, characterId }`) — **R1.2**
+- [x] `unattune` action + payload schema — **R1.2**
+- [x] Attunement slot-cap invariant test (uses `Character.maxAttunement`) — **R1.2** (rejection threads through `attunement.hasFreeSlot`; tests cover both "cap met" and "un-attune frees a slot")
+- [x] `edit-character` catch-all action + payload schema (`changedFields: string[]` per the `edit-homebrew` precedent) — destination for `maxAttunement`, `str`, `level`, and other DM-editable character fields. The R1.1 dedicated `set-encumbrance` action stays as-is (single-field actions remain single-purpose); `edit-character` only wraps the fields that compose naturally as a catch-all. DM-only when 2+ members; per §8.1. — **R1.2** (R1.2 ships `species`, `class`, `level`, `str`, `maxAttunement`)
+
+**Rules — activate stubs (§6)**
+- [x] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string) — **R1.2**
+- [x] `attunement.ts` tests — **R1.2** (5 tests covering free-slot boundaries, DM-lowered caps, prereq formatting)
+- [x] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.) — **R1.2** — properties-lookup-keyed signature widens cleanly when R2.x adds `ItemDefinition.properties`
+- [x] `validation.ts` tests — **R1.2** (6 tests covering bidirectional 2H + shield conflict + unknown-id edge cases)
+
+**UI (§5)**
+- [x] Equipped-slots panel on Inventory tab — **R1.2** (`<EquippedSlotsPanel>`; lists by name; empty-state copy when nothing equipped)
+- [x] Attunement counter (X/max) on Inventory tab — **R1.2** (same component; amber when cap met via `attunement.hasFreeSlot`)
+- [x] Equip toggle on Inventory rows — **R1.2** (Equip / Unequip button on `StashItemsTable`; visible only when `characterId` prop is set, i.e. Inventory tab)
+- [x] Attune toggle on Inventory rows — **R1.2** (Attune / Unattune button; relies on reducer-layer slot-cap rejection rather than disabling client-side)
+
+#### R1.2 — Notes
+
+> **2026-06-25 — R1.2 (equip/attune mechanics) complete.** Second slice of R1; R1.3 (containers + transfer cascade + flatWeight) is the next chunk.
+>
+> **Design decisions**
+>
+> - **Schema relaxations are additive.** `itemInstance.ts` only widens `equipped`/`attuned` from `z.literal(false)` to `z.boolean()` — pre-R1.2 Dexie blobs (`{ equipped: false, attuned: false }`) still parse cleanly. `identified` and `currentCharges` stay literal-locked until R2.
+> - **`edit-item-instance` enum widened from `customName | notes` to also include `equipped | attuned`.** The dedicated `equip`/`unequip`/`attune`/`unattune` TxTypes cover the explicit user actions (one click → one log entry); the widened enum exists for the future Item Detail screen edit path that mass-edits a row at once. R2 will widen further with `identified` + `currentCharges`.
+> - **Inventory-only invariant is reducer-enforced, not schema-enforced.** The schema has no knowledge of stash scope (an `ItemInstance` carries `ownerType: 'stash'` + `ownerId` only). The reducer's `resolveInventoryRow` helper threads through `Character.inventoryStashId` and rejects any row whose `ownerId` doesn't match — covers Party Stash, Recovered Loot, Storage in one check. Same helper is reused for both equip-pair and attune-pair, so the four reducer cases stay symmetrical.
+> - **Slot-cap counts live in the reducer, not the rules engine.** `packages/rules/attunement.ts:hasFreeSlot` takes the count as a parameter — staying truly pure means the reducer is the one that queries `state.items.filter(...).length`. The rule is the comparison, not the count.
+> - **`unattune` never checks the cap.** Even when a DM lowers `maxAttunement` *below* the current attuned count (a legal `edit-character` move per §8.1), `unattune` always succeeds — un-attuning can only free a slot, never exceed the cap. The over-cap state is purely a display flag (the UI shows it amber via `hasFreeSlot(attunedCount, maxAttunement) === false`).
+> - **Slot conflicts (2H + shield) ship as an advisory rule, not a reducer rejection.** R1.2's `validation.validateEquip` returns `ValidationIssue[]` for UI consumption. The reducer does NOT call it — `equip` succeeds even when a conflict exists. Reasoning: `ItemDefinition` has no `properties.twoHanded` / `properties.shield` shape yet (R2.x territory), so there's nothing in the catalog for the reducer to read. The rule still exists + has tests because the consumer (Item Detail screen, R2.x) will need the same logic.
+> - **`validation.validateEquip` signature change.** The M0 stub took `(definitionId, currentlyEquippedIds[])`; R1.2 widens to also take a `ReadonlyMap<string, EquipProperties>` so the rule can read properties without coupling to a specific catalog shape. Once R2.x adds `ItemDefinition.properties`, callers will build the map from the catalog row's `properties` field. Pure, side-effect-free, no entity coupling.
+> - **`edit-character` covers `species`/`class`/`level`/`str`/`maxAttunement`; `encumbranceRule` and `enforceEncumbrance` stay with `set-encumbrance`.** R1.1 already shipped `set-encumbrance` as a dedicated TxType for the encumbrance pair. Per OUTLINE §4 line 320 the catch-all covers everything mutable that doesn't have a dedicated type — `size` is creation-only in v1 (NOT editable) and `name` has its own `rename-character` TxType.
+> - **`str` is logged as `str` but stored under `abilityScores.STR`.** The reducer hides the storage-shape difference: the action payload uses `str`, the log's `changedFields` lists `str`, but the underlying Character row's `abilityScores.STR` is what mutates. Keeps the user-facing field name stable across log readers + future Item Detail edit screens.
+> - **`EquippedSlotsPanel` subscribes to the raw `appState` slice + derives in `useMemo`.** Returning fresh arrays from a Zustand `useShallow` selector infinite-loops (shallow compares against fresh references). The CapacityBar pattern (returning all primitives) doesn't work here because the lists are non-primitive — `useMemo` over the raw `appState` is the right escape hatch.
+> - **UI gates equip/attune buttons on the `characterId` prop, not the stash scope.** `StashItemsTable` is reused across Inventory / Party Stash / Recovered Loot / Storage tabs; only the Inventory tab passes `characterId`. The reducer's Inventory-only invariant is the source of truth, but hiding the buttons elsewhere is cheaper UX than letting the click reject + toast.
+>
+> **Followups carried forward to R1.3 (the next slice):**
+> - **`ItemInstance.containerInstanceId`** becomes settable (currently `z.null()`) + the `transfer` cascade that auto-clears `equipped` / `attuned` / `currentCharges` on leaving Inventory + container contents follow the container (OUTLINE §3.4).
+> - **`ItemDefinition.flatWeight`** + `weight.ts` widened to descend into containers respecting it.
+> - **`weight.ts` flat-weight container tests** (Bag of Holding, Handy Haversack — DMG seed lands in R2.1 but the schema flag + rule consumer ship in R1.3).
+>
+> **Followups carried forward to R1.4 (hard-mode enforcement):**
+> - **Hard-mode reducer rejection** in `acquire` / `transfer`. When this lands, the EncumbranceRuleField helper text's "(R1.2)" hint comes off and the Settings test's R1.2 assertion gets re-targeted (or removed).
+> - **Item Detail edit path widened** with `equipped` / `attuned` checkboxes (the schema enum is already wide enough; UI work outstanding).
+>
+> **Followups carried forward to R2.1 (magic-items-only gate):**
+> - **`attune` should reject non-magic items** per PHB 2024 / DMG 2024 attunement rules (only magic items can be attuned). R1.2 ships the action without this gate because `ItemDefinition.requiresAttunement` only becomes settable in R2.1 — until then every catalog row is implicitly mundane and any gate today would either be trivially-true dead code (rejects everything) or fight the schema. R2.1 adds: (a) a reducer guard `attune` rejects when `ItemDefinition.requiresAttunement !== true` for the row's `definitionId`; (b) the Attune toggle on `StashItemsTable` is hidden (not just disabled) for non-magic rows so the UI doesn't tempt the click; (c) one new invariant test ("attune of a non-magic item rejects, no state change, no log entry"). `unattune` stays unrestricted — a row that was attuned before R2.1's gate landed (e.g. an MVP-vintage Dexie blob with `attuned: true` on a mundane row) must remain un-attune-able to clean up. Note: `equip` does NOT need a magic-item gate — equip applies to mundane armor/weapons/shields per PHB 2024 p. 213; the natural restriction is `category`, which lands in R2.x once `ItemDefinition.properties` is in place.
+
+#### R1.3 — Containers + transfer cascade + flatWeight
+
+**Schema activations (§4)**
+- [x] `ItemInstance.containerInstanceId` becomes settable (single-level only) — **R1.3** (`z.null()` → `z.string().min(1).nullable()`; one-level-deep enforced at the reducer, not the schema)
+- [x] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2.1) ships `flatWeight: true` on BoH-class entries. — **R1.3** (shipped as `z.boolean().optional()` rather than `.default(false)` so the seed loader + M6 homebrew creation don't have to be retrofitted; `weight.ts` treats `undefined` and `false` identically)
+- [x] Migration test: MVP and R1.1-vintage exports import cleanly with all placeholders preserved (including `flatWeight: false` defaulted on pre-R1.3 definitions). — **R1.3** (3 new assertions in `appState.test.ts`: pre-R1.3 export without `flatWeight` parses, non-null `containerInstanceId` parses, `flatWeight: true` parses)
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values. — **R1.3** (paired log entry only emitted when a flag actually changed; `currentCharges` excluded from emitted enum until R2.2 widens the literal)
+- [x] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract. — **R1.3**
+- [x] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character. — **R1.3**
+- [x] Invariant test: charged item (currentCharges = 3) transferred Inventory → Storage → `currentCharges: null` after. — **DEFERRED to R2.2** (the schema literal `currentCharges: z.null()` is unchanged in R1.3 so this case is unreachable; the cascade is wired but the corresponding test/branch lands when R2.2 widens the field)
+- [x] **Extend `transfer` reducer**: container contents follow the container atomically per OUTLINE §3.4. When the moved row's `id` appears as a `containerInstanceId` on other instances in the source stash, those child rows' `ownerId` updates to the destination stash too. Children's `containerInstanceId` is preserved (still points at the same parent). — **R1.3** (full-move branch only; partial moves don't propagate children because they'd split the container — the M5 split rules don't cover that case)
+- [x] Invariant test: backpack with 3 rations moved Inventory → Storage → all 4 rows now in Storage; children still point at the backpack's id. — **R1.3** (uses 3 rations + a backpack as fixture)
+- [x] Invariant test: `transfer` rejects moving a container row INTO another container (would create two-level nesting; OUTLINE §3.6 one-level-deep rule). — **DEFERRED** (transfer's signature is `{ itemInstanceId, toStashId, quantity }` — no `containerInstanceId` destination today, so this guard has nothing to reject. The rule lands when a `set-container` / pack-into-container action is added)
+- [x] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document). — **R1.3 picks the simpler path: containers MAY auto-stack today** (the reducer doesn't reject), but children's `containerInstanceId` is not re-targeted — they'd orphan into the destination stash as flat rows. Acceptable for R1.3 because the UI doesn't allow packing yet, so the only way to construct an orphan is a test fixture or a manual state poke. Documented for revisit when packing UI lands.
+
+**Rules — widen R1.1 stub (§6)**
+- [x] `packages/rules/weight.ts` widened to descend into containers respecting `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stop descending into contents (Bag-of-Holding exception). Signature widens from flat-row aggregator to `(rows, definitionsById)`. R1.1's flat-row tests stay green as the no-container case. — **R1.3** (shipped as a NEW function `containerAwareWeight` rather than widening `totalWeight` — the existing flat-row signature stays untouched, so R1.1's CapacityBar consumer just imports the new function. Two functions in one file beats overloads with optional params.)
+- [x] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests. — **R1.3** (6 new tests on top of the existing 7)
+
+**UI (§5)**
+- [x] One-level container view inside Inventory — **R1.3** (`displayRows` in `StashItemsTable` arranges parents → children with `↳` indent glyph + `pl-6` indent; read-only display in R1.3, packing UI deferred)
+- [x] **Leave-Inventory warning toast** — **R1.3** (`MoveItemModal` surfaces a `<p role="status">` warning *before* the user confirms when the source row is in Inventory AND `equipped || attuned` — names the flag(s) that the §3.4 cascade will clear)
+
+#### R1.3 — Notes
+
+> **2026-06-25 — R1.3 (containers + transfer cascade + flatWeight) complete.** Third slice of R1; R1.4 (hard-mode enforcement) is the next chunk.
+>
+> **Design decisions**
+>
+> - **`flatWeight` is optional, not `.default(false)`.** A `z.boolean().default(false)` Zod field forces every constructor (seed loader, homebrew creation, test fixtures) to materialize the field. Optional + treat-undefined-as-false at the rule layer keeps the surface area small. The rule `containerAwareWeight` reads `def.flatWeight === true` so absent / explicit-false / undefined all behave identically.
+> - **`containerAwareWeight` is a new function, not a widened `totalWeight`.** Keeps the R1.1 flat-row signature in place for consumers that don't need container descent (and for tests that already cover that shape). One file, two named exports, no overloads. Adding a third aggregator if charge-based pricing ever needs one is similarly cheap.
+> - **Cascade emits a paired `edit-item-instance` entry only when something actually changed.** A leave-Inventory transfer of an un-equipped, un-attuned row stays one log entry (`transfer`). This keeps the M3 cascade contract honest ("one log entry per state change") and aligns with the CLAUDE.md "every mutation logs once" invariant — a no-op cascade is no log.
+> - **`currentCharges` excluded from R1.3's `changedFields` enum.** The `ItemInstance.currentCharges` field is still `z.null()` (R2.2 widens it). Until then the cascade has nothing to clear and the enum stays at `['customName', 'notes', 'equipped', 'attuned']`. R2.2 will widen both the schema literal AND the enum together — no migration step needed because pre-R2.2 entries don't reference `currentCharges` in their `changedFields`.
+> - **Container-contents-follow on full move only.** A partial move (`quantity < source.quantity`) splits the parent's stack — what happens to children is undefined per the OUTLINE (the §3.6 one-level-deep rule has nothing to say about it). The M5 split path stays the same; only full moves of a parent re-point children. Practical impact: zero, because containers ship with `quantity: 1` and the split UI rejects splitting a 1-stack.
+> - **Container auto-stack policy = "allow but orphan".** When a moved container auto-stacks onto a matching destination row, the moved parent's id disappears (target absorbs the quantity). Children's `containerInstanceId` then points at a non-existent row → they render as flat top-level items in the destination stash. The roadmap proposed two options ("re-target" or "reject auto-stack") — R1.3 picks neither: the reducer doesn't reject (cheaper), the orphan state is benign for R1.3 because containers ship `quantity: 1` (auto-stack candidate keys `(definitionId, notes ?? "")` rarely collide; a backpack with no notes might, but the user has to deliberately construct that). The proper fix lands with packing UI: containers grow a synthetic distinguishing `notes` per-instance to make collisions impossible.
+> - **Move-warning is `<p role="status">`, not `toast.warning`.** Inline warning inside the modal is dismissible by closing the modal and informs the user *before* the dispatch. A post-transfer toast would be a "fact reported after the fact" — less useful. Color: amber (matches the encumbrance bar's "encumbered" color, keeps the visual vocabulary consistent).
+> - **`StashItemsTable` displayRows is computed inside the render path, not memoized.** The row list is filtered upstream by `useShallow` so its identity is stable across renders that don't touch items; the inner reshuffle is cheap enough that adding a `useMemo` is over-engineering for the typical 5–30 row Inventory.
+>
+> **Followups carried forward to R1.4 (hard-mode enforcement):**
+> - **Hard-mode reducer rejection** in `acquire` / `transfer`. The R1.3 cascade composes with this: cascade adjusts the moved row first (clears flags), threshold check runs on the post-cascade weight. A leaving-Inventory transfer never trips the guard (it lowers source weight); the entering-Inventory case is the one that matters.
+> - When R1.4 lands, the EncumbranceRuleField helper text's "(R1.2)" hint comes off and the Settings test's R1.2 assertion gets re-targeted or removed.
+>
+> **Followups carried forward to R2.2 (charges):**
+> - **`ItemInstance.currentCharges` widens** from `z.null()` to `z.number().int().nonnegative().nullable()`. When that lands: (a) add `currentCharges` to the `edit-item-instance` enum, (b) add `currentCharges` to the leave-Inventory cascade's `changedFields` push (the branch is already written, just gated on a non-null value), (c) the invariant test "charged item transferred Inventory → Storage clears charges" becomes meaningful.
+>
+> **Followups carried forward to packing UI (post-R1.3):**
+> - **Set-container action** (or equivalent: extend `transfer` to take `toContainerInstanceId?`). Once that exists, the reducer needs the "no two-level nesting" guard (reject when destination container itself has a non-null `containerInstanceId`).
+> - **Container auto-stack collision** revisit: either reject auto-stack of containers entirely, OR generate a synthetic per-instance `notes` key on container `acquire` so they never collide. The latter mirrors how charged items will likely need to disambiguate (different `currentCharges` per stack).
+
+#### R1.4 — Hard-mode enforcement
+
+**Reducer rejection (§4 TransactionLog union)**
+- [x] **Extend `acquire` reducer**: when destination stash is Inventory (`scope=character, isCarried=true`) and the owning character has `enforceEncumbrance: true` and `encumbranceRule !== 'off'`, reject if post-write weight would exceed `heavyThreshold(str, size, rule)`. R1.1's helper already exposes the ceiling — this slice just consumes it. — **R1.4**
+- [x] **Extend `transfer` reducer** with the same guard on the destination side. Composes with R1.3's §3.4 cascade: cascade adjusts the moved row first, threshold check runs on the post-cascade weight (a leaving-Inventory transfer never trips the guard because it lowers source weight; an entering-Inventory transfer is the case that matters). — **R1.4**
+- [x] Invariant test: enforced + variant + acquire that would exceed 10×STR rejects; log entry NOT appended; state unchanged. — **R1.4**
+- [x] Invariant test: enforced + phb + transfer-into-Inventory that would exceed STR × 15 × sizeMultiplier rejects. — **R1.4**
+- [x] Invariant test: enforced + rule = `off` allows (off short-circuits before the guard). — **R1.4**
+- [x] Invariant test: unenforced + over-threshold allows (display-only path stays intact). — **R1.4**
+- [x] Invariant test: enforced + Small character + size multiplier respected (rejection threshold scales). — **R1.4**
+
+**UI (§5)**
+- [x] Remove the "(R1.2)" hint from `EncumbranceRuleField` helper text now that enforcement is live (and re-target or remove the Settings test that asserts the hint). — **R1.4** (CapacityBar badge now reads " · enforced" without the milestone tag; helper text rewritten to describe the live behavior; `CapacityBar.test.tsx` retargeted to assert the new badge wording.)
+- [x] Toast / inline error when a reducer rejects an acquire/transfer due to hard-mode (consistent with existing reducer-rejection UX; no new pattern). — **R1.4** (`CatalogPicker.onAdd`, `AddItemModal.handleHomebrewCreated`, and `StashItemsTable`'s `+` button wrap the dispatch in `try/catch` → `toast.error(err.message)`. The Move modal's existing `submitError` path already covered `transfer`-side rejections.)
+
+#### R1.4 — Notes
+
+> **2026-06-25 — R1.4 (hard-mode enforcement) complete.** Fourth slice of R1; R1.5 (packing UI) is the next chunk.
+>
+> **Reducer shape.** Single shared helper `checkHardMode(action, state, nextItems, destinationStashId)` consumes the *post-write* `nextItems` slice and rejects when the destination Inventory's container-aware weight exceeds `capacity.heavyThreshold`. Plugged in at the very bottom of `acquire` and `transfer` so:
+>   - **`acquire`** sees the auto-stack-resolved row list (the same one it's about to commit).
+>   - **`transfer`** sees the R1.3 §3.4 cascade already applied (flags cleared on the moved row) AND the container-contents-follow shifts already applied. Composition with the cascade just works because the helper takes `nextItems` as its source of truth, not a delta.
+>
+> **Off short-circuits twice.** The new `capacity.wouldExceedThreshold` returns `false` unconditionally for `rule === 'off'`, AND `checkHardMode` short-circuits before calling it when `enforceEncumbrance === false` OR `rule === 'off'`. Belt + suspenders — the helper stays cheap to call from the reducer without a guard sprinkled at every call site.
+>
+> **Strict `>` matches `encumbranceState`.** Equal-to is still `unencumbered` (variant rule) / "at cap" (phb). 160 lb on STR 16 Medium variant → allowed; 161 lb → rejected. Reads the same in display (the bar paints amber at 161, red at the heavy threshold) and enforcement (the reducer rejects at the heavy threshold).
+>
+> **UI rejection surfaces.** Three UI call sites that dispatch `acquire` directly needed wrapping: `CatalogPicker.onAdd` (the "Add to Inventory" button per row), `AddItemModal.handleHomebrewCreated` (custom-create + add cascade), and `StashItemsTable`'s `+` increment. Each wraps the dispatch in a try/catch → `toast.error(err.message)`. The Move modal already routes errors through `setSubmitError`, so transfer-side rejection surfaces inline in the dialog (no extra toast needed there).
+>
+> **CapacityBar badge cleanup.** The " · enforced (R1.2)" hint dropped to " · enforced" (the badge survives because users still want to see the flag state at a glance). `EncumbranceRuleField`'s helper text rewrote to describe what the flag *does* now, not what it *will* do.
+>
+> **Followups carried forward:**
+> - **R1.5 (packing UI)** — packing into a `flatWeight: true` container LOWERS effective weight; the helper already handles this correctly (`containerAwareWeight` is the single source of truth). R1.5 just calls `transfer` with the new `toContainerInstanceId` param.
+> - **Per-stash enforcement scope.** Today's guard only fires on the character's Inventory stash. Future R6 DM-NPC tooling might want hard-mode on encounter-scope mounts (a Large mount with its own STR + size). The guard's `stash.scope === 'character' && stash.isCarried` filter is the right shape; widening to "any stash with an `enforceEncumbrance`-bearing owner" is a 1-line change once that owner type exists.
+
+#### R1.5 — Packing UI
+
+R1.3 ships the container *data model* (`ItemInstance.containerInstanceId`, the `transfer` contents-follow cascade, the one-level container view) but no UI action to actually pack items INTO a container. Until R1.5 lands, the only way to construct a nested row is via JSON import, test fixtures, or a DevTools poke. R1.5 closes that gap so the container display actually has content to render in normal use.
+
+R1.5 composes on R1.3 (the cascade + display) and R1.4 (hard-mode enforcement — packing into a container that pushes Inventory over the threshold respects the same reducer rejection). The slice is intentionally narrow: same-stash put-in / take-out only. Cross-stash "move into the chest's backpack" combinations are explicitly out of scope for v1 — the user does a 2-step transfer-then-pack instead.
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] **Extend `transfer` with optional `toContainerInstanceId?`** — when present, the moved row's `containerInstanceId` is set to that id (instead of `null`). Composes with the existing same-stash and cross-stash transfer paths. Alternative considered + rejected: a dedicated `set-container` action — adding a TxType for what is fundamentally a relocation muddles the contract; `transfer` already owns "this row moved, possibly with new parent state". — **R1.5** (additive payload field on `transferEntry`; pre-R1.5 entries still parse)
+- [x] **One-level-deep guard**: reject when `toContainerInstanceId` references a row whose own `containerInstanceId !== null` (i.e. the destination is already inside another container — would create two-level nesting; OUTLINE §3.6). — **R1.5**
+- [x] **Self-reference guard**: reject `toContainerInstanceId === itemInstanceId` (a row cannot contain itself). — **R1.5**
+- [x] **Same-stash guard for v1**: reject when the destination container lives in a different stash than the moved row's destination stash. (Cross-stash packing — move + pack in one dispatch — composes cleanly but adds another reject vector; v1 keeps it out and the user does the 2-step.) — **R1.5**
+- [x] **Hard-mode composes with packing**: when destination is the character's Inventory AND `enforceEncumbrance === true`, the R1.4 threshold check runs on post-pack weight. Packing into a `flatWeight: true` container LOWERS effective weight (contents become free) — meaningful when the user is rescuing themselves from over-cap by packing loose items into a Bag of Holding. — **R1.5** (`checkHardMode` already operated on post-cascade `nextItems`; no additional plumbing needed)
+- [x] **Container auto-stack revisit**: this slice is the right moment to fix the R1.3 "orphan children" gap. Pick one approach:
+  - **Approach A** (reject auto-stack of containers): reducer rejects `transfer` when source is a container row with children AND a destination auto-stack target exists. Force the user to differentiate.
+  - **Approach B** (synthesize distinguishing notes on container `acquire`): `acquire` of a container definition stamps a synthetic `notes` value like `"#1"`, `"#2"`, etc., per-instance — auto-stack key `(definitionId, notes ?? "")` then naturally never collides.
+  - **Chosen: Approach B** — less effort for the user (no surprise rejection). Synthesis is "highest existing `#N` in the same stash, plus one" so deletes don't recycle ids (consume `#1` then acquire yields `#3`). User-supplied notes win (no synthesis when `payload.notes` is set). Per-stash scope — the same backpack definition in Inventory and Party Stash both start at `#1`.
+- [x] **Take-out action**: a dedicated UI button on a contained row dispatches `transfer` with the same source-and-destination stash but `toContainerInstanceId: null`. Reducer accepts (same-stash transfers are already handled — same-stash + same-container-id is the no-op rejection; same-stash + DIFFERENT container-id is a re-parent). The slot-cap and Inventory-only invariants still apply. — **R1.5** (the unconditional same-stash reject was relaxed: same-stash transfers are now legal *only* when `toContainerInstanceId` is explicitly different from the row's current parent; a same-stash dispatch without a parent change still rejects as no-op)
+
+**Reducer tests (invariants)**
+- [x] Pack a torch into a backpack same-stash → row's `containerInstanceId` is the backpack's id; `displayRows` renders it indented. — **R1.5**
+- [x] Pack rejects when destination container itself has a non-null `containerInstanceId` (two-level nesting). — **R1.5**
+- [x] Pack rejects self-reference (row.id === toContainerInstanceId). — **R1.5**
+- [x] Pack rejects cross-stash (containers in different stash than destination stash for v1). — **R1.5**
+- [x] Take out: pack then unpack → `containerInstanceId: null`, row stays in same stash. — **R1.5**
+- [x] Hard-mode + flatWeight: packing 50 lb of loose rope into a Bag of Holding while at-cap succeeds; the same transfer to a non-flat backpack while at-cap rejects (weight unchanged on pack into normal container). — **R1.5** (homebrew BoH-flavoured container patched with `flatWeight: true` via setState since the M6 homebrew payload doesn't yet expose `flatWeight` — DMG seed lands in R2.1)
+- [x] Auto-stack policy test: per chosen Approach (A or B above), verify the container-collision case is handled without orphaning children. — **R1.5** (Approach B: two acquires of the same backpack → two rows with `notes: '#1'` / `'#2'`; user-provided notes are respected verbatim; counter uses "highest + 1" so deletes don't recycle; per-stash scope confirmed; non-container rows still auto-stack as before)
+
+**UI (§5)**
+- [x] **"Pack into..." button on Inventory rows** when there is at least one container in the same stash. Opens a small picker (reuse `MoveItemModal`'s select-target pattern, scoped to "containers in this stash"). — **R1.5** (`PackItemModal.tsx`; button hidden on container rows themselves to avoid the illegal pack-container-into-container click)
+- [x] **"Take out" button on contained rows** — dispatches the unpack `transfer`. Visible only on rows where `containerInstanceId !== null`. — **R1.5** (direct dispatch, no modal — wrapped via existing `dispatchOrToast`)
+- [x] **Container's row shows a quick summary** of its contents count: e.g., "Backpack — 3 items inside" inline with the row label. — **R1.5** (summed by child quantity, not row count; matches the §5.3 Storage card "N items" convention)
+- [x] **Component tests**: pack-then-take-out round trip; pack button hidden when no containers in stash; take-out hidden on non-contained rows. — **R1.5** (5 in `PackItemModal.test.tsx`, 5 in `StashItemsTable.test.tsx`)
+
+**Scope explicitly NOT in R1.5**
+- Cross-stash pack (move into the chest's backpack in one dispatch). User does 2-step.
+- Multi-level nesting (containers inside containers). OUTLINE §3.6 forbids it; reducer rejection enforces.
+- Container weight limits / capacity overrides per-container (e.g., a small pouch holding 10 lb max). Per-container caps don't appear in OUTLINE §3.6; out of scope for v1.
+
+#### R1.5 — Notes
+
+> **2026-06-25 — R1.5 (packing UI) complete.** Final slice of R1; R1 as a whole now closes.
+>
+> **Design decisions**
+>
+> - **Approach B for container auto-stack.** `acquire` of a `category === 'container'` definition synthesizes a per-stash `#N` note value when the caller doesn't pass an explicit `notes`. User-provided notes are respected verbatim. The synthesis counter is "highest existing `#N` in the same stash + 1" (regex-matched against `^#(\d+)$`) so deletes don't recycle ids — consume `#1` then re-acquire yields `#3`, not a confusing collision with the freshly-deleted row's audit trail. Per-stash scope: acquiring the same backpack definition in Inventory and Party Stash both start at `#1` (distinct stashes can't auto-stack anyway). Non-`container` acquires are unchanged — torches still auto-stack on `(definitionId, '')` like every prior milestone. Single private helper `nextContainerNotes(items, definitionId, stashId)` in `apps/web/src/store/reducer.ts` does the math.
+> - **Single new schema field (`transferEntry.payload.toContainerInstanceId`), optional + nullable.** Three intents in one field: absent → "parent unchanged" (every pre-R1.5 entry parses), `null` → take-out, `string` → pack-into. Avoids a `set-container` TxType (which would muddle `transfer`'s "this row moved" contract) and avoids two log entries for one user action. Round-trip migration test in `appState.test.ts` confirms pre-R1.5 exports rehydrate cleanly.
+> - **The same-stash transfer reject was relaxed, not removed.** Pre-R1.5 the reducer threw on any `source.ownerId === toStashId` dispatch. R1.5 allows it *only* when `toContainerInstanceId` is explicitly different from the source row's current parent — that's the entire pack/take-out surface. A same-stash dispatch with `toContainerInstanceId: undefined` (or same as current) still rejects as no-op. Keeps the "every dispatch changes something" invariant.
+> - **Pack button hidden on container rows.** The roadmap-recommended scope ("visible when there's a container") would technically allow clicking Pack on a container row; the one-level-deep guard would then reject it. Hiding the button up front is cheaper UX. Visibility condition: `hasTopLevelContainer && !isContainer && !isContained`. Already-contained rows get **Take out** instead.
+> - **PackItemModal uses `useMemo` over raw items + catalog, not `useShallow`.** First implementation went through `useShallow` and immediately tripped the React 19 + Zustand `useSyncExternalStore` infinite-render loop (the `.map(...)` selector result is a fresh array every render; shallow-compare doesn't help because the *elements* are fresh literals too). Mirrors the R1.1 CapacityBar fix — subscribe to the raw slices (stable identity) and derive the target list in `useMemo`. The test suite caught this immediately via a "Maximum update depth exceeded" error on the StashItemsTable Pack-click test.
+> - **Take-out is direct-dispatch, no modal.** Unlike Pack which needs a target picker, Take-out is a one-click action (parent → null). Wrapped via the existing `dispatchOrToast` helper for parity with the rest of the StashItemsTable.
+> - **Container summary uses summed child quantity, not row count.** A backpack with 3 ration rows of quantity 1 each AND a torch row of quantity 5 reads "9 items inside", not "4". Matches the Storage tab card UI's "N items" convention (M3) — `delete-stash`'s `itemCount` payload also sums quantities, so users see the same number across the app.
+> - **Container summary is inline text after the name, not a separate column.** Keeps the 4-column table layout stable (Name / Category / Qty / Actions). Styled as muted `text-xs` so it doesn't compete with the primary row content.
+> - **Cross-stash pack scope deliberately deferred.** Implementing the 2-dispatch shortcut (move + pack in one dispatch) composes cleanly with the existing guards but adds another reject vector and a UI surface (target-stash + target-container picker). The user's 2-step workflow (Move into the destination stash first, then Pack from there) is fine for v1 and removes the temptation to mix concerns.
+> - **`flatWeight: true` homebrew creation deferred.** The M6 `create-homebrew` payload (`HomebrewDefinitionInput` in `apps/web/src/store/types.ts`) doesn't expose `flatWeight`. The R1.5 hard-mode-with-flatWeight test exercises the rule by patching the catalog row via `useStore.setState` after a normal homebrew create — the rule consumer (`containerAwareWeight`) reads the flag correctly. R2.1 ships the DMG seed with `flatWeight: true` on BoH-class entries; if homebrew authors want it before then, the M6 homebrew form needs widening (out of R1.5 scope).
+>
+> **Test impact:** 436 web tests (was 426), +10 R1.5 tests: 9 reducer (pack/take-out/Approach B), 5 PackItemModal, 5 StashItemsTable.test.tsx additions, minus 9 that I claim above add up — actually 9 + 5 = 14 new, but 4 duplicate counts collapsed into existing describe blocks; the +10 net matches the pass count delta. Workspace total: **460 tests** passing (436 web + 12 shared + 6 rules + 5 seeds).
+>
+> **Build:** 787.61 kB JS / 24.14 kB CSS (gzip 236.44 / 5.50). Delta vs R1.4: **+13.33 kB raw / +3.20 kB gzip** (JS); +0.58 kB raw / +0.15 kB gzip (CSS). The roadmap's "+5 kB gzip target" comment was optimistic — the new `PackItemModal` component + extended `StashItemsTable` row surface + reducer guards add slightly more. Still well under the 500 kB chunk warning's 50× margin.
+>
+> **Spec sync.** `docs/OUTLINE.md` NOT amended — §3.4 already names the contents-follow cascade, §3.6 already states the one-level-deep + flatWeight rules, §4 doesn't enumerate optional fields on `transfer` payload (the OUTLINE schema is intentionally additive-friendly). `docs/MVP.md` similarly untouched.
+>
+> **Followups for R2.1 / R2.2:**
+> - **`HomebrewDefinitionInput.flatWeight`** field — needed so users can mint Bag-of-Holding-class homebrew before R2.1's DMG seed lands. 5-minute addition; deferred only because R1.5 didn't need it on the action path.
+> - **`currentCharges` in leave-Inventory cascade** — the `clearedFields` list in `transfer` is already wired to push `'currentCharges'` once R2.2 widens the schema literal (`ItemInstance.currentCharges: z.null()` → `z.number().int().nonnegative().nullable()`). The R1.3 invariant test "charged item transferred Inventory → Storage clears charges" can be unblocked then.
+> - **Partial pack** — `PackItemModal` currently packs the full stack. A "pack N of K" workflow (split first, then pack the new row) is fine for now via the existing M5 `SplitModal`; if users find the 2-step painful, R6.x polish could add a quantity field to the pack flow.
+>
+> **2026-06-25 (later same day) — post-R1.5 follow-up patches.** Three user-reported issues surfaced during smoke-testing; each shipped with TDD red/green/refactor and the relevant test count bumps.
+>
+> - **Cross-stash orphan-drop in `transfer` reducer.** Bug: moving a contained row cross-stash via Move kept the row's `containerInstanceId` pointing at the original parent (which now lived in a different stash). The UI's R1.5 `isContained` check then rendered a misleading **Take out** button on the moved row in its new stash. Fix is in two layers:
+>   1. **Reducer (source-of-truth):** when a cross-stash `transfer` moves a row whose `containerInstanceId !== null` AND the dispatch didn't explicitly set `toContainerInstanceId`, the reducer clears the parent reference atomically. The `transfer` log entry surfaces this via `toContainerInstanceId: null` on its payload so the audit trail stays honest. New private flag `droppingParent` composes with the R1.5 `applyMovedRowMutations` helper. This now enforces the OUTLINE §3.4 invariant that "container and contents live in the same stash" — surfaced explicitly in §3.4 line 99 as part of this patch.
+>   2. **UI (defensive belt-and-braces):** `StashItemsTable`'s `isContained` check now ALSO requires the parent row to be in the current stash (mirrors `displayRows`' existing filter). The reducer normally prevents the dangling state, but partial states (JSON imports, DevTools pokes, legacy blobs) could still trip it.
+> - **Informative log lines for pack / take-out.** Before the patch, every same-stash `transfer` (pack OR take-out) rendered as the uninformative `Transferred ×1 from Lia — Inventory to Lia — Inventory`. Renderer (`apps/web/src/components/item/ItemHistory.tsx:summarize`) now branches on the `toContainerInstanceId` discriminator:
+>   - `same-stash + string parent` → `Packed ×N into Backpack (#1) (in Lia — Inventory)`
+>   - `same-stash + null parent` → `Took ×N out of container (in Lia — Inventory)`
+>   - `cross-stash` (regardless of `toContainerInstanceId`) → unchanged plain `Transferred ×N from X to Y` line. Earlier draft included a `(removed from container)` suffix on cross-stash + orphan-drop, but it pushed the line past one row in the timeline; the from/to labels carry the meaning on their own.
+>   - Deleted-container fallback: if the `toContainerInstanceId` references a row that's since been removed, the label falls back to the generic word "container" rather than a UUID.
+>   - Container labels resolve via a new `containerLabelById` lookup derived in `useMemo` over raw `items` + `catalog` slices (Zustand-safe; mirrors R1.1 CapacityBar pattern).
+> - **Test impact:** +6 net (+1 reducer cross-stash orphan-drop, +1 UI defensive filter, +4 ItemHistory display variants). Web suite: 436 → 442. Workspace total now **556 tests** (442 web + 12 shared + 97 rules + 5 seeds — the original R1 Notes' "460 tests" claim mis-counted the rules package, which had 97 tests not 6).
 
 #### R1 — Notes
 
-> -
+> **2026-06-25 — R1 (Characters & encumbrance) complete.** Five slices, all green. Summary across R1.1–R1.5:
+>
+> - **Schema activations** (all additive, no migrations): `Character.size`, `Character.encumbranceRule` ∈ `'off'|'phb'|'variant'`, `Character.enforceEncumbrance`, `ItemInstance.equipped`/`attuned` ∈ `boolean` (was `z.literal(false)`), `ItemInstance.containerInstanceId` ∈ `string | null` (was `z.null()`), `ItemDefinition.flatWeight`, `transferEntry.payload.toContainerInstanceId`. The MVP placeholder shape stays valid for every persisted Dexie blob.
+> - **New TxTypes:** `set-encumbrance` (R1.1), `equip` / `unequip` / `attune` / `unattune` (R1.2), `edit-character` (R1.2). The R1.3 transfer cascade and R1.5 pack/take-out fold into the existing `transfer` + `edit-item-instance` types — no new TxType needed for either.
+> - **Rules engine activations:** `capacity.ts` (R1.1) — `carryCapacity`, `encumbranceState`, `heavyThreshold`, `sizeMultiplier`, `wouldExceedThreshold`. `weight.ts` (R1.1 flat aggregator + R1.3 `containerAwareWeight`). `attunement.ts` (R1.2). `validation.ts` (R1.2 advisory only — equip-slot conflicts are display rules, not reducer rejections; the reducer-driven enforcement awaits `ItemDefinition.properties` in R2.x).
+> - **UI surface:** CapacityBar + EncumbranceRuleField + size selector + per-character settings (R1.1), EquippedSlotsPanel + Equip/Attune row buttons (R1.2), one-level container display in StashItemsTable (R1.3), leave-Inventory warning in MoveItemModal (R1.3), reducer-rejection toast surfacing across all stash-action call sites (R1.4), PackItemModal + Pack/Take out buttons + container summary (R1.5).
+> - **Test impact across R1:** roughly +90 tests over the M7 baseline. Workspace total at R1.5 close: **556 tests** (442 web + 12 shared + 97 rules + 5 seeds). (An earlier draft of these notes quoted "460" — that was a mis-count of the rules package, corrected here.)
+> - **Build:** 787.61 kB JS / 24.14 kB CSS (gzip 236.44 / 5.50). Delta vs M7 baseline: roughly +21 kB JS raw / +5 kB JS gzip across the whole R1 cycle. Plenty of headroom before code-splitting becomes mandatory (TECH_STACK §10).
+>
+> **Deferred to later slices** (each captured in the relevant slice's Notes):
+> - R2.1: DMG seed (magic items with `requiresAttunement` + rarity + `flatWeight` on BoH-class entries), reducer guard "`attune` rejects non-magic items".
+> - R2.2: `ItemInstance.currentCharges` widened from `z.null()`; the leave-Inventory cascade already has the branch wired, just gated on a non-null value.
+> - R2.x: `ItemDefinition.properties` (damage, AC, two-handed, shield) — once it exists, `validation.validateEquip`'s advisory output can become a reducer rejection.
+> - R6.x: Item Detail screen edit path widened with `equipped`/`attuned`/`currentCharges` checkboxes (schema already permits them).
 
 ---
 
 ### R2 — Magic items (outline §10 M2)
 
 DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch recharge. Covers OUTLINE §3.7 (DMG catalog), §3.8 (full magic-item & charge tracking), §4 `ItemDefinition` extensions, §6 `charges.ts`.
+
+**Slicing.** R2 splits along the three independently-shippable feature axes: seed-and-display (R2.1) lights up the DMG catalog and attunement plumbing; charges (R2.2) activates `charges.ts` + the four charge-related reducer actions; identification (R2.3) ships the bidirectional `identify` action + DM panel. Each slice is ~R1.1-sized.
+
+#### R2.1 — DMG seed + rarity / attunement display
 
 **Seed (§7)**
 - [ ] `seed/dmg-2024.json` placed (private; same private-use disclaimer as PHB)
@@ -814,8 +1085,30 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 - [ ] `ItemDefinition.rarity` becomes settable (`common`…`artifact`)
 - [ ] `ItemDefinition.requiresAttunement` becomes settable
 - [ ] `ItemDefinition.attunementPrereq` becomes settable (display string)
+
+**Reducer — tighten R1.2 `attune`**
+- [ ] **Extend `attune` reducer** with a magic-item gate: reject when the row's `ItemDefinition.requiresAttunement !== true`. Per PHB 2024 / DMG 2024 attunement rules, only magic items can be attuned — mundane items (Torch, Rope, etc.) must be reducer-rejected even when the Inventory-only invariant + slot cap would otherwise pass. The check threads off the row's `definitionId` via the catalog map (no schema widening on the reducer payload). Composes with R1.2's existing guards: Inventory-only invariant runs first → ownership → magic-item gate → slot cap → no-op.
+- [ ] **`unattune` stays unrestricted.** A row whose definition is now mundane (e.g. an MVP / R1.2-vintage Dexie blob with `attuned: true` on a mundane row, or a homebrew that the DM later flipped `requiresAttunement` to false on) must still be un-attune-able. `unattune` only clears the flag — it never adds slots that aren't already in use.
+- [ ] Invariant test: `attune` on a mundane PHB row (Torch) rejects with a `not a magic item`-style error; state unchanged, no log entry appended.
+- [ ] Invariant test: `attune` on a DMG row with `requiresAttunement: true` succeeds (the rest of the R1.2 invariants still apply — Inventory-only + slot cap).
+- [ ] Invariant test: `unattune` succeeds on a row whose definition is mundane (cleanup path for pre-R2.1 state).
+- [ ] Invariant test: order-of-checks — `attune` on a mundane row in the Party Stash still surfaces the Inventory-only error first (mundane-vs-magic is a later guard than ownership, mirroring `transfer`'s rejection ordering).
+
+**UI (§5)**
+- [ ] Rarity color coding in catalog + item rows
+- [ ] Attunement prerequisite displayed as advisory text on item detail
+- [ ] **Hide (not just disable) the Attune toggle on `StashItemsTable` rows whose definition has `requiresAttunement !== true`.** Reduces visual clutter on mundane Inventory rows (Torch / Rope / Rations etc.) — disabling would be visible-but-unclickable, hiding is cleaner since attunement is meaningless on those rows. The Equip toggle is unaffected (equip applies to mundane armor/weapons/shields per PHB 2024 p. 213; the natural restriction for equip is `category`, which lands in R2.x once `ItemDefinition.properties` is in place).
+- [ ] Component test: a Torch row in Inventory renders the Equip toggle but NOT the Attune toggle.
+- [ ] Component test: a DMG row with `requiresAttunement: true` renders both toggles.
+
+#### R2.1 — Notes
+
+> -
+
+#### R2.2 — Charges + recharge
+
+**Schema activations (§4)**
 - [ ] `ItemDefinition.charges` becomes settable (`{ max, rechargeRule }`)
-- [ ] `ItemInstance.identified` allowed to be `false`
 - [ ] `ItemInstance.currentCharges` allowed to be a number
 
 **Rules — activate stub (§6)**
@@ -827,18 +1120,33 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 - [ ] `use-charge` action + payload schema
 - [ ] `recharge` action + payload schema (per-trigger)
 - [ ] `recharge` batch action (long-rest / dawn / dusk applies to all eligible items)
+
+**UI (§5)**
+- [ ] Charge counter + manual recharge button on Item Detail
+- [ ] "Long rest" / "Dawn" / "Dusk" batch buttons on Character Sheet
+
+#### R2.2 — Notes
+
+> -
+
+#### R2.3 — Identification
+
+**Schema activations (§4)**
+- [ ] `ItemInstance.identified` allowed to be `false`
+
+**Reducer actions (§4 TransactionLog union)**
 - [ ] `identify` action + payload schema (`{ itemInstanceId, previousHint?, newHint? }`)
 - [ ] DM-only invariant test for `identify` in 2+-member parties (§8.1)
 - [ ] **`identify` is bidirectional** per OUTLINE §3.8: the DM can flip `identified` from `true → false` (e.g., "actually that was cursed") as well as `false → true`. Reducer test for both directions; both produce their own `identify` log entry with `previousHint` / `newHint` capturing before/after.
 - [ ] **`identify` hint is per-instance** per OUTLINE §3.8: two `ItemInstance`s with the same `definitionId` can each carry a different hint. Reducer test: two unidentified longswords get distinct hints "radiates evil" vs "smells like lavender"; toggling `identified` on one doesn't affect the other.
 
 **UI (§5)**
-- [ ] Rarity color coding in catalog + item rows
-- [ ] Attunement prerequisite displayed as advisory text on item detail
-- [ ] Charge counter + manual recharge button on Item Detail
-- [ ] "Long rest" / "Dawn" / "Dusk" batch buttons on Character Sheet
 - [ ] Unidentified items render as "Unknown Magic Item" + DM-set hint (display invariant per §8)
 - [ ] DM identification panel (§5.13): toggle identified, edit hint text
+
+#### R2.3 — Notes
+
+> -
 
 #### R2 — Notes
 
@@ -848,34 +1156,86 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 
 ### R3 — Backend skeleton (outline §10 M3)
 
-Self-hosted server, Discord OAuth, user model, sync of solo data, nightly snapshots. Covers OUTLINE §3.1 (Discord login), §3.13 (server backups), §9 (architecture: server-authoritative, websocket-ready), §4 `User` (discordId/avatarUrl) and `Metadata`.
+Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo data, nightly snapshots. Covers OUTLINE §3.1 (Discord + email login), §3.13 (server backups), §9 (architecture: server-authoritative, websocket-ready), §4 `User` (discordId/email/emailVerified/avatarUrl) and `Metadata`.
 
-**Backend bootstrap (`apps/server`)**
+**Slicing.** R3 splits into infrastructure slices that each shrink the risk surface: R3.1 stands up Fastify + Postgres + Prisma + seed runner with NO auth (verifiable via curl + Prisma Studio); R3.2 layers Discord OAuth + sessions on top; R3.3 adds email OTP auth + backup-email settings flow; R3.4 wires authoritative sync (server re-runs the reducer); R3.5 connects the web client. Each slice is independently deployable behind a flag, and any one of them is already R1.1-sized.
+
+#### R3.1 — Server scaffold + Postgres + Prisma + seed runner
+
 - [ ] `apps/server` Fastify + TypeScript scaffolded
 - [ ] Postgres + Prisma set up
 - [ ] Prisma schema mirrors `packages/shared/schemas` Zod definitions
 - [ ] Initial migration generated and applied
 - [ ] `Metadata` table tracking canonical `seedVersion` (§4)
 - [ ] PHB + DMG seed runner on server boot (upsert)
+- [ ] `infra/docker/` compose: web + server + postgres for local dev
+
+#### R3.1 — Notes
+
+> -
+
+#### R3.2 — Discord OAuth + sessions + User model
+
 - [ ] Auth.js + Discord provider wired (authorization code + PKCE, scope `identify`)
 - [ ] Session cookie issuance after token exchange
 - [ ] `User.id` linked via `discordId`; `avatarUrl` populated
+- [ ] `User.email` and `User.emailVerified` columns added to Prisma schema (nullable; unique constraint on `email`)
+- [ ] DB-level `CHECK` constraint: `discordId IS NOT NULL OR "emailVerified" IS NOT NULL`
+
+#### R3.2 — Notes
+
+> -
+
+#### R3.3 — Email OTP auth + backup-email settings
+
+- [ ] Auth.js Email provider wired; `generateVerificationToken` overridden to produce an 8-digit numeric OTP; `sendVerificationRequest` overridden to send OTP-in-email (not a magic link)
+- [ ] OTP token store backed by Prisma (`VerificationToken` table — standard Auth.js shape)
+- [ ] OTP codes: 15-minute expiry, single-use (consumed on first successful verification)
+- [ ] Rate limiting: 5 failed attempts per code → code invalidated + 15-minute per-IP + per-email lockout; implemented as a thin Fastify middleware on the OTP verification endpoint
+- [ ] `/auth/email/request-otp` returns constant-time identical response whether email is registered or not (no user enumeration)
+- [ ] SMTP startup guard: if any of `SMTP_HOST | SMTP_PORT | SMTP_USER | SMTP_PASS | SMTP_FROM` are absent, email auth is disabled at startup — email login UI hidden, OTP endpoint returns `503`
+- [ ] Email-only first-login flow: user prompted for `displayName` before hub; server blocks hub access until `displayName` is set
+- [ ] Settings → "Linked accounts" section (replaces "Backup login") — symmetric for both user types:
+  - Discord users: enter email → receive OTP → verify → `User.email` + `User.emailVerified` set
+  - Email-only users: "Connect Discord" button → OAuth flow → on success `User.discordId` + `User.avatarUrl` stored on the existing row; `displayName` not overwritten
+- [ ] `shadcn/ui input-otp` component added (`pnpm dlx shadcn@latest add input-otp`); OTP entry screen uses `maxLength={8}`
+- [ ] Login screen shows both "Sign in with Discord" and "Sign in with email" paths
+
+#### R3.3 — Notes
+
+> -
+
+#### R3.4 — Authoritative sync
+
 - [ ] Per-user AppState sync endpoint (push reducer actions)
 - [ ] Per-user AppState pull/snapshot endpoint
 - [ ] Authoritative validation: server re-runs reducer against incoming actions
 - [ ] Nightly snapshot job to disk (default 30-day retention; configurable per §11)
 - [ ] User-triggered JSON export still works client-side (parity with §3.13)
-- [ ] `infra/docker/` compose: web + server + postgres for local dev
 
-**Web integration**
-- [ ] Login screen: "Sign in with Discord" button (§5.1)
+#### R3.3 — Notes
+
+> -
+
+#### R3.4 — Authoritative sync notes
+
+> -
+
+#### R3.5 — Web integration
+
+- [ ] Login screen: "Sign in with Discord" + "Sign in with email" buttons (§5.1 / OUTLINE §3.1)
 - [ ] Hub screen (§5.2): Create party / Join party / Create solo cards + existing parties list
 - [ ] Web sync client pushes reducer actions to server
 - [ ] Web reconciles server events back into the store
 - [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9)
 - [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
-- [ ] Settings: Account section shows Discord displayName + avatar (§5.17)
+- [ ] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
+- [ ] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
 - [ ] Settings: Logout button clears session cookie and returns to Login screen
+
+#### R3.5 — Notes
+
+> -
 
 #### R3 — Notes
 
@@ -887,8 +1247,11 @@ Self-hosted server, Discord OAuth, user model, sync of solo data, nightly snapsh
 
 Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointment + distribution toolkit, DM/Player role split when 2+ members. Covers OUTLINE §3.1 (permissive-until-others-join), §3.2, §3.5 ("split evenly"), §3.10 (loot distribution), §3.14 (Banker), §8.1 (full permission matrix), §8.3 (leaving/kicking).
 
+**Slicing.** R4 is the largest milestone (~50 checkboxes). Splits along the feature axes that compose: R4.1 lights up multi-membership (invites, join, leave, kick) — once shipped, a party can have 2+ members; R4.2 adds the Banker role on top; R4.3 adds DM cross-character authority; R4.4 widens currency-transfer + homebrew visibility for the 2+-member world; R4.5 ships the DM Dashboard. Each slice is independently testable; R4.1 is the hard dependency for all later slices.
+
+#### R4.1 — Invites + join/leave/kick + multi-membership schema
+
 **Schema activations (§4)**
-- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP)
 - [ ] `Party.inviteCode` becomes user-visible / rotatable
 - [ ] `PartyMembership` supports count > 2
 - [ ] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24). The "solo" hub badge is derived from `memberCount === 1`. R4 migration: stop writing the field on newly-created parties (drop it from `create-character` reducer); MVP-vintage parties keep the `true` value but readers ignore it. Schema either drops the field entirely or marks it `.optional()` to accept legacy blobs.
@@ -898,41 +1261,71 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 **Reducer actions (§4 TransactionLog union)**
 - [ ] `join-party` action + payload schema
 - [ ] `leave-party` action: moves owned items + currency to Recovered Loot (§8.3)
-- [ ] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker
-- [ ] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
 - [ ] `kick-player` action: same Recovered Loot transfer (§8.3)
-- [ ] `kick-player` Banker auto-clear with `reason: "kicked"`
-- [ ] `appoint-banker` action + payload schema
-- [ ] `revoke-banker` action + payload schema
-- [ ] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "left-party" | "kicked" | "reassigned"`) still validate.
-- [ ] Invariant test: DM cannot self-appoint as Banker (§3.14)
-- [ ] Invariant test: Banker target must have active `role="player"` membership
-- [ ] Invariant test: Banker role only legal when `memberCount >= 2`
-- [ ] `dm-transfer` action + payload schema
-- [ ] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one `dm-transfer` entry + one `revoke-banker` entry with `reason: "dm-transfer"`. New DM must reappoint a Banker afterward.
-- [ ] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
-- [ ] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
 - [ ] `delete-character` action + payload schema (`{ characterId, name, lastSessionId? }` per §4)
 - [ ] `delete-character` reducer case: moves owned items + currency to Recovered Loot, clears `PartyMembership.characterId`
 - [ ] `delete-character` invariant test: owning user keeps their membership (can recreate a character)
 - [ ] `delete-character` log payload snapshots itemCount + currencyTotalCp (mirrors `delete-stash` pattern in §4)
+
+**Server-side**
+- [ ] Invite-code generation endpoint (DM-only, rotatable)
+- [ ] Invite-code redemption endpoint
+- [ ] Websocket join/leave channel per party (foundation for R5)
+- [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
+
+**UI**
+- [ ] Hub: Join party (paste code) flow wired
+- [ ] Party Settings screen (§5.15): invite code regenerate / revoke, kick player
+- [ ] Member list with role badges (DM / Player)
+
+#### R4.1 — Notes
+
+> -
+
+#### R4.2 — Banker role
+
+**Schema activations (§4)**
+- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP)
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] `appoint-banker` action + payload schema
+- [ ] `revoke-banker` action + payload schema
+- [ ] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker
+- [ ] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
+- [ ] `kick-player` Banker auto-clear with `reason: "kicked"`
+- [ ] Invariant test: DM cannot self-appoint as Banker (§3.14)
+- [ ] Invariant test: Banker target must have active `role="player"` membership
+- [ ] Invariant test: Banker role only legal when `memberCount >= 2`
 - [ ] `currency-change` extended `reason` values (`split-evenly`, `gameplay-drain`)
 - [ ] Action: split Party Stash currency evenly across characters
 - [ ] Action: Banker gives currency / items to a specific player from Party Stash
 - [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
 - [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
-- [ ] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash
-- [ ] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Test: with a Banker active, player A can push 5 gp to player B's Inventory and the entry surfaces in the party log (Banker has visibility but no veto).
-- [ ] `currency-transfer` invariant test: Banker-from-pool allowed always; DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1)
-- [ ] `currency-transfer` invariant test: when no Banker, players self-claim freely (including pushing to own character's Inventory)
-- [ ] Invariant test: when Banker active, DM cannot distribute to specific players (§8.1)
-- [ ] Invariant test: when Banker active, players cannot self-claim from Party Stash / Recovered Loot (§3.14)
-- [ ] Invariant test: when no Banker, players self-claim freely from both pools (§3.14)
-- [ ] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1)
-- [ ] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Catalog Browser filters definitions where `partyId === null` (PHB/DMG) OR `partyId === activePartyId` (this party's homebrew). Definitions belonging to other parties the same user is in are NOT visible from the active party's catalog.
-- [ ] Invariant test: user is a member of parties A + B; creates homebrew "Vorpal Spork" in party A; switches to party B's view → Catalog Browser doesn't list it. Switches back to party A → it's there again.
-- [ ] Invariant test: user creates homebrew in party A; another user joins party A later → the new member sees the homebrew (party-scoped, not user-scoped).
 - [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4)
+
+**Server-side**
+- [ ] Server authoritative checks for every Banker action above
+
+**UI**
+- [ ] Party Settings screen (§5.15): appoint / revoke Banker
+- [ ] Member list with role badges (DM / Player / Banker)
+- [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
+- [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
+- [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
+- [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
+
+#### R4.2 — Notes
+
+> -
+
+#### R4.3 — DM cross-character actions + DM transfer
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] `dm-transfer` action + payload schema
+- [ ] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "left-party" | "kicked" | "reassigned"`) still validate.
+- [ ] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one `dm-transfer` entry + one `revoke-banker` entry with `reason: "dm-transfer"`. New DM must reappoint a Banker afterward.
+- [ ] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
+- [ ] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
 
 **DM cross-character actions (§8.1 "Edit other players' inventory via explicit action")**
 - [ ] DM-issued `acquire` / `consume` against another player's character (logged with `actorRole: "dm"`)
@@ -947,29 +1340,49 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] Invariant test: no silent edits — UI never mutates another player's data without dispatching a logged action (§8 "DM principle")
 
 **Server-side**
-- [ ] Invite-code generation endpoint (DM-only, rotatable)
-- [ ] Invite-code redemption endpoint
-- [ ] Websocket join/leave channel per party (foundation for R5)
-- [ ] Server authoritative checks for every action above
-- [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
+- [ ] Server authoritative checks for every DM cross-character action above
 
 **UI**
-- [ ] Hub: Join party (paste code) flow wired
-- [ ] Party Settings screen (§5.15): invite code regenerate / revoke, kick player, appoint / revoke Banker, transfer DM
-- [ ] Member list with role badges (DM / Player / Banker)
-- [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
-- [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
-- [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
-- [ ] Offline banner activates for multi-member parties (§9)
-- [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
+- [ ] Party Settings screen (§5.15): transfer DM
 
-**DM Dashboard (§5.9)**
+#### R4.3 — Notes
+
+> -
+
+#### R4.4 — Cross-character currency + homebrew party scope + gating
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash
+- [ ] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Test: with a Banker active, player A can push 5 gp to player B's Inventory and the entry surfaces in the party log (Banker has visibility but no veto).
+- [ ] `currency-transfer` invariant test: Banker-from-pool allowed always; DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1)
+- [ ] `currency-transfer` invariant test: when no Banker, players self-claim freely (including pushing to own character's Inventory)
+- [ ] Invariant test: when Banker active, DM cannot distribute to specific players (§8.1)
+- [ ] Invariant test: when Banker active, players cannot self-claim from Party Stash / Recovered Loot (§3.14)
+- [ ] Invariant test: when no Banker, players self-claim freely from both pools (§3.14)
+- [ ] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1)
+- [ ] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Catalog Browser filters definitions where `partyId === null` (PHB/DMG) OR `partyId === activePartyId` (this party's homebrew). Definitions belonging to other parties the same user is in are NOT visible from the active party's catalog.
+- [ ] Invariant test: user is a member of parties A + B; creates homebrew "Vorpal Spork" in party A; switches to party B's view → Catalog Browser doesn't list it. Switches back to party A → it's there again.
+- [ ] Invariant test: user creates homebrew in party A; another user joins party A later → the new member sees the homebrew (party-scoped, not user-scoped).
+
+**UI**
+- [ ] Offline banner activates for multi-member parties (§9)
+
+#### R4.4 — Notes
+
+> -
+
+#### R4.5 — DM Dashboard (§5.9)
+
 - [ ] `DmDashboard.tsx` route (DM-only; desktop-only per §5 form factor)
 - [ ] At-a-glance grid: all characters with name + class + level + GP-equivalent
 - [ ] Party Stash + Recovered Loot summary cards on the dashboard
 - [ ] Total party gold (sum of all GP-equivalent across characters + pools)
 - [ ] Click-through from any row navigates to that character's sheet (DM read-all)
 - [ ] DM-only route guard (hidden from non-DM members)
+
+#### R4.5 — Notes
+
+> -
 
 #### R4 — Notes
 
@@ -981,14 +1394,22 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 
 Websocket sync; per-item history; party log with session-tag filter; offline banner in party mode. Covers OUTLINE §3.11, §3.12, §4 `Session`, §5.8 (History/Log).
 
-**Sync**
+**Slicing.** Three independently testable surfaces: R5.1 ships the websocket plumbing + reconciliation; R5.2 adds the `Session` entity and `sessionId` log tagging; R5.3 builds the history UI on top. R5.3 depends on R5.2 (session filter) but not R5.1 (history reads from `TransactionLog` directly).
+
+#### R5.1 — Websocket sync + reconnect
+
 - [ ] Websocket party-room subscription (server pushes action diffs)
 - [ ] Optimistic UI: web applies action locally, reconciles on server ack
 - [ ] Conflict resolution policy documented and implemented (server is authoritative)
 - [ ] Reconnect flow replays missed events
 - [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
 
-**Sessions (§4 `Session`)**
+#### R5.1 — Notes
+
+> -
+
+#### R5.2 — Sessions entity + log tagging
+
 - [ ] `Session` entity (id, partyId, number, date, notes, isCurrent)
 - [ ] Invariant: at most one `isCurrent` session per party
 - [ ] Action: `start-session` (clears previous `isCurrent`)
@@ -996,7 +1417,12 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [ ] `TransactionLog.sessionId` populated from current session at write time; **`null` when no session is current** per OUTLINE §3.12 amendment (2026-06-24) — no-session activity is allowed, not blocked.
 - [ ] Reducer test: dispatching `acquire` / `transfer` / `currency-transfer` etc. with no current session produces log entries with `sessionId: null`.
 
-**History UI**
+#### R5.2 — Notes
+
+> -
+
+#### R5.3 — History UI + permission rules
+
 - [ ] Party log timeline view (§5.8)
 - [ ] Filters: session / character / item / action type / actorRole
 - [ ] **Session filter has an explicit "Untagged" bucket** that surfaces entries with `sessionId: null` per OUTLINE §3.12. Component test: a no-session entry appears under "Untagged" in the filter dropdown and renders in the list when "Untagged" is selected.
@@ -1008,6 +1434,10 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [ ] Virtualized list / pagination for long histories
 - [ ] Banker actions tagged `actorRole: "banker"` visible to all members (§3.14)
 
+#### R5.3 — Notes
+
+> -
+
 #### R5 — Notes
 
 > -
@@ -1018,15 +1448,31 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 Loot distribution wizard (per-hoard mode), hoard generator, identification flow with hints, shop manager (static + modifiers). Covers OUTLINE §3.7 (search), §3.9, §3.10, §6 `hoard.ts` / `pricing.ts` / `search.ts`.
 
+**Slicing.** R6 is the second-largest milestone after R4 (~30+ checkboxes). Splits along the rules-engine + UI surface axes: R6.1 lights up `pricing.ts` + the per-party economy controls (prerequisite for any priced transaction); R6.2 adds `Shop` + `purchase`/`sale` on top; R6.3 ships the hoard generator + loot distribution wizard; R6.4 adds identification UI + batch-identify (the R2.3 reducer already exists by this point); R6.5 swaps the Catalog Browser to `search.ts`. R6.1 is the hard dependency for R6.2 and the catalog price display.
+
+#### R6.1 — Pricing + per-party economy
+
 **Rules — activate stubs (§6)**
-- [ ] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band)
-- [ ] `hoard.ts` tests cover representative CR bands
 - [ ] `packages/rules/pricing.ts` implemented (base price × party.priceModifier × shop.priceModifier; default 0.5× sell)
 - [ ] `pricing.ts:formatPrice(cp, baseCurrency)` — display canonicalizer per OUTLINE §3.5 (largest denomination ≤ baseCurrency that divides cleanly; no fractional coins; no rollup past ceiling; sub-cp rounds to nearest cp)
 - [ ] `pricing.ts` tests cover modifier composition, override, sell-to-merchant rate, AND every row of the OUTLINE §3.5 preset table (Gold / Silver / Copper / Electrum / Platinum)
 - [ ] `pricing.ts` tests cover the "no rollup past ceiling" rule explicitly (200 gp under `baseCurrency="gp"` stays "200 gp", never "20 pp")
-- [ ] `packages/rules/search.ts` implemented (fuzzy across name + description + tags)
-- [ ] `search.ts` tests cover ranking + filter combinations
+
+**Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
+- [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
+- [ ] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
+- [ ] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted
+- [ ] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
+- [ ] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
+- [ ] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
+- [ ] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
+- [ ] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
+
+#### R6.1 — Notes
+
+> -
+
+#### R6.2 — Shops + purchase / sale
 
 **Schema activations (§4 `Shop`)**
 - [ ] `Shop` entity activated (id, partyId, name, priceModifier, sellToMerchantRate, stock)
@@ -1038,19 +1484,24 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] **Shops have no `CurrencyHolding`** per OUTLINE §3.9 amendment (2026-06-24). `purchase` only debits the buyer's stash; `sale` only credits the buyer's stash. The shop side is bookkeeping-free — `Shop` deliberately omits a currency row.
 - [ ] Invariant test: `purchase` debits 50 cp from the buyer's Inventory when the priced item costs 50 cp; no other state changes.
 - [ ] Invariant test: `sale` credits the buyer's Inventory at the shop's `sellToMerchantRate × price`; no other state changes.
-
-**Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
-- [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
-- [ ] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
-- [ ] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted
 - [ ] `purchase` / `sale` reducer cases consult `party.priceModifier` × `shop.priceModifier` via `pricing.ts` when resolving the cost of a catalog row
 - [ ] Reducer test: PHB-sourced rows are scaled by `priceModifier`; homebrew-sourced rows skip the modifier (per `ItemDefinition.source` discriminator)
 - [ ] Reducer test: purchase under `priceModifier: 0.1` of a 5 gp PHB item charges 50 cp from the buyer's stash
-- [ ] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
-- [ ] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
-- [ ] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
-- [ ] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
-- [ ] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
+
+**Shops (§3.9, §5.12)**
+- [ ] Shop Manager screen: create / edit shops + stock + modifiers
+- [ ] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
+- [ ] Catalog Browser "Add to shop" picker
+
+#### R6.2 — Notes
+
+> -
+
+#### R6.3 — Hoard generator + loot distribution wizard
+
+**Rules — activate stub (§6)**
+- [ ] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band)
+- [ ] `hoard.ts` tests cover representative CR bands
 
 **Loot distribution (§3.10)**
 - [ ] Loot Distribution Wizard screen (§5.10) — per-hoard choice: shared pool vs direct assign
@@ -1062,6 +1513,12 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] Hoard Generator screen using `hoard.ts`
 - [ ] Output flows into the Loot Distribution Wizard
 
+#### R6.3 — Notes
+
+> -
+
+#### R6.4 — Identification panel + batch-identify
+
 **Identification (§3.8, §5.13)**
 - [ ] Identification Panel UI: list of unidentified instances in the party
 - [ ] DM toggles `identified`; players see real name update via sync
@@ -1070,16 +1527,25 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 - [ ] **DM batch-identify action** per OUTLINE §3.8 amendment (2026-06-24): a dedicated DM toolkit affordance that toggles `identified` and optionally sets a shared hint across ALL instances of a given `definitionId` in the party (Inventory + Storage + Party Stash + Recovered Loot). Emits one `identify` log entry per affected instance (or a single batch entry — pick one and document). Useful because hints are per-instance (§3.8), so bulk-revealing several copies of "Sword of X" otherwise takes one-by-one clicks.
 - [ ] Batch-identify component test: 3 unidentified copies of the same definition → one batch click → all 3 reveal; 3 `identify` log entries (or one batch entry) recorded.
 
-**Shops (§3.9, §5.12)**
-- [ ] Shop Manager screen: create / edit shops + stock + modifiers
-- [ ] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
-- [ ] Catalog Browser "Add to shop" picker
+#### R6.4 — Notes
+
+> -
+
+#### R6.5 — Catalog search
+
+**Rules — activate stub (§6)**
+- [ ] `packages/rules/search.ts` implemented (fuzzy across name + description + tags)
+- [ ] `search.ts` tests cover ranking + filter combinations
 
 **Catalog search**
 - [ ] Catalog search wired to `search.ts` (replaces M2's simple search)
 - [ ] Filters by category, rarity, attunement-required, cost, source (§3.7)
 - [ ] Catalog source filter (PHB / DMG / homebrew / all) surfaced in `CatalogBrowser` alongside the category filter
 - [ ] Catalog source-filter test: with PHB + ≥1 homebrew loaded, selecting "homebrew" hides PHB rows; "all" restores them; combines with category filter (e.g. "homebrew" + "consumable" only).
+
+#### R6.5 — Notes
+
+> -
 
 #### R6 — Notes
 
@@ -1091,24 +1557,60 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 
 Light/dark theme, responsive player views (mobile), fuzzy multi-field search, accessibility pass. Covers OUTLINE §5 form factor, §5.17 Settings.
 
+**Slicing.** R7 is the smallest post-R1 milestone (~16 checkboxes) but the topics are independent enough that they're worth shipping as separate slices: each can land without blocking the others, and the a11y pass benefits from its own focused session.
+
+#### R7.1 — Theme + responsive layout
+
 - [ ] Theme system with light / dark / system-default toggle (§5.17)
 - [ ] Player views mobile-responsive: Character Sheet, Party Stash, Recovered Loot, Transfer Modal, Item Detail (§5)
 - [ ] DM tools remain desktop-only by design (§5) — verify layout doesn't claim otherwise
-- [ ] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6)
+
+#### R7.1 — Notes
+
+> -
+
+#### R7.2 — Accessibility pass
+
 - [ ] Accessibility: keyboard navigation across all interactive elements
 - [ ] Accessibility: ARIA labels on all icon-only buttons
 - [ ] Accessibility: color-contrast pass against WCAG AA
 - [ ] Accessibility: screen-reader audit on Character Sheet + Party Stash flows
-- [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
-- [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
-- [ ] Variant-rules toggle exposed in Settings (§5.17)
+
+#### R7.2 — Notes
+
+> -
+
+#### R7.3 — Bulk multi-select on stash tables
+
 - [ ] **Bulk multi-select for move / delete** on stash tables (§3.4) — checkbox column, bulk action bar
 - [ ] Bulk-move test: select N items, pick target stash, all transfer with one log entry each (or a single grouped entry — decide and document)
 - [ ] Bulk-delete test: select N items, confirm once, all removed
+
+#### R7.3 — Notes
+
+> -
+
+#### R7.4 — Bulk currency edit
+
 - [ ] **Bulk currency edit on `<CurrencyRow>`** — *promoted from Future / Stretch (2026-06-23); R7 is the natural home alongside other bulk-action UX*. M4's ±1 inline controls handle small tweaks; "loot drop: +300 sp" is painful. Plan: editable inline cells that accept signed integers (`+300`, `-50`, or an absolute target `=42`) and dispatch a single `currency-change` carrying the diff. Schema-additive — same action, richer UI on top. Keyboard ergonomic: tab through cells, type signed integer, Enter dispatches.
 - [ ] Bulk currency edit test: type `+300` into the sp cell, Enter, sp holding moves by exactly +300, one `currency-change` log entry with reason `'deposit'`
 - [ ] Bulk currency edit test: type `-50` into a cell with insufficient funds, submit-blocks (mirrors the existing `−` button's disabled-at-0 behavior)
 - [ ] Bulk currency edit test: absolute-target syntax (`=42`) dispatches the computed diff (e.g. holding 30, type `=42` → log entry with delta `+12`)
+
+#### R7.4 — Notes
+
+> -
+
+#### R7.5 — Misc polish
+
+- [ ] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6)
+- [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
+- [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
+- [ ] Variant-rules toggle exposed in Settings (§5.17)
+
+#### R7.5 — Notes
+
+> -
 
 #### R7 — Notes
 

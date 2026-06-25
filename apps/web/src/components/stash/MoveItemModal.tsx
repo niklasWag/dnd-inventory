@@ -28,6 +28,12 @@ interface MoveItemModalProps {
 interface SourceSnapshot {
   ownerId: string;
   quantity: number;
+  // R1.3 — used to render a "this will lose equipped/attuned state"
+  // warning before the user confirms a leave-Inventory transfer.
+  equipped: boolean;
+  attuned: boolean;
+  /** True when the source row lives in a character's Inventory stash. */
+  isInInventory: boolean;
 }
 
 const EMPTY_TARGETS: ReadonlyArray<{ id: string; label: string }> = [];
@@ -76,11 +82,31 @@ export function MoveItemModal({
     useShallow((s): SourceSnapshot | null => {
       const row = s.appState?.items.find((i) => i.id === itemInstanceId);
       if (row === undefined) return null;
-      return { ownerId: row.ownerId, quantity: row.quantity };
+      const stash = s.appState?.stashes.find((st) => st.id === row.ownerId);
+      const isInInventory =
+        stash !== undefined && stash.scope === 'character' && stash.isCarried === true;
+      return {
+        ownerId: row.ownerId,
+        quantity: row.quantity,
+        equipped: row.equipped,
+        attuned: row.attuned,
+        isInInventory,
+      };
     }),
   );
   const sourceQty = source?.quantity ?? 0;
   const sourceStashId = source?.ownerId ?? '';
+  // R1.3 — surfaces the §3.4 cascade about to fire: a leave-Inventory
+  // transfer auto-clears equipped/attuned on the moved row. We tell the
+  // user *before* they confirm so they're not surprised when the row
+  // comes back un-equipped after a round trip.
+  const willLoseFlags =
+    source !== null &&
+    source.isInInventory === true &&
+    (source.equipped || source.attuned);
+  const lostFlagNames: string[] = [];
+  if (source?.equipped) lostFlagNames.push('equipped');
+  if (source?.attuned) lostFlagNames.push('attuned');
 
   // Build the candidate target list. Excludes the source's current stash.
   // Labels via the shared `buildStashLabels` helper.
@@ -223,6 +249,17 @@ export function MoveItemModal({
               </p>
             ) : null}
           </div>
+
+          {willLoseFlags ? (
+            <p
+              className="rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+              role="status"
+            >
+              <span className="font-medium">Heads up:</span> this item is{' '}
+              {lostFlagNames.join(' and ')}. Moving it out of Inventory will clear{' '}
+              {lostFlagNames.length === 1 ? 'that' : 'those'} state{lostFlagNames.length === 1 ? '' : 's'}.
+            </p>
+          ) : null}
 
           {submitError !== null ? (
             <p className="text-sm text-destructive" role="alert">

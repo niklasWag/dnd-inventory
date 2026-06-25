@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -114,16 +115,23 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
                 key={def.id}
                 def={def}
                 onAdd={(quantity) => {
-                  dispatch({
-                    type: 'acquire',
-                    payload: {
-                      stashId,
-                      definitionId: def.id,
-                      quantity,
-                      source: 'catalog-add',
-                    },
-                  });
-                  onAdded?.();
+                  // R1.4 — hard-mode encumbrance can reject this dispatch.
+                  // Surface as a toast so the user sees why the add didn't
+                  // land instead of an uncaught console error.
+                  try {
+                    dispatch({
+                      type: 'acquire',
+                      payload: {
+                        stashId,
+                        definitionId: def.id,
+                        quantity,
+                        source: 'catalog-add',
+                      },
+                    });
+                    onAdded?.();
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Could not add item');
+                  }
                 }}
                 addLabel={`Add to ${stashLabel}`}
               />

@@ -49,7 +49,7 @@ function renderSettings(initialPath = '/settings'): void {
 describe('Settings — Backup (M7)', () => {
   it('Export triggers a download with a slugified filename', async () => {
     const user = userEvent.setup();
-    bootstrap({ name: 'Bara of Waterdeep', species: 'Half-Elf', class: 'Bard', level: 2, str: 10 });
+    bootstrap({ name: 'Bara of Waterdeep', species: 'Half-Elf', size: 'medium', class: 'Bard', level: 2, str: 10 });
 
     // We can't easily intercept the real triggerDownload (it touches
     // the DOM + URL.createObjectURL). Instead, spy on createObjectURL
@@ -75,6 +75,7 @@ describe('Settings — Character & Party rename (M7)', () => {
     const { characterId } = bootstrap({
       name: 'Thorin',
       species: 'Dwarf',
+      size: 'medium',
       class: 'Fighter',
       level: 1,
       str: 16,
@@ -241,5 +242,99 @@ describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
     const after = useStore.getState();
     expect(after.appState).toEqual(before.appState);
     expect(after.log).toEqual(before.log);
+  });
+});
+
+describe('Settings — Encumbrance (R1.1)', () => {
+  it('flipping the rule dispatches set-encumbrance and updates the store', async () => {
+    const user = userEvent.setup();
+    const { characterId } = bootstrap();
+    const before = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(before.encumbranceRule).toBe('off');
+    expect(before.enforceEncumbrance).toBe(false);
+
+    renderSettings();
+
+    const select = screen.getByLabelText(/encumbrance rule/i);
+    await user.selectOptions(select, 'variant');
+
+    const form = select.closest('form')!;
+    const saveBtn = form.querySelector('button[type="submit"]')!;
+    await user.click(saveBtn);
+
+    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(after.encumbranceRule).toBe('variant');
+    expect(after.enforceEncumbrance).toBe(false);
+
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('set-encumbrance');
+    if (last?.type === 'set-encumbrance') {
+      expect(last.payload).toEqual({
+        characterId,
+        oldRule: 'off',
+        newRule: 'variant',
+        oldEnforce: false,
+        newEnforce: false,
+      });
+    }
+  });
+
+  it('checking enforce + selecting variant dispatches both fields together', async () => {
+    const user = userEvent.setup();
+    const { characterId } = bootstrap();
+
+    renderSettings();
+
+    const select = screen.getByLabelText(/encumbrance rule/i);
+    await user.selectOptions(select, 'phb');
+    // Checkbox appears only after rule !== 'off'. wait for it via getByLabelText.
+    const checkbox = screen.getByLabelText(/enforce encumbrance/i);
+    await user.click(checkbox);
+
+    const saveBtn = select.closest('form')!.querySelector('button[type="submit"]')!;
+    await user.click(saveBtn);
+
+    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    expect(after.encumbranceRule).toBe('phb');
+    expect(after.enforceEncumbrance).toBe(true);
+  });
+
+  it('Save button is disabled when the draft matches the current row', () => {
+    bootstrap();
+    renderSettings();
+
+    const select = screen.getByLabelText(/encumbrance rule/i);
+    const form = select.closest('form')!;
+    const save = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    // Draft init = currentRule (off) + currentEnforce (false) — no edit → disabled.
+    expect(save).toBeDisabled();
+  });
+
+  it('enforce checkbox is hidden when rule is off', () => {
+    bootstrap();
+    renderSettings();
+    // Default rule is off → checkbox should not render.
+    expect(screen.queryByLabelText(/enforce encumbrance/i)).not.toBeInTheDocument();
+  });
+
+  it('helper text describes the active rule', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderSettings();
+
+    const select = screen.getByLabelText(/encumbrance rule/i);
+    // Off → hidden bar.
+    expect(screen.getByText(/Capacity bar hidden/i)).toBeInTheDocument();
+
+    await user.selectOptions(select, 'phb');
+    expect(screen.getByText(/Standard rule.*STR × 15/i)).toBeInTheDocument();
+
+    await user.selectOptions(select, 'variant');
+    expect(screen.getByText(/Variant rule.*5×STR.*10×STR/i)).toBeInTheDocument();
+  });
+
+  it('encumbrance section is hidden pre-bootstrap', () => {
+    renderSettings();
+    expect(screen.queryByLabelText(/encumbrance rule/i)).not.toBeInTheDocument();
   });
 });
