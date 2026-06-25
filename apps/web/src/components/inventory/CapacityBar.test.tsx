@@ -178,7 +178,7 @@ describe('CapacityBar (R1.1)', () => {
   });
 
   describe('enforce flag', () => {
-    it('shows " · enforced (R1.2)" badge when enforceEncumbrance is true', () => {
+    it('shows " · enforced" badge when enforceEncumbrance is true', () => {
       const { characterId } = bootstrapStr10();
       useStore
         .getState()
@@ -186,7 +186,7 @@ describe('CapacityBar (R1.1)', () => {
 
       renderBar(characterId);
 
-      expect(screen.getByText(/enforced \(R1\.2\)/)).toBeInTheDocument();
+      expect(screen.getByText(/· enforced/)).toBeInTheDocument();
     });
 
     it('omits the badge when enforce is false', () => {

@@ -5,7 +5,7 @@ import type {
   Stash,
   TransactionLogEntry,
 } from '@app/shared';
-import { attunement, currency, inventory } from '@app/rules';
+import { attunement, capacity, currency, inventory, weight as weightRules } from '@app/rules';
 
 import type { Action, AppState } from './types';
 
@@ -121,6 +121,67 @@ function requireState(
     throw new Error(`${action}: no AppState (create-character must run first)`);
   }
   return state;
+}
+
+/**
+ * R1.4 — hard-mode encumbrance guard. Called by `acquire` and `transfer`
+ * BEFORE committing `nextItems`. Speculative: `nextItems` already reflects
+ * the proposed mutation (so the §3.4 cascade has already cleared flags on
+ * cross-stash moves). Reads the destination stash; if it's a character's
+ * Inventory AND the character has `enforceEncumbrance: true` AND
+ * `encumbranceRule !== 'off'`, computes the container-aware weight of the
+ * post-write Inventory rows and rejects when over `heavyThreshold`.
+ *
+ * Composition with R1.3: passing `nextItems` (post-cascade) means a
+ * leave-Inventory transfer ALWAYS lowers the source's weight (the row
+ * left) and never trips the guard. The entering-Inventory case is the
+ * one that matters; the destination's flatWeight-container exception
+ * applies via `containerAwareWeight` so packing into a Bag of Holding
+ * doesn't add weight (R1.5 packing UI will land on the same call).
+ *
+ * Throws with a `<action>: would exceed carrying capacity ...` message
+ * carrying the post-write weight + the threshold so toasts can surface
+ * the numbers. The action label is prefixed for log-style consistency
+ * with the rest of the reducer's rejection messages.
+ */
+function checkHardMode(
+  action: string,
+  s: NonNullable<AppState>,
+  nextItems: ReadonlyArray<ItemInstance>,
+  destinationStashId: string,
+): void {
+  const stash = s.stashes.find((st) => st.id === destinationStashId);
+  if (stash === undefined) return;
+  if (stash.scope !== 'character' || !stash.isCarried) return;
+  if (stash.ownerCharacterId === null) return;
+  const character = s.characters.find((c) => c.id === stash.ownerCharacterId);
+  if (character === undefined) return;
+  if (!character.enforceEncumbrance) return;
+  if (character.encumbranceRule === 'off') return;
+
+  const defsById = new Map(
+    s.catalog.map(
+      (d) =>
+        [
+          d.id,
+          d.flatWeight === undefined
+            ? { weight: d.weight ?? 0 }
+            : { weight: d.weight ?? 0, flatWeight: d.flatWeight },
+        ] as const,
+    ),
+  );
+  const inventoryRows = nextItems.filter((i) => i.ownerId === stash.id);
+  const postWeight = weightRules.containerAwareWeight(inventoryRows, defsById);
+  const threshold = capacity.heavyThreshold(
+    character.abilityScores.STR,
+    character.size,
+    character.encumbranceRule,
+  );
+  if (postWeight > threshold) {
+    throw new Error(
+      `${action}: would exceed carrying capacity (${String(postWeight)} > ${String(threshold)} lb)`,
+    );
+  }
 }
 
 // -------------------------------------------------------------------- //
@@ -333,6 +394,11 @@ function acquire(
     if (payload.notes !== undefined) newRow.notes = payload.notes;
     nextItems = [...s.items, newRow];
   }
+
+  // R1.4 — hard-mode threshold check on the post-write items. Guard
+  // short-circuits when the destination isn't a character's Inventory
+  // OR the character has `enforceEncumbrance: false` / `rule === 'off'`.
+  checkHardMode('acquire', s, nextItems, payload.stashId);
 
   return {
     state: { ...s, items: nextItems },
@@ -1080,6 +1146,13 @@ function transfer(
       },
     });
   }
+
+  // R1.4 — hard-mode threshold check on the destination side. Composes
+  // with the §3.4 cascade above: `nextItems` already has flags cleared,
+  // so the guard sees the true post-write Inventory weight. The
+  // leave-Inventory direction always lowers source weight; only the
+  // entering-Inventory case can trip the guard.
+  checkHardMode('transfer', s, nextItems, payload.toStashId);
 
   return {
     state: { ...s, items: nextItems },

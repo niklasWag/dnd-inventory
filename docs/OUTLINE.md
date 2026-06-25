@@ -126,7 +126,7 @@ No HP, spells, AC, proficiencies in v1.
 - Two rules selectable per character via `Character.encumbranceRule` (§3.3 + §4):
   - **`phb`** — single band: at-or-under capacity is unencumbered; above is over-capacity (treated as heavily encumbered for display + enforcement purposes).
   - **`variant`** — PHB 2024 sidebar rule (three bands). **Encumbered** at `> 5×STR×size`; **heavily encumbered** at `> 10×STR×size`. Both bands use strict `>` — equal-to does not trip the next state.
-  - **`off`** — capacity bar hidden, no math, no enforcement. The "MVP-era" default until the user explicitly opts in.
+  - **`off`** — capacity bar hidden, no math, no enforcement. The default until the user explicitly opts in to `phb` or `variant`.
 - **Enforcement is orthogonal** to the rule choice. `Character.enforceEncumbrance: boolean` gates whether the reducer rejects `acquire` / `transfer` that pushes weight past the upper band. A character can be on `variant` with `enforce: false` (display-only warnings) or `enforce: true` (reducer-rejected overloads). The CapacityBar labels both states.
 - **Encumbrance applies ONLY to the character's Inventory stash.** Storage stashes (chests, vaults, etc.) do not count toward carrying capacity.
 - **Containers**: **one level deep** within a stash (item-in-bag, no bag-in-bag). **Bag of Holding** and similar handled as flat-weight exceptions.

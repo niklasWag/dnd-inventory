@@ -106,3 +106,32 @@ export function heavyThreshold(
   if (rule === 'phb') return str * 15 * m;
   return str * 10 * m;
 }
+
+/**
+ * R1.4 — pure composition helper for the reducer's hard-mode guard.
+ *
+ * Returns `true` IFF the hypothetical post-write weight
+ * (`currentWeight + addedWeight`) would CROSS the `heavyThreshold`
+ * ceiling for the given `(str, size, rule)`. Equal-to is NOT a cross
+ * (`>`-strict; matches the `encumbranceState` band semantics so the
+ * threshold reads the same in display and enforcement).
+ *
+ * `rule === 'off'` returns `false` unconditionally — there is no
+ * ceiling, so no post-write weight can cross it. The reducer caller
+ * typically short-circuits before reaching this when `enforce === false`
+ * OR `rule === 'off'`, but the helper stays safe to call regardless.
+ *
+ * Intentionally NOT named `would-reject` — the rejection decision is the
+ * reducer's (it combines this with `enforceEncumbrance`); this helper
+ * only answers the "are we over?" half.
+ */
+export function wouldExceedThreshold(
+  currentWeight: number,
+  addedWeight: number,
+  str: number,
+  size: CreatureSize,
+  rule: EncumbranceRule,
+): boolean {
+  if (rule === 'off') return false;
+  return currentWeight + addedWeight > heavyThreshold(str, size, rule);
+}

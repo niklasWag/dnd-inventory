@@ -3830,4 +3830,241 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
   });
 });
 
+describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject when over carrying capacity', () => {
+  /**
+   * R1.4 — when a character has `enforceEncumbrance: true` and a
+   * non-`off` rule, the reducer rejects `acquire` / `transfer` that
+   * would push the destination Inventory's container-aware weight
+   * past `heavyThreshold(str, size, rule)`. Composes with the R1.3
+   * cascade: cascade adjusts the moved row first (clears flags); the
+   * threshold check runs on the post-cascade weight. A leave-Inventory
+   * transfer never trips the guard (it lowers source weight); the
+   * entering-Inventory case is the one that matters.
+   *
+   * The fixtures use the default STR 16 Medium → variant ceiling
+   * 160 lb, phb ceiling 240 lb. `phb-2024:greatclub` is 10 lb/row so
+   * the math reads cleanly (16 greatclubs = 160 lb at-cap; 17 = 170 lb
+   * over). All tests start from `localBootstrap()` which auto-stacks
+   * via `(definitionId, notes ?? "")` per the M2 acquire contract.
+   */
+
+  function enableEnforce(characterId: string, rule: 'phb' | 'variant'): void {
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule, enforce: true },
+    });
+  }
+
+  it('rejects acquire when post-write weight exceeds variant 10×STR×size (enforced)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    enableEnforce(characterId, 'variant');
+
+    // Pre-load to 160 lb (16 × 10) — exactly at cap, no reject.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 16,
+        source: 'catalog-add',
+      },
+    });
+
+    const itemsBefore = useStore.getState().appState!.items.slice();
+    const logLenBefore = useStore.getState().log.length;
+
+    // Adding one more pushes to 170 lb > 160 — must reject.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 1,
+          source: 'catalog-add',
+        },
+      });
+    }).toThrow(/carrying capacity/i);
+
+    // State unchanged — no row mutation, no log entry.
+    expect(useStore.getState().appState!.items).toEqual(itemsBefore);
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('rejects transfer-into-Inventory when post-write weight exceeds phb STR×15×size (enforced)', () => {
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    enableEnforce(characterId, 'phb');
+
+    // Stage 240 lb worth (24 × 10) in the Party Stash; Inventory empty.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: partyStashId,
+        definitionId: greatclub.id,
+        quantity: 24,
+        source: 'catalog-add',
+      },
+    });
+    // Pre-load Inventory to 230 lb so any incoming over 10 lb rejects.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        // notes differ so this is a separate row (avoids auto-stack
+        // colliding with the transfer target row below).
+        notes: 'pre-loaded',
+        quantity: 23,
+        source: 'catalog-add',
+      },
+    });
+
+    // Find the row in the party stash; transfer 2 (= 20 lb) into Inventory.
+    const partyRow = useStore
+      .getState()
+      .appState!.items.find((i) => i.ownerId === partyStashId && i.definitionId === greatclub.id)!;
+    const itemsBefore = useStore.getState().appState!.items.slice();
+    const logLenBefore = useStore.getState().log.length;
+
+    // Post-write would be 230 + 20 = 250 > 240 phb ceiling → reject.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: { itemInstanceId: partyRow.id, toStashId: inventoryStashId, quantity: 2 },
+      });
+    }).toThrow(/carrying capacity/i);
+
+    expect(useStore.getState().appState!.items).toEqual(itemsBefore);
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('allows acquire when rule = off even if enforce flag is true (off short-circuits)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // Hand-write the enforce flag while leaving rule = off (the reducer
+    // wouldn't accept this via `set-encumbrance` no-op check, but the
+    // schema permits the combo and the guard must respect it).
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: s.appState.characters.map((c) =>
+            c.id === characterId ? { ...c, enforceEncumbrance: true } : c,
+          ),
+        },
+      };
+    });
+
+    // Push way over any threshold — must succeed under rule = off.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 100, // 1000 lb
+          source: 'catalog-add',
+        },
+      });
+    }).not.toThrow();
+  });
+
+  it('allows acquire over threshold when enforceEncumbrance = false (display-only path)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // Rule on, enforce off — CapacityBar will paint red but reducer allows.
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule: 'variant', enforce: false },
+    });
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 20, // 200 lb > 160 variant ceiling
+          source: 'catalog-add',
+        },
+      });
+    }).not.toThrow();
+    const row = useStore
+      .getState()
+      .appState!.items.find((i) => i.ownerId === inventoryStashId);
+    expect(row!.quantity).toBe(20);
+  });
+
+  it('respects size multiplier (Small character: phb ceiling halves to STR × 15 × 0.5)', () => {
+    // Small + STR 10 → phb ceiling = 10 × 15 × 0.5 = 75 lb.
+    const { characterId, inventoryStashId, catalog } = bootstrap({
+      name: 'Pip',
+      species: 'Halfling',
+      size: 'small',
+      class: 'Rogue',
+      level: 1,
+      str: 10,
+    });
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    enableEnforce(characterId, 'phb');
+
+    // 7 greatclubs = 70 lb → under, OK.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 7,
+        source: 'catalog-add',
+      },
+    });
+    // 8th greatclub = 80 lb > 75 ceiling → reject.
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: greatclub.id,
+          quantity: 1,
+          source: 'catalog-add',
+        },
+      });
+    }).toThrow(/carrying capacity/i);
+  });
+
+  it('allows transfer OUT of Inventory regardless of source-side weight (leave-Inventory always lowers)', () => {
+    // The §3.4 cascade test composes here: even if the SOURCE inventory
+    // is over-cap and enforce is on, moving items OUT can only lower
+    // the inventory weight — must succeed.
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // First load Inventory to 230 lb with enforce OFF (so the load itself
+    // doesn't trip the guard), then flip enforce on.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 23,
+        source: 'catalog-add',
+      },
+    });
+    enableEnforce(characterId, 'phb'); // ceiling = 240 — fine, but a future
+    // hypothetical "edit-character to lower STR" path could leave the row
+    // over-cap; this test pins the leave-Inventory direction as always-safe.
+
+    const row = useStore.getState().appState!.items[0]!;
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: { itemInstanceId: row.id, toStashId: partyStashId, quantity: 23 },
+      });
+    }).not.toThrow();
+  });
+});
+
 

@@ -217,16 +217,23 @@ export function StashItemsTable({
                       onClick={() => {
                         // Re-dispatch via `acquire` rather than mutating the
                         // row directly so the log captures the increment.
-                        dispatch({
-                          type: 'acquire',
-                          payload: {
-                            stashId,
-                            definitionId: row.definitionId,
-                            quantity: 1,
-                            source: 'catalog-add',
-                            ...(row.notes !== undefined ? { notes: row.notes } : {}),
+                        // Wrapped via `dispatchOrToast` because R1.4
+                        // hard-mode encumbrance can reject this dispatch
+                        // (and uncaught reducer throws would surface as a
+                        // console error instead of user-visible feedback).
+                        dispatchOrToast(
+                          {
+                            type: 'acquire',
+                            payload: {
+                              stashId,
+                              definitionId: row.definitionId,
+                              quantity: 1,
+                              source: 'catalog-add',
+                              ...(row.notes !== undefined ? { notes: row.notes } : {}),
+                            },
                           },
-                        });
+                          'Could not add item',
+                        );
                       }}
                     >
                       +

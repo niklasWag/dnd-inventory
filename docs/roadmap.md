@@ -936,21 +936,37 @@ Character entity (inventory-only data); equip; encumbrance (off/phb/variant + en
 #### R1.4 — Hard-mode enforcement
 
 **Reducer rejection (§4 TransactionLog union)**
-- [ ] **Extend `acquire` reducer**: when destination stash is Inventory (`scope=character, isCarried=true`) and the owning character has `enforceEncumbrance: true` and `encumbranceRule !== 'off'`, reject if post-write weight would exceed `heavyThreshold(str, size, rule)`. R1.1's helper already exposes the ceiling — this slice just consumes it.
-- [ ] **Extend `transfer` reducer** with the same guard on the destination side. Composes with R1.3's §3.4 cascade: cascade adjusts the moved row first, threshold check runs on the post-cascade weight (a leaving-Inventory transfer never trips the guard because it lowers source weight; an entering-Inventory transfer is the case that matters).
-- [ ] Invariant test: enforced + variant + acquire that would exceed 10×STR rejects; log entry NOT appended; state unchanged.
-- [ ] Invariant test: enforced + phb + transfer-into-Inventory that would exceed STR × 15 × sizeMultiplier rejects.
-- [ ] Invariant test: enforced + rule = `off` allows (off short-circuits before the guard).
-- [ ] Invariant test: unenforced + over-threshold allows (display-only path stays intact).
-- [ ] Invariant test: enforced + Small character + size multiplier respected (rejection threshold scales).
+- [x] **Extend `acquire` reducer**: when destination stash is Inventory (`scope=character, isCarried=true`) and the owning character has `enforceEncumbrance: true` and `encumbranceRule !== 'off'`, reject if post-write weight would exceed `heavyThreshold(str, size, rule)`. R1.1's helper already exposes the ceiling — this slice just consumes it. — **R1.4**
+- [x] **Extend `transfer` reducer** with the same guard on the destination side. Composes with R1.3's §3.4 cascade: cascade adjusts the moved row first, threshold check runs on the post-cascade weight (a leaving-Inventory transfer never trips the guard because it lowers source weight; an entering-Inventory transfer is the case that matters). — **R1.4**
+- [x] Invariant test: enforced + variant + acquire that would exceed 10×STR rejects; log entry NOT appended; state unchanged. — **R1.4**
+- [x] Invariant test: enforced + phb + transfer-into-Inventory that would exceed STR × 15 × sizeMultiplier rejects. — **R1.4**
+- [x] Invariant test: enforced + rule = `off` allows (off short-circuits before the guard). — **R1.4**
+- [x] Invariant test: unenforced + over-threshold allows (display-only path stays intact). — **R1.4**
+- [x] Invariant test: enforced + Small character + size multiplier respected (rejection threshold scales). — **R1.4**
 
 **UI (§5)**
-- [ ] Remove the "(R1.2)" hint from `EncumbranceRuleField` helper text now that enforcement is live (and re-target or remove the Settings test that asserts the hint).
-- [ ] Toast / inline error when a reducer rejects an acquire/transfer due to hard-mode (consistent with existing reducer-rejection UX; no new pattern).
+- [x] Remove the "(R1.2)" hint from `EncumbranceRuleField` helper text now that enforcement is live (and re-target or remove the Settings test that asserts the hint). — **R1.4** (CapacityBar badge now reads " · enforced" without the milestone tag; helper text rewritten to describe the live behavior; `CapacityBar.test.tsx` retargeted to assert the new badge wording.)
+- [x] Toast / inline error when a reducer rejects an acquire/transfer due to hard-mode (consistent with existing reducer-rejection UX; no new pattern). — **R1.4** (`CatalogPicker.onAdd`, `AddItemModal.handleHomebrewCreated`, and `StashItemsTable`'s `+` button wrap the dispatch in `try/catch` → `toast.error(err.message)`. The Move modal's existing `submitError` path already covered `transfer`-side rejections.)
 
 #### R1.4 — Notes
 
-> -
+> **2026-06-25 — R1.4 (hard-mode enforcement) complete.** Fourth slice of R1; R1.5 (packing UI) is the next chunk.
+>
+> **Reducer shape.** Single shared helper `checkHardMode(action, state, nextItems, destinationStashId)` consumes the *post-write* `nextItems` slice and rejects when the destination Inventory's container-aware weight exceeds `capacity.heavyThreshold`. Plugged in at the very bottom of `acquire` and `transfer` so:
+>   - **`acquire`** sees the auto-stack-resolved row list (the same one it's about to commit).
+>   - **`transfer`** sees the R1.3 §3.4 cascade already applied (flags cleared on the moved row) AND the container-contents-follow shifts already applied. Composition with the cascade just works because the helper takes `nextItems` as its source of truth, not a delta.
+>
+> **Off short-circuits twice.** The new `capacity.wouldExceedThreshold` returns `false` unconditionally for `rule === 'off'`, AND `checkHardMode` short-circuits before calling it when `enforceEncumbrance === false` OR `rule === 'off'`. Belt + suspenders — the helper stays cheap to call from the reducer without a guard sprinkled at every call site.
+>
+> **Strict `>` matches `encumbranceState`.** Equal-to is still `unencumbered` (variant rule) / "at cap" (phb). 160 lb on STR 16 Medium variant → allowed; 161 lb → rejected. Reads the same in display (the bar paints amber at 161, red at the heavy threshold) and enforcement (the reducer rejects at the heavy threshold).
+>
+> **UI rejection surfaces.** Three UI call sites that dispatch `acquire` directly needed wrapping: `CatalogPicker.onAdd` (the "Add to Inventory" button per row), `AddItemModal.handleHomebrewCreated` (custom-create + add cascade), and `StashItemsTable`'s `+` increment. Each wraps the dispatch in a try/catch → `toast.error(err.message)`. The Move modal already routes errors through `setSubmitError`, so transfer-side rejection surfaces inline in the dialog (no extra toast needed there).
+>
+> **CapacityBar badge cleanup.** The " · enforced (R1.2)" hint dropped to " · enforced" (the badge survives because users still want to see the flag state at a glance). `EncumbranceRuleField`'s helper text rewrote to describe what the flag *does* now, not what it *will* do.
+>
+> **Followups carried forward:**
+> - **R1.5 (packing UI)** — packing into a `flatWeight: true` container LOWERS effective weight; the helper already handles this correctly (`containerAwareWeight` is the single source of truth). R1.5 just calls `transfer` with the new `toContainerInstanceId` param.
+> - **Per-stash enforcement scope.** Today's guard only fires on the character's Inventory stash. Future R6 DM-NPC tooling might want hard-mode on encounter-scope mounts (a Large mount with its own STR + size). The guard's `stash.scope === 'character' && stash.isCarried` filter is the right shape; widening to "any stash with an `enforceEncumbrance`-bearing owner" is a 1-line change once that owner type exists.
 
 #### R1.5 — Packing UI
 

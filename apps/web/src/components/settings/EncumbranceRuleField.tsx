@@ -22,7 +22,7 @@ interface EncumbranceRuleFieldProps {
  *     drive under jsdom.
  *   - `<input type="checkbox">` — `enforceEncumbrance`. Hidden when
  *     `rule === 'off'` (nothing to enforce). R1.1 stores the flag and
- *     surfaces it in the CapacityBar; R1.2 wires the actual reducer
+ *     surfaces it in the CapacityBar; R1.4 wires the actual reducer
  *     rejection on `acquire` / `transfer`.
  *
  * Save dispatches a single `set-encumbrance` covering both fields. The
@@ -115,8 +115,8 @@ export function EncumbranceRuleField({
               Enforce encumbrance
             </Label>
             <p className="text-xs text-muted-foreground">
-              When on, R1.2 will reject moves that push your Inventory weight
-              over the limit. R1.1 stores the setting; behavior activates in R1.2.
+              When on, the reducer rejects acquires and transfers that
+              would push your Inventory weight over the rule's limit.
             </p>
           </div>
         </div>

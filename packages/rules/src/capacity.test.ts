@@ -133,3 +133,49 @@ describe('rules.capacity.heavyThreshold (R1.1)', () => {
     expect(capacity.heavyThreshold(10, 'huge', 'off')).toBe(Infinity);
   });
 });
+
+describe('rules.capacity.wouldExceedThreshold (R1.4)', () => {
+  // R1.4 — pure threshold-composition helper that the reducer (`acquire` /
+  // `transfer`) calls to decide whether a hypothetical post-write weight
+  // crosses the carrying-capacity ceiling. Uses STRICT `>` so equal-to
+  // does NOT reject (matches `encumbranceState`'s threshold semantics).
+  //
+  // The function is rule-aware: `off` always returns `false` (no ceiling),
+  // `phb` uses `STR × 15 × size`, `variant` uses `STR × 10 × size`.
+
+  it('returns false when the post-write weight is at-or-under the threshold (phb)', () => {
+    // Medium STR 10 — phb ceiling = 150 lb. At exactly 150 → false.
+    expect(capacity.wouldExceedThreshold(140, 10, 10, 'medium', 'phb')).toBe(false);
+    expect(capacity.wouldExceedThreshold(0, 150, 10, 'medium', 'phb')).toBe(false);
+  });
+
+  it('returns true when the post-write weight exceeds the phb ceiling', () => {
+    // 140 + 11 = 151 > 150.
+    expect(capacity.wouldExceedThreshold(140, 11, 10, 'medium', 'phb')).toBe(true);
+  });
+
+  it('returns false at-or-under and true above the variant 10×STR ceiling', () => {
+    // Medium STR 10 — variant ceiling = 100 lb.
+    expect(capacity.wouldExceedThreshold(90, 10, 10, 'medium', 'variant')).toBe(false);
+    expect(capacity.wouldExceedThreshold(90, 11, 10, 'medium', 'variant')).toBe(true);
+  });
+
+  it('respects the size multiplier (Small halves the ceiling)', () => {
+    // Small STR 10 — phb ceiling = STR × 15 × 0.5 = 75 lb.
+    expect(capacity.wouldExceedThreshold(74, 1, 10, 'small', 'phb')).toBe(false);
+    expect(capacity.wouldExceedThreshold(74, 2, 10, 'small', 'phb')).toBe(true);
+    // Large STR 10 — phb ceiling = STR × 15 × 2 = 300 lb.
+    expect(capacity.wouldExceedThreshold(290, 10, 10, 'large', 'phb')).toBe(false);
+    expect(capacity.wouldExceedThreshold(290, 11, 10, 'large', 'phb')).toBe(true);
+  });
+
+  it('returns false unconditionally for rule = off', () => {
+    expect(capacity.wouldExceedThreshold(99_999, 99_999, 10, 'medium', 'off')).toBe(false);
+  });
+
+  it('accepts a zero addedWeight (idempotent check)', () => {
+    // Useful when the caller wants to ask "is the row already over?".
+    expect(capacity.wouldExceedThreshold(151, 0, 10, 'medium', 'phb')).toBe(true);
+    expect(capacity.wouldExceedThreshold(150, 0, 10, 'medium', 'phb')).toBe(false);
+  });
+});

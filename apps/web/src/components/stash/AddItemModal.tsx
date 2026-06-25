@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 import {
   Dialog,
@@ -62,15 +63,22 @@ export function AddItemModal({
     // Custom tab semantics (MVP §5 flow #5): saves to catalog AND adds
     // to the current stash. Two log entries result (create-homebrew +
     // acquire) — that's the desired audit trail per OUTLINE §3.4.
-    dispatch({
-      type: 'acquire',
-      payload: {
-        stashId,
-        definitionId,
-        quantity: 1,
-        source: 'custom-create',
-      },
-    });
+    // R1.4 — the acquire half can be reducer-rejected when hard-mode
+    // encumbrance would be tripped; surface as a toast so the homebrew
+    // creation still survives but the add doesn't silently fail.
+    try {
+      dispatch({
+        type: 'acquire',
+        payload: {
+          stashId,
+          definitionId,
+          quantity: 1,
+          source: 'custom-create',
+        },
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not add item');
+    }
     onOpenChange(false);
   }
 

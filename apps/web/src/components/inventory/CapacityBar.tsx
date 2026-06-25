@@ -32,8 +32,8 @@ interface CapacityBarProps {
  * (`STR × 15` under phb; `STR × 10` under variant). The lb count keeps
  * growing past the cap so the user sees exactly how far over they are.
  *
- * R1.2 will wire reducer rejections when `enforceEncumbrance === true`
- * — until then the (enforced) label is purely informational.
+ * R1.4 wires reducer rejections when `enforceEncumbrance === true` —
+ * the (enforced) badge below now reflects live behavior, not a stub.
  */
 export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | null {
   const data = useStore(
@@ -110,7 +110,7 @@ export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | n
 
   const ruleBadge = data.rule === 'phb' ? 'PHB' : 'Variant';
   const sizeBadge = data.size.charAt(0).toUpperCase() + data.size.slice(1);
-  const enforceBadge = data.enforce ? ' · enforced (R1.2)' : '';
+  const enforceBadge = data.enforce ? ' · enforced' : '';
 
   return (
     <section
