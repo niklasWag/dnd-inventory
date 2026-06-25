@@ -5,7 +5,7 @@ import type {
   Stash,
   TransactionLogEntry,
 } from '@app/shared';
-import { currency, inventory } from '@app/rules';
+import { attunement, currency, inventory } from '@app/rules';
 
 import type { Action, AppState } from './types';
 
@@ -97,6 +97,14 @@ export function reduce(state: AppState, action: Action): ReducerResult {
       return renameParty(state, action.payload);
     case 'set-encumbrance':
       return setEncumbrance(state, action.payload);
+    case 'equip':
+    case 'unequip':
+      return equipOrUnequip(state, action.type, action.payload);
+    case 'attune':
+    case 'unattune':
+      return attuneOrUnattune(state, action.type, action.payload);
+    case 'edit-character':
+      return editCharacter(state, action.payload);
   }
 }
 
@@ -1503,6 +1511,241 @@ function setEncumbrance(
           oldEnforce,
           newEnforce: payload.enforce,
         },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// equip / unequip / attune / unattune (R1.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves an `(itemInstanceId, characterId)` pair to the row + the
+ * character + the character's Inventory stash. Throws with the action's
+ * label if any of the following invariants fail:
+ *   - unknown `itemInstanceId`
+ *   - unknown `characterId`
+ *   - the row's owning stash is not the character's Inventory (the
+ *     `scope=character, isCarried=true` stash referenced by
+ *     `Character.inventoryStashId`).
+ *
+ * Shared by `equip` / `unequip` / `attune` / `unattune` per OUTLINE §3.4
+ * ("equip/attune are only meaningful on items in a character's Inventory
+ * stash"). The Inventory-only guard is the schema's `ownerCharacterId`
+ * check expressed at the reducer level.
+ */
+function resolveInventoryRow(
+  s: NonNullable<AppState>,
+  action: string,
+  itemInstanceId: string,
+  characterId: string,
+): { row: ItemInstance; character: NonNullable<AppState>['characters'][number] } {
+  const character = s.characters.find((c) => c.id === characterId);
+  if (character === undefined) {
+    throw new Error(`${action}: unknown characterId ${characterId}`);
+  }
+  const row = s.items.find((i) => i.id === itemInstanceId);
+  if (row === undefined) {
+    throw new Error(`${action}: unknown itemInstanceId ${itemInstanceId}`);
+  }
+  if (row.ownerId !== character.inventoryStashId) {
+    throw new Error(
+      `${action}: item ${itemInstanceId} is not in character ${characterId}'s Inventory stash`,
+    );
+  }
+  return { row, character };
+}
+
+/**
+ * Flips `ItemInstance.equipped` on an Inventory row. One reducer for
+ * both `equip` (target = true) and `unequip` (target = false) — the
+ * shape is identical apart from the discriminant. Rejects no-ops so the
+ * "every dispatch logs exactly one entry" invariant holds.
+ *
+ * R1.2 does NOT enforce slot conflicts (2H + shield etc.) at the reducer
+ * layer — `packages/rules/validation.ts` flags those as advisory issues
+ * for the UI to render. R2.x revisits this when `ItemDefinition` gains
+ * the `properties` shape and the reducer can read the conflict set.
+ */
+function equipOrUnequip(
+  state: AppState,
+  type: 'equip' | 'unequip',
+  payload: Extract<Action, { type: 'equip' | 'unequip' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, type);
+  const { row } = resolveInventoryRow(s, type, payload.itemInstanceId, payload.characterId);
+
+  const target = type === 'equip';
+  if (row.equipped === target) {
+    throw new Error(`${type}: row ${payload.itemInstanceId} already equipped=${target}`);
+  }
+
+  return {
+    state: {
+      ...s,
+      items: s.items.map((i) => (i.id === row.id ? { ...i, equipped: target } : i)),
+    },
+    logEntries: [
+      {
+        type,
+        payload: {
+          itemInstanceId: row.id,
+          characterId: payload.characterId,
+          ...(payload.slot !== undefined ? { slot: payload.slot } : {}),
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Flips `ItemInstance.attuned` on an Inventory row. Mirrors
+ * `equipOrUnequip`; additionally enforces the attunement slot cap on
+ * the `attune` direction via `attunement.hasFreeSlot`. The cap is read
+ * from `Character.maxAttunement` (default 3, DM-overridable via
+ * `edit-character` per OUTLINE §8.1).
+ *
+ * `unattune` always succeeds (modulo no-op) — un-attuning can only free
+ * a slot, never exceed the cap.
+ */
+function attuneOrUnattune(
+  state: AppState,
+  type: 'attune' | 'unattune',
+  payload: Extract<Action, { type: 'attune' | 'unattune' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, type);
+  const { row, character } = resolveInventoryRow(
+    s,
+    type,
+    payload.itemInstanceId,
+    payload.characterId,
+  );
+
+  const target = type === 'attune';
+  if (row.attuned === target) {
+    throw new Error(`${type}: row ${payload.itemInstanceId} already attuned=${target}`);
+  }
+
+  if (type === 'attune') {
+    // Slot cap is the character's `maxAttunement` (OUTLINE §3.3, default
+    // 3). Counted against the character's currently-attuned rows in
+    // Inventory — items in Storage / Party Stash / Recovered Loot / Shop
+    // cannot be attuned (the Inventory-only invariant above already
+    // rejects those rows before we get here).
+    const attunedCount = s.items.filter(
+      (i) => i.ownerId === character.inventoryStashId && i.attuned,
+    ).length;
+    if (!attunement.hasFreeSlot(attunedCount, character.maxAttunement)) {
+      throw new Error(
+        `attune: character ${character.id} has no free attunement slot (${attunedCount}/${character.maxAttunement})`,
+      );
+    }
+  }
+
+  return {
+    state: {
+      ...s,
+      items: s.items.map((i) => (i.id === row.id ? { ...i, attuned: target } : i)),
+    },
+    logEntries: [
+      {
+        type,
+        payload: {
+          itemInstanceId: row.id,
+          characterId: payload.characterId,
+        },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// edit-character (R1.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Editable Character-field allowlist per OUTLINE §4 line 320.
+ * `encumbranceRule` and `enforceEncumbrance` have their own dedicated
+ * `set-encumbrance` TxType (single-field actions stay single-purpose
+ * per the R1.1 design note); `size` is creation-only in v1; `name` has
+ * its own `rename-character` TxType.
+ */
+const EDIT_CHARACTER_FIELDS = ['species', 'class', 'level', 'str', 'maxAttunement'] as const;
+type EditCharacterField = (typeof EDIT_CHARACTER_FIELDS)[number];
+
+/**
+ * Catch-all Character editor for the fields that compose naturally
+ * (OUTLINE §4 line 320). Diffs the patch against the current row,
+ * derives `changedFields`, and rejects no-op edits — mirrors
+ * `edit-homebrew` and `edit-item-instance`.
+ *
+ * `str` is carried on the payload as `str` but the Character row stores
+ * it under `abilityScores.STR`. The reducer hides the shape difference
+ * at the storage layer; the log entry's `changedFields` names `str` to
+ * match the user-facing field name.
+ */
+function editCharacter(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-character' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-character');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`edit-character: unknown characterId ${payload.characterId}`);
+  }
+
+  const changedFields: EditCharacterField[] = [];
+  const next = { ...character, abilityScores: { ...character.abilityScores } };
+
+  for (const key of EDIT_CHARACTER_FIELDS) {
+    if (!(key in payload.patch)) continue;
+    const newVal = payload.patch[key];
+    if (newVal === undefined) continue; // explicit-undefined treated as "key absent"
+
+    switch (key) {
+      case 'species':
+      case 'class':
+        if (newVal !== character[key]) {
+          changedFields.push(key);
+          (next as Record<string, unknown>)[key] = newVal;
+        }
+        break;
+      case 'level':
+        if (newVal !== character.level) {
+          changedFields.push('level');
+          next.level = newVal as number;
+        }
+        break;
+      case 'str':
+        if (newVal !== character.abilityScores.STR) {
+          changedFields.push('str');
+          next.abilityScores.STR = newVal as number;
+        }
+        break;
+      case 'maxAttunement':
+        if (newVal !== character.maxAttunement) {
+          changedFields.push('maxAttunement');
+          next.maxAttunement = newVal as number;
+        }
+        break;
+    }
+  }
+
+  if (changedFields.length === 0) {
+    throw new Error('edit-character: no fields changed');
+  }
+
+  return {
+    state: {
+      ...s,
+      characters: s.characters.map((c) => (c.id === character.id ? next : c)),
+    },
+    logEntries: [
+      {
+        type: 'edit-character',
+        payload: { characterId: character.id, changedFields },
       },
     ],
   };

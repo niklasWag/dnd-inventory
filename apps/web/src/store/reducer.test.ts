@@ -3134,4 +3134,333 @@ describe('reducer: set-encumbrance (R1.1)', () => {
   });
 });
 
+describe('reducer: equip / unequip (R1.2)', () => {
+  /**
+   * R1.2 flips `ItemInstance.equipped` on Inventory rows. Invariants:
+   *   - row must be in the character's Inventory stash (OUTLINE §3.4);
+   *   - no-ops reject so the "one dispatch = one log entry" invariant holds;
+   *   - rejections leave the row + log untouched.
+   * The Inventory-only check IS the schema-level "equip is only meaningful
+   * when scope=character & isCarried=true" rule expressed at the reducer.
+   */
+  function bootstrapWithTorchInInventory(): {
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    itemInstanceId: string;
+  } {
+    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    return { characterId, inventoryStashId, partyStashId, itemInstanceId };
+  }
+
+  it('flips equipped=false → true on an Inventory row', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({
+      type: 'equip',
+      payload: { characterId, itemInstanceId },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.equipped).toBe(true);
+  });
+
+  it('flips equipped=true → false via unequip', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    useStore.getState().dispatch({
+      type: 'unequip',
+      payload: { characterId, itemInstanceId },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.equipped).toBe(false);
+  });
+
+  it('appends a typed equip log entry with the characterId payload', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('equip');
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+    if (last.type === 'equip') {
+      expect(last.payload.itemInstanceId).toBe(itemInstanceId);
+      expect(last.payload.characterId).toBe(characterId);
+    }
+  });
+
+  it('rejects equip of a row that lives in the Party Stash (Inventory-only invariant)', () => {
+    const { characterId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: partyStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    const logLenBefore = useStore.getState().log.length;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId, itemInstanceId },
+      }),
+    ).toThrow(/not in character .* Inventory/);
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('rejects no-op equip (already equipped)', () => {
+    const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
+    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId, itemInstanceId },
+      }),
+    ).toThrow(/already equipped=true/);
+  });
+
+  it('rejects unknown itemInstanceId', () => {
+    const { characterId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId, itemInstanceId: 'nope' },
+      }),
+    ).toThrow(/unknown itemInstanceId/);
+  });
+
+  it('rejects unknown characterId', () => {
+    const { itemInstanceId } = bootstrapWithTorchInInventory();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId: 'nope', itemInstanceId },
+      }),
+    ).toThrow(/unknown characterId/);
+  });
+});
+
+describe('reducer: attune / unattune (R1.2)', () => {
+  /**
+   * Slot-cap invariant uses `Character.maxAttunement` (default 3, OUTLINE
+   * §3.3). The reducer counts currently-attuned rows in the character's
+   * Inventory before allowing `attune`; `unattune` always succeeds (modulo
+   * no-op). Inventory-only / ownership guards mirror equip/unequip.
+   */
+  function bootstrapWithAttunables(count: number): {
+    characterId: string;
+    ids: string[];
+  } {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    for (let i = 0; i < count; i += 1) {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: torch.id,
+          quantity: 1,
+          source: 'catalog-add',
+          notes: `slot-${i}`,
+        },
+      });
+    }
+    const ids: string[] = [];
+    for (const it of useStore.getState().appState!.items) {
+      if (it.ownerId === inventoryStashId) ids.push(it.id);
+    }
+    return { characterId, ids };
+  }
+
+  it('flips attuned=false → true', () => {
+    const { characterId, ids } = bootstrapWithAttunables(1);
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === ids[0])!;
+    expect(row.attuned).toBe(true);
+  });
+
+  it('respects the slot cap — 4th attune rejects when maxAttunement = 3 (default)', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[3]! },
+      }),
+    ).toThrow(/no free attunement slot/);
+    expect(useStore.getState().appState!.items.find((i) => i.id === ids[3])!.attuned).toBe(false);
+  });
+
+  it('un-attuning frees a slot for the next attune', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    useStore.getState().dispatch({
+      type: 'unattune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[3]! },
+    });
+    expect(useStore.getState().appState!.items.find((i) => i.id === ids[3])!.attuned).toBe(true);
+  });
+
+  it('rejects attune of a row in Party Stash (Inventory-only invariant)', () => {
+    const { characterId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: partyStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId },
+      }),
+    ).toThrow(/not in character .* Inventory/);
+  });
+
+  it('rejects no-op attune / unattune', () => {
+    const { characterId, ids } = bootstrapWithAttunables(1);
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[0]! },
+      }),
+    ).toThrow(/already attuned=true/);
+    useStore.getState().dispatch({
+      type: 'unattune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'unattune',
+        payload: { characterId, itemInstanceId: ids[0]! },
+      }),
+    ).toThrow(/already attuned=false/);
+  });
+
+  it('logs typed attune entries that round-trip through the schema', () => {
+    const { characterId, ids } = bootstrapWithAttunables(1);
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[0]! },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('attune');
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+});
+
+describe('reducer: edit-character (R1.2)', () => {
+  /**
+   * Catch-all editor per OUTLINE §4 line 320. Mirrors `edit-homebrew`:
+   * diff the patch, derive `changedFields`, reject no-ops. `str` is
+   * stored under `abilityScores.STR` but logged + carried as `str`.
+   */
+  it('updates species and class in one dispatch; log records both fields', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { species: 'Elf', class: 'Wizard' } },
+    });
+    const after = useStore.getState().appState!.characters[0]!;
+    expect(after.species).toBe('Elf');
+    expect(after.class).toBe('Wizard');
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('edit-character');
+    if (last.type === 'edit-character') {
+      expect([...last.payload.changedFields].sort()).toEqual(['class', 'species']);
+    }
+  });
+
+  it('updates str (stored on abilityScores.STR) and logs as str', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { str: 18 } },
+    });
+    const after = useStore.getState().appState!.characters[0]!;
+    expect(after.abilityScores.STR).toBe(18);
+    const last = useStore.getState().log.at(-1)!;
+    if (last.type === 'edit-character') {
+      expect(last.payload.changedFields).toEqual(['str']);
+    }
+  });
+
+  it('updates maxAttunement (the DM-editable field per §8.1)', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { maxAttunement: 5 } },
+    });
+    expect(useStore.getState().appState!.characters[0]!.maxAttunement).toBe(5);
+  });
+
+  it('rejects no-op edits (every field unchanged)', () => {
+    const { characterId } = localBootstrap();
+    const before = useStore.getState().appState!.characters[0]!;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-character',
+        payload: {
+          characterId,
+          patch: {
+            species: before.species,
+            class: before.class,
+            level: before.level,
+            str: before.abilityScores.STR,
+            maxAttunement: before.maxAttunement,
+          },
+        },
+      }),
+    ).toThrow(/no fields changed/);
+  });
+
+  it('rejects unknown characterId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-character',
+        payload: { characterId: 'nope', patch: { level: 5 } },
+      }),
+    ).toThrow(/unknown characterId/);
+  });
+
+  it('logs an edit-character entry that round-trips through the schema', () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'edit-character',
+      payload: { characterId, patch: { level: 4 } },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+});
+
 

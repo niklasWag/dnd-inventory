@@ -253,6 +253,75 @@ export type Action =
         rule: EncumbranceRule;
         enforce: boolean;
       };
+    }
+  | {
+      // R1.2: equip an item that lives in a character's Inventory stash.
+      // Reducer rejects when the row is not in a `scope=character,
+      // isCarried=true` stash, or when the stash's `ownerCharacterId`
+      // does not match `characterId`, or when the row is already
+      // equipped (no-op). `slot?` is reserved for R2.x slot tracking.
+      type: 'equip';
+      payload: {
+        itemInstanceId: string;
+        characterId: string;
+        slot?: string;
+      };
+    }
+  | {
+      // R1.2: clear the `equipped` flag on an Inventory row. Same
+      // Inventory-only + ownership guards as `equip`; rejects no-ops.
+      type: 'unequip';
+      payload: {
+        itemInstanceId: string;
+        characterId: string;
+        slot?: string;
+      };
+    }
+  | {
+      // R1.2: attune an item that lives in a character's Inventory
+      // stash. Reducer rejects when the row is not in Inventory, the
+      // stash's `ownerCharacterId !== characterId`, the row is already
+      // attuned (no-op), OR the character has no free attunement slot
+      // (`attunement.hasFreeSlot(currentlyAttunedCount, maxAttunement)`
+      // is `false`).
+      type: 'attune';
+      payload: {
+        itemInstanceId: string;
+        characterId: string;
+      };
+    }
+  | {
+      // R1.2: clear the `attuned` flag on an Inventory row. Same
+      // Inventory-only + ownership guards as `attune`; rejects no-ops.
+      // No slot check (un-attuning always frees a slot).
+      type: 'unattune';
+      payload: {
+        itemInstanceId: string;
+        characterId: string;
+      };
+    }
+  | {
+      // R1.2: catch-all Character editor for fields that compose
+      // naturally per OUTLINE §4 line 320. `encumbranceRule` and
+      // `enforceEncumbrance` have their own `set-encumbrance` action;
+      // `size` is creation-only in v1. The reducer diffs the patch
+      // against the current row, derives `changedFields`, and rejects
+      // no-op edits (mirrors `edit-homebrew` / `edit-item-instance`).
+      // In MVP party-of-one this is owner-only; R4 will widen the
+      // role split per OUTLINE §8.1 (`maxAttunement` is DM-only in
+      // 2+-member parties; `species`/`class`/`level`/`str` may be
+      // owner-edited).
+      type: 'edit-character';
+      payload: {
+        characterId: string;
+        patch: {
+          species?: string;
+          class?: string;
+          level?: number;
+          str?: number;
+          maxAttunement?: number;
+        };
+      };
     };
 
 /**

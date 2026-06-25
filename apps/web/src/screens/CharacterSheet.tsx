@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
 import { CapacityBar } from '@/components/inventory/CapacityBar';
+import { EquippedSlotsPanel } from '@/components/inventory/EquippedSlotsPanel';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
@@ -105,6 +106,9 @@ export function CharacterSheet(): ReactElement {
           <div className="space-y-4">
             <CurrencyRow stashId={targetStash} />
             {tab === 'inventory' ? <CapacityBar characterId={character.id} /> : null}
+            {tab === 'inventory' ? (
+              <EquippedSlotsPanel characterId={character.id} />
+            ) : null}
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-muted-foreground">
                 {labelForTab(tab)}
@@ -119,7 +123,10 @@ export function CharacterSheet(): ReactElement {
                 + Add item
               </Button>
             </div>
-            <StashItemsTable stashId={targetStash} />
+            <StashItemsTable
+              stashId={targetStash}
+              {...(tab === 'inventory' ? { characterId: character.id } : {})}
+            />
           </div>
         )}
       </section>

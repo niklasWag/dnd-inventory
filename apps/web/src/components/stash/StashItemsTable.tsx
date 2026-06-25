@@ -1,10 +1,13 @@
 import { type ReactElement, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store';
+import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
+import { attunement } from '@app/rules';
 import { MoveItemModal } from './MoveItemModal';
 import { SplitModal } from './SplitModal';
 
@@ -15,6 +18,13 @@ const EMPTY_CATALOG: readonly ItemDefinition[] = [];
 
 interface StashItemsTableProps {
   stashId: string;
+  /**
+   * R1.2 — when provided AND the row lives in this character's
+   * Inventory (i.e. `stashId === character.inventoryStashId`), render
+   * Equip / Attune toggle buttons. Omitted for Party Stash / Recovered
+   * Loot / Storage tabs (those scopes ignore the flags per OUTLINE §4).
+   */
+  characterId?: string;
 }
 
 /**
@@ -40,7 +50,10 @@ interface StashItemsTableProps {
  * `CharacterSheet` mounts `AddItemModal` once per tab). The active
  * `itemInstanceId` is stored in component state.
  */
-export function StashItemsTable({ stashId }: StashItemsTableProps): ReactElement {
+export function StashItemsTable({
+  stashId,
+  characterId,
+}: StashItemsTableProps): ReactElement {
   const navigate = useNavigate();
   const items = useStore(
     useShallow((s) =>
@@ -52,6 +65,30 @@ export function StashItemsTable({ stashId }: StashItemsTableProps): ReactElement
   const catalog = useStore((s) => s.appState?.catalog ?? EMPTY_CATALOG);
   const catalogById = useMemo(() => new Map(catalog.map((d) => [d.id, d])), [catalog]);
   const dispatch = useStore((s) => s.dispatch);
+
+  // R1.2 — surface the attunement cap state to the row buttons so the
+  // Attune toggle can pre-disable when full (rather than letting the
+  // reducer-rejection throw bubble to the console). Subscribed via
+  // `useShallow` so the returned object is shallow-compared (fresh
+  // literals would otherwise trigger an infinite re-render loop). The
+  // Inventory-tab render path (characterId provided) is the only
+  // consumer; non-Inventory tabs get `null`.
+  const attunementState = useStore(
+    useShallow((s) => {
+      if (characterId === undefined || s.appState === null) return null;
+      const character = s.appState.characters.find((c) => c.id === characterId);
+      if (character === undefined) return null;
+      let attunedCount = 0;
+      for (const it of s.appState.items) {
+        if (it.ownerId === character.inventoryStashId && it.attuned) attunedCount += 1;
+      }
+      return {
+        hasFreeSlot: attunement.hasFreeSlot(attunedCount, character.maxAttunement),
+        attunedCount,
+        maxAttunement: character.maxAttunement,
+      };
+    }),
+  );
 
   // Modal state — one of each mounted at the table level; `activeItemId`
   // tells the modal which row to operate on.
@@ -65,6 +102,23 @@ export function StashItemsTable({ stashId }: StashItemsTableProps): ReactElement
         Nothing here yet. Add items from the catalog.
       </p>
     );
+  }
+
+  /**
+   * Wraps a `dispatch` call so reducer rejections surface as a toast
+   * instead of a console error (R1.2 follow-up). The reducer's "throw on
+   * rejection" contract stays — silent fallback would violate the
+   * CLAUDE.md "every dispatch logs exactly once" invariant — but the
+   * direct one-click toggles in this table aren't wrapped by a modal's
+   * try/catch the way the M3/M5 dispatch sites are, so we need a local
+   * boundary.
+   */
+  function dispatchOrToast(action: Action, fallback: string): void {
+    try {
+      dispatch(action);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : fallback);
+    }
   }
 
   return (
@@ -150,6 +204,63 @@ export function StashItemsTable({ stashId }: StashItemsTableProps): ReactElement
                     >
                       Split
                     </Button>
+                    {characterId !== undefined ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={row.equipped ? 'default' : 'outline'}
+                          aria-pressed={row.equipped}
+                          aria-label={`${row.equipped ? 'Unequip' : 'Equip'} ${displayName}`}
+                          onClick={() => {
+                            dispatchOrToast(
+                              {
+                                type: row.equipped ? 'unequip' : 'equip',
+                                payload: { characterId, itemInstanceId: row.id },
+                              },
+                              row.equipped ? 'Could not unequip' : 'Could not equip',
+                            );
+                          }}
+                        >
+                          {row.equipped ? 'Unequip' : 'Equip'}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={row.attuned ? 'default' : 'outline'}
+                          aria-pressed={row.attuned}
+                          // Pre-disable the "Attune" direction when the
+                          // character's slots are full — cheaper UX than
+                          // letting the click reject into a toast. The
+                          // "Unattune" direction stays clickable (and the
+                          // reducer always allows it modulo no-op).
+                          disabled={
+                            !row.attuned &&
+                            attunementState !== null &&
+                            !attunementState.hasFreeSlot
+                          }
+                          title={
+                            !row.attuned &&
+                            attunementState !== null &&
+                            !attunementState.hasFreeSlot
+                              ? `Attunement slots full (${attunementState.attunedCount}/${attunementState.maxAttunement})`
+                              : undefined
+                          }
+                          aria-label={`${row.attuned ? 'Unattune' : 'Attune'} ${displayName}`}
+                          onClick={() => {
+                            dispatchOrToast(
+                              {
+                                type: row.attuned ? 'unattune' : 'attune',
+                                payload: { characterId, itemInstanceId: row.id },
+                              },
+                              row.attuned ? 'Could not unattune' : 'Could not attune',
+                            );
+                          }}
+                        >
+                          {row.attuned ? 'Unattune' : 'Attune'}
+                        </Button>
+                      </>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"

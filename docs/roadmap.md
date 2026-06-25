@@ -827,34 +827,60 @@ Character entity (inventory-only data); equip; encumbrance (off/phb/variant + en
 #### R1.2 — Equip / attune mechanics
 
 **Schema activations (§4)**
-- [ ] `ItemInstance.equipped` allowed to be `true`
-- [ ] `ItemInstance.attuned` allowed to be `true`
-- [ ] `Character.maxAttunement` becomes DM-editable (was display-only in MVP)
+- [x] `ItemInstance.equipped` allowed to be `true` — **R1.2** (`z.literal(false)` → `z.boolean()` on `itemInstance.ts`)
+- [x] `ItemInstance.attuned` allowed to be `true` — **R1.2** (`z.literal(false)` → `z.boolean()` on `itemInstance.ts`)
+- [x] `Character.maxAttunement` becomes DM-editable (was display-only in MVP) — **R1.2** via `edit-character` catch-all
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `equip` action + payload schema (`{ itemInstanceId, characterId, slot? }`)
-- [ ] `unequip` action + payload schema
-- [ ] Invariant test: equip only from `scope=character, isCarried=true` stash
-- [ ] `attune` action + payload schema (`{ itemInstanceId, characterId }`)
-- [ ] `unattune` action + payload schema
-- [ ] Attunement slot-cap invariant test (uses `Character.maxAttunement`)
-- [ ] `edit-character` catch-all action + payload schema (`changedFields: string[]` per the `edit-homebrew` precedent) — destination for `maxAttunement`, `str`, `level`, and other DM-editable character fields. The R1.1 dedicated `set-encumbrance` action stays as-is (single-field actions remain single-purpose); `edit-character` only wraps the fields that compose naturally as a catch-all. DM-only when 2+ members; per §8.1.
+- [x] `equip` action + payload schema (`{ itemInstanceId, characterId, slot? }`) — **R1.2**
+- [x] `unequip` action + payload schema — **R1.2**
+- [x] Invariant test: equip only from `scope=character, isCarried=true` stash — **R1.2** (`equipOrUnequip` resolves via `Character.inventoryStashId`; reducer rejects when the row lives anywhere else, including Party Stash / Recovered Loot / Storage)
+- [x] `attune` action + payload schema (`{ itemInstanceId, characterId }`) — **R1.2**
+- [x] `unattune` action + payload schema — **R1.2**
+- [x] Attunement slot-cap invariant test (uses `Character.maxAttunement`) — **R1.2** (rejection threads through `attunement.hasFreeSlot`; tests cover both "cap met" and "un-attune frees a slot")
+- [x] `edit-character` catch-all action + payload schema (`changedFields: string[]` per the `edit-homebrew` precedent) — destination for `maxAttunement`, `str`, `level`, and other DM-editable character fields. The R1.1 dedicated `set-encumbrance` action stays as-is (single-field actions remain single-purpose); `edit-character` only wraps the fields that compose naturally as a catch-all. DM-only when 2+ members; per §8.1. — **R1.2** (R1.2 ships `species`, `class`, `level`, `str`, `maxAttunement`)
 
 **Rules — activate stubs (§6)**
-- [ ] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string)
-- [ ] `attunement.ts` tests
-- [ ] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.)
-- [ ] `validation.ts` tests
+- [x] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string) — **R1.2**
+- [x] `attunement.ts` tests — **R1.2** (5 tests covering free-slot boundaries, DM-lowered caps, prereq formatting)
+- [x] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.) — **R1.2** — properties-lookup-keyed signature widens cleanly when R2.x adds `ItemDefinition.properties`
+- [x] `validation.ts` tests — **R1.2** (6 tests covering bidirectional 2H + shield conflict + unknown-id edge cases)
 
 **UI (§5)**
-- [ ] Equipped-slots panel on Inventory tab
-- [ ] Attunement counter (X/max) on Inventory tab
-- [ ] Equip toggle on Inventory rows
-- [ ] Attune toggle on Inventory rows
+- [x] Equipped-slots panel on Inventory tab — **R1.2** (`<EquippedSlotsPanel>`; lists by name; empty-state copy when nothing equipped)
+- [x] Attunement counter (X/max) on Inventory tab — **R1.2** (same component; amber when cap met via `attunement.hasFreeSlot`)
+- [x] Equip toggle on Inventory rows — **R1.2** (Equip / Unequip button on `StashItemsTable`; visible only when `characterId` prop is set, i.e. Inventory tab)
+- [x] Attune toggle on Inventory rows — **R1.2** (Attune / Unattune button; relies on reducer-layer slot-cap rejection rather than disabling client-side)
 
 #### R1.2 — Notes
 
-> -
+> **2026-06-25 — R1.2 (equip/attune mechanics) complete.** Second slice of R1; R1.3 (containers + transfer cascade + flatWeight) is the next chunk.
+>
+> **Design decisions**
+>
+> - **Schema relaxations are additive.** `itemInstance.ts` only widens `equipped`/`attuned` from `z.literal(false)` to `z.boolean()` — pre-R1.2 Dexie blobs (`{ equipped: false, attuned: false }`) still parse cleanly. `identified` and `currentCharges` stay literal-locked until R2.
+> - **`edit-item-instance` enum widened from `customName | notes` to also include `equipped | attuned`.** The dedicated `equip`/`unequip`/`attune`/`unattune` TxTypes cover the explicit user actions (one click → one log entry); the widened enum exists for the future Item Detail screen edit path that mass-edits a row at once. R2 will widen further with `identified` + `currentCharges`.
+> - **Inventory-only invariant is reducer-enforced, not schema-enforced.** The schema has no knowledge of stash scope (an `ItemInstance` carries `ownerType: 'stash'` + `ownerId` only). The reducer's `resolveInventoryRow` helper threads through `Character.inventoryStashId` and rejects any row whose `ownerId` doesn't match — covers Party Stash, Recovered Loot, Storage in one check. Same helper is reused for both equip-pair and attune-pair, so the four reducer cases stay symmetrical.
+> - **Slot-cap counts live in the reducer, not the rules engine.** `packages/rules/attunement.ts:hasFreeSlot` takes the count as a parameter — staying truly pure means the reducer is the one that queries `state.items.filter(...).length`. The rule is the comparison, not the count.
+> - **`unattune` never checks the cap.** Even when a DM lowers `maxAttunement` *below* the current attuned count (a legal `edit-character` move per §8.1), `unattune` always succeeds — un-attuning can only free a slot, never exceed the cap. The over-cap state is purely a display flag (the UI shows it amber via `hasFreeSlot(attunedCount, maxAttunement) === false`).
+> - **Slot conflicts (2H + shield) ship as an advisory rule, not a reducer rejection.** R1.2's `validation.validateEquip` returns `ValidationIssue[]` for UI consumption. The reducer does NOT call it — `equip` succeeds even when a conflict exists. Reasoning: `ItemDefinition` has no `properties.twoHanded` / `properties.shield` shape yet (R2.x territory), so there's nothing in the catalog for the reducer to read. The rule still exists + has tests because the consumer (Item Detail screen, R2.x) will need the same logic.
+> - **`validation.validateEquip` signature change.** The M0 stub took `(definitionId, currentlyEquippedIds[])`; R1.2 widens to also take a `ReadonlyMap<string, EquipProperties>` so the rule can read properties without coupling to a specific catalog shape. Once R2.x adds `ItemDefinition.properties`, callers will build the map from the catalog row's `properties` field. Pure, side-effect-free, no entity coupling.
+> - **`edit-character` covers `species`/`class`/`level`/`str`/`maxAttunement`; `encumbranceRule` and `enforceEncumbrance` stay with `set-encumbrance`.** R1.1 already shipped `set-encumbrance` as a dedicated TxType for the encumbrance pair. Per OUTLINE §4 line 320 the catch-all covers everything mutable that doesn't have a dedicated type — `size` is creation-only in v1 (NOT editable) and `name` has its own `rename-character` TxType.
+> - **`str` is logged as `str` but stored under `abilityScores.STR`.** The reducer hides the storage-shape difference: the action payload uses `str`, the log's `changedFields` lists `str`, but the underlying Character row's `abilityScores.STR` is what mutates. Keeps the user-facing field name stable across log readers + future Item Detail edit screens.
+> - **`EquippedSlotsPanel` subscribes to the raw `appState` slice + derives in `useMemo`.** Returning fresh arrays from a Zustand `useShallow` selector infinite-loops (shallow compares against fresh references). The CapacityBar pattern (returning all primitives) doesn't work here because the lists are non-primitive — `useMemo` over the raw `appState` is the right escape hatch.
+> - **UI gates equip/attune buttons on the `characterId` prop, not the stash scope.** `StashItemsTable` is reused across Inventory / Party Stash / Recovered Loot / Storage tabs; only the Inventory tab passes `characterId`. The reducer's Inventory-only invariant is the source of truth, but hiding the buttons elsewhere is cheaper UX than letting the click reject + toast.
+>
+> **Followups carried forward to R1.3 (the next slice):**
+> - **`ItemInstance.containerInstanceId`** becomes settable (currently `z.null()`) + the `transfer` cascade that auto-clears `equipped` / `attuned` / `currentCharges` on leaving Inventory + container contents follow the container (OUTLINE §3.4).
+> - **`ItemDefinition.flatWeight`** + `weight.ts` widened to descend into containers respecting it.
+> - **`weight.ts` flat-weight container tests** (Bag of Holding, Handy Haversack — DMG seed lands in R2.1 but the schema flag + rule consumer ship in R1.3).
+>
+> **Followups carried forward to R1.4 (hard-mode enforcement):**
+> - **Hard-mode reducer rejection** in `acquire` / `transfer`. When this lands, the EncumbranceRuleField helper text's "(R1.2)" hint comes off and the Settings test's R1.2 assertion gets re-targeted (or removed).
+> - **Item Detail edit path widened** with `equipped` / `attuned` checkboxes (the schema enum is already wide enough; UI work outstanding).
+>
+> **Followups carried forward to R2.1 (magic-items-only gate):**
+> - **`attune` should reject non-magic items** per PHB 2024 / DMG 2024 attunement rules (only magic items can be attuned). R1.2 ships the action without this gate because `ItemDefinition.requiresAttunement` only becomes settable in R2.1 — until then every catalog row is implicitly mundane and any gate today would either be trivially-true dead code (rejects everything) or fight the schema. R2.1 adds: (a) a reducer guard `attune` rejects when `ItemDefinition.requiresAttunement !== true` for the row's `definitionId`; (b) the Attune toggle on `StashItemsTable` is hidden (not just disabled) for non-magic rows so the UI doesn't tempt the click; (c) one new invariant test ("attune of a non-magic item rejects, no state change, no log entry"). `unattune` stays unrestricted — a row that was attuned before R2.1's gate landed (e.g. an MVP-vintage Dexie blob with `attuned: true` on a mundane row) must remain un-attune-able to clean up. Note: `equip` does NOT need a magic-item gate — equip applies to mundane armor/weapons/shields per PHB 2024 p. 213; the natural restriction is `category`, which lands in R2.x once `ItemDefinition.properties` is in place.
 
 #### R1.3 — Containers + transfer cascade + flatWeight
 
@@ -929,13 +955,29 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 - [ ] `ItemDefinition.requiresAttunement` becomes settable
 - [ ] `ItemDefinition.attunementPrereq` becomes settable (display string)
 
+**Reducer — tighten R1.2 `attune`**
+- [ ] **Extend `attune` reducer** with a magic-item gate: reject when the row's `ItemDefinition.requiresAttunement !== true`. Per PHB 2024 / DMG 2024 attunement rules, only magic items can be attuned — mundane items (Torch, Rope, etc.) must be reducer-rejected even when the Inventory-only invariant + slot cap would otherwise pass. The check threads off the row's `definitionId` via the catalog map (no schema widening on the reducer payload). Composes with R1.2's existing guards: Inventory-only invariant runs first → ownership → magic-item gate → slot cap → no-op.
+- [ ] **`unattune` stays unrestricted.** A row whose definition is now mundane (e.g. an MVP / R1.2-vintage Dexie blob with `attuned: true` on a mundane row, or a homebrew that the DM later flipped `requiresAttunement` to false on) must still be un-attune-able. `unattune` only clears the flag — it never adds slots that aren't already in use.
+- [ ] Invariant test: `attune` on a mundane PHB row (Torch) rejects with a `not a magic item`-style error; state unchanged, no log entry appended.
+- [ ] Invariant test: `attune` on a DMG row with `requiresAttunement: true` succeeds (the rest of the R1.2 invariants still apply — Inventory-only + slot cap).
+- [ ] Invariant test: `unattune` succeeds on a row whose definition is mundane (cleanup path for pre-R2.1 state).
+- [ ] Invariant test: order-of-checks — `attune` on a mundane row in the Party Stash still surfaces the Inventory-only error first (mundane-vs-magic is a later guard than ownership, mirroring `transfer`'s rejection ordering).
+
 **UI (§5)**
 - [ ] Rarity color coding in catalog + item rows
 - [ ] Attunement prerequisite displayed as advisory text on item detail
+- [ ] **Hide (not just disable) the Attune toggle on `StashItemsTable` rows whose definition has `requiresAttunement !== true`.** Reduces visual clutter on mundane Inventory rows (Torch / Rope / Rations etc.) — disabling would be visible-but-unclickable, hiding is cleaner since attunement is meaningless on those rows. The Equip toggle is unaffected (equip applies to mundane armor/weapons/shields per PHB 2024 p. 213; the natural restriction for equip is `category`, which lands in R2.x once `ItemDefinition.properties` is in place).
+- [ ] Component test: a Torch row in Inventory renders the Equip toggle but NOT the Attune toggle.
+- [ ] Component test: a DMG row with `requiresAttunement: true` renders both toggles.
 
 #### R2.1 — Notes
 
-> -
+> **Deferred design — structured class data on `Character`.** A future feature that needs machine-readable class info (e.g. spell-list filtering, equip-proficiency hints) should add a SEPARATE OPTIONAL field — `Character.standardClassId?: 'barbarian' | 'bard' | 'cleric' | 'druid' | 'fighter' | 'monk' | 'paladin' | 'ranger' | 'rogue' | 'sorcerer' | 'warlock' | 'wizard'` — alongside the existing free-text `class`. Free-text stays the source of truth for display and the audit log; the optional structured id is consumed only by the new feature. Reasons not to do it now / not to replace `class` with an enum:
+> - **Prereqs are advisory only** per OUTLINE §3.8 / §6 — the R2.1 attunement gate keys off `ItemDefinition.requiresAttunement` (boolean, item-side), not the actor's class. Class-prereq strings like "Druid, Cleric" render via `attunement.prereqDisplay` and never block.
+> - **Homebrew classes** (Blood Hunter, Tasha's Artificer, pure-DM-invented) must keep working — closed enum would lock them out and contradict the "private use, support whatever the table runs" stance that the same app applies to homebrew item definitions.
+> - **Subclass / multiclass reality** — "Cleric (Life Domain)" and "Fighter 3 / Wizard 2" don't fit a flat 12-value enum without becoming a 50+ entry mess or fighting the single-string `class` schema.
+> - **Bit-for-bit lossless export round-trip** (CLAUDE.md) — tightening the existing field to an enum would reject previously-valid free-text exports. Adding an optional field is additive and safe.
+> - **No current consumer.** Spell management / proficiency hints are out of scope for v1; OUTLINE / MVP / roadmap don't reference them. Add the field when the consuming feature lands, not speculatively.
 
 #### R2.2 — Charges + recharge
 
