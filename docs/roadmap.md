@@ -745,55 +745,32 @@ Sections mirror **`OUTLINE.md` §10** (M1–M7). Each release milestone adds **p
 
 ### R1 — Characters & encumbrance (outline §10 M1)
 
-Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); single-level containers + Bag of Holding. Covers OUTLINE §3.3, §3.4 (equip), §3.6, §3.8 (attune slot tracking foundation), §4 `Character` / `Stash` / `ItemInstance` activations, §6 capacity/attunement/weight/validation modules.
+Character entity (inventory-only data); equip; encumbrance (off/phb/variant + enforce); single-level containers + Bag of Holding. Covers OUTLINE §3.3, §3.4 (equip), §3.6, §3.8 (attune slot tracking foundation), §4 `Character` / `Stash` / `ItemInstance` activations, §6 capacity/attunement/weight/validation modules.
+
+**Slicing.** R1 splits along four independently-shippable feature axes. R1.1 (shipped) lit up encumbrance display — capacity rule (`off | phb | variant`), enforce flag, size multiplier, capacity bar. R1.2 ships equip / attune plumbing — reducer actions, slot rules, validation. R1.3 ships container modelling + the §3.4 transfer cascade — `containerInstanceId`, `flatWeight`, auto-clear of equip/attune/charges leaving Inventory. R1.4 closes the loop by activating Hard-mode enforcement (reducer rejection in `acquire` / `transfer` when over-threshold). Each slice is ~R1.1-sized.
+
+#### R1.1 — Encumbrance display (rule + size + enforce flag)
 
 **Schema activations (§4)**
-- [ ] `ItemInstance.equipped` allowed to be `true`
-- [ ] `ItemInstance.attuned` allowed to be `true`
-- [x] `Character.encumbranceRule` accepts `"advisory" | "hard"` (in addition to `"off"`) — **R1.1**
-- [ ] `Character.maxAttunement` becomes DM-editable (was display-only in MVP)
-- [ ] `ItemInstance.containerInstanceId` becomes settable (single-level only)
-- [ ] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2) ships `flatWeight: true` on BoH-class entries.
-- [ ] Migration test: MVP exports import cleanly with all placeholders preserved (including `flatWeight: false` defaulted on M2-vintage definitions)
+- [x] `Character.encumbranceRule` accepts `"phb" | "variant"` (in addition to `"off"`) — **R1.1** (renamed mid-slice from `advisory|hard`; hard rename, no legacy aliases)
+- [x] `Character.enforceEncumbrance: boolean` added as orthogonal flag — **R1.1**
+- [x] `Character.size: CreatureSize` added (`tiny|small|medium|large|huge|gargantuan`); set at create, not editable post-creation in MVP — **R1.1**
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `equip` action + payload schema (`{ itemInstanceId, characterId, slot? }`)
-- [ ] `unequip` action + payload schema
-- [ ] Invariant test: equip only from `scope=character, isCarried=true` stash
-- [ ] `attune` action + payload schema (`{ itemInstanceId, characterId }`)
-- [ ] `unattune` action + payload schema
-- [ ] Attunement slot-cap invariant test (uses `Character.maxAttunement`)
-- [ ] Action to set `Character.maxAttunement` (DM-only when 2+ members; per §8.1)
-- [x] Action to set `Character.encumbranceRule` (DM-only when 2+ members; per §8.1) — **R1.1** shipped `set-encumbrance-rule` (dedicated, not catch-all); player-role in MVP, R4 widens to DM-only.
-- [ ] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values.
-- [ ] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract.
-- [ ] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character.
-- [ ] Invariant test: charged item (currentCharges = 3) transferred Inventory → Storage → `currentCharges: null` after.
-- [ ] **Extend `transfer` reducer**: container contents follow the container atomically per OUTLINE §3.4. When the moved row's `id` appears as a `containerInstanceId` on other instances in the source stash, those child rows' `ownerId` updates to the destination stash too. Children's `containerInstanceId` is preserved (still points at the same parent).
-- [ ] Invariant test: backpack with 3 rations moved Inventory → Storage → all 4 rows now in Storage; children still point at the backpack's id.
-- [ ] Invariant test: `transfer` rejects moving a container row INTO another container (would create two-level nesting; OUTLINE §3.6 one-level-deep rule).
-- [ ] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document).
+- [x] `set-encumbrance` action + payload (`{ characterId, oldRule, newRule, oldEnforce, newEnforce }`) — **R1.1** (single entry covers both fields; player-role in MVP, R4 widens to DM-only)
 
 **Rules — activate stubs (§6)**
-- [x] `packages/rules/capacity.ts` implemented (STR × 15; encumbered > 5×STR; heavily > 10×STR) — **R1.1**
-- [x] `capacity.ts` tests cover boundaries + `off` / `advisory` / `hard` enforcement — **R1.1** (8 tests; strict `>` boundaries pinned at 5×STR and 10×STR)
-- [ ] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string)
-- [ ] `attunement.ts` tests
-- [ ] `packages/rules/weight.ts` implemented (single-level container + Bag-of-Holding flat-weight exception). Reads `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stops descending into contents. — **R1.1** ships the flat-row aggregator (`weight × quantity` summed); container + flatWeight branch deferred to R1.2 where the §3.4 cascade is also being added.
-- [ ] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests. — **R1.1** shipped 7 tests for the flat-row sum (empty list, single row, quantity multiplier, multi-row sum, zero-weight, fractional weight, all-zero-quantity). Container + flatWeight tests deferred to R1.2.
-- [ ] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.)
-- [ ] `validation.ts` tests
+- [x] `packages/rules/capacity.ts` implemented — **R1.1**: `carryCapacity(str, size) = str × 15 × sizeMultiplier(size)`; `encumbranceState(weight, str, size, rule)` branches on rule (`phb` → unencumbered/heavily only; `variant` → strict `>` thresholds at 5×STR and 10×STR); `heavyThreshold(str, size, rule)` exposes the upper ceiling; `sizeMultiplier(size)` is `0.5 / 0.5 / 1 / 2 / 4 / 8`
+- [x] `capacity.ts` tests cover boundaries + `off`/`phb`/`variant`; Small/Medium/Large pinned for both rules — **R1.1** (25 tests)
+- [x] `packages/rules/weight.ts` flat-row aggregator (`Σ weight × quantity`) — **R1.1**; container + flatWeight branch deferred to **R1.3**
+- [x] `weight.ts` tests for the flat-row sum — **R1.1** (7 tests); container + flatWeight tests deferred to **R1.3**
 
 **UI (§5)**
-- [x] Capacity bar on Inventory tab (per-character; warning states matching enforcement level) — **R1.1** (hidden under `'off'`; amber at encumbered; destructive at heavily-encumbered; Progress primitive)
-- [ ] Equipped-slots panel on Inventory tab
-- [ ] Attunement counter (X/max) on Inventory tab
-- [ ] Equip toggle on Inventory rows
-- [ ] Attune toggle on Inventory rows
-- [ ] One-level container view inside Inventory
-- [x] Encumbrance-rule selector on Character settings — **R1.1** (Settings page, native `<select>`, per-character; helper text flags R1.2 enforcement)
+- [x] Capacity bar on Inventory tab (per-character; PHB/Variant + size + enforce surfaced as inline badges) — **R1.1** (hidden under `'off'`; amber/destructive thresholds; Progress primitive)
+- [x] Encumbrance-rule selector on Character settings (rule `<select>` + enforce checkbox + per-rule helper text) — **R1.1**
+- [x] CreateCharacter size `<select>` (default Medium; per-option capacity multiplier hint) — **R1.1**
 
-#### R1 — Notes
+#### R1.1 — Notes
 
 > **2026-06-24 — R1.1 (encumbrance display) complete.** First slice of R1 per the plan; R1.2 (equip/attune + transfer cascade + Hard enforcement) is the next chunk.
 >
@@ -844,6 +821,89 @@ Character entity (inventory-only data); equip; encumbrance (off/advisory/hard); 
 > - **`validation.ts` activation** — slot conflicts (2H + shield etc.).
 > - **Hard-mode reducer rejection** in `acquire` / `transfer`. When this lands, the EncumbranceRuleField helper text's "(R1.2)" hint comes off and the Settings test's R1.2 assertion gets re-targeted (or removed).
 > - **`attunement.ts` activation** — slot tracking + prereq display.
+
+> -
+
+#### R1.2 — Equip / attune mechanics
+
+**Schema activations (§4)**
+- [ ] `ItemInstance.equipped` allowed to be `true`
+- [ ] `ItemInstance.attuned` allowed to be `true`
+- [ ] `Character.maxAttunement` becomes DM-editable (was display-only in MVP)
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] `equip` action + payload schema (`{ itemInstanceId, characterId, slot? }`)
+- [ ] `unequip` action + payload schema
+- [ ] Invariant test: equip only from `scope=character, isCarried=true` stash
+- [ ] `attune` action + payload schema (`{ itemInstanceId, characterId }`)
+- [ ] `unattune` action + payload schema
+- [ ] Attunement slot-cap invariant test (uses `Character.maxAttunement`)
+- [ ] `edit-character` catch-all action + payload schema (`changedFields: string[]` per the `edit-homebrew` precedent) — destination for `maxAttunement`, `str`, `level`, and other DM-editable character fields. The R1.1 dedicated `set-encumbrance` action stays as-is (single-field actions remain single-purpose); `edit-character` only wraps the fields that compose naturally as a catch-all. DM-only when 2+ members; per §8.1.
+
+**Rules — activate stubs (§6)**
+- [ ] `packages/rules/attunement.ts` implemented (slot tracking, prereq display string)
+- [ ] `attunement.ts` tests
+- [ ] `packages/rules/validation.ts` implemented (equip slot conflicts: 2H + shield, etc.)
+- [ ] `validation.ts` tests
+
+**UI (§5)**
+- [ ] Equipped-slots panel on Inventory tab
+- [ ] Attunement counter (X/max) on Inventory tab
+- [ ] Equip toggle on Inventory rows
+- [ ] Attune toggle on Inventory rows
+
+#### R1.2 — Notes
+
+> -
+
+#### R1.3 — Containers + transfer cascade + flatWeight
+
+**Schema activations (§4)**
+- [ ] `ItemInstance.containerInstanceId` becomes settable (single-level only)
+- [ ] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2.1) ships `flatWeight: true` on BoH-class entries.
+- [ ] Migration test: MVP and R1.1-vintage exports import cleanly with all placeholders preserved (including `flatWeight: false` defaulted on pre-R1.3 definitions).
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values.
+- [ ] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract.
+- [ ] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character.
+- [ ] Invariant test: charged item (currentCharges = 3) transferred Inventory → Storage → `currentCharges: null` after.
+- [ ] **Extend `transfer` reducer**: container contents follow the container atomically per OUTLINE §3.4. When the moved row's `id` appears as a `containerInstanceId` on other instances in the source stash, those child rows' `ownerId` updates to the destination stash too. Children's `containerInstanceId` is preserved (still points at the same parent).
+- [ ] Invariant test: backpack with 3 rations moved Inventory → Storage → all 4 rows now in Storage; children still point at the backpack's id.
+- [ ] Invariant test: `transfer` rejects moving a container row INTO another container (would create two-level nesting; OUTLINE §3.6 one-level-deep rule).
+- [ ] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document).
+
+**Rules — widen R1.1 stub (§6)**
+- [ ] `packages/rules/weight.ts` widened to descend into containers respecting `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stop descending into contents (Bag-of-Holding exception). Signature widens from flat-row aggregator to `(rows, definitionsById)`. R1.1's flat-row tests stay green as the no-container case.
+- [ ] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests.
+
+**UI (§5)**
+- [ ] One-level container view inside Inventory
+
+#### R1.3 — Notes
+
+> -
+
+#### R1.4 — Hard-mode enforcement
+
+**Reducer rejection (§4 TransactionLog union)**
+- [ ] **Extend `acquire` reducer**: when destination stash is Inventory (`scope=character, isCarried=true`) and the owning character has `enforceEncumbrance: true` and `encumbranceRule !== 'off'`, reject if post-write weight would exceed `heavyThreshold(str, size, rule)`. R1.1's helper already exposes the ceiling — this slice just consumes it.
+- [ ] **Extend `transfer` reducer** with the same guard on the destination side. Composes with R1.3's §3.4 cascade: cascade adjusts the moved row first, threshold check runs on the post-cascade weight (a leaving-Inventory transfer never trips the guard because it lowers source weight; an entering-Inventory transfer is the case that matters).
+- [ ] Invariant test: enforced + variant + acquire that would exceed 10×STR rejects; log entry NOT appended; state unchanged.
+- [ ] Invariant test: enforced + phb + transfer-into-Inventory that would exceed STR × 15 × sizeMultiplier rejects.
+- [ ] Invariant test: enforced + rule = `off` allows (off short-circuits before the guard).
+- [ ] Invariant test: unenforced + over-threshold allows (display-only path stays intact).
+- [ ] Invariant test: enforced + Small character + size multiplier respected (rejection threshold scales).
+
+**UI (§5)**
+- [ ] Remove the "(R1.2)" hint from `EncumbranceRuleField` helper text now that enforcement is live (and re-target or remove the Settings test that asserts the hint).
+- [ ] Toast / inline error when a reducer rejects an acquire/transfer due to hard-mode (consistent with existing reducer-rejection UX; no new pattern).
+
+#### R1.4 — Notes
+
+> -
+
+#### R1 — Notes
 
 > -
 
