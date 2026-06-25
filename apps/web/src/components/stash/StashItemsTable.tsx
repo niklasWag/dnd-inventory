@@ -105,6 +105,38 @@ export function StashItemsTable({
   }
 
   /**
+   * R1.3 — one-level container view: arrange `items` so that each
+   * container's children (rows with `containerInstanceId === parent.id`)
+   * render directly under their parent. The visual nesting is a single
+   * level deep per OUTLINE §3.6. Items whose `containerInstanceId`
+   * references a row in a DIFFERENT stash are rendered as top-level
+   * here (defensive — shouldn't happen in practice, but the cascade
+   * across §3.4 keeps the (parent, child) pair in the same stash).
+   */
+  const displayRows: { row: (typeof items)[number]; depth: 0 | 1 }[] = (() => {
+    const byParent = new Map<string, (typeof items)[number][]>();
+    const stashIds = new Set(items.map((i) => i.id));
+    const tops: (typeof items)[number][] = [];
+    for (const row of items) {
+      if (row.containerInstanceId !== null && stashIds.has(row.containerInstanceId)) {
+        const arr = byParent.get(row.containerInstanceId) ?? [];
+        arr.push(row);
+        byParent.set(row.containerInstanceId, arr);
+      } else {
+        tops.push(row);
+      }
+    }
+    const out: { row: (typeof items)[number]; depth: 0 | 1 }[] = [];
+    for (const parent of tops) {
+      out.push({ row: parent, depth: 0 });
+      for (const child of byParent.get(parent.id) ?? []) {
+        out.push({ row: child, depth: 1 });
+      }
+    }
+    return out;
+  })();
+
+  /**
    * Wraps a `dispatch` call so reducer rejections surface as a toast
    * instead of a console error (R1.2 follow-up). The reducer's "throw on
    * rejection" contract stays — silent fallback would violate the
@@ -133,13 +165,21 @@ export function StashItemsTable({
           </tr>
         </thead>
         <tbody>
-          {items.map((row) => {
+          {displayRows.map(({ row, depth }) => {
             const def = catalogById.get(row.definitionId);
             const displayName = row.customName ?? def?.name ?? '(unknown item)';
             const canSplit = row.quantity >= 2;
             return (
               <tr key={row.id} className="border-b border-border/50 last:border-0">
-                <td className="py-2 pr-2">
+                <td className={`py-2 pr-2${depth === 1 ? ' pl-6' : ''}`}>
+                  {depth === 1 ? (
+                    <span
+                      aria-hidden="true"
+                      className="mr-2 text-muted-foreground"
+                    >
+                      ↳
+                    </span>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => {

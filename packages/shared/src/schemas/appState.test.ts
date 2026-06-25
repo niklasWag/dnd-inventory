@@ -269,4 +269,94 @@ describe('appStateSchema round-trip', () => {
     (bad['stashes'] as Array<Record<string, unknown>>)[0]!['scope'] = 'solo';
     expect(() => appStateSchema.parse(bad)).toThrow();
   });
+
+  it('R1.3 migration — imports a pre-R1.3 export without flatWeight or container fields', () => {
+    // Pre-R1.3-vintage shape: definitions omit `flatWeight`, item rows
+    // carry `containerInstanceId: null` (was a Zod literal pre-R1.3).
+    // The schema relaxations land additively — older exports parse
+    // cleanly with no migration step required.
+    const aged = structuredClone(fixture);
+    aged.catalog = [
+      {
+        id: 'phb-2024:backpack',
+        name: 'Backpack',
+        source: 'PHB',
+        category: 'container',
+        weight: 5,
+        // NOTE: no `flatWeight` field — pre-R1.3 exports never wrote it.
+      },
+    ];
+    aged.items = [
+      {
+        id: 'item-backpack',
+        definitionId: 'phb-2024:backpack',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+    ];
+    expect(() => appStateSchema.parse(aged)).not.toThrow();
+  });
+
+  it('R1.3 — accepts an item with a non-null containerInstanceId', () => {
+    const withContainer = structuredClone(fixture);
+    withContainer.catalog = [
+      {
+        id: 'phb-2024:backpack',
+        name: 'Backpack',
+        source: 'PHB',
+        category: 'container',
+        weight: 5,
+      },
+    ];
+    withContainer.items = [
+      {
+        id: 'item-backpack',
+        definitionId: 'phb-2024:backpack',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+      {
+        id: 'item-rations',
+        definitionId: 'phb-2024:backpack', // catalog id reused for test brevity
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: 'item-backpack', // now a non-null id
+        quantity: 3,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+    ];
+    const parsed = appStateSchema.parse(withContainer);
+    expect(parsed.items[1]!.containerInstanceId).toBe('item-backpack');
+  });
+
+  it('R1.3 — accepts an ItemDefinition with flatWeight: true', () => {
+    const dmgFlavoured = structuredClone(fixture);
+    dmgFlavoured.catalog = [
+      {
+        id: 'dmg-2024:bag-of-holding',
+        name: 'Bag of Holding',
+        source: 'PHB', // M2 schema still gates `source` to PHB|homebrew; DMG seed lands in R2.1
+        category: 'container',
+        weight: 15,
+        flatWeight: true,
+      },
+    ];
+    const parsed = appStateSchema.parse(dmgFlavoured);
+    expect(parsed.catalog[0]!.flatWeight).toBe(true);
+  });
 });

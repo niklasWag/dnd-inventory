@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { Progress } from '@/components/ui/progress';
 import { useStore } from '@/store';
-import { capacity } from '@app/rules';
+import { capacity, weight as weightRules } from '@app/rules';
 
 interface CapacityBarProps {
   characterId: string;
@@ -42,14 +42,26 @@ export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | n
       const character = s.appState.characters.find((c) => c.id === characterId);
       if (character === undefined) return null;
       const stashId = character.inventoryStashId;
-      const weightByDefId = new Map(
-        s.appState.catalog.map((d) => [d.id, d.weight ?? 0] as const),
+      // R1.3: switch to the container-aware aggregator so Bag of Holding
+      // etc. (`ItemDefinition.flatWeight === true`) correctly absorbs
+      // their contents per OUTLINE §3.6. Flat rows (no container nesting)
+      // get the same answer as the R1.1 `totalWeight` function would.
+      const defsById = new Map(
+        s.appState.catalog.map(
+          (d) =>
+            [
+              d.id,
+              // Spread `flatWeight` only when defined; the rule helper's
+              // parameter type uses `flatWeight?: boolean` (under
+              // exactOptionalPropertyTypes, `undefined` ≠ "absent").
+              d.flatWeight === undefined
+                ? { weight: d.weight ?? 0 }
+                : { weight: d.weight ?? 0, flatWeight: d.flatWeight },
+            ] as const,
+        ),
       );
-      let currentWeight = 0;
-      for (const item of s.appState.items) {
-        if (item.ownerId !== stashId) continue;
-        currentWeight += (weightByDefId.get(item.definitionId) ?? 0) * item.quantity;
-      }
+      const inventoryRows = s.appState.items.filter((i) => i.ownerId === stashId);
+      const currentWeight = weightRules.containerAwareWeight(inventoryRows, defsById);
       return {
         str: character.abilityScores.STR,
         size: character.size,

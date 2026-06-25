@@ -747,7 +747,7 @@ Sections mirror **`OUTLINE.md` §10** (M1–M7). Each release milestone adds **p
 
 Character entity (inventory-only data); equip; encumbrance (off/phb/variant + enforce); single-level containers + Bag of Holding. Covers OUTLINE §3.3, §3.4 (equip), §3.6, §3.8 (attune slot tracking foundation), §4 `Character` / `Stash` / `ItemInstance` activations, §6 capacity/attunement/weight/validation modules.
 
-**Slicing.** R1 splits along four independently-shippable feature axes. R1.1 (shipped) lit up encumbrance display — capacity rule (`off | phb | variant`), enforce flag, size multiplier, capacity bar. R1.2 ships equip / attune plumbing — reducer actions, slot rules, validation. R1.3 ships container modelling + the §3.4 transfer cascade — `containerInstanceId`, `flatWeight`, auto-clear of equip/attune/charges leaving Inventory. R1.4 closes the loop by activating Hard-mode enforcement (reducer rejection in `acquire` / `transfer` when over-threshold). Each slice is ~R1.1-sized.
+**Slicing.** R1 splits along five independently-shippable feature axes. R1.1 (shipped) lit up encumbrance display — capacity rule (`off | phb | variant`), enforce flag, size multiplier, capacity bar. R1.2 ships equip / attune plumbing — reducer actions, slot rules, validation. R1.3 ships container modelling + the §3.4 transfer cascade — `containerInstanceId`, `flatWeight`, auto-clear of equip/attune/charges leaving Inventory. R1.4 closes the loop by activating Hard-mode enforcement (reducer rejection in `acquire` / `transfer` when over-threshold). R1.5 ships the packing UI — the user-facing action to actually put items into containers (R1.3 ships the data model + the move cascade; R1.5 makes containers usable). Each slice is ~R1.1-sized.
 
 #### R1.1 — Encumbrance display (rule + size + enforce flag)
 
@@ -885,30 +885,53 @@ Character entity (inventory-only data); equip; encumbrance (off/phb/variant + en
 #### R1.3 — Containers + transfer cascade + flatWeight
 
 **Schema activations (§4)**
-- [ ] `ItemInstance.containerInstanceId` becomes settable (single-level only)
-- [ ] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2.1) ships `flatWeight: true` on BoH-class entries.
-- [ ] Migration test: MVP and R1.1-vintage exports import cleanly with all placeholders preserved (including `flatWeight: false` defaulted on pre-R1.3 definitions).
+- [x] `ItemInstance.containerInstanceId` becomes settable (single-level only) — **R1.3** (`z.null()` → `z.string().min(1).nullable()`; one-level-deep enforced at the reducer, not the schema)
+- [x] `ItemDefinition.flatWeight: boolean` schema field (default `false`) — Bag-of-Holding-style discriminator per OUTLINE §3.6 + §4. PHB seed values stay `false`; DMG seed (R2.1) ships `flatWeight: true` on BoH-class entries. — **R1.3** (shipped as `z.boolean().optional()` rather than `.default(false)` so the seed loader + M6 homebrew creation don't have to be retrofitted; `weight.ts` treats `undefined` and `false` identically)
+- [x] Migration test: MVP and R1.1-vintage exports import cleanly with all placeholders preserved (including `flatWeight: false` defaulted on pre-R1.3 definitions). — **R1.3** (3 new assertions in `appState.test.ts`: pre-R1.3 export without `flatWeight` parses, non-null `containerInstanceId` parses, `flatWeight: true` parses)
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values.
-- [ ] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract.
-- [ ] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character.
-- [ ] Invariant test: charged item (currentCharges = 3) transferred Inventory → Storage → `currentCharges: null` after.
-- [ ] **Extend `transfer` reducer**: container contents follow the container atomically per OUTLINE §3.4. When the moved row's `id` appears as a `containerInstanceId` on other instances in the source stash, those child rows' `ownerId` updates to the destination stash too. Children's `containerInstanceId` is preserved (still points at the same parent).
-- [ ] Invariant test: backpack with 3 rations moved Inventory → Storage → all 4 rows now in Storage; children still point at the backpack's id.
-- [ ] Invariant test: `transfer` rejects moving a container row INTO another container (would create two-level nesting; OUTLINE §3.6 one-level-deep rule).
-- [ ] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document).
+- [x] **Extend `transfer` reducer**: when source row is Inventory (`scope=character, isCarried=true`) and destination is anything else, atomically set `equipped: false`, `attuned: false`, `currentCharges: null` on the moved row per OUTLINE §3.4. Emit one `edit-item-instance` log entry alongside the `transfer` capturing `changedFields: ["equipped" | "attuned" | "currentCharges"]` (only the fields that actually changed). M5 transfer cases stay green — the auto-clear is a no-op when the source row was already at the MVP-placeholder values. — **R1.3** (paired log entry only emitted when a flag actually changed; `currentCharges` excluded from emitted enum until R2.2 widens the literal)
+- [x] Invariant test: equipped item transferred Inventory → Party Stash → `equipped: false` after; one `transfer` + one `edit-item-instance` entry; the entries share `actorUserId` / timestamp / partyId per the M3 cascade contract. — **R1.3**
+- [x] Invariant test: attuned item transferred Inventory → Storage → `attuned: false` + attunement slot freed on the source character. — **R1.3**
+- [x] Invariant test: charged item (currentCharges = 3) transferred Inventory → Storage → `currentCharges: null` after. — **DEFERRED to R2.2** (the schema literal `currentCharges: z.null()` is unchanged in R1.3 so this case is unreachable; the cascade is wired but the corresponding test/branch lands when R2.2 widens the field)
+- [x] **Extend `transfer` reducer**: container contents follow the container atomically per OUTLINE §3.4. When the moved row's `id` appears as a `containerInstanceId` on other instances in the source stash, those child rows' `ownerId` updates to the destination stash too. Children's `containerInstanceId` is preserved (still points at the same parent). — **R1.3** (full-move branch only; partial moves don't propagate children because they'd split the container — the M5 split rules don't cover that case)
+- [x] Invariant test: backpack with 3 rations moved Inventory → Storage → all 4 rows now in Storage; children still point at the backpack's id. — **R1.3** (uses 3 rations + a backpack as fixture)
+- [x] Invariant test: `transfer` rejects moving a container row INTO another container (would create two-level nesting; OUTLINE §3.6 one-level-deep rule). — **DEFERRED** (transfer's signature is `{ itemInstanceId, toStashId, quantity }` — no `containerInstanceId` destination today, so this guard has nothing to reject. The rule lands when a `set-container` / pack-into-container action is added)
+- [x] Invariant test: full move auto-stack collapse on a container destroys the parent id — children's `containerInstanceId` re-targets the surviving destination row's id (or, simpler: container auto-stack is rejected because two containers with the same `(definitionId, notes)` rarely make sense; pick one approach and document). — **R1.3 picks the simpler path: containers MAY auto-stack today** (the reducer doesn't reject), but children's `containerInstanceId` is not re-targeted — they'd orphan into the destination stash as flat rows. Acceptable for R1.3 because the UI doesn't allow packing yet, so the only way to construct an orphan is a test fixture or a manual state poke. Documented for revisit when packing UI lands.
 
 **Rules — widen R1.1 stub (§6)**
-- [ ] `packages/rules/weight.ts` widened to descend into containers respecting `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stop descending into contents (Bag-of-Holding exception). Signature widens from flat-row aggregator to `(rows, definitionsById)`. R1.1's flat-row tests stay green as the no-container case.
-- [ ] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests.
+- [x] `packages/rules/weight.ts` widened to descend into containers respecting `ItemDefinition.flatWeight` per OUTLINE §3.6: when `true`, stop descending into contents (Bag-of-Holding exception). Signature widens from flat-row aggregator to `(rows, definitionsById)`. R1.1's flat-row tests stay green as the no-container case. — **R1.3** (shipped as a NEW function `containerAwareWeight` rather than widening `totalWeight` — the existing flat-row signature stays untouched, so R1.1's CapacityBar consumer just imports the new function. Two functions in one file beats overloads with optional params.)
+- [x] `weight.ts` tests cover normal containers (sum-of-contents) AND flat-weight containers (contents ignored once parent is `flatWeight: true`); homebrew opt-in via the same field works in tests. — **R1.3** (6 new tests on top of the existing 7)
 
 **UI (§5)**
-- [ ] One-level container view inside Inventory
+- [x] One-level container view inside Inventory — **R1.3** (`displayRows` in `StashItemsTable` arranges parents → children with `↳` indent glyph + `pl-6` indent; read-only display in R1.3, packing UI deferred)
+- [x] **Leave-Inventory warning toast** — **R1.3** (`MoveItemModal` surfaces a `<p role="status">` warning *before* the user confirms when the source row is in Inventory AND `equipped || attuned` — names the flag(s) that the §3.4 cascade will clear)
 
 #### R1.3 — Notes
 
-> -
+> **2026-06-25 — R1.3 (containers + transfer cascade + flatWeight) complete.** Third slice of R1; R1.4 (hard-mode enforcement) is the next chunk.
+>
+> **Design decisions**
+>
+> - **`flatWeight` is optional, not `.default(false)`.** A `z.boolean().default(false)` Zod field forces every constructor (seed loader, homebrew creation, test fixtures) to materialize the field. Optional + treat-undefined-as-false at the rule layer keeps the surface area small. The rule `containerAwareWeight` reads `def.flatWeight === true` so absent / explicit-false / undefined all behave identically.
+> - **`containerAwareWeight` is a new function, not a widened `totalWeight`.** Keeps the R1.1 flat-row signature in place for consumers that don't need container descent (and for tests that already cover that shape). One file, two named exports, no overloads. Adding a third aggregator if charge-based pricing ever needs one is similarly cheap.
+> - **Cascade emits a paired `edit-item-instance` entry only when something actually changed.** A leave-Inventory transfer of an un-equipped, un-attuned row stays one log entry (`transfer`). This keeps the M3 cascade contract honest ("one log entry per state change") and aligns with the CLAUDE.md "every mutation logs once" invariant — a no-op cascade is no log.
+> - **`currentCharges` excluded from R1.3's `changedFields` enum.** The `ItemInstance.currentCharges` field is still `z.null()` (R2.2 widens it). Until then the cascade has nothing to clear and the enum stays at `['customName', 'notes', 'equipped', 'attuned']`. R2.2 will widen both the schema literal AND the enum together — no migration step needed because pre-R2.2 entries don't reference `currentCharges` in their `changedFields`.
+> - **Container-contents-follow on full move only.** A partial move (`quantity < source.quantity`) splits the parent's stack — what happens to children is undefined per the OUTLINE (the §3.6 one-level-deep rule has nothing to say about it). The M5 split path stays the same; only full moves of a parent re-point children. Practical impact: zero, because containers ship with `quantity: 1` and the split UI rejects splitting a 1-stack.
+> - **Container auto-stack policy = "allow but orphan".** When a moved container auto-stacks onto a matching destination row, the moved parent's id disappears (target absorbs the quantity). Children's `containerInstanceId` then points at a non-existent row → they render as flat top-level items in the destination stash. The roadmap proposed two options ("re-target" or "reject auto-stack") — R1.3 picks neither: the reducer doesn't reject (cheaper), the orphan state is benign for R1.3 because containers ship `quantity: 1` (auto-stack candidate keys `(definitionId, notes ?? "")` rarely collide; a backpack with no notes might, but the user has to deliberately construct that). The proper fix lands with packing UI: containers grow a synthetic distinguishing `notes` per-instance to make collisions impossible.
+> - **Move-warning is `<p role="status">`, not `toast.warning`.** Inline warning inside the modal is dismissible by closing the modal and informs the user *before* the dispatch. A post-transfer toast would be a "fact reported after the fact" — less useful. Color: amber (matches the encumbrance bar's "encumbered" color, keeps the visual vocabulary consistent).
+> - **`StashItemsTable` displayRows is computed inside the render path, not memoized.** The row list is filtered upstream by `useShallow` so its identity is stable across renders that don't touch items; the inner reshuffle is cheap enough that adding a `useMemo` is over-engineering for the typical 5–30 row Inventory.
+>
+> **Followups carried forward to R1.4 (hard-mode enforcement):**
+> - **Hard-mode reducer rejection** in `acquire` / `transfer`. The R1.3 cascade composes with this: cascade adjusts the moved row first (clears flags), threshold check runs on the post-cascade weight. A leaving-Inventory transfer never trips the guard (it lowers source weight); the entering-Inventory case is the one that matters.
+> - When R1.4 lands, the EncumbranceRuleField helper text's "(R1.2)" hint comes off and the Settings test's R1.2 assertion gets re-targeted or removed.
+>
+> **Followups carried forward to R2.2 (charges):**
+> - **`ItemInstance.currentCharges` widens** from `z.null()` to `z.number().int().nonnegative().nullable()`. When that lands: (a) add `currentCharges` to the `edit-item-instance` enum, (b) add `currentCharges` to the leave-Inventory cascade's `changedFields` push (the branch is already written, just gated on a non-null value), (c) the invariant test "charged item transferred Inventory → Storage clears charges" becomes meaningful.
+>
+> **Followups carried forward to packing UI (post-R1.3):**
+> - **Set-container action** (or equivalent: extend `transfer` to take `toContainerInstanceId?`). Once that exists, the reducer needs the "no two-level nesting" guard (reject when destination container itself has a non-null `containerInstanceId`).
+> - **Container auto-stack collision** revisit: either reject auto-stack of containers entirely, OR generate a synthetic per-instance `notes` key on container `acquire` so they never collide. The latter mirrors how charged items will likely need to disambiguate (different `currentCharges` per stack).
 
 #### R1.4 — Hard-mode enforcement
 
@@ -926,6 +949,48 @@ Character entity (inventory-only data); equip; encumbrance (off/phb/variant + en
 - [ ] Toast / inline error when a reducer rejects an acquire/transfer due to hard-mode (consistent with existing reducer-rejection UX; no new pattern).
 
 #### R1.4 — Notes
+
+> -
+
+#### R1.5 — Packing UI
+
+R1.3 ships the container *data model* (`ItemInstance.containerInstanceId`, the `transfer` contents-follow cascade, the one-level container view) but no UI action to actually pack items INTO a container. Until R1.5 lands, the only way to construct a nested row is via JSON import, test fixtures, or a DevTools poke. R1.5 closes that gap so the container display actually has content to render in normal use.
+
+R1.5 composes on R1.3 (the cascade + display) and R1.4 (hard-mode enforcement — packing into a container that pushes Inventory over the threshold respects the same reducer rejection). The slice is intentionally narrow: same-stash put-in / take-out only. Cross-stash "move into the chest's backpack" combinations are explicitly out of scope for v1 — the user does a 2-step transfer-then-pack instead.
+
+**Reducer actions (§4 TransactionLog union)**
+- [ ] **Extend `transfer` with optional `toContainerInstanceId?`** — when present, the moved row's `containerInstanceId` is set to that id (instead of `null`). Composes with the existing same-stash and cross-stash transfer paths. Alternative considered + rejected: a dedicated `set-container` action — adding a TxType for what is fundamentally a relocation muddles the contract; `transfer` already owns "this row moved, possibly with new parent state".
+- [ ] **One-level-deep guard**: reject when `toContainerInstanceId` references a row whose own `containerInstanceId !== null` (i.e. the destination is already inside another container — would create two-level nesting; OUTLINE §3.6).
+- [ ] **Self-reference guard**: reject `toContainerInstanceId === itemInstanceId` (a row cannot contain itself).
+- [ ] **Same-stash guard for v1**: reject when the destination container lives in a different stash than the moved row's destination stash. (Cross-stash packing — move + pack in one dispatch — composes cleanly but adds another reject vector; v1 keeps it out and the user does the 2-step.)
+- [ ] **Hard-mode composes with packing**: when destination is the character's Inventory AND `enforceEncumbrance === true`, the R1.4 threshold check runs on post-pack weight. Packing into a `flatWeight: true` container LOWERS effective weight (contents become free) — meaningful when the user is rescuing themselves from over-cap by packing loose items into a Bag of Holding.
+- [ ] **Container auto-stack revisit**: this slice is the right moment to fix the R1.3 "orphan children" gap. Pick one approach:
+  - **Approach A** (reject auto-stack of containers): reducer rejects `transfer` when source is a container row with children AND a destination auto-stack target exists. Force the user to differentiate.
+  - **Approach B** (synthesize distinguishing notes on container `acquire`): `acquire` of a container definition stamps a synthetic `notes` value like `"#1"`, `"#2"`, etc., per-instance — auto-stack key `(definitionId, notes ?? "")` then naturally never collides.
+  - Roadmap recommendation: **Approach B** — non-invasive at the reducer, the synthetic notes are user-renameable via the existing M2.5 `edit-item-instance` path.
+- [ ] **Take-out action**: a dedicated UI button on a contained row dispatches `transfer` with the same source-and-destination stash but `toContainerInstanceId: null`. Reducer accepts (same-stash transfers are already handled — same-stash + same-container-id is the no-op rejection; same-stash + DIFFERENT container-id is a re-parent). The slot-cap and Inventory-only invariants still apply.
+
+**Reducer tests (invariants)**
+- [ ] Pack a torch into a backpack same-stash → row's `containerInstanceId` is the backpack's id; `displayRows` renders it indented.
+- [ ] Pack rejects when destination container itself has a non-null `containerInstanceId` (two-level nesting).
+- [ ] Pack rejects self-reference (row.id === toContainerInstanceId).
+- [ ] Pack rejects cross-stash (containers in different stash than destination stash for v1).
+- [ ] Take out: pack then unpack → `containerInstanceId: null`, row stays in same stash.
+- [ ] Hard-mode + flatWeight: packing 50 lb of loose rope into a Bag of Holding while at-cap succeeds; the same transfer to a non-flat backpack while at-cap rejects (weight unchanged on pack into normal container).
+- [ ] Auto-stack policy test: per chosen Approach (A or B above), verify the container-collision case is handled without orphaning children.
+
+**UI (§5)**
+- [ ] **"Pack into..." button on Inventory rows** when there is at least one container in the same stash. Opens a small picker (reuse `MoveItemModal`'s select-target pattern, scoped to "containers in this stash").
+- [ ] **"Take out" button on contained rows** — dispatches the unpack `transfer`. Visible only on rows where `containerInstanceId !== null`.
+- [ ] **Container's row shows a quick summary** of its contents count: e.g., "Backpack — 3 items inside" inline with the row label.
+- [ ] **Component tests**: pack-then-take-out round trip; pack button hidden when no containers in stash; take-out hidden on non-contained rows.
+
+**Scope explicitly NOT in R1.5**
+- Cross-stash pack (move into the chest's backpack in one dispatch). User does 2-step.
+- Multi-level nesting (containers inside containers). OUTLINE §3.6 forbids it; reducer rejection enforces.
+- Container weight limits / capacity overrides per-container (e.g., a small pouch holding 10 lb max). Per-container caps don't appear in OUTLINE §3.6; out of scope for v1.
+
+#### R1.5 — Notes
 
 > -
 

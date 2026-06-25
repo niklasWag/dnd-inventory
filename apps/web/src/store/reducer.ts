@@ -948,43 +948,106 @@ function transfer(
     source.notes,
   );
 
+  // R1.3 — leave-Inventory cascade (OUTLINE §3.4): when the source row
+  // lives in a character's Inventory stash and the destination is
+  // anything else, clear `equipped` / `attuned` / `currentCharges`
+  // atomically. The cascade is a no-op when the source row was already
+  // at the MVP-placeholder values (un-equipped, un-attuned, no charges)
+  // — in that case we don't emit the paired `edit-item-instance` entry
+  // because nothing actually changed.
+  const fromStash = s.stashes.find((st) => st.id === fromStashId);
+  const leavingInventory =
+    fromStash !== undefined &&
+    fromStash.scope === 'character' &&
+    fromStash.isCarried === true &&
+    payload.toStashId !== fromStashId;
+  const clearedFields: ('equipped' | 'attuned')[] = [];
+  if (leavingInventory) {
+    if (source.equipped) clearedFields.push('equipped');
+    if (source.attuned) clearedFields.push('attuned');
+    // `currentCharges` is still null-locked (R2.2 widens it); the cascade
+    // has nothing to clear there yet, but the structure is in place.
+  }
+  // Helper: apply the cascade clear-fields to a row (used in every branch
+  // below where we either move or split the source row).
+  function clearLeaveInventoryFlags(row: ItemInstance): ItemInstance {
+    if (clearedFields.length === 0) return row;
+    return { ...row, equipped: false, attuned: false };
+  }
+
   let nextItems: ItemInstance[];
   let survivingId: string;
+
+  // R1.3 — container-contents-follow cascade (OUTLINE §3.4): when the
+  // moved row's `id` is referenced as `containerInstanceId` by other
+  // rows in the SAME source stash, those child rows' `ownerId` updates
+  // to the destination stash atomically. Children's `containerInstanceId`
+  // is preserved so the (parent, contents) hierarchy survives the move.
+  // The cascade is implicit in the state diff — no per-child log entry
+  // is emitted (cf. M3's delete-stash cascade which IS per-child).
+  //
+  // Only meaningful on a full move (`isFullMove === true`); a partial
+  // move would split the container into two rows, which the OUTLINE
+  // §3.6 one-level-deep rule has nothing to say about and the M5 split
+  // path already rejects via `validateSplit` rules. For R1.3 we follow
+  // children only on full moves.
+  const childRows =
+    isFullMove && target === undefined
+      ? s.items.filter(
+          (i) => i.containerInstanceId === source.id && i.ownerId === fromStashId,
+        )
+      : [];
 
   if (target !== undefined) {
     // Auto-stack onto target. Target row absorbs the moved quantity;
     // source row either disappears (full move) or stays decremented.
+    // The cascade's flag clears apply to the TARGET because that's the
+    // surviving row carrying the moved quantity. (The source row, if it
+    // remains, stays in Inventory — its flags don't change.)
     survivingId = target.id;
     if (isFullMove) {
       nextItems = s.items
         .filter((i) => i.id !== source.id)
         .map((i) =>
-          i.id === target.id ? { ...i, quantity: i.quantity + payload.quantity } : i,
+          i.id === target.id
+            ? clearLeaveInventoryFlags({ ...i, quantity: i.quantity + payload.quantity })
+            : i,
         );
     } else {
       nextItems = s.items.map((i) => {
         if (i.id === source.id) return { ...i, quantity: i.quantity - payload.quantity };
-        if (i.id === target.id) return { ...i, quantity: i.quantity + payload.quantity };
+        if (i.id === target.id)
+          return clearLeaveInventoryFlags({ ...i, quantity: i.quantity + payload.quantity });
         return i;
       });
     }
   } else if (isFullMove) {
-    // Re-point source to the new stash; id preserved.
+    // Re-point source to the new stash; id preserved. Cascade applies
+    // directly to the moved row. Plus R1.3: any child rows in the
+    // source stash whose `containerInstanceId === source.id` follow the
+    // parent atomically (their `containerInstanceId` stays unchanged;
+    // only their `ownerId` re-points to the destination).
     survivingId = source.id;
-    nextItems = s.items.map((i) =>
-      i.id === source.id ? { ...i, ownerId: payload.toStashId } : i,
-    );
+    const childIds = new Set(childRows.map((c) => c.id));
+    nextItems = s.items.map((i) => {
+      if (i.id === source.id)
+        return clearLeaveInventoryFlags({ ...i, ownerId: payload.toStashId });
+      if (childIds.has(i.id)) return { ...i, ownerId: payload.toStashId };
+      return i;
+    });
   } else {
     // Partial move with no auto-stack target: clone source into a fresh
-    // row in the destination, decrement source.
+    // row in the destination, decrement source. The cascade applies to
+    // the NEW row (it's the one that left Inventory). Source row stays
+    // in Inventory — flags untouched.
     const newId = crypto.randomUUID();
     survivingId = newId;
-    const newRow: ItemInstance = {
+    const newRow: ItemInstance = clearLeaveInventoryFlags({
       ...source,
       id: newId,
       ownerId: payload.toStashId,
       quantity: payload.quantity,
-    };
+    });
     nextItems = [
       ...s.items.map((i) =>
         i.id === source.id ? { ...i, quantity: i.quantity - payload.quantity } : i,
@@ -993,19 +1056,34 @@ function transfer(
     ];
   }
 
+  const logEntries: LogEntrySlice[] = [
+    {
+      type: 'transfer',
+      payload: {
+        itemInstanceId: survivingId,
+        quantity: payload.quantity,
+        fromStashId,
+        toStashId: payload.toStashId,
+      },
+    },
+  ];
+  // Paired `edit-item-instance` entry per OUTLINE §3.4: only emitted
+  // when the cascade actually changed something. Same `actorUserId` /
+  // `partyId` / `timestamp` because both entries resolve off the same
+  // pre-mutation snapshot in `index.ts` (M3 cascade contract).
+  if (clearedFields.length > 0) {
+    logEntries.push({
+      type: 'edit-item-instance',
+      payload: {
+        itemInstanceId: survivingId,
+        changedFields: clearedFields,
+      },
+    });
+  }
+
   return {
     state: { ...s, items: nextItems },
-    logEntries: [
-      {
-        type: 'transfer',
-        payload: {
-          itemInstanceId: survivingId,
-          quantity: payload.quantity,
-          fromStashId,
-          toStashId: payload.toStashId,
-        },
-      },
-    ],
+    logEntries,
   };
 }
 

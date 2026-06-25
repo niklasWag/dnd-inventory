@@ -167,3 +167,59 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     expect(screen.getByRole('button', { name: /^unequip torch/i })).toBeInTheDocument();
   });
 });
+
+describe('StashItemsTable — R1.3 container view', () => {
+  /**
+   * One-level container nesting (OUTLINE §3.6): a row whose
+   * `containerInstanceId` points at another row in the same stash
+   * renders directly under that parent, with a visual indent. The R1.3
+   * UI is a read-only display — packing items into a container lives in
+   * a later milestone.
+   */
+  it('renders child rows directly after their parent with an indent marker', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const rations = catalog.find((d) => d.id === 'phb-2024:rations-1day')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rations.id,
+        quantity: 1,
+        source: 'catalog-add',
+        notes: 'inside-pack',
+      },
+    });
+    // Patch the rations row to live inside the backpack.
+    useStore.setState((curr) => {
+      if (curr.appState === null) return curr;
+      return {
+        ...curr,
+        appState: {
+          ...curr.appState,
+          items: curr.appState.items.map((row) =>
+            row.notes === 'inside-pack' ? { ...row, containerInstanceId: backpackId } : row,
+          ),
+        },
+      };
+    });
+
+    render(
+      <MemoryRouter>
+        <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
+        <Toaster />
+      </MemoryRouter>,
+    );
+
+    // Both rows render. The child's row should carry the indent marker (↳).
+    expect(screen.getByText('Backpack')).toBeInTheDocument();
+    expect(screen.getByText(/Rations/i)).toBeInTheDocument();
+    // The indent glyph appears at least once (one child row).
+    expect(screen.getAllByText('↳').length).toBeGreaterThanOrEqual(1);
+  });
+});

@@ -176,3 +176,51 @@ describe('MoveItemModal (M5)', () => {
     expect(opt!.textContent).toMatch(/Chest at home/);
   });
 });
+
+describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
+  /**
+   * The §3.4 cascade auto-clears equipped/attuned on a leave-Inventory
+   * transfer. The modal must surface this BEFORE the user confirms so
+   * the row coming back un-equipped after a round trip isn't a surprise.
+   * Warning shows only when (a) source row lives in Inventory AND
+   * (b) at least one of `equipped` / `attuned` is true.
+   */
+  it('renders a warning when an equipped Inventory row is being moved', () => {
+    const { characterId, itemInstanceId } = (() => {
+      const setup = setupWithStacks(1);
+      // Source row is in Inventory; equip it before opening the modal.
+      const charId = useStore.getState().appState!.characters[0]!.id;
+      useStore
+        .getState()
+        .dispatch({ type: 'equip', payload: { characterId: charId, itemInstanceId: setup.itemInstanceId } });
+      return { characterId: charId, itemInstanceId: setup.itemInstanceId };
+    })();
+    expect(characterId).toBeTruthy();
+
+    renderWith(true, itemInstanceId);
+    expect(screen.getByRole('status').textContent).toMatch(/equipped/i);
+    expect(screen.getByRole('status').textContent).toMatch(/clear/i);
+  });
+
+  it('renders a warning naming both flags when row is equipped AND attuned', () => {
+    const setup = setupWithStacks(1);
+    const charId = useStore.getState().appState!.characters[0]!.id;
+    useStore
+      .getState()
+      .dispatch({ type: 'equip', payload: { characterId: charId, itemInstanceId: setup.itemInstanceId } });
+    useStore
+      .getState()
+      .dispatch({ type: 'attune', payload: { characterId: charId, itemInstanceId: setup.itemInstanceId } });
+
+    renderWith(true, setup.itemInstanceId);
+    const status = screen.getByRole('status').textContent ?? '';
+    expect(status).toMatch(/equipped/i);
+    expect(status).toMatch(/attuned/i);
+  });
+
+  it('does NOT render a warning for an un-equipped, un-attuned row', () => {
+    const { itemInstanceId } = setupWithStacks(1);
+    renderWith(true, itemInstanceId);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+});
