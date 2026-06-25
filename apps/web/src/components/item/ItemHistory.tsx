@@ -4,11 +4,17 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { useStore } from '@/store';
 import { buildStashLabels, shortStashId } from '@/lib/stashLabels';
-import type { TransactionLogEntry } from '@app/shared';
+import type { ItemDefinition, ItemInstance, TransactionLogEntry } from '@app/shared';
 
 interface ItemHistoryProps {
   itemInstanceId: string;
 }
+
+/** Stable empty references — fresh `[]` literals would break Zustand's
+ * shallow equality and cause an infinite render loop when `appState` is
+ * null. */
+const EMPTY_ITEMS: readonly ItemInstance[] = [];
+const EMPTY_DEFS: readonly ItemDefinition[] = [];
 
 /**
  * Per-item history view (OUTLINE §3.11). Filters `state.log` for entries
@@ -86,6 +92,23 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
     [stashes, characters, log],
   );
 
+  // R1.5 — the `transfer` summarizer needs to resolve `toContainerInstanceId`
+  // to a human-readable container name (e.g. "Backpack (#1)"). Subscribe to
+  // the raw `items` + `catalog` slices and derive the lookup in `useMemo`.
+  const items = useStore((s) => s.appState?.items ?? EMPTY_ITEMS);
+  const catalog = useStore((s) => s.appState?.catalog ?? EMPTY_DEFS);
+  const containerLabelById = useMemo<ReadonlyMap<string, string>>(() => {
+    const defsById = new Map(catalog.map((d) => [d.id, d]));
+    const out = new Map<string, string>();
+    for (const row of items) {
+      const def = defsById.get(row.definitionId);
+      const baseName = row.customName ?? def?.name ?? 'container';
+      const suffix = row.notes !== undefined ? ` (${row.notes})` : '';
+      out.set(row.id, `${baseName}${suffix}`);
+    }
+    return out;
+  }, [items, catalog]);
+
   if (entries.length === 0) {
     return (
       <section className="space-y-2">
@@ -114,7 +137,7 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
             <span className="rounded bg-muted px-1.5 py-0.5 text-xs uppercase text-muted-foreground">
               {e.actorRole}
             </span>
-            <span>{summarize(e, itemInstanceId, stashLabelById)}</span>
+            <span>{summarize(e, itemInstanceId, stashLabelById, containerLabelById)}</span>
           </li>
         ))}
       </ul>
@@ -128,6 +151,7 @@ function summarize(
   e: ItemEntry,
   viewingItemId: string,
   stashLabels: ReadonlyMap<string, string>,
+  containerLabels: ReadonlyMap<string, string>,
 ): string {
   switch (e.type) {
     case 'acquire':
@@ -139,11 +163,40 @@ function summarize(
     case 'edit-item-instance':
       return `Edited ${e.payload.changedFields.join(' + ')}`;
     case 'transfer': {
-      // Source stash may have been deleted (delete-cascade synthesizes
-      // these). Fall back to a short-uuid prefix so the row is still
-      // legible — the full id stays in the log for forensic use.
-      const from = stashLabels.get(e.payload.fromStashId) ?? shortStashId(e.payload.fromStashId);
-      const to = stashLabels.get(e.payload.toStashId) ?? shortStashId(e.payload.toStashId);
+      // R1.5 — `toContainerInstanceId` distinguishes four variants that
+      // share the same TxType but mean very different things to a
+      // reader. Without this branch every same-stash pack/take-out
+      // rendered as the uninformative "Transferred ×1 from X to X".
+      //
+      //   - same-stash + parent: string  → "Packed ×N into {container} (in {stash})"
+      //   - same-stash + parent: null    → "Took ×N out of container (in {stash})"
+      //   - cross-stash + parent: null   → existing "from X to Y" + "(removed from container)"
+      //   - cross-stash + parent: undef  → existing "from X to Y" (pre-R1.5 phrasing)
+      const sameStash = e.payload.fromStashId === e.payload.toStashId;
+      const stashLabel =
+        stashLabels.get(e.payload.toStashId) ?? shortStashId(e.payload.toStashId);
+      if (sameStash && typeof e.payload.toContainerInstanceId === 'string') {
+        // The container row may have been deleted between the pack event
+        // and the current view; fall back to a generic "container" word
+        // so the line stays readable.
+        const containerLabel =
+          containerLabels.get(e.payload.toContainerInstanceId) ?? 'container';
+        return `Packed \u00d7${String(e.payload.quantity)} into ${containerLabel} (in ${stashLabel})`;
+      }
+      if (sameStash && e.payload.toContainerInstanceId === null) {
+        return `Took \u00d7${String(e.payload.quantity)} out of container (in ${stashLabel})`;
+      }
+      // Cross-stash path: fall through to the legacy phrasing. The
+      // orphan-drop case (cross-stash + `toContainerInstanceId: null`)
+      // intentionally renders identically to a plain cross-stash move:
+      // the parent-clear is structural plumbing, the source/destination
+      // stash labels already tell the whole story, and an extra
+      // "(removed from container)" suffix makes the line too long to
+      // fit one row in the log timeline. The reducer-side orphan-drop
+      // still keeps state honest; the log just doesn't shout about it.
+      const from =
+        stashLabels.get(e.payload.fromStashId) ?? shortStashId(e.payload.fromStashId);
+      const to = stashLabel;
       return `Transferred \u00d7${String(e.payload.quantity)} from ${from} to ${to}`;
     }
     case 'split': {

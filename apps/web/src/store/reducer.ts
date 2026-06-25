@@ -356,12 +356,29 @@ function acquire(
   if (!s.stashes.some((st) => st.id === payload.stashId)) {
     throw new Error(`acquire: unknown stashId ${payload.stashId}`);
   }
-  if (!s.catalog.some((d) => d.id === payload.definitionId)) {
+  const definition = s.catalog.find((d) => d.id === payload.definitionId);
+  if (definition === undefined) {
     throw new Error(`acquire: unknown definitionId ${payload.definitionId}`);
   }
 
+  // R1.5 Approach B — synthesize a distinguishing `notes` value when the
+  // acquired definition is a container AND the caller didn't pass an
+  // explicit notes value. Each container instance gets its own per-stash
+  // `#1`, `#2`, … tag so the auto-stack key `(definitionId, notes ?? "")`
+  // never collides (two backpacks stay as two rows). Counter strategy is
+  // "highest existing + 1" rather than "count + 1" so deletes don't
+  // recycle ids: deleting `#1` then acquiring yields `#3`, not `#1` again.
+  // The user can rename the tag via the existing M2.5 Item Detail edit
+  // path (`edit-item-instance` with `changedFields: ["notes"]`).
+  const effectiveNotes =
+    payload.notes !== undefined
+      ? payload.notes
+      : definition.category === 'container'
+        ? nextContainerNotes(s.items, payload.definitionId, payload.stashId)
+        : undefined;
+
   // Auto-stack key: (definitionId, notes ?? "").
-  const notesKey = payload.notes ?? '';
+  const notesKey = effectiveNotes ?? '';
   const existing = s.items.find(
     (i) =>
       i.ownerId === payload.stashId &&
@@ -391,7 +408,7 @@ function acquire(
       identified: true,
       currentCharges: null,
     };
-    if (payload.notes !== undefined) newRow.notes = payload.notes;
+    if (effectiveNotes !== undefined) newRow.notes = effectiveNotes;
     nextItems = [...s.items, newRow];
   }
 
@@ -413,6 +430,35 @@ function acquire(
       },
     }],
   };
+}
+
+/**
+ * R1.5 Approach B helper — derive the next synthesized `notes` value
+ * for a container `acquire` in `stashId`. Scans existing instances of
+ * `definitionId` in the same stash for `#N` tags and returns `#<max+1>`
+ * (or `#1` if none exist). Per-stash scope: acquiring the same backpack
+ * definition in Inventory and Party Stash yields `#1` in each.
+ *
+ * Non-matching notes (user-set or imported) are ignored by the regex
+ * so the counter doesn't trip on `"Volo's backpack"` or similar.
+ */
+function nextContainerNotes(
+  items: ReadonlyArray<ItemInstance>,
+  definitionId: string,
+  stashId: string,
+): string {
+  const SYNTH_RE = /^#(\d+)$/;
+  let max = 0;
+  for (const row of items) {
+    if (row.definitionId !== definitionId) continue;
+    if (row.ownerId !== stashId) continue;
+    if (row.notes === undefined) continue;
+    const m = SYNTH_RE.exec(row.notes);
+    if (m === null) continue;
+    const n = Number.parseInt(m[1]!, 10);
+    if (n > max) max = n;
+  }
+  return `#${String(max + 1)}`;
 }
 
 // -------------------------------------------------------------------- //
@@ -1000,19 +1046,74 @@ function transfer(
   if (toStash === undefined) {
     throw new Error(`transfer: unknown toStashId ${payload.toStashId}`);
   }
-  if (source.ownerId === payload.toStashId) {
+
+  // R1.5 — `toContainerInstanceId` adds pack / take-out / no-op semantics.
+  //   - `undefined`: parent unchanged (every pre-R1.5 dispatch).
+  //   - `null`: take-out — clear `containerInstanceId` on the moved row.
+  //   - `string`: pack-into — set `containerInstanceId` to the supplied id.
+  // The same-stash transfer rule (was unconditional reject) now allows
+  // same-stash dispatches when the caller is explicitly changing the
+  // container parent — that's the entire R1.5 surface. A same-stash
+  // dispatch WITHOUT an explicit `toContainerInstanceId` change is still
+  // a no-op and reject.
+  const changingContainerParent =
+    payload.toContainerInstanceId !== undefined &&
+    payload.toContainerInstanceId !== source.containerInstanceId;
+  if (source.ownerId === payload.toStashId && !changingContainerParent) {
     throw new Error('transfer: same stash (no-op)');
   }
+
+  // R1.5 guards on the destination container, if any:
+  if (
+    payload.toContainerInstanceId !== undefined &&
+    payload.toContainerInstanceId !== null
+  ) {
+    // Self-reference: a row can't contain itself.
+    if (payload.toContainerInstanceId === payload.itemInstanceId) {
+      throw new Error('transfer: cannot pack a row into itself (self-reference)');
+    }
+    const parent = s.items.find((i) => i.id === payload.toContainerInstanceId);
+    if (parent === undefined) {
+      throw new Error(
+        `transfer: unknown toContainerInstanceId ${payload.toContainerInstanceId}`,
+      );
+    }
+    // One-level-deep (OUTLINE §3.6): the destination container itself
+    // must be top-level (no parent), otherwise this pack would create
+    // two-level nesting.
+    if (parent.containerInstanceId !== null) {
+      throw new Error(
+        'transfer: destination container is already nested (one level deep only)',
+      );
+    }
+    // Same-stash (v1): destination container must live in the same stash
+    // as the moved row's destination. Cross-stash pack is a 2-step (move
+    // then pack) per the R1.5 scope.
+    if (parent.ownerId !== payload.toStashId) {
+      throw new Error(
+        'transfer: destination container must live in the same stash as toStashId',
+      );
+    }
+  }
+
   inventory.validateTransfer(source, payload.quantity);
 
   const fromStashId = source.ownerId;
   const isFullMove = payload.quantity === source.quantity;
-  const target = inventory.findAutoStackTarget(
-    s.items,
-    payload.toStashId,
-    source.definitionId,
-    source.notes,
-  );
+  // Auto-stack on arrival is gated on "actually changing stash" — a same-
+  // stash pack/take-out dispatch must NOT auto-stack onto a matching row
+  // (it'd merge the packed/unpacked row into a sibling and lose the
+  // container parent change). The R1.5 Approach B synthesized notes
+  // generally prevent collisions already, but the guard is defensive.
+  const target =
+    source.ownerId === payload.toStashId
+      ? undefined
+      : inventory.findAutoStackTarget(
+          s.items,
+          payload.toStashId,
+          source.definitionId,
+          source.notes,
+        );
 
   // R1.3 — leave-Inventory cascade (OUTLINE §3.4): when the source row
   // lives in a character's Inventory stash and the destination is
@@ -1034,11 +1135,39 @@ function transfer(
     // `currentCharges` is still null-locked (R2.2 widens it); the cascade
     // has nothing to clear there yet, but the structure is in place.
   }
-  // Helper: apply the cascade clear-fields to a row (used in every branch
-  // below where we either move or split the source row).
-  function clearLeaveInventoryFlags(row: ItemInstance): ItemInstance {
-    if (clearedFields.length === 0) return row;
-    return { ...row, equipped: false, attuned: false };
+  // Cross-stash container-orphan check (OUTLINE §3.4 invariant: parent
+  // and contents live in the same stash). When the moved row is itself
+  // a CHILD (`containerInstanceId !== null`) and we're changing stash,
+  // AND the parent isn't following along (the parent row's `ownerId`
+  // stays put because we're moving the child, not the parent), the
+  // moved row's `containerInstanceId` would dangle — pointing at a row
+  // in a different stash. Drop the reference atomically so the UI's
+  // "is this row contained?" check stays accurate post-move.
+  //
+  // Skips when an explicit `toContainerInstanceId` is set on the payload
+  // (the user is re-parenting in the destination — `applyMovedRowMutations`
+  // already handles that case via the R1.5 branch below).
+  const droppingParent =
+    payload.toContainerInstanceId === undefined &&
+    source.containerInstanceId !== null &&
+    payload.toStashId !== fromStashId;
+
+  // Helper: apply the cascade clear-fields + R1.5 parent change + cross-
+  // stash orphan-drop to a row (used in every branch below where we
+  // either move or split the source row). Container-parent re-assignment
+  // is part of the same atomic write so the §3.4 cascade and R1.5
+  // pack/take-out compose cleanly.
+  function applyMovedRowMutations(row: ItemInstance): ItemInstance {
+    let next = row;
+    if (clearedFields.length > 0) {
+      next = { ...next, equipped: false, attuned: false };
+    }
+    if (payload.toContainerInstanceId !== undefined) {
+      next = { ...next, containerInstanceId: payload.toContainerInstanceId };
+    } else if (droppingParent) {
+      next = { ...next, containerInstanceId: null };
+    }
+    return next === row ? row : next;
   }
 
   let nextItems: ItemInstance[];
@@ -1057,8 +1186,12 @@ function transfer(
   // §3.6 one-level-deep rule has nothing to say about and the M5 split
   // path already rejects via `validateSplit` rules. For R1.3 we follow
   // children only on full moves.
+  //
+  // Same-stash transfers (R1.5 pack/take-out) never need this cascade
+  // — children stay in the same stash regardless — so we short-circuit
+  // when the destination matches the source stash.
   const childRows =
-    isFullMove && target === undefined
+    isFullMove && target === undefined && source.ownerId !== payload.toStashId
       ? s.items.filter(
           (i) => i.containerInstanceId === source.id && i.ownerId === fromStashId,
         )
@@ -1076,14 +1209,14 @@ function transfer(
         .filter((i) => i.id !== source.id)
         .map((i) =>
           i.id === target.id
-            ? clearLeaveInventoryFlags({ ...i, quantity: i.quantity + payload.quantity })
+            ? applyMovedRowMutations({ ...i, quantity: i.quantity + payload.quantity })
             : i,
         );
     } else {
       nextItems = s.items.map((i) => {
         if (i.id === source.id) return { ...i, quantity: i.quantity - payload.quantity };
         if (i.id === target.id)
-          return clearLeaveInventoryFlags({ ...i, quantity: i.quantity + payload.quantity });
+          return applyMovedRowMutations({ ...i, quantity: i.quantity + payload.quantity });
         return i;
       });
     }
@@ -1097,7 +1230,7 @@ function transfer(
     const childIds = new Set(childRows.map((c) => c.id));
     nextItems = s.items.map((i) => {
       if (i.id === source.id)
-        return clearLeaveInventoryFlags({ ...i, ownerId: payload.toStashId });
+        return applyMovedRowMutations({ ...i, ownerId: payload.toStashId });
       if (childIds.has(i.id)) return { ...i, ownerId: payload.toStashId };
       return i;
     });
@@ -1108,7 +1241,7 @@ function transfer(
     // in Inventory — flags untouched.
     const newId = crypto.randomUUID();
     survivingId = newId;
-    const newRow: ItemInstance = clearLeaveInventoryFlags({
+    const newRow: ItemInstance = applyMovedRowMutations({
       ...source,
       id: newId,
       ownerId: payload.toStashId,
@@ -1122,15 +1255,30 @@ function transfer(
     ];
   }
 
+  const transferPayload: {
+    itemInstanceId: string;
+    quantity: number;
+    fromStashId: string;
+    toStashId: string;
+    toContainerInstanceId?: string | null;
+  } = {
+    itemInstanceId: survivingId,
+    quantity: payload.quantity,
+    fromStashId,
+    toStashId: payload.toStashId,
+  };
+  if (payload.toContainerInstanceId !== undefined) {
+    transferPayload.toContainerInstanceId = payload.toContainerInstanceId;
+  } else if (droppingParent) {
+    // Surface the implicit orphan-drop in the audit trail so a log
+    // reader can explain why a row's `containerInstanceId` flipped to
+    // null on a cross-stash move without an explicit take-out dispatch.
+    transferPayload.toContainerInstanceId = null;
+  }
   const logEntries: LogEntrySlice[] = [
     {
       type: 'transfer',
-      payload: {
-        itemInstanceId: survivingId,
-        quantity: payload.quantity,
-        fromStashId,
-        toStashId: payload.toStashId,
-      },
+      payload: transferPayload,
     },
   ];
   // Paired `edit-item-instance` entry per OUTLINE §3.4: only emitted

@@ -9,6 +9,7 @@ import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
 import { attunement } from '@app/rules';
 import { MoveItemModal } from './MoveItemModal';
+import { PackItemModal } from './PackItemModal';
 import { SplitModal } from './SplitModal';
 
 /** Stable empty-catalog reference — fresh `[]` literals would break Zustand
@@ -94,6 +95,7 @@ export function StashItemsTable({
   // tells the modal which row to operate on.
   const [moveOpen, setMoveOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
 
   if (items.length === 0) {
@@ -101,6 +103,30 @@ export function StashItemsTable({
       <p className="text-sm text-muted-foreground">
         Nothing here yet. Add items from the catalog.
       </p>
+    );
+  }
+
+  // R1.5 — does this stash hold at least one top-level container row?
+  // (`containerInstanceId === null` filter excludes nested containers,
+  // which the reducer would reject as pack targets anyway.) Pack button
+  // visibility hangs on this flag — hiding it when no containers exist
+  // is cheaper UX than letting the empty-modal experience confuse users.
+  const hasTopLevelContainer = items.some((row) => {
+    if (row.containerInstanceId !== null) return false;
+    const def = catalogById.get(row.definitionId);
+    return def?.category === 'container';
+  });
+
+  // R1.5 — count children (by SUMMED quantity, not row count) per
+  // container row. Used to render the "Backpack — 3 items inside"
+  // summary on container rows. Computed once per render; cheap because
+  // we're already iterating the same item list in displayRows.
+  const childCountByParent = new Map<string, number>();
+  for (const row of items) {
+    if (row.containerInstanceId === null) continue;
+    childCountByParent.set(
+      row.containerInstanceId,
+      (childCountByParent.get(row.containerInstanceId) ?? 0) + row.quantity,
     );
   }
 
@@ -169,6 +195,27 @@ export function StashItemsTable({
             const def = catalogById.get(row.definitionId);
             const displayName = row.customName ?? def?.name ?? '(unknown item)';
             const canSplit = row.quantity >= 2;
+            // R1.5 — row classification for Pack / Take out buttons + the
+            // "N items inside" container summary.
+            const isContainer = def?.category === 'container';
+            // A row is "contained" only when its `containerInstanceId`
+            // resolves to a parent IN THIS STASH. Mirrors `displayRows`'
+            // defensive filter (parent might live elsewhere after a
+            // cross-stash Move — the reducer's R1.5 orphan-drop normally
+            // clears the reference, but partial states like JSON imports
+            // could still trip this; belt-and-braces).
+            const parentInStash =
+              row.containerInstanceId !== null &&
+              items.some((p) => p.id === row.containerInstanceId);
+            const isContained = parentInStash;
+            const childCount = childCountByParent.get(row.id) ?? 0;
+            // Pack button: visible only on free, top-level, non-container
+            // rows in a stash that has at least one container. Containers
+            // themselves don't get the button (no container-in-container
+            // by OUTLINE §3.6). Already-contained rows don't get it
+            // either (the user can take out first, or use Move).
+            const canPack =
+              hasTopLevelContainer && !isContainer && !isContained;
             return (
               <tr key={row.id} className="border-b border-border/50 last:border-0">
                 <td className={`py-2 pr-2${depth === 1 ? ' pl-6' : ''}`}>
@@ -190,6 +237,11 @@ export function StashItemsTable({
                   >
                     {displayName}
                   </button>
+                  {isContainer && childCount > 0 ? (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      — {childCount} {childCount === 1 ? 'item' : 'items'} inside
+                    </span>
+                  ) : null}
                 </td>
                 <td className="py-2 pr-2 text-muted-foreground">{def?.category ?? '—'}</td>
                 <td className="py-2 pr-2 text-right tabular-nums">{row.quantity}</td>
@@ -308,6 +360,49 @@ export function StashItemsTable({
                         </Button>
                       </>
                     ) : null}
+                    {canPack ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Pack ${displayName} into a container`}
+                        onClick={() => {
+                          setActiveItemId(row.id);
+                          setPackOpen(true);
+                        }}
+                      >
+                        Pack
+                      </Button>
+                    ) : null}
+                    {isContained ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Take ${displayName} out of its container`}
+                        onClick={() => {
+                          // R1.5 — direct dispatch (no modal): same-stash
+                          // transfer with `toContainerInstanceId: null`
+                          // unsets the container parent. Wrapped via
+                          // `dispatchOrToast` for the (rare) race where
+                          // the reducer rejects.
+                          dispatchOrToast(
+                            {
+                              type: 'transfer',
+                              payload: {
+                                itemInstanceId: row.id,
+                                toStashId: row.ownerId,
+                                quantity: row.quantity,
+                                toContainerInstanceId: null,
+                              },
+                            },
+                            'Could not take item out',
+                          );
+                        }}
+                      >
+                        Take out
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"
@@ -355,6 +450,14 @@ export function StashItemsTable({
             open={splitOpen}
             onOpenChange={(next) => {
               setSplitOpen(next);
+              if (!next) setActiveItemId(null);
+            }}
+            itemInstanceId={activeItemId}
+          />
+          <PackItemModal
+            open={packOpen}
+            onOpenChange={(next) => {
+              setPackOpen(next);
               if (!next) setActiveItemId(null);
             }}
             itemInstanceId={activeItemId}

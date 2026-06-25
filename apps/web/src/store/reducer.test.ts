@@ -4067,4 +4067,462 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
   });
 });
 
+describe('reducer: transfer — pack & take out (R1.5)', () => {
+  /**
+   * R1.5 — same-stash packing UI. Extends `transfer` with optional
+   * `toContainerInstanceId`:
+   *   - `undefined`: parent unchanged (every pre-R1.5 dispatch).
+   *   - `null`: take-out — clears `containerInstanceId` on the moved row.
+   *   - `string`: pack-into — sets `containerInstanceId` to the supplied id.
+   *
+   * Guards: self-ref, one-level-deep, same-stash, unknown-id. The hard-
+   * mode (R1.4) check composes on post-pack weight, so packing into a
+   * `flatWeight: true` container LOWERS effective weight (it just works
+   * via the existing `containerAwareWeight` rule).
+   *
+   * Approach B for container auto-stack policy (acquire side): every
+   * `acquire` of a `category === 'container'` definition synthesizes a
+   * distinguishing `notes` value so two backpacks never collide on the
+   * `(definitionId, notes ?? "")` key.
+   */
+
+  function acquireRow(
+    stashId: string,
+    definitionId: string,
+    quantity = 1,
+    notes?: string,
+  ): string {
+    const before = new Set(useStore.getState().appState!.items.map((i) => i.id));
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId,
+        definitionId,
+        quantity,
+        source: 'catalog-add',
+        ...(notes !== undefined ? { notes } : {}),
+      },
+    });
+    const fresh = useStore.getState().appState!.items.find((i) => !before.has(i.id));
+    return fresh!.id;
+  }
+
+  function enableEnforce(characterId: string, rule: 'phb' | 'variant'): void {
+    useStore.getState().dispatch({
+      type: 'set-encumbrance',
+      payload: { characterId, rule, enforce: true },
+    });
+  }
+
+  it('packs a torch into a backpack in the same stash', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: backpackId,
+      },
+    });
+
+    const torchRow = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(torchRow.containerInstanceId).toBe(backpackId);
+    expect(torchRow.ownerId).toBe(inventoryStashId);
+  });
+
+  it('rejects pack when destination container has a non-null containerInstanceId (two-level nesting)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    // Backpack A (top-level), Backpack B (will be nested), torch.
+    const backpackAId = acquireRow(inventoryStashId, backpack.id, 1, 'A');
+    const backpackBId = acquireRow(inventoryStashId, backpack.id, 1, 'B');
+    const torchId = acquireRow(inventoryStashId, torch.id);
+    // Manually nest backpack B inside A so it has containerInstanceId !== null.
+    useStore.setState((curr) => {
+      const next = curr.appState!.items.map((i) =>
+        i.id === backpackBId ? { ...i, containerInstanceId: backpackAId } : i,
+      );
+      return { ...curr, appState: { ...curr.appState!, items: next } };
+    });
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: torchId,
+          toStashId: inventoryStashId,
+          quantity: 1,
+          toContainerInstanceId: backpackBId, // already nested inside A
+        },
+      });
+    }).toThrow(/one level|two-level|nested|already in a container/i);
+  });
+
+  it('rejects pack with self-reference (row.id === toContainerInstanceId)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: backpackId,
+          toStashId: inventoryStashId,
+          quantity: 1,
+          toContainerInstanceId: backpackId, // pack into self
+        },
+      });
+    }).toThrow(/self|itself|same row/i);
+  });
+
+  it('rejects pack when destination container lives in a different stash than toStashId', () => {
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    // Backpack lives in party stash; torch lives in inventory.
+    const partyBackpackId = acquireRow(partyStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: torchId,
+          toStashId: inventoryStashId, // moving to inventory
+          quantity: 1,
+          toContainerInstanceId: partyBackpackId, // ... but container is in party stash
+        },
+      });
+    }).toThrow(/same stash|different stash/i);
+  });
+
+  it('rejects pack when toContainerInstanceId references an unknown id', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: torchId,
+          toStashId: inventoryStashId,
+          quantity: 1,
+          toContainerInstanceId: 'bogus-container-id',
+        },
+      });
+    }).toThrow(/unknown|not found/i);
+  });
+
+  it('takes a row out of a container via toContainerInstanceId: null (same stash)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+    // Pack first.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: backpackId,
+      },
+    });
+    // Take out.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: null,
+      },
+    });
+
+    const torchRow = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(torchRow.containerInstanceId).toBeNull();
+    expect(torchRow.ownerId).toBe(inventoryStashId);
+  });
+
+  it('hard-mode allows packing into a flatWeight container at-cap (effective weight drops)', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
+    // Create a homebrew "Big Sack" container, then patch its `flatWeight`
+    // via setState (the M6 homebrew payload doesn't expose flatWeight in
+    // R1.5 — DMG seed lands in R2.1; for now we exercise the reducer rule
+    // against a manually-flagged row).
+    const bigSackName = 'Big Sack of Plenty';
+    useStore.getState().dispatch({
+      type: 'create-homebrew',
+      payload: {
+        name: bigSackName,
+        category: 'container',
+        weight: 5,
+        cost: { amount: 1, currency: 'gp' },
+        description: 'A magical sack that ignores its contents weight.',
+        tags: [],
+      },
+    });
+    useStore.setState((curr) => {
+      const nextCatalog = curr.appState!.catalog.map((d) =>
+        d.name === bigSackName ? { ...d, flatWeight: true } : d,
+      );
+      return { ...curr, appState: { ...curr.appState!, catalog: nextCatalog } };
+    });
+    const sackDef = useStore.getState().appState!.catalog.find((d) => d.name === bigSackName)!;
+    const sackId = acquireRow(inventoryStashId, sackDef.id);
+    // Pre-load Inventory near the PHB cap (16 × 15 = 240 lb).
+    // 23 greatclubs × 10 lb = 230 lb + 5 lb sack = 235 lb total (under 240).
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: greatclub.id,
+        quantity: 23,
+        source: 'catalog-add',
+      },
+    });
+    enableEnforce(characterId, 'phb'); // ceiling = 240 lb
+    const greatclubRow = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === greatclub.id)!;
+
+    // Packing the 230 lb greatclub stack into the flat-weight sack should
+    // LOWER effective weight (sack still contributes 5 lb, contents free).
+    expect(() => {
+      useStore.getState().dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: greatclubRow.id,
+          toStashId: inventoryStashId,
+          quantity: greatclubRow.quantity,
+          toContainerInstanceId: sackId,
+        },
+      });
+    }).not.toThrow();
+  });
+
+  it('Approach B: two acquires of the same container definition produce two rows with distinct synthesized notes', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    const backpackRows = useStore
+      .getState()
+      .appState!.items.filter((i) => i.definitionId === backpack.id);
+    expect(backpackRows).toHaveLength(2);
+    const notesA = backpackRows[0]!.notes;
+    const notesB = backpackRows[1]!.notes;
+    expect(notesA).toBeDefined();
+    expect(notesB).toBeDefined();
+    expect(notesA).not.toBe(notesB);
+    // Conventional synthesis pattern: '#1', '#2'.
+    expect([notesA, notesB].sort()).toEqual(['#1', '#2']);
+  });
+
+  it('Approach B: user-provided notes on container acquire are used verbatim (no synthesis)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+        notes: "Volo's backpack",
+      },
+    });
+
+    const row = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!;
+    expect(row.notes).toBe("Volo's backpack");
+  });
+
+  it('Approach B: synthesis uses "highest existing + 1" so deletes do not recycle ids', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const def = backpack.id;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+    });
+    // Consume #1 fully.
+    const row1 = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === def && i.notes === '#1')!;
+    useStore.getState().dispatch({
+      type: 'consume',
+      payload: { itemInstanceId: row1.id, quantity: 1 },
+    });
+    // Next acquire must synth '#3', not recycle '#1'.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+    });
+
+    const liveRows = useStore
+      .getState()
+      .appState!.items.filter((i) => i.definitionId === def);
+    const notes = liveRows.map((r) => r.notes).sort();
+    expect(notes).toEqual(['#2', '#3']);
+  });
+
+  it('synthesized notes are scoped per-stash (acquiring the same container in two stashes yields #1 in each)', () => {
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: partyStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    const invBackpack = useStore
+      .getState()
+      .appState!.items.find(
+        (i) => i.definitionId === backpack.id && i.ownerId === inventoryStashId,
+      )!;
+    const partyBackpack = useStore
+      .getState()
+      .appState!.items.find(
+        (i) => i.definitionId === backpack.id && i.ownerId === partyStashId,
+      )!;
+    expect(invBackpack.notes).toBe('#1');
+    expect(partyBackpack.notes).toBe('#1');
+  });
+
+  it('non-container acquire is unchanged (no synthesis on weapons / gear)', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+
+    // Should auto-stack on `(definitionId, notes ?? "")` per the M2 contract.
+    const torchRows = useStore
+      .getState()
+      .appState!.items.filter((i) => i.definitionId === torch.id);
+    expect(torchRows).toHaveLength(1);
+    expect(torchRows[0]!.quantity).toBe(2);
+    expect(torchRows[0]!.notes).toBeUndefined();
+  });
+
+  it('cross-stash transfer of a contained row clears its containerInstanceId (no dangling parent)', () => {
+    // Bug repro: pack a torch into a backpack (Inventory), then Move the
+    // torch (NOT the backpack) to the Party Stash. The moved torch must
+    // NOT carry its old `containerInstanceId` — the parent backpack
+    // stayed in Inventory, so the reference would dangle. Without this
+    // fix the UI's `isContained` check renders a Take-out button on the
+    // moved row in the new stash, even though there's no parent there.
+    //
+    // Note: this is the inverse of the OUTLINE §3.4 contents-follow rule.
+    // §3.4 handles "move the PARENT, children come along". This test
+    // covers "move a CHILD out of the container by cross-stash Move",
+    // which must drop the parent reference.
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const backpackId = acquireRow(inventoryStashId, backpack.id);
+    const torchId = acquireRow(inventoryStashId, torch.id);
+
+    // Pack torch into backpack.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: backpackId,
+      },
+    });
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === torchId)!
+        .containerInstanceId,
+    ).toBe(backpackId);
+
+    // Now move JUST the torch cross-stash. The backpack stays in Inventory.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: partyStashId,
+        quantity: 1,
+      },
+    });
+
+    const torchAfter = useStore
+      .getState()
+      .appState!.items.find((i) => i.id === torchId)!;
+    expect(torchAfter.ownerId).toBe(partyStashId);
+    // The fix: containerInstanceId must be cleared because the parent
+    // isn't in the destination stash.
+    expect(torchAfter.containerInstanceId).toBeNull();
+  });
+});
+
 

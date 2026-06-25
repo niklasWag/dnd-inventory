@@ -138,6 +138,16 @@ const editItemInstanceEntry = z.object({
  *
  * M3 emits these synthetically as part of `delete-stash`. M5 user-
  * initiated transfers will dispatch this directly.
+ *
+ * R1.5 — `toContainerInstanceId` is optional + nullable to express three
+ * intents per OUTLINE §3.4 / §3.6:
+ *   - `undefined` (or absent): "transfer did not change container parent"
+ *     — every pre-R1.5 log entry has this shape and stays valid.
+ *   - `null`: explicit take-out — the moved row's `containerInstanceId`
+ *     is cleared to `null` (re-emerges at top level of the destination
+ *     stash).
+ *   - `string`: pack-into — the moved row's `containerInstanceId` is set
+ *     to the supplied id (one-level-deep, same-stash-only in v1).
  */
 const transferEntry = z.object({
   ...baseLogFields,
@@ -147,6 +157,7 @@ const transferEntry = z.object({
     quantity: z.number().int().positive(),
     fromStashId: z.string().min(1),
     toStashId: z.string().min(1),
+    toContainerInstanceId: z.string().min(1).nullable().optional(),
   }),
 });
 

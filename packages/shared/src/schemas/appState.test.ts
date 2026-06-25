@@ -359,4 +359,81 @@ describe('appStateSchema round-trip', () => {
     const parsed = appStateSchema.parse(dmgFlavoured);
     expect(parsed.catalog[0]!.flatWeight).toBe(true);
   });
+
+  it('R1.5 migration — imports a pre-R1.5 transfer entry without toContainerInstanceId', () => {
+    // Pre-R1.5 transfer log entries don't carry `toContainerInstanceId`.
+    // The R1.5 schema widening is additive — older entries parse cleanly.
+    const aged = structuredClone(fixture);
+    aged.log = [
+      {
+        id: 'log-1',
+        partyId: aged.party.id,
+        sessionId: null,
+        timestamp: '2026-06-20T12:00:00.000Z',
+        actorUserId: aged.user.id,
+        actorRole: 'player',
+        type: 'transfer',
+        payload: {
+          itemInstanceId: 'item-x',
+          quantity: 1,
+          fromStashId: 'stash-a',
+          toStashId: 'stash-b',
+          // NOTE: no `toContainerInstanceId` field — pre-R1.5 entries never wrote it.
+        },
+      },
+    ];
+    expect(() => appStateSchema.parse(aged)).not.toThrow();
+  });
+
+  it('R1.5 — accepts a transfer entry with toContainerInstanceId as a string (pack)', () => {
+    const packEntry = structuredClone(fixture);
+    packEntry.log = [
+      {
+        id: 'log-1',
+        partyId: packEntry.party.id,
+        sessionId: null,
+        timestamp: '2026-06-25T12:00:00.000Z',
+        actorUserId: packEntry.user.id,
+        actorRole: 'player',
+        type: 'transfer',
+        payload: {
+          itemInstanceId: 'item-torch',
+          quantity: 1,
+          fromStashId: 'stash-inv',
+          toStashId: 'stash-inv',
+          toContainerInstanceId: 'item-backpack',
+        },
+      },
+    ];
+    const parsed = appStateSchema.parse(packEntry);
+    const entry = parsed.log[0]!;
+    if (entry.type !== 'transfer') throw new Error('expected transfer entry');
+    expect(entry.payload.toContainerInstanceId).toBe('item-backpack');
+  });
+
+  it('R1.5 — accepts a transfer entry with toContainerInstanceId: null (take-out)', () => {
+    const takeOutEntry = structuredClone(fixture);
+    takeOutEntry.log = [
+      {
+        id: 'log-1',
+        partyId: takeOutEntry.party.id,
+        sessionId: null,
+        timestamp: '2026-06-25T12:00:00.000Z',
+        actorUserId: takeOutEntry.user.id,
+        actorRole: 'player',
+        type: 'transfer',
+        payload: {
+          itemInstanceId: 'item-torch',
+          quantity: 1,
+          fromStashId: 'stash-inv',
+          toStashId: 'stash-inv',
+          toContainerInstanceId: null,
+        },
+      },
+    ];
+    const parsed = appStateSchema.parse(takeOutEntry);
+    const entry = parsed.log[0]!;
+    if (entry.type !== 'transfer') throw new Error('expected transfer entry');
+    expect(entry.payload.toContainerInstanceId).toBeNull();
+  });
 });

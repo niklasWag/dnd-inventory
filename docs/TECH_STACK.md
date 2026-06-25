@@ -21,7 +21,7 @@ This document is the **source of truth for technology choices** across both the 
 | Backend (M3+) | **Node.js + Fastify** | Same TS toolchain as frontend. |
 | Database (M3+) | **PostgreSQL + Prisma** | Generated types; first-class migrations. |
 | Realtime (M5+) | **Socket.IO** | Room-per-party broadcast. |
-| Auth (M3+) | **Auth.js + Discord provider** | OAuth2 + session cookies. |
+| Auth (M3+) | **Auth.js + Discord provider + Email OTP provider** | OAuth2 + passwordless email; session cookies. |
 | Deployment | **Docker Compose + nginx + Let's Encrypt** | Single Linux box, self-hosted. |
 
 ---
@@ -65,7 +65,13 @@ This document is the **source of truth for technology choices** across both the 
 ### 2.7 Forms — React Hook Form + Zod resolver
 - All forms (create character, custom item editor, etc.) use RHF + Zod for unified validation.
 
-### 2.8 Build & Tooling
+### 2.8 OTP Input — shadcn/ui `input-otp`
+- Used on the email OTP verification screen (login + backup-email setup in Settings).
+- Built on [`input-otp`](https://github.com/guilhermerodz/input-otp) by guilhermerodz — accessible, copy-paste-friendly, unstyled core wrapped in shadcn/ui primitives.
+- Configured with `maxLength={8}` for the 8-digit code per `OUTLINE.md` §3.1 / `SECURITY.md` §1.2.
+- Added via `pnpm dlx shadcn@latest add input-otp`. Do not hand-edit `src/components/ui/input-otp.tsx`.
+
+### 2.9 Build & Tooling
 - **Vite** for dev + prod build.
 - **vite-plugin-pwa** later, when offline-capable PWA is added (outline §9).
 - **TypeScript** strict mode (`"strict": true`, `noUncheckedIndexedAccess`, `noImplicitOverride`).
@@ -165,11 +171,13 @@ Monorepo via **pnpm workspaces** (anticipating shared rules engine between clien
 - Broadcast `AppState` deltas after every server-side mutation.
 - Automatic reconnect handled by the client SDK; we layer "queue while disconnected" on top per outline §9 (party mode = online required, solo = offline ok).
 
-### 6.6 Auth — Auth.js (next-auth core) + Discord provider
-- **Scope**: `identify` only (per outline §9 / Discord OAuth section in chat history).
-- Session via signed cookies (HTTP-only, SameSite=Lax).
-- PKCE handled automatically by Auth.js.
-- **No email collection**, no password reset, no account recovery flow.
+### 6.6 Auth — Auth.js (next-auth core) + Discord provider + Email provider
+- **Discord OAuth** (primary): scope `identify` only. PKCE handled automatically by Auth.js. The browser never sees the Discord `access_token`.
+- **Email OTP** (passwordless fallback / standalone): Auth.js Email provider, customized to issue an 8-digit numeric OTP (default Auth.js email uses a magic link — this project overrides the `generateVerificationToken` callback to produce an 8-digit code and the `sendVerificationRequest` callback to deliver it as an OTP-in-email rather than a clickable link). Code lifetime: 15 minutes. Rate limiting and single-use enforcement live in the server-side token store (Prisma-backed), not in Auth.js itself.
+- **SMTP:** operator-supplied via environment variables. Required vars: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`. If any are absent at startup, email auth is **disabled entirely** — the login UI hides the email option and the OTP endpoint returns `503`. This prevents silent SMTP failures.
+- Session via signed cookies (`HttpOnly`, `Secure`, `SameSite=Lax`).
+- **No passwords.** No password reset flow. No email collection from Discord (scope is `identify` only — Discord emails are never requested).
+- See `SECURITY.md` §1.1 (Discord) and §1.2 (Email OTP) for the full threat model and mitigations.
 
 ### 6.7 Validation — Zod (shared with client)
 - Request body / params / query strings parsed via Zod before reaching handlers.

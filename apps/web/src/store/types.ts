@@ -140,11 +140,20 @@ export type Action =
       // another. Auto-stacks onto matching `(definitionId, notes ?? "")`
       // rows on arrival. Same-stash transfers, over-quantity transfers,
       // and unknown stash / item ids are reducer-rejected.
+      //
+      // R1.5 — optional `toContainerInstanceId` adds same-stash packing UI:
+      //   - absent / `undefined`: leave the moved row's
+      //     `containerInstanceId` alone (every pre-R1.5 dispatch).
+      //   - `null`: take-out — clear `containerInstanceId` on the moved row.
+      //   - `string`: pack-into — set `containerInstanceId` to the supplied
+      //     id. Reducer guards: self-reference, one-level-deep, same-stash
+      //     (destination container must live in `toStashId`), unknown-id.
       type: 'transfer';
       payload: {
         itemInstanceId: string;
         toStashId: string;
         quantity: number;
+        toContainerInstanceId?: string | null;
       };
     }
   | {

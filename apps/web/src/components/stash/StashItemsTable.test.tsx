@@ -223,3 +223,206 @@ describe('StashItemsTable — R1.3 container view', () => {
     expect(screen.getAllByText('↳').length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary', () => {
+  /**
+   * R1.5 — same-stash pack / take-out UI. Pack button visibility hinges
+   * on the stash having at least one free top-level container; Take out
+   * shows up only on rows that ARE inside a container. The container
+   * summary ("Backpack — 3 items inside") renders inline next to the
+   * container's name.
+   */
+
+  it('hides the Pack button when no containers are in the stash', () => {
+    const { stashId } = setupWith(1); // just a torch, no containers
+    renderTable(stashId);
+    expect(
+      screen.queryByRole('button', { name: /^pack torch/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the Pack button on free top-level items when a container exists', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    renderTable(inventoryStashId);
+    expect(screen.getByRole('button', { name: /^pack torch/i })).toBeInTheDocument();
+  });
+
+  it('hides Pack on the container row itself (no container-in-container per §3.6)', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    // Two backpacks so a candidate container exists in the stash, but
+    // the container row itself shouldn't get a Pack button (avoids the
+    // illegal "pack backpack into backpack" combo even though the
+    // reducer would reject it).
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    renderTable(inventoryStashId);
+    expect(
+      screen.queryByRole('button', { name: /^pack backpack/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens PackItemModal when Pack is clicked, dispatches transfer with toContainerInstanceId', async () => {
+    const user = userEvent.setup();
+    const { inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    renderTable(inventoryStashId);
+
+    await user.click(screen.getByRole('button', { name: /^pack torch/i }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/pack into container/i)).toBeInTheDocument();
+
+    // Submit the form (the default-selected option is the backpack).
+    await user.click(screen.getByRole('button', { name: /^pack$/i }));
+
+    const torchRow = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(torchRow.containerInstanceId).toBe(backpackId);
+  });
+
+  it('renders Take out only on contained rows and dispatches a take-out transfer', async () => {
+    const user = userEvent.setup();
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    // Pack via reducer so the UI test starts in "torch inside backpack" state.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: torchId, toStashId: inventoryStashId, quantity: 1, toContainerInstanceId: backpackId },
+    });
+
+    render(
+      <MemoryRouter>
+        <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
+        <Toaster />
+      </MemoryRouter>,
+    );
+
+    // The torch row now has Take out; the backpack row doesn't.
+    expect(screen.getByRole('button', { name: /take torch/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /take backpack/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /take torch/i }));
+    const torchAfter = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(torchAfter.containerInstanceId).toBeNull();
+  });
+
+  it('renders the "N items inside" summary on container rows with contents', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 3, source: 'catalog-add' },
+    });
+    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: torchId, toStashId: inventoryStashId, quantity: 3, toContainerInstanceId: backpackId },
+    });
+
+    render(
+      <MemoryRouter>
+        <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
+        <Toaster />
+      </MemoryRouter>,
+    );
+
+    // Summary reads "— 3 items inside" (sum of child quantities, not row count).
+    expect(screen.getByText(/3 items inside/i)).toBeInTheDocument();
+  });
+
+  it('hides Take out when the parent is in a different stash (dangling reference)', () => {
+    // Defensive UI filter: a row whose `containerInstanceId` points at
+    // a row in a DIFFERENT stash is not actually contained from the
+    // user's perspective — the parent isn't visible here, so a
+    // "Take out" button would be confusing. The R1.5 reducer's
+    // orphan-drop usually prevents this state, but partial states
+    // (legacy JSON imports, manual DevTools pokes) could still trip it.
+    const { characterId, inventoryStashId, partyStashId, catalog } = bootstrap();
+    const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: partyStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    // Force a dangling reference: torch in Party Stash points at a
+    // backpack in Inventory. (The reducer would normally clear this on
+    // a real cross-stash Move; we patch state directly here to simulate
+    // a legacy / imported blob.)
+    useStore.setState((curr) => {
+      if (curr.appState === null) return curr;
+      return {
+        ...curr,
+        appState: {
+          ...curr.appState,
+          items: curr.appState.items.map((row) =>
+            row.id === torchId ? { ...row, containerInstanceId: backpackId } : row,
+          ),
+        },
+      };
+    });
+
+    render(
+      <MemoryRouter>
+        <StashItemsTable stashId={partyStashId} characterId={characterId} />
+        <Toaster />
+      </MemoryRouter>,
+    );
+
+    // Torch renders top-level (no Take out, because the backpack isn't here).
+    expect(screen.getByText('Torch')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /take torch/i }),
+    ).not.toBeInTheDocument();
+  });
+});
