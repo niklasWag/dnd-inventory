@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ItemHistory } from '@/components/item/ItemHistory';
 import { useStore } from '@/store';
+import { rarityClasses, rarityLabel } from '@/lib/rarity';
 
 /**
  * Item Detail screen (MVP §7 screen 4 / OUTLINE §5 screen 4).
@@ -147,11 +148,34 @@ export function ItemDetail(): ReactElement {
         {backLabel}
       </Button>
 
-      <header className="space-y-1">
+      <header className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">{displayName}</h1>
         <p className="text-sm text-muted-foreground">
           {def?.source ?? '—'} · {def?.category ?? '—'} · {stash?.name ?? '—'}
         </p>
+        {def?.rarity != null || def?.requiresAttunement === true ? (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {def?.rarity != null ? (
+              <span
+                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${rarityClasses(def.rarity)}`}
+                aria-label={`Rarity: ${rarityLabel(def.rarity)}`}
+              >
+                {rarityLabel(def.rarity)}
+              </span>
+            ) : null}
+            {def?.requiresAttunement === true ? (
+              <span
+                className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-inset ring-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-800"
+                aria-label="Requires attunement"
+              >
+                Requires attunement
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {def?.attunementPrereq !== undefined && def.attunementPrereq.length > 0 ? (
+          <p className="text-xs italic text-muted-foreground">{def.attunementPrereq}</p>
+        ) : null}
       </header>
 
       <section className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border border-border p-4 text-sm">

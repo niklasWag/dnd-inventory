@@ -1075,35 +1075,100 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 #### R2.1 — DMG seed + rarity / attunement display
 
 **Seed (§7)**
-- [ ] `seed/dmg-2024.json` placed (private; same private-use disclaimer as PHB)
-- [ ] DMG seed Zod schema
-- [ ] DMG seed loader + tests
-- [ ] `seedVersion` bumped; re-seed test: PHB+DMG upsert, homebrew untouched
-- [ ] DMG seed entries for Bag of Holding, Handy Haversack, Portable Hole, and any other "extradimensional storage" item ship with `flatWeight: true` per OUTLINE §3.6 (the rules-engine discriminator added in R1). Seed test: at least one BoH-class entry parses with `flatWeight: true`; non-container DMG entries default to `false`.
+- [x] `seed/dmg-2024.json` placed (private; same private-use disclaimer as PHB) — **R2.1** (305 entries; gitignored under `packages/seeds/data/dmg-*.json`)
+- [x] DMG seed Zod schema — **R2.1** (`packages/seeds/src/dmg-2024.schema.ts`; `rarity` required; `requiresAttunement`/`attunementPrereq`/`flatWeight`/`weight`/`cost`/`description`/`tags` optional)
+- [x] DMG seed loader + tests — **R2.1** (`loadDmgSeed()` mints `dmg-2024:<slug>` ids; 9 new tests in `loader.test.ts`)
+- [x] `seedVersion` bumped; re-seed test: PHB+DMG upsert, homebrew untouched — **R2.1** (renamed `PHB_SEED_VERSION` → `SEED_VERSION = 2`; existing M2 upsert-by-id reducer path handles the combined entry list with no changes; homebrew tests carried over green)
+- [x] DMG seed entries for Bag of Holding, Handy Haversack, Portable Hole, and any other "extradimensional storage" item ship with `flatWeight: true` per OUTLINE §3.6 (the rules-engine discriminator added in R1). Seed test: at least one BoH-class entry parses with `flatWeight: true`; non-container DMG entries default to `false`. — **R2.1** (BoH + Haversack + Portable Hole + Quiver of Ehlonna all `flatWeight: true`; dedicated tests assert each)
 
 **Schema activations (§4)**
-- [ ] `ItemDefinition.rarity` becomes settable (`common`…`artifact`)
-- [ ] `ItemDefinition.requiresAttunement` becomes settable
-- [ ] `ItemDefinition.attunementPrereq` becomes settable (display string)
+- [x] `ItemDefinition.rarity` becomes settable (`common`…`artifact`) — **R2.1** (`raritySchema = z.enum(['common','uncommon','rare','very-rare','legendary','artifact'])`; `.nullable().optional()` per OUTLINE §4 line 273)
+- [x] `ItemDefinition.requiresAttunement` becomes settable — **R2.1**
+- [x] `ItemDefinition.attunementPrereq` becomes settable (display string) — **R2.1**
+- [x] `itemCategorySchema` widened with `'magic'` and `'currency'` per OUTLINE §4 line 272 — **R2.1** (matches the OUTLINE-named categories; HomebrewForm picker + CatalogBrowser filter updated in lockstep)
+- [x] `ItemDefinition.source` widened to `'PHB' | 'DMG' | 'homebrew'` — **R2.1**
 
 **Reducer — tighten R1.2 `attune`**
-- [ ] **Extend `attune` reducer** with a magic-item gate: reject when the row's `ItemDefinition.requiresAttunement !== true`. Per PHB 2024 / DMG 2024 attunement rules, only magic items can be attuned — mundane items (Torch, Rope, etc.) must be reducer-rejected even when the Inventory-only invariant + slot cap would otherwise pass. The check threads off the row's `definitionId` via the catalog map (no schema widening on the reducer payload). Composes with R1.2's existing guards: Inventory-only invariant runs first → ownership → magic-item gate → slot cap → no-op.
-- [ ] **`unattune` stays unrestricted.** A row whose definition is now mundane (e.g. an MVP / R1.2-vintage Dexie blob with `attuned: true` on a mundane row, or a homebrew that the DM later flipped `requiresAttunement` to false on) must still be un-attune-able. `unattune` only clears the flag — it never adds slots that aren't already in use.
-- [ ] Invariant test: `attune` on a mundane PHB row (Torch) rejects with a `not a magic item`-style error; state unchanged, no log entry appended.
-- [ ] Invariant test: `attune` on a DMG row with `requiresAttunement: true` succeeds (the rest of the R1.2 invariants still apply — Inventory-only + slot cap).
-- [ ] Invariant test: `unattune` succeeds on a row whose definition is mundane (cleanup path for pre-R2.1 state).
-- [ ] Invariant test: order-of-checks — `attune` on a mundane row in the Party Stash still surfaces the Inventory-only error first (mundane-vs-magic is a later guard than ownership, mirroring `transfer`'s rejection ordering).
+- [x] **Extend `attune` reducer** with a magic-item gate: reject when the row's `ItemDefinition.requiresAttunement !== true`. — **R2.1** (gate placed AFTER `resolveInventoryRow` + no-op check, BEFORE slot cap; throws `attune: item "<name>" (<id>) is not a magic item` and `attune: definition <id> not in catalog` for the missing-catalog edge)
+- [x] **`unattune` stays unrestricted.** — **R2.1** (cleanup path verified)
+- [x] Invariant test: `attune` on a mundane PHB row (Torch) rejects with a `not a magic item`-style error; state unchanged, no log entry appended. — **R2.1**
+- [x] Invariant test: `attune` on a DMG row with `requiresAttunement: true` succeeds (the rest of the R1.2 invariants still apply — Inventory-only + slot cap). — **R2.1** (Cloak of Protection is the canonical fixture — `requiresAttunement: true` + no class prereq)
+- [x] Invariant test: `unattune` succeeds on a row whose definition is mundane (cleanup path for pre-R2.1 state). — **R2.1**
+- [x] Invariant test: order-of-checks — `attune` on a mundane row in the Party Stash still surfaces the Inventory-only error first (mundane-vs-magic is a later guard than ownership, mirroring `transfer`'s rejection ordering). — **R2.1**
+- [x] Invariant test: `attune` on a row whose `definitionId` is missing from the catalog throws a clear error (defends the catalog-lookup edge). — **R2.1** (additional invariant beyond the original roadmap entries)
 
 **UI (§5)**
-- [ ] Rarity color coding in catalog + item rows
-- [ ] Attunement prerequisite displayed as advisory text on item detail
-- [ ] **Hide (not just disable) the Attune toggle on `StashItemsTable` rows whose definition has `requiresAttunement !== true`.** Reduces visual clutter on mundane Inventory rows (Torch / Rope / Rations etc.) — disabling would be visible-but-unclickable, hiding is cleaner since attunement is meaningless on those rows. The Equip toggle is unaffected (equip applies to mundane armor/weapons/shields per PHB 2024 p. 213; the natural restriction for equip is `category`, which lands in R2.x once `ItemDefinition.properties` is in place).
-- [ ] Component test: a Torch row in Inventory renders the Equip toggle but NOT the Attune toggle.
-- [ ] Component test: a DMG row with `requiresAttunement: true` renders both toggles.
+- [x] Rarity color coding in catalog + item rows — **R2.1** (`apps/web/src/lib/rarity.ts` exports `rarityLabel` / `rarityClasses` / `rarityDotClass` / `RARITY_ORDER`; CatalogBrowser renders a Rarity column with chips, StashItemsTable renders a small colored dot prefix on the row name)
+- [x] Attunement prerequisite displayed as advisory text on item detail — **R2.1** (ItemDetail header gains rarity chip, "Requires attunement" pill when `requiresAttunement: true`, and italic `attunementPrereq` advisory line)
+- [x] **Hide (not just disable) the Attune toggle on `StashItemsTable` rows whose definition has `requiresAttunement !== true`.** — **R2.1** (gated on `def?.requiresAttunement === true || row.attuned`; the legacy-cleanup branch keeps `Unattune` visible on a mundane row that was previously attuned)
+- [x] Component test: a Torch row in Inventory renders the Equip toggle but NOT the Attune toggle. — **R2.1**
+- [x] Component test: a DMG row with `requiresAttunement: true` renders both toggles. — **R2.1**
+- [x] CatalogBrowser DMG row renders a rarity badge with the correct label + class. — **R2.1**
+- [x] CatalogBrowser DMG rows show Duplicate (no Edit/Delete) — same treatment as PHB. — **R2.1**
+- [x] ItemDetail rarity chip + Requires-attunement pill + `attunementPrereq` advisory text tests. — **R2.1**
 
 #### R2.1 — Notes
 
-> -
+> **2026-06-25 — R2.1 (DMG seed + rarity / attunement display) complete.** First slice of R2; R2.2 (charges + recharge) is the next chunk.
+>
+> **Schema activations (all additive).** `itemDefinitionSchema` widens in three places:
+> - `source: z.enum(['PHB', 'DMG', 'homebrew'])` (was `['PHB', 'homebrew']`).
+> - `itemCategorySchema` adds `'magic'` and `'currency'`, completing the OUTLINE §4 line 272 enum (10 values total; previous 8 were `weapon, armor, gear, tool, ammunition, consumable, container, other`).
+> - Three magic-item fields: `rarity: raritySchema.nullable().optional()`, `requiresAttunement: z.boolean().optional()`, `attunementPrereq: z.string().optional()`. PHB seed entries omit all three; the rules / UI consumers treat absence as "no rarity, no attunement, no prereq."
+>
+> **Rationale for `.nullable().optional()` on rarity.** OUTLINE §4 line 273 reads `rarity (common…artifact | null)`. The `null` case isn't theoretical — homebrew authors who want to mark a row as "no specific rarity" should be able to set `rarity: null` explicitly. `undefined` (absence) carries the same semantics for downstream consumers, but the explicit `null` is what the OUTLINE specifies. `.nullable().optional()` accepts all three.
+>
+> **DMG seed scope: 305 entries.** Authored end-to-end, covering every rarity tier, every attunement-prereq shape (none / class restriction / alignment restriction / spellcaster restriction), and the three canonical flat-weight containers (Bag of Holding, Handy Haversack, Portable Hole — plus Quiver of Ehlonna). Categories use the widened enum: most magic items map to `'magic'` (wands, rods, staves, miscellaneous wondrous items), with weapons/armor/ammunition/consumables/containers/currency populated where appropriate. Roughly 12 currency/gem/art rows under the new `'currency'` category exercise the schema and seed the future hoard-generator surface (R6.x).
+>
+> **`seedVersion` bumped 1 → 2.** Existing Dexie blobs (PHB-only, `seedVersion: 1`) automatically re-seed on next boot through the M2 upsert path. Homebrew rows are untouched because their ids don't carry the `phb-2024:` / `dmg-2024:` prefixes — the upsert key is the row id. Kept `PHB_SEED_VERSION` as a deprecated alias to avoid churning test fixtures that import the M2-era name (the alias re-exports `SEED_VERSION`).
+>
+> **Reducer gate ordering.** The R2.1 magic-item check sits between the no-op guard and the slot-cap check inside `attuneOrUnattune`. `resolveInventoryRow` runs first (Inventory-only + ownership), so a mundane row in the Party Stash surfaces the Inventory-only error before the magic-item error — matches the existing R1.2 "rejects attune in Party Stash" test, which now also doubles as the R2.1 rejection-ordering invariant. `unattune` deliberately skips the gate so a legacy / R1.2-vintage Dexie blob with `attuned: true` on a Torch can still be cleaned up.
+>
+> **`unattune` left unguarded** even when the row's definition is mundane. Reason: `unattune` can only free a slot. The over-cap state is purely a display flag. If we gated `unattune`, users with stale state could never clean up — bad UX. Tested explicitly.
+>
+> **Catalog-lookup edge.** The reducer rejects when `row.definitionId` doesn't resolve to a catalog row (`attune: definition <id> not in catalog`). Schema can't catch this — `definitionId` is `z.string().min(1)`. A test seeds the case via `useStore.setState` to construct an orphan row.
+>
+> **UI gate uses `def?.requiresAttunement === true || row.attuned`.** The second clause keeps the **Unattune** button visible on rows that were attuned BEFORE the R2.1 gate landed (or on homebrew where the DM flipped `requiresAttunement` off after attuning). Once the user unattunes, the button disappears at next render because both clauses are false. The Equip button stays unconditionally inside the `characterId !== undefined` block — equip applies to mundane armor / weapons / shields per PHB 2024 p. 213.
+>
+> **Rarity dot vs. chip.** `lib/rarity.ts` exports both:
+> - `rarityClasses(r)` returns a chip-style class string (bg + fg + ring) — used in CatalogBrowser's Rarity column and ItemDetail's header.
+> - `rarityDotClass(r)` returns a single bg-color class — used as a tiny inline dot prefix on `StashItemsTable` row names. Compact rows don't have space for a full chip.
+> - Color palette: common=slate, uncommon=green, rare=blue, very-rare=purple, legendary=orange, artifact=red. Matches the community-standard 5e palette.
+>
+> **`itemCategory` enum widened in R2.1** (not deferred). Original plan deferred this; user opted to land it now. `HomebrewForm` and `CatalogBrowser` both grew select options for `magic` and `currency`. No reducer logic keys off these new categories yet — they're descriptive labels for catalog filtering. `'magic'` is the natural home for wands, rods, staves, and wondrous items; `'currency'` is the natural home for gems, art objects, and coin-equivalents (R6.x hoard generator will populate party stashes with these).
+>
+> **Test fixture switch: `phb-2024:torch` → `dmg-2024:cloak-of-protection` for attune tests.** R1.2 attune fixtures all used a Torch, which the new gate rejects. Switched the in-place `bootstrapWithAttunables` / `bootstrapWithTorches` (renamed to `bootstrapWithMagicItems` where attune is the focus) to Cloak of Protection, which has `requiresAttunement: true` and no class prereq — clean magic-item fixture with no ripple effects. Equip-only tests keep Torch (equip is unaffected by R2.1).
+>
+> **Tests: 579 workspace-wide passing.** Breakdown vs R1.5 close (556):
+> - shared: 12 (unchanged — schema additions are optional, covered transitively by seed-loader tests)
+> - rules: 97 (unchanged)
+> - seeds: **14** (+9 R2.1: 9 DMG suite + 5 PHB regression)
+> - web: **456** (+14 R2.1: 5 reducer + 3 StashItemsTable + 2 CatalogBrowser + 4 ItemDetail)
+>
+> **Build:** 902.55 kB JS / 29.51 kB CSS (gzip: 261.66 kB / 6.25 kB). Delta vs R1.5: **+114.94 kB raw / +25.22 kB gzip** (JS); +5.37 kB raw / +0.75 kB gzip (CSS). The bulk is the DMG seed JSON (305 entries × ~370 bytes raw each ≈ 113 kB) inlined by Vite. Still well under the 50× margin of the 500 kB chunk warning. Code-splitting becomes mandatory before R3 anyway (the server scaffold + auth screens add another set of routes that can lazy-load) — TECH_STACK.md §10.
+>
+> **Spec sync.** `docs/OUTLINE.md` not amended — every change is consistent with the existing spec:
+> - §3.7 (catalog): DMG seed lands as described, homebrew visibility unchanged.
+> - §3.8 (magic items + attunement): bidirectional `identify` stays deferred to R2.3 (this slice ships only the schema activation + reducer gate + display).
+> - §4 (data model): every new field already in the OUTLINE; this slice activates them.
+> - §6 (rules modules): no changes — `attunement.ts` already shipped in R1.2.
+> - §8.1 (permissions matrix): unchanged — `attune` rejection still surfaces as a reducer throw regardless of role.
+>
+> **`docs/MVP.md` not amended.** MVP closed at M7 in R1.1 — the MVP doc is a frozen snapshot. R2 work updates only `OUTLINE.md` (none needed) and `roadmap.md` (this entry).
+>
+> **Followups carried forward to R2.2 (charges + recharge):**
+> - `ItemInstance.currentCharges` widens from `z.null()` to `z.number().int().nonnegative().nullable()`. The R1.3 leave-Inventory cascade already has the `currentCharges` branch wired, just gated on a non-null value. When R2.2 lands, the deferred invariant test "charged item transferred Inventory → Storage clears charges" gets unblocked.
+> - `ItemDefinition.charges: { max, rechargeRule }` becomes settable; the existing DMG entries with `"7 charges"` etc. in their descriptions need a `charges` block added in a follow-up content edit (probably bumps `SEED_VERSION` to 3).
+> - `packages/rules/charges.ts` activates with dawn/dusk/long-rest/short-rest/custom recharge triggers; `use-charge` and `recharge` reducer actions.
+>
+> **Followups carried forward to R2.3 (identification):**
+> - `ItemInstance.identified` widens from `z.literal(true)` to `z.boolean()`. Display invariant per OUTLINE §3.8 ("Unknown Magic Item" + DM-set hint when `identified: false`) becomes meaningful.
+> - `identify` reducer action — bidirectional flip per OUTLINE §3.8; per-instance `newHint`.
+> - DM identification panel (§5.13).
+>
+> **Followups carried forward to R6.x:**
+> - Hoard generator (§5.11) will populate party stashes with gems / art via the new `'currency'` category.
+> - Shop manager (§5.12) will price DMG entries via `pricing.ts` × the per-party economy controls (already specced in §3.5).
 
 #### R2.2 — Charges + recharge
 

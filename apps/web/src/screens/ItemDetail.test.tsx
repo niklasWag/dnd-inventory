@@ -12,7 +12,7 @@ import { loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
 import { appStateSchema } from '@app/shared';
 
-import { bootstrapWithItem } from '@/test/fixtures';
+import { bootstrap, bootstrapWithItem } from '@/test/fixtures';
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -161,5 +161,53 @@ describe('ItemDetail (M2.5)', () => {
 
     // CharacterSheet renders the character name as an h1.
     expect(screen.getByRole('heading', { name: 'Thorin' })).toBeInTheDocument();
+  });
+});
+
+describe('ItemDetail — R2.1 rarity + attunement display', () => {
+  /**
+   * R2.1 — DMG rows surface their rarity (as a colored chip with an
+   * aria-label), a "Requires attunement" pill when `requiresAttunement`
+   * is true, and the `attunementPrereq` string as italic advisory text.
+   */
+  function bootstrapWithDmgRow(definitionId: string): { itemInstanceId: string } {
+    const { inventoryStashId, catalog } = bootstrap();
+    const def = catalog.find((d) => d.id === definitionId);
+    if (def === undefined) throw new Error(`bootstrapWithDmgRow: ${definitionId} not in catalog`);
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: def.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === def.id)!.id;
+    return { itemInstanceId };
+  }
+
+  it('renders the rarity chip on a DMG row (Cloak of Protection → Uncommon)', () => {
+    const { itemInstanceId } = bootstrapWithDmgRow('dmg-2024:cloak-of-protection');
+    renderAt(`/item/${itemInstanceId}`);
+    expect(screen.getByLabelText('Rarity: Uncommon')).toBeInTheDocument();
+  });
+
+  it('renders the Requires attunement pill on a row with requiresAttunement:true', () => {
+    const { itemInstanceId } = bootstrapWithDmgRow('dmg-2024:cloak-of-protection');
+    renderAt(`/item/${itemInstanceId}`);
+    expect(screen.getByLabelText('Requires attunement')).toBeInTheDocument();
+  });
+
+  it('renders the attunementPrereq advisory text when present', () => {
+    // Wand of the War Mage +1 carries `attunementPrereq: "Requires
+    // attunement by a spellcaster"`.
+    const { itemInstanceId } = bootstrapWithDmgRow('dmg-2024:wand-of-the-war-mage-plus-1');
+    renderAt(`/item/${itemInstanceId}`);
+    expect(screen.getByText(/Requires attunement by a spellcaster/i)).toBeInTheDocument();
+  });
+
+  it('omits the rarity chip and attunement pill on a mundane PHB row (Torch)', () => {
+    const { itemInstanceId } = bootstrapWithTorch();
+    renderAt(`/item/${itemInstanceId}`);
+    expect(screen.queryByLabelText(/^Rarity:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Requires attunement')).not.toBeInTheDocument();
   });
 });

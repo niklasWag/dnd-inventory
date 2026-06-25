@@ -166,4 +166,36 @@ describe('CatalogBrowser', () => {
     expect(screen.getByLabelText(/^name$/i)).toHaveValue('');
     expect(screen.getByRole('button', { name: /^create$/i })).toBeInTheDocument();
   });
+
+  // R2.1 — DMG row rarity badges.
+  it('renders a rarity badge with the correct label on a DMG row (R2.1)', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderBrowser();
+
+    // Filter by name so the long DMG list collapses to one row.
+    await user.type(screen.getByLabelText(/^search$/i), 'cloak of protection');
+
+    // The rarity chip carries an aria-label of the form "Rarity: <tier>".
+    expect(screen.getByLabelText('Rarity: Uncommon')).toBeInTheDocument();
+  });
+
+  it('treats DMG rows like PHB — Duplicate button, no Edit/Delete (R2.1)', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderBrowser();
+
+    await user.type(screen.getByLabelText(/^search$/i), 'cloak of protection');
+
+    expect(
+      screen.getByRole('button', { name: /duplicate cloak of protection/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /edit cloak of protection/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /delete cloak of protection/i }),
+    ).not.toBeInTheDocument();
+  });
 });
+

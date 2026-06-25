@@ -1927,6 +1927,27 @@ function attuneOrUnattune(
   }
 
   if (type === 'attune') {
+    // R2.1 — magic-item gate per OUTLINE §3.8 / PHB 2024 attunement
+    // rules: only items whose `ItemDefinition.requiresAttunement` is
+    // `true` can be attuned. Mundane rows (Torch, Rope, Rations, etc.)
+    // are reducer-rejected here even when the Inventory-only + slot-cap
+    // checks would otherwise pass. Order: Inventory-only (via
+    // `resolveInventoryRow` above) → no-op (above) → magic-item gate
+    // (here) → slot-cap (below). `unattune` deliberately skips this
+    // gate so MVP / R1.2-vintage state with `attuned: true` on a
+    // mundane row can still be cleaned up.
+    const def = s.catalog.find((d) => d.id === row.definitionId);
+    if (def === undefined) {
+      throw new Error(
+        `attune: definition ${row.definitionId} not in catalog for row ${row.id}`,
+      );
+    }
+    if (def.requiresAttunement !== true) {
+      throw new Error(
+        `attune: item "${def.name}" (${def.id}) is not a magic item (requiresAttunement !== true)`,
+      );
+    }
+
     // Slot cap is the character's `maxAttunement` (OUTLINE §3.3, default
     // 3). Counted against the character's currently-attuned rows in
     // Inventory — items in Storage / Party Stash / Recovered Loot / Shop

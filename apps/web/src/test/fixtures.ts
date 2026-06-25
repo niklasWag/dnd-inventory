@@ -3,7 +3,7 @@ import {
   type ItemDefinition,
   type TransactionLogEntry,
 } from '@app/shared';
-import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
+import { SEED_VERSION, loadDmgSeed, loadPhbSeed } from '@app/seeds';
 
 import { useStore } from '@/store';
 import type { HomebrewDefinitionInput } from '@/store/types';
@@ -64,7 +64,7 @@ export function bootstrap(payload: CreateCharacterPayload = VALID_CREATE_CHARACT
   dispatch({ type: 'create-character', payload });
   dispatch({
     type: 'seed-catalog',
-    payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
+    payload: { seedVersion: SEED_VERSION, entries: [...loadPhbSeed(), ...loadDmgSeed()] },
   });
   const s = useStore.getState().appState;
   if (s === null) throw new Error('bootstrap: appState should be populated');

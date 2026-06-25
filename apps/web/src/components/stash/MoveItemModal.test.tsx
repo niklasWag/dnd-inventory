@@ -203,16 +203,27 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
   });
 
   it('renders a warning naming both flags when row is equipped AND attuned', () => {
+    // R2.1 — `attune` reducer rejects mundane rows. Acquire a DMG magic
+    // item alongside the torch fixture so this test can attune.
     const setup = setupWithStacks(1);
     const charId = useStore.getState().appState!.characters[0]!.id;
+    const catalog = useStore.getState().appState!.catalog;
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: setup.inventoryStashId, definitionId: magic.id, quantity: 1, source: 'catalog-add' },
+    });
+    const magicItemId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === magic.id)!.id;
     useStore
       .getState()
-      .dispatch({ type: 'equip', payload: { characterId: charId, itemInstanceId: setup.itemInstanceId } });
+      .dispatch({ type: 'equip', payload: { characterId: charId, itemInstanceId: magicItemId } });
     useStore
       .getState()
-      .dispatch({ type: 'attune', payload: { characterId: charId, itemInstanceId: setup.itemInstanceId } });
+      .dispatch({ type: 'attune', payload: { characterId: charId, itemInstanceId: magicItemId } });
 
-    renderWith(true, setup.itemInstanceId);
+    renderWith(true, magicItemId);
     const status = screen.getByRole('status').textContent ?? '';
     expect(status).toMatch(/equipped/i);
     expect(status).toMatch(/attuned/i);

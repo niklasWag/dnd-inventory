@@ -3259,13 +3259,17 @@ describe('reducer: attune / unattune (R1.2)', () => {
     ids: string[];
   } {
     const { characterId, inventoryStashId, catalog } = localBootstrap();
-    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    // R2.1 — `attune` reducer rejects mundane rows. Use a DMG magic item
+    // (Wand of Magic Missiles: `requiresAttunement: true`, no prereq) so
+    // these tests focus on slot-cap + Inventory-only invariants, not the
+    // magic-item gate (covered in its own describe block below).
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     for (let i = 0; i < count; i += 1) {
       useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
-          definitionId: torch.id,
+          definitionId: magic.id,
           quantity: 1,
           source: 'catalog-add',
           notes: `slot-${i}`,
@@ -3374,6 +3378,142 @@ describe('reducer: attune / unattune (R1.2)', () => {
     const last = useStore.getState().log.at(-1)!;
     expect(last.type).toBe('attune');
     expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+});
+
+describe('reducer: attune magic-item gate (R2.1)', () => {
+  /**
+   * R2.1 — `attune` rejects mundane rows (`def.requiresAttunement !== true`).
+   * Ordering: Inventory-only (via `resolveInventoryRow`) → no-op →
+   * magic-item gate → slot cap. `unattune` deliberately skips the gate
+   * so legacy state with `attuned: true` on a mundane row can be cleaned
+   * up.
+   */
+  it('rejects attune on a mundane PHB row (Torch); state unchanged, no log entry', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const logLenBefore = useStore.getState().log.length;
+    const itemsBefore = useStore.getState().appState!.items;
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId } }),
+    ).toThrow(/is not a magic item/);
+
+    // State unchanged, log untouched.
+    expect(useStore.getState().appState!.items).toEqual(itemsBefore);
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('accepts attune on a DMG row with requiresAttunement:true', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: magic.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find((i) => i.definitionId === magic.id)!.id;
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId } }),
+    ).not.toThrow();
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.attuned).toBe(true);
+  });
+
+  it('unattune succeeds even when the definition is mundane (cleanup path)', () => {
+    // Construct a stale state: a mundane Torch row with `attuned: true`.
+    // Pre-R2.1 vintage Dexie blobs could carry this combination; the
+    // reducer must let users clean it up via `unattune`.
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    // Patch the row directly to mimic legacy state.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          items: s.appState.items.map((i) => (i.id === itemInstanceId ? { ...i, attuned: true } : i)),
+        },
+      };
+    });
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'unattune', payload: { characterId, itemInstanceId } }),
+    ).not.toThrow();
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.attuned).toBe(false);
+  });
+
+  it('attune on a mundane row in Party Stash surfaces the Inventory-only error FIRST (rejection ordering)', () => {
+    // The Inventory-only check runs in `resolveInventoryRow` BEFORE the
+    // magic-item gate. A Torch in the Party Stash trips BOTH guards;
+    // the error message must be the Inventory-only one, not the
+    // magic-item one.
+    const { characterId, partyStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: partyStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore.getState().appState!.items[0]!.id;
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId } }),
+    ).toThrow(/not in character .* Inventory/);
+  });
+
+  it('attune throws a clear error when the row\'s definitionId is missing from the catalog', () => {
+    // Construct an inventory row whose `definitionId` points at a id
+    // that doesn't exist in the catalog. Schema can't catch this — it
+    // only enforces string-min-1 on `definitionId`.
+    const { characterId, inventoryStashId } = localBootstrap();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      const orphanRow = {
+        id: 'orphan-row',
+        definitionId: 'dmg-2024:does-not-exist',
+        ownerType: 'stash' as const,
+        ownerId: inventoryStashId,
+        quantity: 1,
+        containerInstanceId: null,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      };
+      return {
+        ...s,
+        appState: { ...s.appState, items: [...s.appState.items, orphanRow] },
+      };
+    });
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({
+          type: 'attune',
+          payload: { characterId, itemInstanceId: 'orphan-row' },
+        }),
+    ).toThrow(/not in catalog/);
   });
 });
 
@@ -3530,12 +3670,14 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
 
   it('clears attuned on Inventory → Storage transfer + frees slot on source character', () => {
     const { characterId, inventoryStashId, catalog } = localBootstrap();
-    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    // R2.1 — use a DMG magic item so `attune` doesn't reject under the
+    // mundane-item gate. Cascade behaviour is orthogonal to the gate.
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
-        definitionId: torch.id,
+        definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
       },
@@ -3565,7 +3707,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
-        definitionId: torch.id,
+        definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
         notes: 'fresh-row',
@@ -3639,12 +3781,15 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
 
   it('clears BOTH equipped and attuned on the same transfer in ONE paired entry', () => {
     const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
-    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    // R2.1 — magic item required for `attune`. `equip` accepts any item
+    // category in R1.2 (the property-based slot conflict rule is advisory
+    // only) so a wand is fine for the equip leg too.
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
-        definitionId: torch.id,
+        definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
       },
