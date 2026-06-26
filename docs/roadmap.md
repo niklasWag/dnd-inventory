@@ -1622,10 +1622,9 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 - [ ] Authoritative validation: server re-runs reducer against incoming actions
 - [ ] Nightly snapshot job to disk (default 30-day retention; configurable per §11)
 - [ ] User-triggered JSON export still works client-side (parity with §3.13)
-
-#### R3.3 — Notes
-
-> -
+- [ ] **§8.1 guard layer reads `user.needsDisplayName` and returns `409 display_name_required` on every protected route except `POST /auth/email/set-display-name`** — carryforward from R3.3 (the column + the unblocking route shipped in R3.3; this slice is the guard that uses them).
+- [ ] **Guard rejects writes of `PartyMembership.role = 'banker'`** — carryforward from R3.2 (`MembershipRole.banker` enum value exists; banker membership is forbidden per OUTLINE §3.14 because banker is denormalized on `Party.bankerUserId`).
+- [ ] **Reducer emits `actorRole: 'banker'` on `TransactionLog` entries when `Party.bankerUserId === actorUserId`** — carryforward from R3.2 (the Zod union entry exists; this is the reducer-side write).
 
 #### R3.4 — Authoritative sync notes
 
@@ -1641,6 +1640,9 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 - [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
 - [ ] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
 - [ ] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
+- [ ] **Discord-link `?link=1` callback handling** — carryforward from R3.3 (the `events.signIn` callback detects the link case from a request-context flag, attaches `discordId` + `avatarUrl` to the existing session's user instead of letting the adapter create a new row; conflict on snowflake already linked elsewhere → `409 discord_already_linked`). Lands here because R3.5 is already revisiting the OAuth callback for the redirect-to-hub flow.
+- [ ] **OTP entry uses `shadcn/ui input-otp` with `maxLength={8}`** — carryforward from R3.3 (`pnpm dlx shadcn@latest add input-otp` in `apps/web`).
+- [ ] **Display-name prompt screen when `needsDisplayName: true`** — carryforward from R3.3 (the server-side `POST /auth/email/set-display-name` shipped; this is the UI that calls it, plus the gate that prevents the client from rendering the hub until the flag flips).
 - [ ] Settings: Logout button clears session cookie and returns to Login screen
 
 #### R3.5 — Notes

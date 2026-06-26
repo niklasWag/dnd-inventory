@@ -302,6 +302,13 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
    * roughly cover the p50 of real SMTP submission latency (one network
    * round-trip + the SMTP STARTTLS dance) — Postmark/SES p50 sit in the
    * 100-400ms band.
+   *
+   * Followup (R3.3 Notes): the constant-time pad defangs the trivial
+   * timing-leak case but isn't a defense against a sophisticated attacker
+   * with millions of requests. Add a per-IP rate limit on
+   * `POST /auth/email/request-otp` itself (reusing the `EmailAuthAttempt`
+   * keyspace from rate-limit.ts) when the per-IP request volume becomes
+   * relevant — currently only `verify-otp` is rate-limited.
    */
   async function constantTimePad(): Promise<void> {
     const ms = 150 + Math.random() * 200;
