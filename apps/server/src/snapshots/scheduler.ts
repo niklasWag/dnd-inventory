@@ -23,10 +23,17 @@ import type { PrismaClient } from '../../prisma/generated/prisma/client.js';
 import { sweepSnapshots, type RetentionSweepResult } from './retention.js';
 import { writeSnapshot, type SnapshotWriteResult } from './writer.js';
 
-/** Cron pattern: 03:00 every day, local time. Picking 03:00 (rather
+/** Cron pattern: 03:07 every day, local time. Picking 03:07 (rather
  * than 00:00 / 03:00 sharp) matches the R3.3 "avoid the :00 / :30
  * minute marks" guidance loosely — but we DO want a predictable hour
- * for operators / log scraping, so 03:07 is the compromise. */
+ * for operators / log scraping, so 03:07 is the compromise.
+ *
+ * Single-binary deployment assumption: `schedule()` registers an
+ * in-process timer; in a multi-replica deployment every replica would
+ * fire its own tick and write duplicate snapshots. Followup tracked
+ * in `docs/roadmap.md` → **Operational followups (unscheduled)** →
+ * "Snapshot cron coordination for multi-replica deploys" — node-cron
+ * v4's `runCoordinator` / `distributed` options solve this. */
 const NIGHTLY_CRON = '7 3 * * *';
 
 export interface SnapshotTickResult {

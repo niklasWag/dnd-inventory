@@ -16,7 +16,9 @@
  * either the `email` OR the `ip` — see `checkLockout`.
  *
  * Cleanup of dead rows is a followup (a cron sweep over `lockedUntil < now()`).
- * The `@@index([lockedUntil])` makes such a sweep cheap.
+ * The `@@index([lockedUntil])` makes such a sweep cheap. Tracked in
+ * `docs/roadmap.md` → **Operational followups (unscheduled)** →
+ * "EmailAuthAttempt cron sweep".
  */
 import type { PrismaClient } from '../../../prisma/generated/prisma/client.js';
 

@@ -275,6 +275,21 @@ Per §9: WebSocket carries live party-sync events; clients receive updates withi
 - Self-hosted: the import target `partyId` is taken from the URL / session, **not** the payload. If the payload's IDs don't match (or the actor isn't a DM of that party), reject.
 - Imports do not execute code. All fields are plain data; there are no `function`, `eval`, `Function`, or prototype-pollution paths from imported JSON (Zod `.strict()` plus a flat data model preclude prototype injection).
 
+### 7.1 Server-side export endpoint (R3.4.b)
+
+R3.4.b adds `GET /sync/export?partyId=<id>` so a synced user can download their authoritative AppState without round-tripping through the web's Dexie cache.
+
+| Concern | Notes |
+|---|---|
+| **Cross-party data leak** | An authenticated user requests another party's export. |
+| **Pre-onboarding leak** | An email-only user mid-onboarding (`needsDisplayName: true`) attempts an export before display-name setup. |
+| **Envelope drift between export + snapshot** | A schema change would silently desync the operator's snapshots from user-driven exports. |
+
+**Mitigations:**
+- Same auth + party-membership + `needsDisplayName` gates as `GET /sync/state` (per §2.1, identity is session-derived, never trusted from the request body); a non-member request returns `403`, an unknown party returns `404`, a `needsDisplayName: true` session returns `409 display_name_required`.
+- The endpoint returns the SAME `exportEnvelope` shape that the nightly snapshot writer produces (`packages/shared/src/schemas/exportEnvelope.ts`) — both go through `exportEnvelopeSchema.parse()` at the wire boundary, so any drift surfaces as a parse error before bytes leave the server. The web's existing import flow already round-trips this shape losslessly.
+- Snapshot files and the export endpoint are equivalent in terms of leaked data; the file-permission + retention guidance in §8 applies equally to whatever the user downloads (storing an export on a shared host is the user's responsibility, same as for snapshots).
+
 ---
 
 ## 8. Server & Infrastructure (self-hosted, M3+)
@@ -288,9 +303,9 @@ Per §9: WebSocket carries live party-sync events; clients receive updates withi
 | **HTTPS termination** | App expects to live behind a reverse proxy. |
 
 **Mitigations:**
-- Snapshots written to a directory outside the web root, mode `0600`, owned by the server process user.
-- Each snapshot file has a SHA-256 checksum stored alongside (plain checksum, not signed — the private-use threat model doesn't include an attacker substituting snapshot files; the checksum is for detecting accidental corruption). Restore verifies the checksum before loading.
-- Default retention: 30 days; operator-configurable in admin settings.
+- Snapshots are written outside the web root (the static-asset path served by nginx is `apps/web/dist`; the snapshot directory is a sibling docker-compose volume) and owned by the server-container process user. **Filesystem permissions are the host operator's responsibility** per the deployment model: the application writes files with Node's default mode (umask-dependent; typically `0644` in a stock container, `0600` under `umask 077`). Operators who need stricter access control set the container's `umask`, mount the snapshot volume read-only outside the server, or wrap the volume in an LUKS / EBS-encryption layer — same delegation as the Postgres data directory.
+- Each snapshot file has a SHA-256 checksum stored alongside (R3.4.b ships a `sha256sum`-compatible `<digest>  <filename>` sidecar; plain checksum, not signed — the private-use threat model doesn't include an attacker substituting snapshot files; the checksum is for detecting accidental corruption). The `snapshot:restore` CLI verifies the checksum and refuses to apply on mismatch.
+- Default retention: 30 days; operator-configurable via `SNAPSHOT_RETENTION_DAYS`.
 - All secrets loaded from environment variables; `.env` is in `.gitignore`, `.env.example` documents the variables.
 - Session signing key is a 256-bit random value generated at install time; rotating it invalidates all existing sessions.
 - `pnpm audit` runs in CI; high/critical findings block release.

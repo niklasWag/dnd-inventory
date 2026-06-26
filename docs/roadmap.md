@@ -1611,9 +1611,7 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 > - Display-name prompt screen when `needsDisplayName: true`.
 > - Settings → "Linked accounts" UI: backup-email flow for Discord users (server endpoints shipped); Connect-Discord flow for email-only users (server-side `?link=1` callback handling lands here too).
 >
-> **Followups for ops/maintenance:**
-> - Cron sweep on `EmailAuthAttempt` rows with `lockedUntil < now() - 24h` (the `@@index([lockedUntil])` makes this cheap). Not blocking — the table is bounded by `(email, ip)` UNIQUE and rows hold no PII beyond the email + IP.
-> - Consider a per-IP rate limit on `POST /auth/email/request-otp` itself (currently only verify-side is rate-limited). Reuse `EmailAuthAttempt` keyspace.
+> **Followups for ops/maintenance:** see the **Operational followups (unscheduled)** section at the bottom of this file (R3.3 contributes the `EmailAuthAttempt` cron sweep + per-IP `request-otp` rate limit).
 
 #### R3.4 — Authoritative sync
 
@@ -1688,10 +1686,7 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 >
 > **Schema-invariants test untouched.** No new tables; no Prisma migrations. The snapshot files live entirely on the filesystem.
 >
-> **Followups (no slice carries them forward):**
-> - Operator metric: "snapshot age per party" gauge — surfaces a stuck cron / disk-full situation. Could be wired into a future `/admin/health` endpoint.
-> - Multi-replica deployment: cron runs in every replica, which would write duplicate snapshots. node-cron@4's `runCoordinator` / `distributed` options solve this when R5+ ships multi-instance deployments — for the single-binary MVP it's a non-concern.
-> - Snapshot encryption at rest. Right now files are plaintext JSON. If the operator wants encryption, they handle it at the volume layer (LUKS, EBS-encryption, etc.) — same pattern as the Postgres data directory. Documented in the server README's hosting notes.
+> **Followups (no slice carries them forward):** see the **Operational followups (unscheduled)** section at the bottom of this file (R3.4.b contributes the snapshot-age metric, multi-replica cron coordination, and snapshot encryption-at-rest items).
 
 #### R3.5 — Web integration
 
@@ -2169,3 +2164,28 @@ Not milestone-specific; revisit each release.
 > | `Party.isSoloShortcut` removed | R4 — schema migration + 1 migration test; MVP keeps writing the literal |
 >
 > All future spec changes should follow the same pattern: amend OUTLINE.md first, then add roadmap checkboxes in the affected milestone(s), then code. The roadmap is a tracker, not a source of truth — if it disagrees with OUTLINE, OUTLINE wins (per CLAUDE.md).
+
+---
+
+## Operational followups (unscheduled)
+
+Followups that don't belong to any single feature slice. Listed here so they're discoverable; promote any item to a milestone (with a checkbox) when scheduled. Inline `// Followup:` comments in the source code point back to this section where relevant.
+
+### Hardening / observability
+
+- [ ] **`EmailAuthAttempt` cron sweep** — periodically delete rows with `lockedUntil < now() - 24h`. The `@@index([lockedUntil])` makes this cheap. Not blocking — the table is bounded by the `(email, ip)` UNIQUE and rows hold no PII beyond email + IP. Inline pointer: `apps/server/src/auth/email/rate-limit.ts:18`. (Source: R3.3 Notes.)
+- [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** — verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
+- [ ] **Snapshot-age operator metric** — "snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). (Source: R3.4.b Notes.)
+
+### Multi-replica / scale
+
+- [ ] **Snapshot cron coordination for multi-replica deploys** — `node-cron@4`'s `runCoordinator` / `distributed` options let a multi-instance deployment elect one writer per tick. Non-issue for the single-binary MVP / R3-tier; relevant when R5+ ships horizontal scaling. (Source: R3.4.b Notes.)
+
+### At-rest data security
+
+- [ ] **Snapshot encryption** — snapshot files are plaintext JSON; if encryption is required the operator handles it at the volume layer (LUKS / EBS-encryption / etc.), same pattern as the Postgres data directory. Document the recommendation in the root README's hosting section; revisit if the project ever ships its own snapshot daemon. (Source: R3.4.b Notes.)
+
+### Process
+
+- Promote an item to a real milestone by adding a checkbox + brief checklist there, then leave a back-pointer here that reads `**Promoted to <slice> on <date>.**`. The intent is that this section shrinks over time as items either ship or are explicitly deprioritized.
+

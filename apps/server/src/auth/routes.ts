@@ -303,12 +303,15 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
    * round-trip + the SMTP STARTTLS dance) — Postmark/SES p50 sit in the
    * 100-400ms band.
    *
-   * Followup (R3.3 Notes): the constant-time pad defangs the trivial
-   * timing-leak case but isn't a defense against a sophisticated attacker
-   * with millions of requests. Add a per-IP rate limit on
-   * `POST /auth/email/request-otp` itself (reusing the `EmailAuthAttempt`
-   * keyspace from rate-limit.ts) when the per-IP request volume becomes
-   * relevant — currently only `verify-otp` is rate-limited.
+   * Followup: the constant-time pad defangs the trivial timing-leak
+   * case but isn't a defense against a sophisticated attacker with
+   * millions of requests. Add a per-IP rate limit on
+   * `POST /auth/email/request-otp` itself (reusing the
+   * `EmailAuthAttempt` keyspace from rate-limit.ts) when per-IP request
+   * volume becomes relevant — currently only `verify-otp` is
+   * rate-limited. Tracked in `docs/roadmap.md` → **Operational
+   * followups (unscheduled)** → "Per-IP rate limit on
+   * POST /auth/email/request-otp".
    */
   async function constantTimePad(): Promise<void> {
     const ms = 150 + Math.random() * 200;
