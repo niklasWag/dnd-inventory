@@ -1,0 +1,42 @@
+# R3.5 — Optional same-origin proxy for the compose stack.
+#
+# Only runs under `docker compose --profile proxy up`. Production
+# deployments behind a host-level reverse proxy (per README §5) skip
+# this and route directly to the `web` + `server` services on their
+# compose-exposed ports.
+#
+# Why it exists:
+# The split-port stack (web :5173, server :3000) makes the SPA
+# cross-origin to the server. Browsers refuse to send `SameSite=Lax`
+# session cookies on cross-origin XHR/fetch, so the SPA can't see the
+# logged-in session even though Discord OAuth itself succeeded. This
+# Caddy puts everything behind one host port so cookies stay
+# same-origin AND the local Docker Desktop test loop matches what the
+# eventual production nginx host does.
+{
+	# Auto-HTTPS is unnecessary for the local desktop loop; the prod
+	# box terminates TLS at its own nginx in front of this stack.
+	auto_https off
+}
+
+# Listen on the host-published port (default 8080 in compose).
+:8080 {
+	encode gzip
+
+	# Route the server-owned paths to the Fastify backend. Order
+	# matters: handle_path is a longest-match-first matcher and
+	# strips the prefix for the upstream (we don't want stripping
+	# since the server expects the full path), so we use `handle`
+	# with explicit matchers.
+	@server {
+		path /auth/* /sync/* /healthz /healthz/*
+	}
+	handle @server {
+		reverse_proxy server:3000
+	}
+
+	# Everything else is the SPA.
+	handle {
+		reverse_proxy web:5173
+	}
+}

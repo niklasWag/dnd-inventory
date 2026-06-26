@@ -49,7 +49,16 @@ services:
       # src/config/env.ts.
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://${POSTGRES_USER:-dnd}:${POSTGRES_PASSWORD:-dnd}@postgres:5432/${POSTGRES_DB:-dnd_inv}
-      WEB_ORIGIN: http://localhost:${WEB_PORT:-5173}
+      # `WEB_ORIGIN` gates CORS allow-origin AND the Auth.js redirect
+      # whitelist. Must match the origin the SPA is loaded from in a
+      # browser — otherwise the session cookie can't ride along on
+      # `fetch(... { credentials: 'include' })`. Three typical values:
+      #   - `--profile proxy` setup: `http://localhost:${PROXY_PORT}`.
+      #   - Host nginx in prod: the public https origin.
+      #   - Legacy split-port: `http://localhost:${WEB_PORT}` (works
+      #     for local-only mode; breaks server-mode auth).
+      # Defaults to the split-port URL for backwards-compat.
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:${WEB_PORT:-5173}}
       LOG_LEVEL: info
       # R3.2 — Auth.js. AUTH_SECRET is required at all times; DISCORD_*
       # vars are required at boot when NODE_ENV=production (see
@@ -112,6 +121,37 @@ services:
     ports:
       - '${WEB_PORT:-5173}:5173'
 
+  # R3.5 — Optional same-origin reverse proxy for local desktop testing.
+  #
+  # Only runs under `docker compose --profile proxy up`. Production
+  # deployments behind a host-level reverse proxy (per README §5) leave
+  # this disabled and route directly to the `web` and `server` services
+  # via their compose-exposed ports.
+  #
+  # Cross-origin auth doesn't work with `SameSite=Lax` cookies (the
+  # browser refuses to send them on cross-origin fetches). Routing both
+  # services through a single host port keeps the session cookie
+  # same-origin and lets the local Docker Desktop loop exercise the
+  # same auth flow the prod nginx host serves.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles:
+      - proxy
+    depends_on:
+      server:
+        condition: service_started
+      web:
+        condition: service_started
+    ports:
+      - '${PROXY_PORT:-8080}:8080'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
   postgres-data:
   snapshots-data:
+  caddy-data:
+  caddy-config:

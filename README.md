@@ -180,6 +180,27 @@ curl http://127.0.0.1:${SERVER_PORT}/healthz
 
 The Fastify server binds inside the container only; it expects a reverse proxy to terminate TLS and forward HTTPS traffic. **Trust-host requirement** (Auth.js v5): the proxy must pass the canonical `Host` header so Auth.js can build correct callback URLs. Don't blindly forward `X-Forwarded-Host` from clients — that's a Host-header injection vector. Standard Caddy / nginx defaults are safe.
 
+#### Same-origin requirement (why a proxy is mandatory for server mode)
+
+`SameSite=Lax` session cookies (per SECURITY §1.1) are **not** sent on cross-origin `fetch` requests. If the SPA is loaded from `http://localhost:5173` and the API lives at `http://localhost:3000`, the browser will silently drop the session cookie on every API call — the user appears logged out the moment they navigate to a protected screen even though Discord OAuth succeeded.
+
+Fix: the SPA and the API must share an origin. Either:
+
+- **In prod** — host nginx (or Caddy) on the public domain reverse-proxies `/auth/*`, `/sync/*`, `/healthz` to the server container and everything else to the web container. Sections below show the exact configs.
+- **For local Docker Desktop testing** — bring the stack up with `--profile proxy` so compose spins up an internal Caddy on `${PROXY_PORT:-8080}` that routes the same way:
+
+  ```bash
+  cd infra/docker
+  # In .env, point both VITE_SERVER_URL and WEB_ORIGIN at the proxy:
+  #   VITE_SERVER_URL=http://localhost:8080
+  #   WEB_ORIGIN=http://localhost:8080
+  # Then rebuild + bring up with the proxy profile:
+  docker compose --profile proxy up -d --build
+  # Browse to http://localhost:8080 — same origin for SPA + API.
+  ```
+
+  `docker compose up` (without the flag) leaves the Caddy container out — that's what production deployments behind a real host nginx do.
+
 #### Caddy (easiest — auto-TLS)
 
 `/etc/caddy/Caddyfile`:
