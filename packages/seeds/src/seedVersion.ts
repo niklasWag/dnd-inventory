@@ -11,8 +11,12 @@
  * - `2` (R2.1): adds DMG 2024 magic items + rarity / attunement
  *   metadata. First boot after upgrading triggers the upsert path
  *   exactly once.
+ * - `3` (R2.2): adds `charges` blocks to ~40-50 DMG entries (wands,
+ *   staves, rings, single-use consumables). The schema activations
+ *   are additive — older Dexie blobs upsert cleanly to gain the new
+ *   fields on PHB/DMG rows; homebrew rows are untouched.
  */
-export const SEED_VERSION = 2;
+export const SEED_VERSION = 3;
 
 /**
  * @deprecated Use `SEED_VERSION` (covers both PHB and DMG).

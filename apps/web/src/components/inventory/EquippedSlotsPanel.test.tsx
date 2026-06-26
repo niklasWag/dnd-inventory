@@ -98,4 +98,46 @@ describe('EquippedSlotsPanel (R1.2)', () => {
     render(<EquippedSlotsPanel characterId={characterId} />);
     expect(screen.getByLabelText('Attunement slots').textContent).toMatch(/0\s*\/\s*5/);
   });
+
+  it('R2.3 — equipped unidentified magic item renders as "Unknown Magic Item", not its real name', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+    });
+    const cloakId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    useStore.getState().dispatch({
+      type: 'equip',
+      payload: { characterId, itemInstanceId: cloakId },
+    });
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: cloakId, identified: false },
+    });
+    render(<EquippedSlotsPanel characterId={characterId} />);
+    expect(screen.getByText('Unknown Magic Item')).toBeInTheDocument();
+    expect(screen.queryByText('Cloak of Protection')).not.toBeInTheDocument();
+  });
+
+  it('R2.3 — attuned unidentified magic item renders as "Unknown Magic Item" in the Attuned list', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+    });
+    const cloakId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: cloakId },
+    });
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: cloakId, identified: false, hint: 'shimmers faintly' },
+    });
+    render(<EquippedSlotsPanel characterId={characterId} />);
+    expect(screen.getByText('Unknown Magic Item')).toBeInTheDocument();
+    expect(screen.queryByText('Cloak of Protection')).not.toBeInTheDocument();
+  });
 });

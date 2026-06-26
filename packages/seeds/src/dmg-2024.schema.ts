@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  chargesSchema,
   currencyDenominationSchema,
   itemCategorySchema,
   raritySchema,
@@ -52,6 +53,11 @@ export const dmgSeedEntrySchema = z.object({
   requiresAttunement: z.boolean().optional(),
   attunementPrereq: z.string().optional(),
   flatWeight: z.boolean().optional(),
+  // R2.2 — optional charges block (OUTLINE §3.8 + §4 line 277). Wands /
+  // staves / rods / charged rings / single-use consumables ship this
+  // block; everything else omits it. The MVP rules engine doesn't
+  // evaluate `rechargeAmount` — the field is human-readable flavor.
+  charges: chargesSchema.optional(),
 });
 
 export type DmgSeedEntry = z.infer<typeof dmgSeedEntrySchema>;

@@ -81,5 +81,6 @@ function toDmgItemDefinition(entry: DmgSeedEntry): ItemDefinition {
   if (entry.attunementPrereq !== undefined)
     def.attunementPrereq = entry.attunementPrereq;
   if (entry.flatWeight !== undefined) def.flatWeight = entry.flatWeight;
+  if (entry.charges !== undefined) def.charges = entry.charges;
   return def;
 }

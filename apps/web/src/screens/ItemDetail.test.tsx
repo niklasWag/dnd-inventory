@@ -211,3 +211,311 @@ describe('ItemDetail — R2.1 rarity + attunement display', () => {
     expect(screen.queryByLabelText('Requires attunement')).not.toBeInTheDocument();
   });
 });
+
+describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
+  /**
+   * R2.2 — surfaces the `def.charges` block as a `<span aria-label="Charges">`
+   * line plus two action buttons:
+   *   - Use: dispatches `use-charge` (disabled when currentCharges === 0)
+   *   - Recharge: dispatches `recharge` (mode: 'manual', disabled at max)
+   * Hidden entirely when the item has no charges block OR isn't in
+   * the character's Inventory.
+   */
+  function bootstrapWithChargedRow(definitionId: string): {
+    itemInstanceId: string;
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+  } {
+    const base = bootstrap();
+    const def = base.catalog.find((d) => d.id === definitionId);
+    if (def === undefined) throw new Error(`bootstrapWithChargedRow: ${definitionId} not in catalog`);
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId, quantity: 1, source: 'catalog-add' },
+    });
+    const itemInstanceId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === definitionId)!.id;
+    return {
+      itemInstanceId,
+      characterId: base.characterId,
+      inventoryStashId: base.inventoryStashId,
+      partyStashId: base.partyStashId,
+    };
+  }
+
+  it('renders the charges line on an Inventory wand row', () => {
+    const { itemInstanceId } = bootstrapWithChargedRow('dmg-2024:wand-of-magic-missiles');
+    renderAt(`/item/${itemInstanceId}`);
+    expect(screen.getByLabelText('Charges')).toHaveTextContent(
+      '7 / 7 charges — Recharges at dawn (1d6+1)',
+    );
+  });
+
+  it('does NOT render the charges row on a non-charged item (Torch)', () => {
+    const { itemInstanceId } = bootstrapWithTorch();
+    renderAt(`/item/${itemInstanceId}`);
+    expect(screen.queryByLabelText('Charges')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render the charges row on a charged item that is NOT in Inventory', () => {
+    const { itemInstanceId, partyStashId } = bootstrapWithChargedRow(
+      'dmg-2024:wand-of-magic-missiles',
+    );
+    // Move the wand to the Party Stash; currentCharges clears via cascade.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+    });
+    const movedId = useStore.getState().appState!.items.find((i) => i.ownerId === partyStashId)!.id;
+    renderAt(`/item/${movedId}`);
+    expect(screen.queryByLabelText('Charges')).not.toBeInTheDocument();
+  });
+
+  it('Use button decrements currentCharges and disables at 0', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithChargedRow('dmg-2024:wand-of-magic-missiles');
+    renderAt(`/item/${itemInstanceId}`);
+
+    const useBtn = screen.getByRole('button', { name: /^use$/i });
+    expect(useBtn).toBeEnabled();
+    // Spend 7 charges.
+    for (let i = 0; i < 7; i++) {
+      await user.click(useBtn);
+    }
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.currentCharges,
+    ).toBe(0);
+    // Button disables at 0.
+    expect(screen.getByRole('button', { name: /^use$/i })).toBeDisabled();
+  });
+
+  it('Recharge button is disabled at full charges and enabled after a spend', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithChargedRow('dmg-2024:wand-of-magic-missiles');
+    renderAt(`/item/${itemInstanceId}`);
+
+    // At full charges, Recharge is disabled.
+    expect(screen.getByRole('button', { name: /^recharge$/i })).toBeDisabled();
+
+    // Spend one charge to enable Recharge.
+    await user.click(screen.getByRole('button', { name: /^use$/i }));
+    expect(screen.getByRole('button', { name: /^recharge$/i })).toBeEnabled();
+
+    // Wand of Magic Missiles has rechargeAmount '1d6+1' — clicking Recharge
+    // now opens the inline roll input rather than dispatching. R2.2.1.
+    await user.click(screen.getByRole('button', { name: /^recharge$/i }));
+    const rollInput = await screen.findByLabelText(/Roll result/i);
+    expect(rollInput).toBeInTheDocument();
+
+    // Enter 1 charge (the deficit), click Apply.
+    await user.type(rollInput, '1');
+    await user.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    // Reducer state: wand back to full charges; input collapses; Recharge re-disables.
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.currentCharges,
+    ).toBe(7);
+    expect(screen.queryByLabelText(/Roll result/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^recharge$/i })).toBeDisabled();
+  });
+
+  it('Roll input rejects amounts that exceed the current deficit', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithChargedRow('dmg-2024:wand-of-magic-missiles');
+    renderAt(`/item/${itemInstanceId}`);
+
+    // Spend 2 charges → deficit = 2.
+    await user.click(screen.getByRole('button', { name: /^use$/i }));
+    await user.click(screen.getByRole('button', { name: /^use$/i }));
+
+    await user.click(screen.getByRole('button', { name: /^recharge$/i }));
+    const rollInput = await screen.findByLabelText(/Roll result/i);
+    await user.type(rollInput, '5');
+    await user.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/Cannot exceed deficit/);
+    // State unchanged.
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.currentCharges,
+    ).toBe(5); // 7 - 2 = 5
+  });
+
+  it('Cancel button closes the roll input without dispatching', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithChargedRow('dmg-2024:wand-of-magic-missiles');
+    renderAt(`/item/${itemInstanceId}`);
+
+    await user.click(screen.getByRole('button', { name: /^use$/i }));
+    await user.click(screen.getByRole('button', { name: /^recharge$/i }));
+    expect(screen.getByLabelText(/Roll result/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByLabelText(/Roll result/i)).not.toBeInTheDocument();
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.currentCharges,
+    ).toBe(6); // unchanged after Use, no Recharge applied
+  });
+
+  it('Items without a rechargeAmount formula (Decanter) still full-recharge on click', async () => {
+    const user = userEvent.setup();
+    // Decanter of Endless Water: rechargeRule dawn, NO rechargeAmount.
+    const { itemInstanceId } = bootstrapWithChargedRow('dmg-2024:decanter-of-endless-water');
+    renderAt(`/item/${itemInstanceId}`);
+    // Spend all 3 charges.
+    await user.click(screen.getByRole('button', { name: /^use$/i }));
+    await user.click(screen.getByRole('button', { name: /^use$/i }));
+    await user.click(screen.getByRole('button', { name: /^use$/i }));
+
+    // Clicking Recharge dispatches immediately — no roll input appears.
+    await user.click(screen.getByRole('button', { name: /^recharge$/i }));
+    expect(screen.queryByLabelText(/Roll result/i)).not.toBeInTheDocument();
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.currentCharges,
+    ).toBe(3); // full recharge to max
+  });
+});
+
+describe('ItemDetail — R2.3 identification panel + display gate', () => {
+  /**
+   * R2.3 — adds an Identification Panel with a toggle (`<button
+   * role="switch">`) + hint editor. Header rendering switches to the
+   * "Unknown Magic Item" + hint subtitle UI when `row.identified ===
+   * false`; rarity chip + Requires-attunement pill + charges section
+   * are all hidden in that state (spoiler protection).
+   */
+  function bootstrapWithCloak(): { itemInstanceId: string } {
+    const base = bootstrap();
+    const cloak = base.catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection');
+    if (cloak === undefined) throw new Error('cloak missing from catalog');
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    return { itemInstanceId };
+  }
+
+  it('identified row renders the real name + rarity chip + attunement pill', () => {
+    const { itemInstanceId } = bootstrapWithCloak();
+    renderAt(`/item/${itemInstanceId}`);
+    expect(
+      screen.getByRole('heading', { name: 'Cloak of Protection' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Rarity:/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Requires attunement')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Unidentified')).not.toBeInTheDocument();
+  });
+
+  it('unidentified row renders "Unknown Magic Item" + Unidentified badge, hides rarity + attunement', () => {
+    const { itemInstanceId } = bootstrapWithCloak();
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'shimmers faintly' },
+    });
+    renderAt(`/item/${itemInstanceId}`);
+    expect(
+      screen.getByRole('heading', { name: 'Unknown Magic Item' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Unidentified')).toBeInTheDocument();
+    expect(screen.getByLabelText('Unidentified hint')).toHaveTextContent(
+      'shimmers faintly',
+    );
+    expect(screen.queryByLabelText(/^Rarity:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Requires attunement')).not.toBeInTheDocument();
+  });
+
+  it('clicking the Identified toggle flips identified and dispatches identify', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithCloak();
+    renderAt(`/item/${itemInstanceId}`);
+
+    const toggle = screen.getByRole('switch', { name: 'Identified' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await user.click(toggle);
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.identified).toBe(false);
+    // The toggle re-renders against the new row.
+    expect(screen.getByRole('switch', { name: 'Identified' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+    // Log captured the transition.
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('identify');
+  });
+
+  it('typing in the hint editor and clicking Save dispatches identify with the new hint', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithCloak();
+    // Start unidentified so the hint is meaningful for the smoke flow.
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false },
+    });
+    renderAt(`/item/${itemInstanceId}`);
+
+    const input = screen.getByLabelText(/unidentified hint \(dm only\)/i);
+    await user.type(input, 'radiates evil');
+    await user.click(screen.getByRole('button', { name: /save hint/i }));
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.hint).toBe('radiates evil');
+    // Identified state preserved.
+    expect(after.identified).toBe(false);
+  });
+
+  it('Save hint button is disabled when the input matches the current hint (no-op guard)', () => {
+    const { itemInstanceId } = bootstrapWithCloak();
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'glows blue' },
+    });
+    renderAt(`/item/${itemInstanceId}`);
+    // Input is pre-populated with the current hint via the syncing useEffect.
+    expect(screen.getByRole('button', { name: /save hint/i })).toBeDisabled();
+  });
+
+  it('clearing the hint input enables a "Clear" button that dispatches identify with hint: undefined', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithCloak();
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'glows blue' },
+    });
+    renderAt(`/item/${itemInstanceId}`);
+    const input = screen.getByLabelText(/unidentified hint \(dm only\)/i);
+    await user.clear(input);
+    await user.click(screen.getByRole('button', { name: /^clear$/i }));
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.hint).toBeUndefined();
+  });
+
+  it('unidentified Inventory wand hides the charges row (spoiler protection)', () => {
+    const base = bootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: wandId, identified: false },
+    });
+    renderAt(`/item/${wandId}`);
+    // Identified would show the charges line; unidentified hides it.
+    expect(screen.queryByLabelText('Charges')).not.toBeInTheDocument();
+  });
+});

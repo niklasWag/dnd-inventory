@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useStore } from '@/store';
@@ -18,12 +18,22 @@ const EMPTY_DEFS: readonly ItemDefinition[] = [];
 
 /**
  * Per-item history view (OUTLINE §3.11). Filters `state.log` for entries
- * whose payload references `itemInstanceId`. Five TxTypes currently carry
- * an item id on their payload: `acquire`, `consume`, `edit-item-instance`
- * (M2.5), `transfer` (M3 synthetic + M5 user-initiated), and `split`
- * (M5 — surfaces on both the source row's filter and the new row's
- * filter). Future milestones (R1 equip/attune, R2 recharge / identify)
- * will extend the predicate.
+ * whose payload references `itemInstanceId`. The TxType set that carries
+ * an item id has grown across milestones:
+ *   - M2:  acquire, consume
+ *   - M2.5: edit-item-instance
+ *   - M3:  transfer (synthetic delete-cascade)
+ *   - M5:  transfer (user-initiated), split
+ *   - R1.2: equip, unequip, attune, unattune
+ *   - R2.2: use-charge, recharge
+ *   - R2.3: identify
+ *
+ * R2.3 — OUTLINE §3.11 default filter shows the "ownership transition"
+ * entries (events that change *who holds the item* or *what it is*) and
+ * hides the noisier `use-charge` / `recharge` / `edit-item-instance`
+ * rows behind a "Show all events" toggle. Component-state toggle —
+ * resets per mount, which is the right ergonomic default for "I'm
+ * inspecting one item right now."
  *
  * Permission gating (owner + DM only per OUTLINE §8) lands in R4/R5 —
  * single-user MVP shows the full slice.
@@ -40,8 +50,41 @@ const EMPTY_DEFS: readonly ItemDefinition[] = [];
  */
 type ItemEntry = Extract<
   TransactionLogEntry,
-  { type: 'acquire' | 'consume' | 'edit-item-instance' | 'transfer' | 'split' }
+  {
+    type:
+      | 'acquire'
+      | 'consume'
+      | 'edit-item-instance'
+      | 'transfer'
+      | 'split'
+      | 'equip'
+      | 'unequip'
+      | 'attune'
+      | 'unattune'
+      | 'use-charge'
+      | 'recharge'
+      | 'identify';
+  }
 >;
+
+/**
+ * OUTLINE §3.11 default-filter TxTypes — "what changes who holds it /
+ * what it is". The remaining ItemEntry types (`use-charge`, `recharge`,
+ * `edit-item-instance`) are hidden until the user toggles "Show all
+ * events". `purchase` / `sale` aren't implemented yet (R5) but the spec
+ * lists them — when added they slot into this set.
+ */
+const DEFAULT_FILTER_TYPES: ReadonlySet<ItemEntry['type']> = new Set<ItemEntry['type']>([
+  'acquire',
+  'consume',
+  'transfer',
+  'split',
+  'equip',
+  'unequip',
+  'attune',
+  'unattune',
+  'identify',
+]);
 
 function isItemEntry(e: TransactionLogEntry): e is ItemEntry {
   return (
@@ -49,7 +92,14 @@ function isItemEntry(e: TransactionLogEntry): e is ItemEntry {
     e.type === 'consume' ||
     e.type === 'edit-item-instance' ||
     e.type === 'transfer' ||
-    e.type === 'split'
+    e.type === 'split' ||
+    e.type === 'equip' ||
+    e.type === 'unequip' ||
+    e.type === 'attune' ||
+    e.type === 'unattune' ||
+    e.type === 'use-charge' ||
+    e.type === 'recharge' ||
+    e.type === 'identify'
   );
 }
 
@@ -68,6 +118,11 @@ function entryReferencesItem(e: ItemEntry, itemInstanceId: string): boolean {
 }
 
 export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement {
+  // R2.3 — component-local toggle. Default `false` matches OUTLINE §3.11
+  // "ownership-transition filter". Resets per mount; R5 may lift to
+  // Zustand if cross-navigation persistence becomes a real need.
+  const [showAll, setShowAll] = useState(false);
+
   const entries = useStore(
     useShallow((s) =>
       s.log.filter(
@@ -75,6 +130,12 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
       ),
     ),
   );
+
+  const visibleEntries = useMemo(
+    () => (showAll ? entries : entries.filter((e) => DEFAULT_FILTER_TYPES.has(e.type))),
+    [entries, showAll],
+  );
+  const hiddenCount = entries.length - visibleEntries.length;
 
   // Stash + character lookups for the `transfer` / `split` summarizers.
   // Raw arrays come through `useShallow`; the per-id dictionary is
@@ -122,25 +183,46 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
 
   return (
     <section className="space-y-2">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        History
-      </h2>
-      <ul className="space-y-1 text-sm" role="list">
-        {entries.map((e) => (
-          <li
-            key={e.id}
-            className="flex items-baseline gap-3 border-b border-border/50 py-1 last:border-0"
-          >
-            <span className="font-mono text-xs text-muted-foreground">
-              {new Date(e.timestamp).toLocaleString()}
-            </span>
-            <span className="rounded bg-muted px-1.5 py-0.5 text-xs uppercase text-muted-foreground">
-              {e.actorRole}
-            </span>
-            <span>{summarize(e, itemInstanceId, stashLabelById, containerLabelById)}</span>
-          </li>
-        ))}
-      </ul>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          History
+        </h2>
+        {hiddenCount > 0 || showAll ? (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={showAll}
+              onChange={(e) => {
+                setShowAll(e.target.checked);
+              }}
+              className="h-3.5 w-3.5"
+            />
+            <span>Show all events{!showAll && hiddenCount > 0 ? ` (+${String(hiddenCount)})` : ''}</span>
+          </label>
+        ) : null}
+      </div>
+      {visibleEntries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No ownership-transition events for this item yet — toggle "Show all events" to see {hiddenCount} hidden entr{hiddenCount === 1 ? 'y' : 'ies'}.
+        </p>
+      ) : (
+        <ul className="space-y-1 text-sm" role="list">
+          {visibleEntries.map((e) => (
+            <li
+              key={e.id}
+              className="flex items-baseline gap-3 border-b border-border/50 py-1 last:border-0"
+            >
+              <span className="font-mono text-xs text-muted-foreground">
+                {new Date(e.timestamp).toLocaleString()}
+              </span>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs uppercase text-muted-foreground">
+                {e.actorRole}
+              </span>
+              <span>{summarize(e, itemInstanceId, stashLabelById, containerLabelById)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -206,6 +288,43 @@ function summarize(
       return isSource
         ? `Split \u00d7${String(e.payload.quantity)} into a new row`
         : `Split off from another stack (\u00d7${String(e.payload.quantity)})`;
+    }
+    case 'equip':
+      return 'Equipped';
+    case 'unequip':
+      return 'Unequipped';
+    case 'attune':
+      return 'Attuned';
+    case 'unattune':
+      return 'Unattuned';
+    case 'use-charge':
+      return `Used \u00d7${String(e.payload.amount)} charge${e.payload.amount === 1 ? '' : 's'}`;
+    case 'recharge': {
+      const delta = e.payload.to - e.payload.from;
+      const triggerLabel =
+        e.payload.trigger === 'manual'
+          ? 'manual'
+          : e.payload.trigger.replace('-', ' ');
+      return `Recharged +${String(delta)} (${String(e.payload.from)} \u2192 ${String(e.payload.to)}, ${triggerLabel})`;
+    }
+    case 'identify': {
+      const { previousIdentified, newIdentified, previousHint, newHint } = e.payload;
+      if (previousIdentified !== newIdentified) {
+        // Identification flip is the headline; mention the hint only if it
+        // also changed in the same dispatch.
+        const base = newIdentified ? 'Identified' : 'Marked unidentified';
+        if (previousHint !== newHint) {
+          if (newHint !== undefined && newHint.length > 0) {
+            return `${base} (hint: "${newHint}")`;
+          }
+          return `${base} (hint cleared)`;
+        }
+        return base;
+      }
+      // Hint-only change (identified unchanged).
+      if (newHint === undefined) return 'Cleared unidentified hint';
+      if (previousHint === undefined) return `Set unidentified hint to "${newHint}"`;
+      return `Updated unidentified hint to "${newHint}"`;
     }
   }
 }

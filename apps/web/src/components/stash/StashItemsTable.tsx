@@ -9,6 +9,8 @@ import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
 import { attunement } from '@app/rules';
 import { rarityDotClass, rarityLabel } from '@/lib/rarity';
+import { formatChargesShort } from '@/lib/charges';
+import { displayName as computeDisplayName } from '@/lib/identify';
 import { MoveItemModal } from './MoveItemModal';
 import { PackItemModal } from './PackItemModal';
 import { SplitModal } from './SplitModal';
@@ -194,7 +196,12 @@ export function StashItemsTable({
         <tbody>
           {displayRows.map(({ row, depth }) => {
             const def = catalogById.get(row.definitionId);
-            const displayName = row.customName ?? def?.name ?? '(unknown item)';
+            const isIdentified = row.identified;
+            // R2.3 — display gate per OUTLINE §8: unidentified rows render
+            // as "Unknown Magic Item". Helper centralises the rule + also
+            // hides `customName` (spoiler protection — a nickname can
+            // reveal magic-item-ness).
+            const displayName = computeDisplayName(row, def);
             const canSplit = row.quantity >= 2;
             // R1.5 — row classification for Pack / Take out buttons + the
             // "N items inside" container summary.
@@ -236,15 +243,32 @@ export function StashItemsTable({
                     className="text-left underline-offset-2 hover:underline focus:outline-none focus-visible:underline"
                     aria-label={`Open details for ${displayName}`}
                   >
-                    {def?.rarity != null ? (
+                    {isIdentified && def?.rarity != null ? (
                       <span
                         aria-label={`Rarity: ${rarityLabel(def.rarity)}`}
                         title={rarityLabel(def.rarity)}
                         className={`mr-2 inline-block h-2 w-2 rounded-full align-middle ${rarityDotClass(def.rarity)}`}
                       />
                     ) : null}
+                    {!isIdentified ? (
+                      <span
+                        aria-label="Unidentified"
+                        title={row.hint ?? 'Unidentified'}
+                        className="mr-2 inline-block w-3 align-middle text-center text-xs font-semibold text-muted-foreground"
+                      >
+                        ?
+                      </span>
+                    ) : null}
                     {displayName}
                   </button>
+                  {isIdentified && def?.charges !== undefined && row.currentCharges !== null ? (
+                    <span
+                      aria-label={`Charges: ${formatChargesShort(row.currentCharges, def.charges.max)}`}
+                      className="ml-2 text-xs tabular-nums text-muted-foreground"
+                    >
+                      ({formatChargesShort(row.currentCharges, def.charges.max)})
+                    </span>
+                  ) : null}
                   {isContainer && childCount > 0 ? (
                     <span className="ml-2 text-xs text-muted-foreground">
                       — {childCount} {childCount === 1 ? 'item' : 'items'} inside

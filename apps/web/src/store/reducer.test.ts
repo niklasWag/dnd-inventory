@@ -4670,4 +4670,1006 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
   });
 });
 
+describe('reducer: use-charge (R2.2)', () => {
+  /**
+   * Bootstrap a character with a Wand of Magic Missiles in their
+   * Inventory. The acquire path auto-stacks into a row; the leave/enter-
+   * Inventory cascade (R2.2) initialises `currentCharges` to `def.max`
+   * the moment the row lands in Inventory. Verifying the init here is
+   * load-bearing for every subsequent use-charge test.
+   */
+  function setupWandInInventory(): {
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    itemInstanceId: string;
+    wand: ReturnType<typeof bootstrap>['catalog'][number];
+  } {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles');
+    if (wand === undefined) throw new Error('setupWandInInventory: wand not in catalog');
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === wand.id,
+    )!.id;
+    return {
+      characterId: base.characterId,
+      inventoryStashId: base.inventoryStashId,
+      partyStashId: base.partyStashId,
+      itemInstanceId,
+      wand,
+    };
+  }
+
+  function setupPotionInInventory(quantity: number): {
+    characterId: string;
+    inventoryStashId: string;
+    itemInstanceId: string;
+    potion: ReturnType<typeof bootstrap>['catalog'][number];
+  } {
+    const base = localBootstrap();
+    const potion = base.catalog.find((d) => d.id === 'dmg-2024:potion-of-healing');
+    if (potion === undefined) throw new Error('setupPotionInInventory: potion not in catalog');
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: potion.id,
+        quantity,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === potion.id,
+    )!.id;
+    return {
+      characterId: base.characterId,
+      inventoryStashId: base.inventoryStashId,
+      itemInstanceId,
+      potion,
+    };
+  }
+
+  it('initialises currentCharges to def.max when a charged item enters Inventory via acquire', () => {
+    const { itemInstanceId, wand } = setupWandInInventory();
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(wand.charges!.max);
+  });
+
+  it('decrements currentCharges by 1 on dispatch with default amount', () => {
+    const { characterId, itemInstanceId, wand } = setupWandInInventory();
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(wand.charges!.max - 1);
+  });
+
+  it('decrements by the provided amount', () => {
+    const { characterId, itemInstanceId, wand } = setupWandInInventory();
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId, amount: 3 },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(wand.charges!.max - 3);
+  });
+
+  it('emits one use-charge log entry with amount captured', () => {
+    const { characterId, itemInstanceId } = setupWandInInventory();
+    const logLenBefore = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId, amount: 2 },
+    });
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added).toHaveLength(1);
+    const entry = added[0]!;
+    expect(entry.type).toBe('use-charge');
+    if (entry.type !== 'use-charge') throw new Error('narrow');
+    expect(entry.payload).toMatchObject({ itemInstanceId, characterId, amount: 2 });
+  });
+
+  it('log entry round-trips through the schema', () => {
+    const { characterId, itemInstanceId } = setupWandInInventory();
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+
+  it('rejects when the row is not in the character\'s Inventory (Party Stash)', () => {
+    const { characterId, partyStashId, wand } = setupWandInInventory();
+    // Move the wand out of Inventory into Party Stash.
+    const wandRow = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === wand.id,
+    )!;
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: wandRow.id, toStashId: partyStashId, quantity: 1 },
+    });
+    // The wand is now in Party Stash. Try to use-charge — must reject.
+    const movedId = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === wand.id,
+    )!.id;
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'use-charge', payload: { itemInstanceId: movedId, characterId } }),
+    ).toThrow(/not in character .* Inventory stash/);
+  });
+
+  it('rejects when the row\'s definition has no charges block (Torch)', () => {
+    const base = localBootstrap();
+    const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const torchId = useStore.getState().appState!.items[0]!.id;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'use-charge',
+        payload: { itemInstanceId: torchId, characterId: base.characterId },
+      }),
+    ).toThrow(/has no charges defined/);
+  });
+
+  it('rejects when currentCharges - amount would go below 0', () => {
+    const { characterId, itemInstanceId, wand } = setupWandInInventory();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'use-charge',
+        payload: { itemInstanceId, characterId, amount: wand.charges!.max + 1 },
+      }),
+    ).toThrow(/insufficient charges/);
+  });
+
+  it('rejects amount <= 0', () => {
+    const { characterId, itemInstanceId } = setupWandInInventory();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'use-charge', payload: { itemInstanceId, characterId, amount: 0 } }),
+    ).toThrow(/positive integer/);
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'use-charge', payload: { itemInstanceId, characterId, amount: -1 } }),
+    ).toThrow(/positive integer/);
+  });
+
+  it('non-single-use: spending last charge leaves currentCharges 0, row intact', () => {
+    const { characterId, itemInstanceId, wand } = setupWandInInventory();
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId, amount: wand.charges!.max },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId);
+    expect(row).toBeDefined();
+    expect(row!.currentCharges).toBe(0);
+  });
+
+  it('single-use cascade: spending last charge on stack=1 drops row + emits paired consume entry', () => {
+    const { characterId, itemInstanceId } = setupPotionInInventory(1);
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId },
+    });
+
+    // Row is gone.
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId);
+    expect(row).toBeUndefined();
+
+    // Two log entries appended in order.
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['use-charge', 'consume']);
+    const consumeEntry = added[1]!;
+    if (consumeEntry.type !== 'consume') throw new Error('narrow');
+    expect(consumeEntry.payload.removed).toBe(true);
+    expect(consumeEntry.payload.itemInstanceId).toBe(itemInstanceId);
+    expect(consumeEntry.payload.quantity).toBe(1);
+  });
+
+  it('single-use stack: spending one charge from stack of 5 decrements quantity to 4 + resets currentCharges to max', () => {
+    const { characterId, itemInstanceId, potion } = setupPotionInInventory(5);
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.quantity).toBe(4);
+    expect(row.currentCharges).toBe(potion.charges!.max);
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['use-charge', 'consume']);
+    const consumeEntry = added[1]!;
+    if (consumeEntry.type !== 'consume') throw new Error('narrow');
+    expect(consumeEntry.payload.removed).toBe(false);
+  });
+
+  it('single-use + non-zero result: no synthetic consume entry', () => {
+    // A potion with `max: 1` always decrements to 0, so this test uses a
+    // necklace-of-fireballs (`max: 9`, `rechargeRule: 'none'`) and spends
+    // a single charge. The row stays put (it's a single-use mechanism
+    // that bookkeeps charges WITHIN a single instance — the necklace
+    // doesn't drop until all 9 beads are spent).
+    const base = localBootstrap();
+    const necklace = base.catalog.find((d) => d.id === 'dmg-2024:necklace-of-fireballs');
+    if (necklace === undefined) {
+      throw new Error('test: necklace not in catalog');
+    }
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: necklace.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === necklace.id,
+    )!.id;
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId, characterId: base.characterId },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(necklace.charges!.max - 1);
+    expect(row.quantity).toBe(1); // intact
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['use-charge']); // no consume
+  });
+});
+
+describe('reducer: recharge (R2.2)', () => {
+  function setupWandSpentTo(targetCharges: number): {
+    characterId: string;
+    itemInstanceId: string;
+    wand: ReturnType<typeof bootstrap>['catalog'][number];
+  } {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === wand.id,
+    )!.id;
+    const spend = wand.charges!.max - targetCharges;
+    if (spend > 0) {
+      useStore.getState().dispatch({
+        type: 'use-charge',
+        payload: { itemInstanceId, characterId: base.characterId, amount: spend },
+      });
+    }
+    return { characterId: base.characterId, itemInstanceId, wand };
+  }
+
+  it('mode=single: recharges to def.max and emits one recharge entry with trigger=manual', () => {
+    const { characterId, itemInstanceId, wand } = setupWandSpentTo(2);
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'single', itemInstanceId, characterId },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(wand.charges!.max);
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added).toHaveLength(1);
+    const rechargeEntry = added[0]!;
+    if (rechargeEntry.type !== 'recharge') throw new Error('narrow');
+    expect(rechargeEntry.payload).toMatchObject({
+      itemInstanceId,
+      characterId,
+      from: 2,
+      to: wand.charges!.max,
+      trigger: 'manual',
+    });
+  });
+
+  it('mode=manual: behaves identically to mode=single', () => {
+    const { characterId, itemInstanceId, wand } = setupWandSpentTo(0);
+
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'manual', itemInstanceId, characterId },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(wand.charges!.max);
+    const last = useStore.getState().log.at(-1)!;
+    if (last.type !== 'recharge') throw new Error('narrow');
+    expect(last.payload.trigger).toBe('manual');
+  });
+
+  it('mode=single rejects items already at full charges', () => {
+    const { characterId, itemInstanceId } = setupWandSpentTo(7); // full
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'recharge',
+        payload: { mode: 'single', itemInstanceId, characterId },
+      }),
+    ).toThrow(/already at full charges/);
+  });
+
+  it('mode=single rejects rows whose definition has no charges block', () => {
+    const base = localBootstrap();
+    const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const torchId = useStore.getState().appState!.items[0]!.id;
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'recharge',
+        payload: { mode: 'single', itemInstanceId: torchId, characterId: base.characterId },
+      }),
+    ).toThrow(/has no charges defined/);
+  });
+
+  it('mode=batch dawn: recharges only dawn-rule items; long-rest items untouched', () => {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    const pearl = base.catalog.find((d) => d.id === 'dmg-2024:pearl-of-power')!;
+    // Acquire both into Inventory.
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: pearl.id, quantity: 1, source: 'catalog-add' },
+    });
+    const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    const pearlId = useStore.getState().appState!.items.find((i) => i.definitionId === pearl.id)!.id;
+    // Spend a charge on each.
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId: wandId, characterId: base.characterId },
+    });
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId: pearlId, characterId: base.characterId },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    // Trigger dawn batch.
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'batch', characterId: base.characterId, trigger: 'dawn' },
+    });
+
+    const wandAfter = useStore.getState().appState!.items.find((i) => i.id === wandId)!;
+    const pearlAfter = useStore.getState().appState!.items.find((i) => i.id === pearlId)!;
+    expect(wandAfter.currentCharges).toBe(wand.charges!.max); // dawn rule → recharged
+    expect(pearlAfter.currentCharges).toBe(0); // long-rest rule → untouched
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added).toHaveLength(1); // only the wand
+    const dawnEntry = added[0]!;
+    if (dawnEntry.type !== 'recharge') throw new Error('narrow');
+    expect(dawnEntry.payload.trigger).toBe('dawn');
+  });
+
+  it('mode=batch long-rest: recharges only long-rest-rule items', () => {
+    const base = localBootstrap();
+    const pearl = base.catalog.find((d) => d.id === 'dmg-2024:pearl-of-power')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: pearl.id, quantity: 1, source: 'catalog-add' },
+    });
+    const pearlId = useStore.getState().appState!.items.find((i) => i.definitionId === pearl.id)!.id;
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId: pearlId, characterId: base.characterId },
+    });
+
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'batch', characterId: base.characterId, trigger: 'long-rest' },
+    });
+
+    const pearlAfter = useStore.getState().appState!.items.find((i) => i.id === pearlId)!;
+    expect(pearlAfter.currentCharges).toBe(pearl.charges!.max);
+  });
+
+  it('mode=batch with no eligible items emits zero log entries (no throw)', () => {
+    const { characterId } = localBootstrap(); // empty Inventory
+    const logLenBefore = useStore.getState().log.length;
+
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'recharge',
+        payload: { mode: 'batch', characterId, trigger: 'long-rest' },
+      }),
+    ).not.toThrow();
+
+    expect(useStore.getState().log.length).toBe(logLenBefore);
+  });
+
+  it('mode=batch silently skips rows already at full charges (no-op rows)', () => {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    // Wand acquired = full charges immediately. No spend.
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'batch', characterId: base.characterId, trigger: 'dawn' },
+    });
+
+    expect(useStore.getState().log.length).toBe(logLenBefore); // zero new entries
+  });
+
+  it('mode=batch recharge log entry round-trips through the schema', () => {
+    const { characterId, itemInstanceId } = setupWandSpentTo(0);
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'batch', characterId, trigger: 'dawn' },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+    if (last.type !== 'recharge') throw new Error('narrow');
+    expect(last.payload.itemInstanceId).toBe(itemInstanceId);
+  });
+
+  // -------------------------------------------------------------------- //
+  // R2.2.1 — partial recharge by user-rolled amount                       //
+  // -------------------------------------------------------------------- //
+
+  it('mode=single with amount: applies partial recharge clamped at max', () => {
+    const { characterId, itemInstanceId } = setupWandSpentTo(2);
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'single', itemInstanceId, characterId, amount: 3 },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(5); // 2 + 3 = 5
+    const last = useStore.getState().log.at(-1)!;
+    if (last.type !== 'recharge') throw new Error('narrow');
+    expect(last.payload.from).toBe(2);
+    expect(last.payload.to).toBe(5);
+  });
+
+  it('mode=single with amount: clamps when amount overshoots max', () => {
+    const { characterId, itemInstanceId, wand } = setupWandSpentTo(5);
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: { mode: 'single', itemInstanceId, characterId, amount: 99 },
+    });
+    const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(row.currentCharges).toBe(wand.charges!.max); // capped at 7
+  });
+
+  it('mode=single with amount: rejects non-positive amount', () => {
+    const { characterId, itemInstanceId } = setupWandSpentTo(0);
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'recharge',
+        payload: { mode: 'single', itemInstanceId, characterId, amount: 0 },
+      }),
+    ).toThrow(/positive integer/);
+  });
+
+  it('mode=batch with amounts: applies per-item partial recharge for formula-bearing items', () => {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    // Spend down to 0.
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId: wandId, characterId: base.characterId, amount: 7 },
+    });
+
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: {
+        mode: 'batch',
+        characterId: base.characterId,
+        trigger: 'dawn',
+        amounts: { [wandId]: 4 },
+      },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === wandId)!;
+    expect(row.currentCharges).toBe(4); // partial recharge
+  });
+
+  it('mode=batch with amounts: rows without formula full-recharge regardless of amounts map', () => {
+    const base = localBootstrap();
+    // Decanter of Endless Water: rechargeRule dawn, NO rechargeAmount.
+    const decanter = base.catalog.find((d) => d.id === 'dmg-2024:decanter-of-endless-water')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: decanter.id, quantity: 1, source: 'catalog-add' },
+    });
+    const decanterId = useStore.getState().appState!.items.find((i) => i.definitionId === decanter.id)!.id;
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId: decanterId, characterId: base.characterId, amount: decanter.charges!.max },
+    });
+
+    useStore.getState().dispatch({
+      type: 'recharge',
+      payload: {
+        mode: 'batch',
+        characterId: base.characterId,
+        trigger: 'dawn',
+        amounts: { [decanterId]: 1 }, // ignored — decanter has no formula
+      },
+    });
+
+    const row = useStore.getState().appState!.items.find((i) => i.id === decanterId)!;
+    expect(row.currentCharges).toBe(decanter.charges!.max); // full recharge
+  });
+});
+
+describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + R2.3 preserve)', () => {
+  /**
+   * R1.3 left scaffolding for the currentCharges branch in the transfer
+   * cascade test suite (`reducer.test.ts:3606`). R2.2 widens currentCharges
+   * from `z.null()` to `number | null` and activated both cascade
+   * directions. R2.3 amended the design: charges PRESERVE across moves
+   * (the R2.2 round-trip-recharge exploit is fixed). The cascade now:
+   *   - leave Inventory → currentCharges UNCHANGED (only `equipped` /
+   *     `attuned` clear).
+   *   - enter Inventory → currentCharges initialised to def.max only if
+   *     currently null (preserves non-null values).
+   * The OUTLINE §3.4 "only meaningful in Inventory" invariant becomes a
+   * UI display rule, not a storage rule.
+   */
+
+  it('Inventory → Storage: preserves currentCharges (no longer cleared to null per R2.3)', () => {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    // Verify the entering-Inventory init worked (the row has currentCharges = max).
+    expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBe(
+      wand.charges!.max,
+    );
+    // Spend one charge so the post-move value is observably non-default.
+    useStore.getState().dispatch({
+      type: 'use-charge',
+      payload: { itemInstanceId: wandId, characterId: base.characterId },
+    });
+    expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBe(
+      wand.charges!.max - 1,
+    );
+
+    // Create a Storage stash.
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore
+      .getState()
+      .appState!.stashes.find((st) => st.name === 'Vault')!.id;
+
+    const logLenBefore = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: wandId, toStashId: storageStashId, quantity: 1 },
+    });
+
+    const moved = useStore.getState().appState!.items.find((i) => i.ownerId === storageStashId);
+    expect(moved).toBeDefined();
+    // R2.3 — currentCharges preserved across the move.
+    expect(moved!.currentCharges).toBe(wand.charges!.max - 1);
+
+    // No paired edit-item-instance entry for currentCharges (nothing
+    // changed). Equipped/attuned were already false on the wand so the
+    // cascade emits no edit-item-instance at all.
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['transfer']);
+  });
+
+  it('Storage → Inventory: initialises currentCharges to def.max when source has null (first-entry case)', () => {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    // Acquire DIRECTLY into Storage (not Inventory) so currentCharges starts null.
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore
+      .getState()
+      .appState!.stashes.find((st) => st.name === 'Vault')!.id;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: storageStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBeNull();
+
+    // Move into Inventory — currentCharges should initialise to def.max
+    // (first time the row is meaningfully tracked).
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: wandId, toStashId: base.inventoryStashId, quantity: 1 },
+    });
+
+    const moved = useStore.getState().appState!.items.find((i) => i.ownerId === base.inventoryStashId);
+    expect(moved!.currentCharges).toBe(wand.charges!.max);
+  });
+
+  it('R2.3 — round-trip Inventory → Storage → Inventory preserves the spent count (no free recharge exploit)', () => {
+    const base = localBootstrap();
+    const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    // Spend 4 charges → 3/7 left.
+    for (let i = 0; i < 4; i++) {
+      useStore.getState().dispatch({
+        type: 'use-charge',
+        payload: { itemInstanceId: wandId, characterId: base.characterId },
+      });
+    }
+    expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBe(3);
+
+    // Move to Storage.
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.find((st) => st.name === 'Vault')!.id;
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: wandId, toStashId: storageStashId, quantity: 1 },
+    });
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges,
+    ).toBe(3);
+
+    // Move back to Inventory — charges still 3/7, not refilled.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: wandId, toStashId: base.inventoryStashId, quantity: 1 },
+    });
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges,
+    ).toBe(3);
+  });
+
+  it('non-charged item (Torch) Inventory → Storage: cascade leaves currentCharges null both sides', () => {
+    const base = localBootstrap();
+    const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: base.inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    const torchId = useStore.getState().appState!.items[0]!.id;
+    expect(useStore.getState().appState!.items[0]!.currentCharges).toBeNull(); // torch has no charges
+
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.find((st) => st.name === 'Vault')!.id;
+
+    const logLenBefore = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId: torchId, toStashId: storageStashId, quantity: 1 },
+    });
+
+    // No paired edit-item-instance because nothing changed (no equipped, no attuned, no charges).
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added.map((e) => e.type)).toEqual(['transfer']);
+  });
+});
+
+describe('reducer: identify (R2.3)', () => {
+  /**
+   * Bootstrap a character with a magic item in Inventory. Cloak of
+   * Protection is the canonical fixture — `requiresAttunement: true`,
+   * `rarity: 'uncommon'`, no charges block — so it exercises the
+   * identification surface cleanly without dragging in attunement
+   * cap / charges init side-effects.
+   */
+  function setupCloakInInventory(): {
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    itemInstanceId: string;
+  } {
+    const base = localBootstrap();
+    const cloak = base.catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection');
+    if (cloak === undefined) throw new Error('setupCloakInInventory: cloak not in catalog');
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const itemInstanceId = useStore.getState().appState!.items.find(
+      (i) => i.definitionId === cloak.id,
+    )!.id;
+    return {
+      characterId: base.characterId,
+      inventoryStashId: base.inventoryStashId,
+      partyStashId: base.partyStashId,
+      itemInstanceId,
+    };
+  }
+
+  it('flips identified: true → false and emits a log entry capturing the transition', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    const before = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(before.identified).toBe(true);
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false },
+    });
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.identified).toBe(false);
+
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added).toHaveLength(1);
+    const entry = added[0]!;
+    expect(entry.type).toBe('identify');
+    if (entry.type !== 'identify') throw new Error('expected identify');
+    expect(entry.payload.previousIdentified).toBe(true);
+    expect(entry.payload.newIdentified).toBe(false);
+    expect(entry.payload.previousHint).toBeUndefined();
+    expect(entry.payload.newHint).toBeUndefined();
+    expect(entry.actorRole).toBe('dm');
+  });
+
+  it('flips identified: false → true (re-identify) and logs the reverse transition', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    // First mark unidentified with a hint.
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'shimmers faintly' },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: true, hint: 'shimmers faintly' },
+    });
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.identified).toBe(true);
+    // Hint preserved on re-identify per the R2.3 plan (DM panel can reuse it
+    // if the item is later flipped unidentified again).
+    expect(after.hint).toBe('shimmers faintly');
+
+    const entry = useStore.getState().log.slice(logLenBefore)[0]!;
+    expect(entry.type).toBe('identify');
+    if (entry.type !== 'identify') throw new Error('expected identify');
+    expect(entry.payload.previousIdentified).toBe(false);
+    expect(entry.payload.newIdentified).toBe(true);
+  });
+
+  it('writes a new hint without changing identified', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'radiates evil' },
+    });
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.identified).toBe(false);
+    expect(after.hint).toBe('radiates evil');
+
+    const entry = useStore.getState().log.slice(logLenBefore)[0]!;
+    if (entry.type !== 'identify') throw new Error('expected identify');
+    expect(entry.payload.previousHint).toBeUndefined();
+    expect(entry.payload.newHint).toBe('radiates evil');
+  });
+
+  it('clears the hint when payload.hint is explicit undefined', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'whispers in elvish' },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: undefined },
+    });
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.identified).toBe(false);
+    expect(after.hint).toBeUndefined();
+
+    const entry = useStore.getState().log.slice(logLenBefore)[0]!;
+    if (entry.type !== 'identify') throw new Error('expected identify');
+    expect(entry.payload.previousHint).toBe('whispers in elvish');
+    expect(entry.payload.newHint).toBeUndefined();
+  });
+
+  it('succeeds on a non-Inventory row (Party Stash) — identify has no location restriction', () => {
+    const { itemInstanceId, inventoryStashId, partyStashId } = setupCloakInInventory();
+    // Move the cloak to the Party Stash.
+    useStore.getState().dispatch({
+      type: 'transfer',
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+    });
+    expect(
+      useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.ownerId,
+    ).toBe(partyStashId);
+
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'feels heavy' },
+    });
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.identified).toBe(false);
+    expect(after.hint).toBe('feels heavy');
+    // Sanity: the original Inventory stash no longer holds the cloak.
+    expect(
+      useStore.getState().appState!.items.find((i) => i.ownerId === inventoryStashId && i.id === itemInstanceId),
+    ).toBeUndefined();
+  });
+
+  it('rejects when itemInstanceId is unknown', () => {
+    setupCloakInInventory();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'identify',
+        payload: { itemInstanceId: 'ghost-id', identified: false },
+      }),
+    ).toThrow(/unknown itemInstanceId/);
+  });
+
+  it('rejects when the definitionId is not in the catalog (defensive)', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    // Synthesise an orphan row by editing the store directly.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          items: s.appState.items.map((i) =>
+            i.id === itemInstanceId ? { ...i, definitionId: 'ghost-def' } : i,
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'identify',
+        payload: { itemInstanceId, identified: false },
+      }),
+    ).toThrow(/not in catalog/);
+  });
+
+  it('rejects exact no-op (same identified, same hint)', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    // Row starts identified=true, no hint. Dispatching the same combination
+    // is a no-op.
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'identify',
+        payload: { itemInstanceId, identified: true },
+      }),
+    ).toThrow(/no-op/);
+  });
+
+  it('does not throw on no-op when hint key is omitted but identified differs (hint untouched)', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'shimmers' },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    // Flip identified back without supplying hint key — hint stays untouched.
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: true },
+    });
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.identified).toBe(true);
+    expect(after.hint).toBe('shimmers');
+
+    const entry = useStore.getState().log.slice(logLenBefore)[0]!;
+    if (entry.type !== 'identify') throw new Error('expected identify');
+    expect(entry.payload.previousHint).toBe('shimmers');
+    expect(entry.payload.newHint).toBe('shimmers');
+  });
+
+  it('hint-only change (identified unchanged) is a valid dispatch', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'glows blue' },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    // Same identified state, different hint.
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false, hint: 'glows red' },
+    });
+
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.hint).toBe('glows red');
+
+    const entry = useStore.getState().log.slice(logLenBefore)[0]!;
+    if (entry.type !== 'identify') throw new Error('expected identify');
+    expect(entry.payload.previousIdentified).toBe(false);
+    expect(entry.payload.newIdentified).toBe(false);
+    expect(entry.payload.previousHint).toBe('glows blue');
+    expect(entry.payload.newHint).toBe('glows red');
+  });
+
+  it('routes the log entry through actorRole=dm per OUTLINE §8.1', () => {
+    const { itemInstanceId } = setupCloakInInventory();
+    const logLenBefore = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId, identified: false },
+    });
+    const entry = useStore.getState().log.slice(logLenBefore)[0]!;
+    expect(entry.actorRole).toBe('dm');
+  });
+});
+
 

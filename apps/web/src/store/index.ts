@@ -93,6 +93,8 @@ function resolveActor(
     case 'unequip':
     case 'attune':
     case 'unattune':
+    case 'use-charge':
+    case 'recharge':
     case 'edit-character':
       // M3 player-initiated stash CRUD + the synthetic transfer +
       // currency-change emitted from the delete-stash cascade. M5
@@ -115,6 +117,11 @@ function resolveActor(
       // per the reducer's `resolveInventoryRow` guard). `edit-character`
       // is logged as player-role in MVP; R4 will route `maxAttunement`
       // edits through the DM role per OUTLINE §8.1.
+      // R2.2 adds `use-charge` / `recharge` — both owner-only in MVP
+      // (the row must live in the character's own Inventory). R4 will
+      // route DM force-use-charge / force-recharge through the DM role
+      // per OUTLINE §8.1 (force-actions on Inventory items + force-
+      // recharge on any-location items).
       // R4 (multi-member) will also let DM / Banker drive these.
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
@@ -122,6 +129,20 @@ function resolveActor(
       return {
         actorUserId: state.user.id,
         actorRole: 'player',
+        partyId: state.party.id,
+      };
+    case 'identify':
+      // R2.3: DM-only action per OUTLINE §8.1 row 459 ("Identify magic
+      // item (toggle identified)"). In MVP party-of-one the sole user
+      // wears both hats so this routes the same physical user through
+      // the DM membership for audit purposes. R3+ server-side gate
+      // will enforce DM-only for multi-member parties.
+      if (state === null) {
+        throw new Error('resolveActor: identify requires populated AppState');
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'dm',
         partyId: state.party.id,
       };
   }

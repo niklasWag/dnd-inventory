@@ -46,6 +46,53 @@ export const raritySchema = z.enum([
 ]);
 export type Rarity = z.infer<typeof raritySchema>;
 
+/**
+ * Recharge rule on a magic-item `charges` block (OUTLINE §3.8 + §6
+ * `charges.ts`). Activated in R2.2.
+ *
+ * - `'dawn' | 'dusk' | 'long-rest' | 'short-rest'` — standard 5e
+ *   recharge triggers. The Character Sheet "Rest" dropdown fires the
+ *   matching batch dispatch; the reducer iterates Inventory and
+ *   recharges every item whose `rechargeRule` strictly matches the
+ *   trigger.
+ * - `'custom'` — DM-recharged manually (e.g. Rod of Resurrection's
+ *   multi-day recharge). The MVP rules layer ignores the formula and
+ *   the Item Detail Recharge button fully recharges to `max` on press;
+ *   R6 (DM tools) is the natural home for formula evaluation.
+ * - `'none'` — single-use sentinel (potions, scrolls, necklace beads).
+ *   When `currentCharges` decrements to 0 and `rechargeRule === 'none'`,
+ *   the reducer emits a synthetic `consume` entry to remove (or
+ *   decrement-stack) the row.
+ *
+ * Distinct from the `recharge` log entry's `trigger` enum, which uses
+ * `'manual'` for the user-initiated path (button press / R6 force-
+ * recharge). The two enums are intentionally not the same shape:
+ * `rechargeRule` describes how an item recharges; `trigger` describes
+ * what fired the recharge.
+ */
+export const chargesRechargeRuleSchema = z.enum([
+  'dawn',
+  'dusk',
+  'long-rest',
+  'short-rest',
+  'custom',
+  'none',
+]);
+export type ChargesRechargeRule = z.infer<typeof chargesRechargeRuleSchema>;
+
+/**
+ * `charges` block on a magic-item `ItemDefinition`. `max` is the
+ * fully-recharged count; `rechargeAmount` is an opaque human-readable
+ * formula (e.g. `"1d6+1"`) — the MVP rules engine does not evaluate
+ * it. R6 may add formula parsing.
+ */
+export const chargesSchema = z.object({
+  max: z.number().int().positive(),
+  rechargeRule: chargesRechargeRuleSchema,
+  rechargeAmount: z.string().min(1).optional(),
+});
+export type ChargesBlock = z.infer<typeof chargesSchema>;
+
 export const itemDefinitionSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -86,6 +133,13 @@ export const itemDefinitionSchema = z.object({
   rarity: raritySchema.nullable().optional(),
   requiresAttunement: z.boolean().optional(),
   attunementPrereq: z.string().optional(),
+  // R2.2 — magic-item charges block (OUTLINE §3.8 + §4 line 277).
+  // Optional rather than `.default(...)` so PHB seed rows + M6 homebrew
+  // creation paths don't need retrofitting — undefined / absent means
+  // "this item has no charges mechanic". DMG seed entries that describe
+  // charges in their flavor text (wands, staves, rings, potions, scrolls)
+  // ship with this block populated.
+  charges: chargesSchema.optional(),
   duplicatedFromId: z.string().min(1).optional(),
   createdBy: z.string().min(1).optional(),
   partyId: z.string().min(1).optional(),

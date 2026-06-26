@@ -2,6 +2,7 @@ import { type ReactElement, useMemo } from 'react';
 
 import { useStore } from '@/store';
 import { attunement } from '@app/rules';
+import { displayName as computeDisplayName } from '@/lib/identify';
 
 interface EquippedSlotsPanelProps {
   characterId: string;
@@ -30,12 +31,15 @@ export function EquippedSlotsPanel({
     const character = appState.characters.find((c) => c.id === characterId);
     if (character === undefined) return null;
     const inventoryStashId = character.inventoryStashId;
-    const nameByDefId = new Map(appState.catalog.map((d) => [d.id, d.name] as const));
+    const defById = new Map(appState.catalog.map((d) => [d.id, d] as const));
     const equipped: { id: string; label: string }[] = [];
     const attuned: { id: string; label: string }[] = [];
     for (const row of appState.items) {
       if (row.ownerId !== inventoryStashId) continue;
-      const label = row.customName ?? nameByDefId.get(row.definitionId) ?? '(unknown)';
+      // R2.3 — route through the shared displayName helper so unidentified
+      // equipped/attuned magic items render as "Unknown Magic Item" instead
+      // of leaking their real name (OUTLINE §8 display invariant).
+      const label = computeDisplayName(row, defById.get(row.definitionId));
       if (row.equipped) equipped.push({ id: row.id, label });
       if (row.attuned) attuned.push({ id: row.id, label });
     }
