@@ -277,6 +277,36 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     expect(dataArg['type']).toBe('oauth');
   });
 
+  it('getUser preserves email: null for Discord-only users (no email scope per SECURITY §1.1)', async () => {
+    // Discord OAuth uses scope `identify` only — no email is ever returned.
+    // The DB column User.email is therefore NULL for Discord-only accounts
+    // (per OUTLINE §4: "email (nullable — set for email-only users or
+    // Discord users who added a backup login)"). The adapter MUST surface
+    // that null through to the AdapterUser so the Auth.js session callback
+    // can project null onto the public session payload — the client's
+    // sessionUserSchema.email is `z.string().email().nullable().optional()`,
+    // which accepts null but rejects ''.
+    const findUniqueMock = vi.fn(async () => ({
+      id: 'user-1',
+      displayName: 'GandalfTheGrey',
+      email: null,
+      emailVerified: null,
+      avatarUrl: null,
+      needsDisplayName: false,
+      discordId: '123',
+    }));
+    const fakePrisma = {
+      account: { create: vi.fn() },
+      user: { findUnique: findUniqueMock },
+    } as unknown as PrismaClient;
+    const adapter = makeAdapter(fakePrisma);
+
+    const result = await adapter.getUser!('user-1');
+    // Must remain null — coercion to '' would break the client's
+    // session-response Zod schema (z.email() rejects empty strings).
+    expect(result?.email).toBeNull();
+  });
+
   it('createUser maps AdapterUser name → schema displayName (B7 regression)', async () => {
     // The @auth/prisma-adapter passes Auth.js's `AdapterUser` shape directly
     // to prisma.user.create — but our schema column is `displayName`, not

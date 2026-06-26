@@ -47,7 +47,12 @@ function dbToAdapterUser(row: DbUserRow): AdapterUser {
   return {
     id: row.id,
     name: row.displayName,
-    email: row.email ?? '',
+    // Preserve SQL NULL. Discord uses scope `identify` only (SECURITY §1.1),
+    // so Discord-only users legitimately have no email. The public session
+    // schema (`sessionUserSchema.email`) is `z.string().email().nullable()`
+    // — coercing null → '' here would fail Zod email-format validation on
+    // the client and trip the `/auth/session` malformed-response branch.
+    email: row.email,
     emailVerified: row.emailVerified,
     image: row.avatarUrl,
     displayName: row.displayName,
