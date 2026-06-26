@@ -1755,7 +1755,9 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
 
 **UI**
-- [ ] Hub: Join party (paste code) flow wired
+- [ ] Hub: Join party (paste code) flow wired — **carryforward from R3.5** (the Hub card is currently hidden with a "Coming in R4" caption; unhide + wire the input + call `POST /parties/join`).
+- [ ] Hub: "do you also play a character?" toggle on the Create-party dialog (OUTLINE §3.1 default yes) — **carryforward from R3.5** (the Hub today always invokes `create-character` which mints both DM + player memberships; the toggle requires a reducer branch for DM-only).
+- [ ] Hub: per-party row navigation — clicking a party in the Hub list pulls THAT party's `AppState` via `pullState(partyId)` and routes into it. R3.5 ships the row but the click navigates to whichever character happens to be in the local store, which is wrong for users with multiple parties. **Carryforward from R3.5.**
 - [ ] Party Settings screen (§5.15): invite code regenerate / revoke, kick player
 - [ ] Member list with role badges (DM / Player)
 
@@ -1884,6 +1886,8 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [ ] Conflict resolution policy documented and implemented (server is authoritative)
 - [ ] Reconnect flow replays missed events
 - [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
+- [ ] **Offline-first Dexie cache for solo parties** — **carryforward from R3.5**. Today the web sync queue keeps optimistic state on a network error but drops the batch; solo parties should survive a full offline session by replaying the queue when connectivity returns. (Source: R3.5 Notes.)
+- [ ] **Sync queue retry semantics** — R3.5 surfaces a transient toast on network errors and drops the batch. R5 should add bounded retry with exponential backoff and an "outbox" persisted to Dexie so a tab close doesn't lose work. Inline pointer: `apps/web/src/sync/queue.ts:22, 192`. **Carryforward from R3.5.**
 
 #### R5.1 — Notes
 
@@ -2187,6 +2191,21 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 - [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** — verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
 - [ ] **`PendingDiscordLink` cron sweep** — R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
 - [ ] **Snapshot-age operator metric** — "snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). (Source: R3.4.b Notes.)
+
+### Test infrastructure
+
+- [ ] **Sync queue bootstrap pull-after-push test** — R3.5 dropped the bootstrap integration test from `apps/web/src/sync/queue.test.ts` because `instanceof BatchRejectedError` checks across `vi.resetModules()` boundaries proved flaky in the existing test rig. A proper fix wires module-singleton caching (or replaces `instanceof` with structural checks) so the bootstrap pull-after-push + 422 rollback paths get explicit coverage. The happy path + 401 path are tested; the rollback + bootstrap paths are exercised only through the type-checker today. (Source: R3.5 Notes.)
+- [ ] **Delete `apps/web/src/screens/Welcome.tsx` + `CreateCharacter.tsx`** — R3.5 kept them as legacy fixtures so the existing screen tests (`Settings.test.tsx`, `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `StorageDetail.test.tsx`) keep working without churn. The tests should be migrated to mount `Hub` (or their target screen) directly; once they do, the legacy files can be deleted. (Source: R3.5 Notes.)
+
+### Feature gaps (small, web-only)
+
+- [ ] **Multiple local-mode parties** — today's Dexie schema stores a single `AppState` blob under `meta.appState` (`apps/web/src/db/save.ts:3`, `load.ts:3`), so the local-only build is hard-capped at one party. The Hub's universal "Create solo / Create party" cards therefore replace the existing party on second use, which is a sharp edge for users running the app standalone. To lift the cap:
+  - Switch the Dexie storage key from `appState` to `appState:<partyId>` (or split into a per-entity store layout, mirroring R5+ multi-party). One blob per party.
+  - Generalize the `currentPartyId` meta entry (already in `apps/web/src/db/meta.ts`) so local mode can also point at the active party.
+  - Have `hydrate.ts` enumerate the per-party blobs to build the Hub's list in local mode (today it pulls from `AppState.party` alone, which only sees the active one).
+  - The JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) needs a per-party export OR a multi-party "vault" export — pick one. Server-side already does per-party so per-party is the obvious match.
+  - **Risk:** none of the existing reducer / rules code has to change — the multi-party split is purely at the storage + hub layers. Scope is bounded; tests touch Hub + Dexie + io modules.
+  - Server-mode users get this for free via `GET /sync/parties` + the existing per-party pull (already shipped in R3.5). This item only closes the gap for local-mode users.
 
 ### Multi-replica / scale
 
