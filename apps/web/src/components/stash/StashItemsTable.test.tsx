@@ -82,6 +82,11 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
    * Equip / Attune toggles. Reducer-rejection scenarios (attune over the
    * slot cap) must surface as a toast — never an uncaught throw — and
    * the Attune button must pre-disable when the cap is met.
+   *
+   * R2.1 — `attune` rejects mundane rows, and the Attune toggle is
+   * hidden on rows whose definition has `requiresAttunement !== true`.
+   * Tests that exercise attune use a DMG magic item (Wand of Magic
+   * Missiles); Equip-only tests keep using a Torch.
    */
 
   function bootstrapWithTorches(count: number): {
@@ -105,6 +110,27 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     return { characterId, inventoryStashId };
   }
 
+  function bootstrapWithMagicItems(count: number): {
+    characterId: string;
+    inventoryStashId: string;
+  } {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    for (let i = 0; i < count; i += 1) {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: magic.id,
+          quantity: 1,
+          source: 'catalog-add',
+          notes: `slot-${i}`,
+        },
+      });
+    }
+    return { characterId, inventoryStashId };
+  }
+
   function renderInventory(stashId: string, characterId: string): void {
     render(
       <MemoryRouter>
@@ -115,7 +141,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
   }
 
   it('disables the Attune button when maxAttunement is met', () => {
-    const { characterId, inventoryStashId } = bootstrapWithTorches(4);
+    const { characterId, inventoryStashId } = bootstrapWithMagicItems(4);
     // Attune the first three (default cap = 3).
     const ids = useStore
       .getState()
@@ -129,11 +155,11 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     renderInventory(inventoryStashId, characterId);
 
     // The fourth row's Attune button must be disabled (cap met).
-    const attuneButtons = screen.getAllByRole('button', { name: /^attune torch/i });
+    const attuneButtons = screen.getAllByRole('button', { name: /^attune cloak of protection/i });
     expect(attuneButtons).toHaveLength(1); // only the un-attuned row shows "Attune"
     expect(attuneButtons[0]).toBeDisabled();
     // The three attuned rows show "Unattune" and remain enabled.
-    expect(screen.getAllByRole('button', { name: /^unattune torch/i })).toHaveLength(3);
+    expect(screen.getAllByRole('button', { name: /^unattune cloak of protection/i })).toHaveLength(3);
   });
 
   it('shows a toast (not an uncaught error) when the reducer rejects', async () => {
@@ -143,7 +169,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     // (unlike userEvent) bypasses the `disabled` check so we can reach
     // the dispatch handler even though React has re-rendered with a
     // disabled button by the time the click lands.
-    const { characterId, inventoryStashId } = bootstrapWithTorches(1);
+    const { characterId, inventoryStashId } = bootstrapWithMagicItems(1);
     renderInventory(inventoryStashId, characterId);
 
     // Drop cap to 0 — re-render disables the Attune button.
@@ -151,7 +177,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
       .getState()
       .dispatch({ type: 'edit-character', payload: { characterId, patch: { maxAttunement: 0 } } });
 
-    const button = screen.getByRole('button', { name: /^attune torch/i });
+    const button = screen.getByRole('button', { name: /^attune cloak of protection/i });
     fireEvent.click(button); // bypass `disabled` to hit the reducer
 
     expect(await screen.findByText(/no free attunement slot/i)).toBeInTheDocument();
@@ -426,3 +452,178 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     ).not.toBeInTheDocument();
   });
 });
+
+describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () => {
+  /**
+   * R2.1 — the Attune toggle is hidden on rows whose definition has
+   * `requiresAttunement !== true`. The Equip toggle is unaffected — equip
+   * applies to mundane armor / weapons / shields per PHB 2024.
+   * A rarity dot prefix appears on the row name when `def.rarity != null`.
+   */
+  function renderInventory(stashId: string, characterId: string): void {
+    render(
+      <MemoryRouter>
+        <StashItemsTable stashId={stashId} characterId={characterId} />
+        <Toaster />
+      </MemoryRouter>,
+    );
+  }
+
+  it('hides the Attune button on a mundane PHB row (Torch) but shows Equip', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+
+    renderInventory(inventoryStashId, characterId);
+
+    expect(screen.getByRole('button', { name: /^equip torch/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^attune torch/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^unattune torch/i })).not.toBeInTheDocument();
+  });
+
+  it('shows both Equip and Attune on a DMG row with requiresAttunement:true', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: magic.id, quantity: 1, source: 'catalog-add' },
+    });
+
+    renderInventory(inventoryStashId, characterId);
+
+    expect(
+      screen.getByRole('button', { name: /^equip cloak of protection/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^attune cloak of protection/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the rarity dot prefix on a DMG row (Uncommon class)', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: magic.id, quantity: 1, source: 'catalog-add' },
+    });
+
+    renderInventory(inventoryStashId, characterId);
+
+    // The rarity dot is a small span labelled with the rarity name.
+    expect(screen.getByLabelText('Rarity: Uncommon')).toBeInTheDocument();
+  });
+});
+
+describe('StashItemsTable — R2.2 charges indicator', () => {
+  /**
+   * R2.2 — when a row's definition has a `charges` block AND the row
+   * is in an Inventory stash (currentCharges !== null), the row name
+   * gets a compact `(N/M)` suffix labelled "Charges: N/M". Mundane
+   * rows show no indicator.
+   */
+  function renderInventory(stashId: string, characterId: string): void {
+    render(
+      <MemoryRouter>
+        <StashItemsTable stashId={stashId} characterId={characterId} />
+        <Toaster />
+      </MemoryRouter>,
+    );
+  }
+
+  it('shows the (N/M) charges indicator on a Wand row in Inventory', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    renderInventory(inventoryStashId, characterId);
+    expect(screen.getByLabelText(/Charges: 7\/7/)).toBeInTheDocument();
+  });
+
+  it('does NOT show a charges indicator on a mundane Torch row', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+    });
+    renderInventory(inventoryStashId, characterId);
+    expect(screen.queryByLabelText(/^Charges:/)).not.toBeInTheDocument();
+  });
+});
+
+describe('StashItemsTable — R2.3 unidentified display gate', () => {
+  /**
+   * R2.3 — rows with `identified: false` render as "Unknown Magic Item"
+   * (OUTLINE §8 display invariant) with a `?` glyph instead of the
+   * rarity dot. Charges indicator and `customName` are also suppressed
+   * because both reveal magic-item-ness.
+   */
+  function renderInventory(stashId: string, characterId: string): void {
+    render(
+      <MemoryRouter>
+        <StashItemsTable stashId={stashId} characterId={characterId} />
+        <Toaster />
+      </MemoryRouter>,
+    );
+  }
+
+  it('renders an identified magic-item row with the real name + rarity dot', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+    });
+    renderInventory(inventoryStashId, characterId);
+    expect(
+      screen.getByRole('button', { name: /open details for cloak of protection/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Rarity: Uncommon')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Unidentified')).not.toBeInTheDocument();
+  });
+
+  it('renders an unidentified magic-item row as "Unknown Magic Item" with the ? glyph', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+    });
+    const itemId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: itemId, identified: false, hint: 'shimmers faintly' },
+    });
+    renderInventory(inventoryStashId, characterId);
+
+    expect(
+      screen.getByRole('button', { name: /open details for unknown magic item/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Cloak of Protection')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Unidentified')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Rarity: Uncommon')).not.toBeInTheDocument();
+  });
+
+  it('hides the charges indicator on an unidentified Inventory wand', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+    });
+    const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: wandId, identified: false },
+    });
+    renderInventory(inventoryStashId, characterId);
+    // The R2.2 charges indicator is gone (would say "Charges: 7/7" if identified).
+    expect(screen.queryByLabelText(/^Charges:/)).not.toBeInTheDocument();
+  });
+});
+

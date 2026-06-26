@@ -14,6 +14,7 @@ import {
 import { HomebrewForm } from '@/components/catalog/HomebrewForm';
 import { DeleteHomebrewDialog } from '@/components/catalog/DeleteHomebrewDialog';
 import { useStore } from '@/store';
+import { rarityClasses, rarityLabel } from '@/lib/rarity';
 import type { ItemCategory, ItemDefinition, ItemInstance } from '@app/shared';
 
 /**
@@ -72,8 +73,8 @@ export function CatalogBrowser(): ReactElement {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Catalog</h1>
           <p className="text-sm text-muted-foreground">
-            PHB 2024 mundane items + homebrew. PHB rows are read-only — use Duplicate to
-            create an editable homebrew copy.
+            PHB 2024 mundane items, DMG 2024 magic items, and homebrew. PHB / DMG rows
+            are read-only — use Duplicate to create an editable homebrew copy.
           </p>
         </div>
         <Button
@@ -114,6 +115,8 @@ export function CatalogBrowser(): ReactElement {
               <SelectItem value="tool">Tools</SelectItem>
               <SelectItem value="ammunition">Ammunition</SelectItem>
               <SelectItem value="consumable">Consumables</SelectItem>
+              <SelectItem value="magic">Magic items</SelectItem>
+              <SelectItem value="currency">Currency &amp; gems</SelectItem>
               <SelectItem value="container">Containers</SelectItem>
               <SelectItem value="other">Other</SelectItem>
             </SelectContent>
@@ -139,6 +142,7 @@ export function CatalogBrowser(): ReactElement {
                 <th className="px-3 py-2 font-medium">Name</th>
                 <th className="px-3 py-2 font-medium">Source</th>
                 <th className="px-3 py-2 font-medium">Category</th>
+                <th className="px-3 py-2 font-medium">Rarity</th>
                 <th className="px-3 py-2 text-right font-medium">Weight</th>
                 <th className="px-3 py-2 text-right font-medium">Cost</th>
                 <th className="px-3 py-2 text-right font-medium">Actions</th>
@@ -150,6 +154,18 @@ export function CatalogBrowser(): ReactElement {
                   <td className="px-3 py-2 font-medium">{d.name}</td>
                   <td className="px-3 py-2 text-muted-foreground">{d.source}</td>
                   <td className="px-3 py-2 text-muted-foreground">{d.category}</td>
+                  <td className="px-3 py-2">
+                    {d.rarity != null ? (
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${rarityClasses(d.rarity)}`}
+                        aria-label={`Rarity: ${rarityLabel(d.rarity)}`}
+                      >
+                        {rarityLabel(d.rarity)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {d.weight !== undefined ? `${String(d.weight)} lb` : '—'}
                   </td>
@@ -159,7 +175,7 @@ export function CatalogBrowser(): ReactElement {
                       : '—'}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {d.source === 'PHB' ? (
+                    {d.source === 'PHB' || d.source === 'DMG' ? (
                       <Button
                         type="button"
                         size="sm"

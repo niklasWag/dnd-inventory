@@ -35,6 +35,33 @@ function bootstrapWithTorches(count: number): { characterId: string; rowIds: str
   return { characterId, rowIds };
 }
 
+/**
+ * Helper: bootstrap + add `count` magic-item rows (Wand of Magic Missiles)
+ * in Inventory with distinct notes. Used for tests that exercise `attune`,
+ * since R2.1 added a reducer gate rejecting `attune` on mundane rows.
+ */
+function bootstrapWithMagicItems(count: number): { characterId: string; rowIds: string[] } {
+  const { characterId, inventoryStashId, catalog } = bootstrap();
+  const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+  for (let i = 0; i < count; i += 1) {
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: magic.id,
+        quantity: 1,
+        source: 'catalog-add',
+        notes: `slot-${i}`,
+      },
+    });
+  }
+  const rowIds: string[] = [];
+  for (const row of useStore.getState().appState!.items) {
+    if (row.ownerId === inventoryStashId) rowIds.push(row.id);
+  }
+  return { characterId, rowIds };
+}
+
 describe('EquippedSlotsPanel (R1.2)', () => {
   it('renders empty-state copy when nothing equipped or attuned', () => {
     const { characterId } = bootstrap();
@@ -55,7 +82,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
   });
 
   it('counts attuned items against the cap (X/max)', () => {
-    const { characterId, rowIds } = bootstrapWithTorches(3);
+    const { characterId, rowIds } = bootstrapWithMagicItems(3);
     for (const id of rowIds) {
       useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId: id } });
     }
@@ -70,5 +97,47 @@ describe('EquippedSlotsPanel (R1.2)', () => {
       .dispatch({ type: 'edit-character', payload: { characterId, patch: { maxAttunement: 5 } } });
     render(<EquippedSlotsPanel characterId={characterId} />);
     expect(screen.getByLabelText('Attunement slots').textContent).toMatch(/0\s*\/\s*5/);
+  });
+
+  it('R2.3 — equipped unidentified magic item renders as "Unknown Magic Item", not its real name', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+    });
+    const cloakId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    useStore.getState().dispatch({
+      type: 'equip',
+      payload: { characterId, itemInstanceId: cloakId },
+    });
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: cloakId, identified: false },
+    });
+    render(<EquippedSlotsPanel characterId={characterId} />);
+    expect(screen.getByText('Unknown Magic Item')).toBeInTheDocument();
+    expect(screen.queryByText('Cloak of Protection')).not.toBeInTheDocument();
+  });
+
+  it('R2.3 — attuned unidentified magic item renders as "Unknown Magic Item" in the Attuned list', () => {
+    const { characterId, inventoryStashId, catalog } = bootstrap();
+    const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+    });
+    const cloakId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: cloakId },
+    });
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: cloakId, identified: false, hint: 'shimmers faintly' },
+    });
+    render(<EquippedSlotsPanel characterId={characterId} />);
+    expect(screen.getByText('Unknown Magic Item')).toBeInTheDocument();
+    expect(screen.queryByText('Cloak of Protection')).not.toBeInTheDocument();
   });
 });

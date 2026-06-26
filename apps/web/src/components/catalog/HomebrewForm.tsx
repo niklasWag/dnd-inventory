@@ -62,6 +62,8 @@ const CATEGORY_OPTIONS: { value: ItemCategory; label: string }[] = [
   { value: 'tool', label: 'Tool' },
   { value: 'ammunition', label: 'Ammunition' },
   { value: 'consumable', label: 'Consumable' },
+  { value: 'magic', label: 'Magic item' },
+  { value: 'currency', label: 'Currency / gem' },
   { value: 'container', label: 'Container' },
   { value: 'other', label: 'Other' },
 ];
@@ -86,6 +88,8 @@ const formSchema = z.object({
     'tool',
     'ammunition',
     'consumable',
+    'magic',
+    'currency',
     'container',
     'other',
   ]),

@@ -8,6 +8,9 @@ import { useStore } from '@/store';
 import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
 import { attunement } from '@app/rules';
+import { rarityDotClass, rarityLabel } from '@/lib/rarity';
+import { formatChargesShort } from '@/lib/charges';
+import { displayName as computeDisplayName } from '@/lib/identify';
 import { MoveItemModal } from './MoveItemModal';
 import { PackItemModal } from './PackItemModal';
 import { SplitModal } from './SplitModal';
@@ -193,7 +196,12 @@ export function StashItemsTable({
         <tbody>
           {displayRows.map(({ row, depth }) => {
             const def = catalogById.get(row.definitionId);
-            const displayName = row.customName ?? def?.name ?? '(unknown item)';
+            const isIdentified = row.identified;
+            // R2.3 — display gate per OUTLINE §8: unidentified rows render
+            // as "Unknown Magic Item". Helper centralises the rule + also
+            // hides `customName` (spoiler protection — a nickname can
+            // reveal magic-item-ness).
+            const displayName = computeDisplayName(row, def);
             const canSplit = row.quantity >= 2;
             // R1.5 — row classification for Pack / Take out buttons + the
             // "N items inside" container summary.
@@ -235,8 +243,32 @@ export function StashItemsTable({
                     className="text-left underline-offset-2 hover:underline focus:outline-none focus-visible:underline"
                     aria-label={`Open details for ${displayName}`}
                   >
+                    {isIdentified && def?.rarity != null ? (
+                      <span
+                        aria-label={`Rarity: ${rarityLabel(def.rarity)}`}
+                        title={rarityLabel(def.rarity)}
+                        className={`mr-2 inline-block h-2 w-2 rounded-full align-middle ${rarityDotClass(def.rarity)}`}
+                      />
+                    ) : null}
+                    {!isIdentified ? (
+                      <span
+                        aria-label="Unidentified"
+                        title={row.hint ?? 'Unidentified'}
+                        className="mr-2 inline-block w-3 align-middle text-center text-xs font-semibold text-muted-foreground"
+                      >
+                        ?
+                      </span>
+                    ) : null}
                     {displayName}
                   </button>
+                  {isIdentified && def?.charges !== undefined && row.currentCharges !== null ? (
+                    <span
+                      aria-label={`Charges: ${formatChargesShort(row.currentCharges, def.charges.max)}`}
+                      className="ml-2 text-xs tabular-nums text-muted-foreground"
+                    >
+                      ({formatChargesShort(row.currentCharges, def.charges.max)})
+                    </span>
+                  ) : null}
                   {isContainer && childCount > 0 ? (
                     <span className="ml-2 text-xs text-muted-foreground">
                       — {childCount} {childCount === 1 ? 'item' : 'items'} inside
@@ -323,41 +355,53 @@ export function StashItemsTable({
                         >
                           {row.equipped ? 'Unequip' : 'Equip'}
                         </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={row.attuned ? 'default' : 'outline'}
-                          aria-pressed={row.attuned}
-                          // Pre-disable the "Attune" direction when the
-                          // character's slots are full — cheaper UX than
-                          // letting the click reject into a toast. The
-                          // "Unattune" direction stays clickable (and the
-                          // reducer always allows it modulo no-op).
-                          disabled={
-                            !row.attuned &&
-                            attunementState !== null &&
-                            !attunementState.hasFreeSlot
-                          }
-                          title={
-                            !row.attuned &&
-                            attunementState !== null &&
-                            !attunementState.hasFreeSlot
-                              ? `Attunement slots full (${attunementState.attunedCount}/${attunementState.maxAttunement})`
-                              : undefined
-                          }
-                          aria-label={`${row.attuned ? 'Unattune' : 'Attune'} ${displayName}`}
-                          onClick={() => {
-                            dispatchOrToast(
-                              {
-                                type: row.attuned ? 'unattune' : 'attune',
-                                payload: { characterId, itemInstanceId: row.id },
-                              },
-                              row.attuned ? 'Could not unattune' : 'Could not attune',
-                            );
-                          }}
-                        >
-                          {row.attuned ? 'Unattune' : 'Attune'}
-                        </Button>
+                        {/*
+                         * R2.1 — hide the Attune toggle entirely on rows whose
+                         * definition has `requiresAttunement !== true`. The
+                         * reducer rejects the dispatch anyway (mundane-item
+                         * gate), but hiding the button is cleaner UX than
+                         * disabling — attunement is meaningless on a Torch.
+                         * `row.attuned === true` keeps the Unattune button
+                         * visible for legacy / cleanup state where a mundane
+                         * row was attuned before the gate landed.
+                         */}
+                        {def?.requiresAttunement === true || row.attuned ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={row.attuned ? 'default' : 'outline'}
+                            aria-pressed={row.attuned}
+                            // Pre-disable the "Attune" direction when the
+                            // character's slots are full — cheaper UX than
+                            // letting the click reject into a toast. The
+                            // "Unattune" direction stays clickable (and the
+                            // reducer always allows it modulo no-op).
+                            disabled={
+                              !row.attuned &&
+                              attunementState !== null &&
+                              !attunementState.hasFreeSlot
+                            }
+                            title={
+                              !row.attuned &&
+                              attunementState !== null &&
+                              !attunementState.hasFreeSlot
+                                ? `Attunement slots full (${attunementState.attunedCount}/${attunementState.maxAttunement})`
+                                : undefined
+                            }
+                            aria-label={`${row.attuned ? 'Unattune' : 'Attune'} ${displayName}`}
+                            onClick={() => {
+                              dispatchOrToast(
+                                {
+                                  type: row.attuned ? 'unattune' : 'attune',
+                                  payload: { characterId, itemInstanceId: row.id },
+                                },
+                                row.attuned ? 'Could not unattune' : 'Could not attune',
+                              );
+                            }}
+                          >
+                            {row.attuned ? 'Unattune' : 'Attune'}
+                          </Button>
+                        ) : null}
                       </>
                     ) : null}
                     {canPack ? (

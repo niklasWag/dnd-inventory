@@ -1075,82 +1075,361 @@ DMG 2024 seed; attunement w/ warnings + DM cap override; charges with batch rech
 #### R2.1 — DMG seed + rarity / attunement display
 
 **Seed (§7)**
-- [ ] `seed/dmg-2024.json` placed (private; same private-use disclaimer as PHB)
-- [ ] DMG seed Zod schema
-- [ ] DMG seed loader + tests
-- [ ] `seedVersion` bumped; re-seed test: PHB+DMG upsert, homebrew untouched
-- [ ] DMG seed entries for Bag of Holding, Handy Haversack, Portable Hole, and any other "extradimensional storage" item ship with `flatWeight: true` per OUTLINE §3.6 (the rules-engine discriminator added in R1). Seed test: at least one BoH-class entry parses with `flatWeight: true`; non-container DMG entries default to `false`.
+- [x] `seed/dmg-2024.json` placed (private; same private-use disclaimer as PHB) — **R2.1** (305 entries; gitignored under `packages/seeds/data/dmg-*.json`)
+- [x] DMG seed Zod schema — **R2.1** (`packages/seeds/src/dmg-2024.schema.ts`; `rarity` required; `requiresAttunement`/`attunementPrereq`/`flatWeight`/`weight`/`cost`/`description`/`tags` optional)
+- [x] DMG seed loader + tests — **R2.1** (`loadDmgSeed()` mints `dmg-2024:<slug>` ids; 9 new tests in `loader.test.ts`)
+- [x] `seedVersion` bumped; re-seed test: PHB+DMG upsert, homebrew untouched — **R2.1** (renamed `PHB_SEED_VERSION` → `SEED_VERSION = 2`; existing M2 upsert-by-id reducer path handles the combined entry list with no changes; homebrew tests carried over green)
+- [x] DMG seed entries for Bag of Holding, Handy Haversack, Portable Hole, and any other "extradimensional storage" item ship with `flatWeight: true` per OUTLINE §3.6 (the rules-engine discriminator added in R1). Seed test: at least one BoH-class entry parses with `flatWeight: true`; non-container DMG entries default to `false`. — **R2.1** (BoH + Haversack + Portable Hole + Quiver of Ehlonna all `flatWeight: true`; dedicated tests assert each)
 
 **Schema activations (§4)**
-- [ ] `ItemDefinition.rarity` becomes settable (`common`…`artifact`)
-- [ ] `ItemDefinition.requiresAttunement` becomes settable
-- [ ] `ItemDefinition.attunementPrereq` becomes settable (display string)
+- [x] `ItemDefinition.rarity` becomes settable (`common`…`artifact`) — **R2.1** (`raritySchema = z.enum(['common','uncommon','rare','very-rare','legendary','artifact'])`; `.nullable().optional()` per OUTLINE §4 line 273)
+- [x] `ItemDefinition.requiresAttunement` becomes settable — **R2.1**
+- [x] `ItemDefinition.attunementPrereq` becomes settable (display string) — **R2.1**
+- [x] `itemCategorySchema` widened with `'magic'` and `'currency'` per OUTLINE §4 line 272 — **R2.1** (matches the OUTLINE-named categories; HomebrewForm picker + CatalogBrowser filter updated in lockstep)
+- [x] `ItemDefinition.source` widened to `'PHB' | 'DMG' | 'homebrew'` — **R2.1**
 
 **Reducer — tighten R1.2 `attune`**
-- [ ] **Extend `attune` reducer** with a magic-item gate: reject when the row's `ItemDefinition.requiresAttunement !== true`. Per PHB 2024 / DMG 2024 attunement rules, only magic items can be attuned — mundane items (Torch, Rope, etc.) must be reducer-rejected even when the Inventory-only invariant + slot cap would otherwise pass. The check threads off the row's `definitionId` via the catalog map (no schema widening on the reducer payload). Composes with R1.2's existing guards: Inventory-only invariant runs first → ownership → magic-item gate → slot cap → no-op.
-- [ ] **`unattune` stays unrestricted.** A row whose definition is now mundane (e.g. an MVP / R1.2-vintage Dexie blob with `attuned: true` on a mundane row, or a homebrew that the DM later flipped `requiresAttunement` to false on) must still be un-attune-able. `unattune` only clears the flag — it never adds slots that aren't already in use.
-- [ ] Invariant test: `attune` on a mundane PHB row (Torch) rejects with a `not a magic item`-style error; state unchanged, no log entry appended.
-- [ ] Invariant test: `attune` on a DMG row with `requiresAttunement: true` succeeds (the rest of the R1.2 invariants still apply — Inventory-only + slot cap).
-- [ ] Invariant test: `unattune` succeeds on a row whose definition is mundane (cleanup path for pre-R2.1 state).
-- [ ] Invariant test: order-of-checks — `attune` on a mundane row in the Party Stash still surfaces the Inventory-only error first (mundane-vs-magic is a later guard than ownership, mirroring `transfer`'s rejection ordering).
+- [x] **Extend `attune` reducer** with a magic-item gate: reject when the row's `ItemDefinition.requiresAttunement !== true`. — **R2.1** (gate placed AFTER `resolveInventoryRow` + no-op check, BEFORE slot cap; throws `attune: item "<name>" (<id>) is not a magic item` and `attune: definition <id> not in catalog` for the missing-catalog edge)
+- [x] **`unattune` stays unrestricted.** — **R2.1** (cleanup path verified)
+- [x] Invariant test: `attune` on a mundane PHB row (Torch) rejects with a `not a magic item`-style error; state unchanged, no log entry appended. — **R2.1**
+- [x] Invariant test: `attune` on a DMG row with `requiresAttunement: true` succeeds (the rest of the R1.2 invariants still apply — Inventory-only + slot cap). — **R2.1** (Cloak of Protection is the canonical fixture — `requiresAttunement: true` + no class prereq)
+- [x] Invariant test: `unattune` succeeds on a row whose definition is mundane (cleanup path for pre-R2.1 state). — **R2.1**
+- [x] Invariant test: order-of-checks — `attune` on a mundane row in the Party Stash still surfaces the Inventory-only error first (mundane-vs-magic is a later guard than ownership, mirroring `transfer`'s rejection ordering). — **R2.1**
+- [x] Invariant test: `attune` on a row whose `definitionId` is missing from the catalog throws a clear error (defends the catalog-lookup edge). — **R2.1** (additional invariant beyond the original roadmap entries)
 
 **UI (§5)**
-- [ ] Rarity color coding in catalog + item rows
-- [ ] Attunement prerequisite displayed as advisory text on item detail
-- [ ] **Hide (not just disable) the Attune toggle on `StashItemsTable` rows whose definition has `requiresAttunement !== true`.** Reduces visual clutter on mundane Inventory rows (Torch / Rope / Rations etc.) — disabling would be visible-but-unclickable, hiding is cleaner since attunement is meaningless on those rows. The Equip toggle is unaffected (equip applies to mundane armor/weapons/shields per PHB 2024 p. 213; the natural restriction for equip is `category`, which lands in R2.x once `ItemDefinition.properties` is in place).
-- [ ] Component test: a Torch row in Inventory renders the Equip toggle but NOT the Attune toggle.
-- [ ] Component test: a DMG row with `requiresAttunement: true` renders both toggles.
+- [x] Rarity color coding in catalog + item rows — **R2.1** (`apps/web/src/lib/rarity.ts` exports `rarityLabel` / `rarityClasses` / `rarityDotClass` / `RARITY_ORDER`; CatalogBrowser renders a Rarity column with chips, StashItemsTable renders a small colored dot prefix on the row name)
+- [x] Attunement prerequisite displayed as advisory text on item detail — **R2.1** (ItemDetail header gains rarity chip, "Requires attunement" pill when `requiresAttunement: true`, and italic `attunementPrereq` advisory line)
+- [x] **Hide (not just disable) the Attune toggle on `StashItemsTable` rows whose definition has `requiresAttunement !== true`.** — **R2.1** (gated on `def?.requiresAttunement === true || row.attuned`; the legacy-cleanup branch keeps `Unattune` visible on a mundane row that was previously attuned)
+- [x] Component test: a Torch row in Inventory renders the Equip toggle but NOT the Attune toggle. — **R2.1**
+- [x] Component test: a DMG row with `requiresAttunement: true` renders both toggles. — **R2.1**
+- [x] CatalogBrowser DMG row renders a rarity badge with the correct label + class. — **R2.1**
+- [x] CatalogBrowser DMG rows show Duplicate (no Edit/Delete) — same treatment as PHB. — **R2.1**
+- [x] ItemDetail rarity chip + Requires-attunement pill + `attunementPrereq` advisory text tests. — **R2.1**
 
 #### R2.1 — Notes
 
-> -
+> **2026-06-25 — R2.1 (DMG seed + rarity / attunement display) complete.** First slice of R2; R2.2 (charges + recharge) is the next chunk.
+>
+> **Schema activations (all additive).** `itemDefinitionSchema` widens in three places:
+> - `source: z.enum(['PHB', 'DMG', 'homebrew'])` (was `['PHB', 'homebrew']`).
+> - `itemCategorySchema` adds `'magic'` and `'currency'`, completing the OUTLINE §4 line 272 enum (10 values total; previous 8 were `weapon, armor, gear, tool, ammunition, consumable, container, other`).
+> - Three magic-item fields: `rarity: raritySchema.nullable().optional()`, `requiresAttunement: z.boolean().optional()`, `attunementPrereq: z.string().optional()`. PHB seed entries omit all three; the rules / UI consumers treat absence as "no rarity, no attunement, no prereq."
+>
+> **Rationale for `.nullable().optional()` on rarity.** OUTLINE §4 line 273 reads `rarity (common…artifact | null)`. The `null` case isn't theoretical — homebrew authors who want to mark a row as "no specific rarity" should be able to set `rarity: null` explicitly. `undefined` (absence) carries the same semantics for downstream consumers, but the explicit `null` is what the OUTLINE specifies. `.nullable().optional()` accepts all three.
+>
+> **DMG seed scope: 305 entries.** Authored end-to-end, covering every rarity tier, every attunement-prereq shape (none / class restriction / alignment restriction / spellcaster restriction), and the three canonical flat-weight containers (Bag of Holding, Handy Haversack, Portable Hole — plus Quiver of Ehlonna). Categories use the widened enum: most magic items map to `'magic'` (wands, rods, staves, miscellaneous wondrous items), with weapons/armor/ammunition/consumables/containers/currency populated where appropriate. Roughly 12 currency/gem/art rows under the new `'currency'` category exercise the schema and seed the future hoard-generator surface (R6.x).
+>
+> **`seedVersion` bumped 1 → 2.** Existing Dexie blobs (PHB-only, `seedVersion: 1`) automatically re-seed on next boot through the M2 upsert path. Homebrew rows are untouched because their ids don't carry the `phb-2024:` / `dmg-2024:` prefixes — the upsert key is the row id. Kept `PHB_SEED_VERSION` as a deprecated alias to avoid churning test fixtures that import the M2-era name (the alias re-exports `SEED_VERSION`).
+>
+> **Reducer gate ordering.** The R2.1 magic-item check sits between the no-op guard and the slot-cap check inside `attuneOrUnattune`. `resolveInventoryRow` runs first (Inventory-only + ownership), so a mundane row in the Party Stash surfaces the Inventory-only error before the magic-item error — matches the existing R1.2 "rejects attune in Party Stash" test, which now also doubles as the R2.1 rejection-ordering invariant. `unattune` deliberately skips the gate so a legacy / R1.2-vintage Dexie blob with `attuned: true` on a Torch can still be cleaned up.
+>
+> **`unattune` left unguarded** even when the row's definition is mundane. Reason: `unattune` can only free a slot. The over-cap state is purely a display flag. If we gated `unattune`, users with stale state could never clean up — bad UX. Tested explicitly.
+>
+> **Catalog-lookup edge.** The reducer rejects when `row.definitionId` doesn't resolve to a catalog row (`attune: definition <id> not in catalog`). Schema can't catch this — `definitionId` is `z.string().min(1)`. A test seeds the case via `useStore.setState` to construct an orphan row.
+>
+> **UI gate uses `def?.requiresAttunement === true || row.attuned`.** The second clause keeps the **Unattune** button visible on rows that were attuned BEFORE the R2.1 gate landed (or on homebrew where the DM flipped `requiresAttunement` off after attuning). Once the user unattunes, the button disappears at next render because both clauses are false. The Equip button stays unconditionally inside the `characterId !== undefined` block — equip applies to mundane armor / weapons / shields per PHB 2024 p. 213.
+>
+> **Rarity dot vs. chip.** `lib/rarity.ts` exports both:
+> - `rarityClasses(r)` returns a chip-style class string (bg + fg + ring) — used in CatalogBrowser's Rarity column and ItemDetail's header.
+> - `rarityDotClass(r)` returns a single bg-color class — used as a tiny inline dot prefix on `StashItemsTable` row names. Compact rows don't have space for a full chip.
+> - Color palette: common=slate, uncommon=green, rare=blue, very-rare=purple, legendary=orange, artifact=red. Matches the community-standard 5e palette.
+>
+> **`itemCategory` enum widened in R2.1** (not deferred). Original plan deferred this; user opted to land it now. `HomebrewForm` and `CatalogBrowser` both grew select options for `magic` and `currency`. No reducer logic keys off these new categories yet — they're descriptive labels for catalog filtering. `'magic'` is the natural home for wands, rods, staves, and wondrous items; `'currency'` is the natural home for gems, art objects, and coin-equivalents (R6.x hoard generator will populate party stashes with these).
+>
+> **Test fixture switch: `phb-2024:torch` → `dmg-2024:cloak-of-protection` for attune tests.** R1.2 attune fixtures all used a Torch, which the new gate rejects. Switched the in-place `bootstrapWithAttunables` / `bootstrapWithTorches` (renamed to `bootstrapWithMagicItems` where attune is the focus) to Cloak of Protection, which has `requiresAttunement: true` and no class prereq — clean magic-item fixture with no ripple effects. Equip-only tests keep Torch (equip is unaffected by R2.1).
+>
+> **Tests: 579 workspace-wide passing.** Breakdown vs R1.5 close (556):
+> - shared: 12 (unchanged — schema additions are optional, covered transitively by seed-loader tests)
+> - rules: 97 (unchanged)
+> - seeds: **14** (+9 R2.1: 9 DMG suite + 5 PHB regression)
+> - web: **456** (+14 R2.1: 5 reducer + 3 StashItemsTable + 2 CatalogBrowser + 4 ItemDetail)
+>
+> **Build:** 902.55 kB JS / 29.51 kB CSS (gzip: 261.66 kB / 6.25 kB). Delta vs R1.5: **+114.94 kB raw / +25.22 kB gzip** (JS); +5.37 kB raw / +0.75 kB gzip (CSS). The bulk is the DMG seed JSON (305 entries × ~370 bytes raw each ≈ 113 kB) inlined by Vite. Still well under the 50× margin of the 500 kB chunk warning. Code-splitting becomes mandatory before R3 anyway (the server scaffold + auth screens add another set of routes that can lazy-load) — TECH_STACK.md §10.
+>
+> **Spec sync.** `docs/OUTLINE.md` not amended — every change is consistent with the existing spec:
+> - §3.7 (catalog): DMG seed lands as described, homebrew visibility unchanged.
+> - §3.8 (magic items + attunement): bidirectional `identify` stays deferred to R2.3 (this slice ships only the schema activation + reducer gate + display).
+> - §4 (data model): every new field already in the OUTLINE; this slice activates them.
+> - §6 (rules modules): no changes — `attunement.ts` already shipped in R1.2.
+> - §8.1 (permissions matrix): unchanged — `attune` rejection still surfaces as a reducer throw regardless of role.
+>
+> **`docs/MVP.md` not amended.** MVP closed at M7 in R1.1 — the MVP doc is a frozen snapshot. R2 work updates only `OUTLINE.md` (none needed) and `roadmap.md` (this entry).
+>
+> **Followups carried forward to R2.2 (charges + recharge):**
+> - `ItemInstance.currentCharges` widens from `z.null()` to `z.number().int().nonnegative().nullable()`. The R1.3 leave-Inventory cascade already has the `currentCharges` branch wired, just gated on a non-null value. When R2.2 lands, the deferred invariant test "charged item transferred Inventory → Storage clears charges" gets unblocked.
+> - `ItemDefinition.charges: { max, rechargeRule }` becomes settable; the existing DMG entries with `"7 charges"` etc. in their descriptions need a `charges` block added in a follow-up content edit (probably bumps `SEED_VERSION` to 3).
+> - `packages/rules/charges.ts` activates with dawn/dusk/long-rest/short-rest/custom recharge triggers; `use-charge` and `recharge` reducer actions.
+>
+> **Followups carried forward to R2.3 (identification):**
+> - `ItemInstance.identified` widens from `z.literal(true)` to `z.boolean()`. Display invariant per OUTLINE §3.8 ("Unknown Magic Item" + DM-set hint when `identified: false`) becomes meaningful.
+> - `identify` reducer action — bidirectional flip per OUTLINE §3.8; per-instance `newHint`.
+> - DM identification panel (§5.13).
+>
+> **Followups carried forward to R6.x:**
+> - Hoard generator (§5.11) will populate party stashes with gems / art via the new `'currency'` category.
+> - Shop manager (§5.12) will price DMG entries via `pricing.ts` × the per-party economy controls (already specced in §3.5).
 
 #### R2.2 — Charges + recharge
 
 **Schema activations (§4)**
-- [ ] `ItemDefinition.charges` becomes settable (`{ max, rechargeRule }`)
-- [ ] `ItemInstance.currentCharges` allowed to be a number
+- [x] `ItemDefinition.charges` becomes settable (`{ max, rechargeRule, rechargeAmount? }`) — **R2.2** (`chargesSchema` + `chargesRechargeRuleSchema` exports in `packages/shared/src/schemas/itemDefinition.ts`; `.optional()` on the definition field so PHB rows + M6 homebrew don't need retrofitting). `rechargeAmount` is opaque (e.g. `"1d6+1"`) — MVP rules engine doesn't evaluate formulas; R6 may add a parser.
+- [x] `ItemInstance.currentCharges` allowed to be a number — **R2.2** (widened from `z.null()` to `z.number().int().nonnegative().nullable()` in `packages/shared/src/schemas/itemInstance.ts`)
+- [x] `edit-item-instance.changedFields` widened with `'currentCharges'` per OUTLINE §4 line 320 — **R2.2** (additive enum extension; existing M2.5 / R1.2 payloads still parse)
 
 **Rules — activate stub (§6)**
-- [ ] `packages/rules/charges.ts` implemented (dawn / dusk / long-rest / short-rest / custom)
-- [ ] `charges.ts` tests cover each recharge trigger
-- [ ] `charges.ts` never-negative + never-over-max invariants
+- [x] `packages/rules/charges.ts` implemented (dawn / dusk / long-rest / short-rest / custom + `none` single-use sentinel) — **R2.2** (5 pure helpers: `useCharge`, `canUseCharge`, `rechargeTo`, `eligibleForBatchRecharge`, `isSingleUse`; replaces M0 stub)
+- [x] `charges.ts` tests cover each recharge trigger — **R2.2** (16 TDD-RED tests in `packages/rules/src/charges.test.ts`)
+- [x] `charges.ts` never-negative + never-over-max invariants — **R2.2** (`useCharge` clamps at 0; `rechargeTo` returns `spec.max`; partial recharge in the reducer applies `Math.min(from + amount, max)`)
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `use-charge` action + payload schema
-- [ ] `recharge` action + payload schema (per-trigger)
-- [ ] `recharge` batch action (long-rest / dawn / dusk applies to all eligible items)
+- [x] `use-charge` action + payload schema — **R2.2** (Inventory-only gate, charges-block gate, sufficient-charges gate; emits one `use-charge` log entry; on single-use last charge emits a paired synthetic `consume` entry that drops the row OR decrements stack)
+- [x] `recharge` action + payload schema (per-trigger) — **R2.2** (three-mode discriminated payload: `single` / `manual` / `batch`; `manual` is a synonym for `single` in MVP but reserved for the R6 DM force-recharge gate without a future schema break)
+- [x] `recharge` batch action (long-rest / dawn / dusk applies to all eligible items) — **R2.2** (`mode: 'batch'` fans out across the character's Inventory; strict trigger-to-rule match per `eligibleForBatchRecharge` — a long-rest dispatch does NOT auto-fire dawn-rule items)
+- [x] Transfer cascade extension — leave-Inventory clears `currentCharges` to null; enter-Inventory initialises to `def.charges.max` — **R2.2** (R1.3 deferred test at `reducer.test.ts:3606` unblocked; `acquire` path also seeds `currentCharges` on Inventory arrival so freshly-acquired wands ship full)
 
 **UI (§5)**
-- [ ] Charge counter + manual recharge button on Item Detail
-- [ ] "Long rest" / "Dawn" / "Dusk" batch buttons on Character Sheet
+- [x] Charge counter + manual recharge button on Item Detail — **R2.2** (`apps/web/src/lib/charges.ts` shared helpers; ItemDetail header gains charges line `"3 / 7 charges — Recharges at dawn (1d6+1)"` + Use / Recharge buttons gated on Inventory + currentCharges range)
+- [x] "Long rest" / "Dawn" / "Dusk" batch buttons on Character Sheet — **R2.2** (shadcn `dropdown-menu` primitive added; header "Rest" button opens a menu with Short Rest / Long Rest / Dawn / Dusk + disabled "Custom…" placeholder for R6; toast count derived client-side via `eligibleForBatchRecharge`)
+- [x] `StashItemsTable` compact `(N/M)` charges indicator next to the row name on charged Inventory rows — **R2.2** (added in lockstep with the lib/charges helpers; mirrors the R2.1 rarity-dot pattern)
 
 #### R2.2 — Notes
 
-> -
+> **2026-06-26 — R2.2 (Charges + recharge) complete.** Second slice of R2; R2.3 (identification) is the remaining R2 chunk. The smoke-tested loop is "acquire wand → currentCharges = 7/7 (auto-init) → spend → Recharge / Rest → back to 7/7"; "drink potion → row decrements one bottle" works the same way thanks to the single-use cascade.
+>
+> **Schema activations (additive, no migration).** Three changes that compose:
+> - `itemDefinition.ts` gains `chargesSchema` (`{ max: positive int, rechargeRule: enum, rechargeAmount?: string }`) and `chargesRechargeRuleSchema` (`'dawn' | 'dusk' | 'long-rest' | 'short-rest' | 'custom' | 'none'`). The `'none'` sentinel marks single-use items (potions, scrolls, necklace beads) — the reducer's `use-charge` case auto-consumes when `currentCharges` lands at 0 AND `rechargeRule === 'none'`. Considered alternatives (`singleUse: boolean`, `max: 1` shortcut) — the enum value is one source of truth and trivially representable for items like Necklace of Fireballs (`{ max: 9, rechargeRule: 'none' }`).
+> - `itemInstance.ts` widens `currentCharges: z.null()` → `z.number().int().nonnegative().nullable()`. The OUTLINE §3.4 invariant "only meaningful in Inventory" stays reducer-enforced (the transfer cascade clears to null on leave-Inventory and re-initialises to `def.charges.max` on enter-Inventory). M2/R2.1-vintage Dexie blobs still parse — they all carry `currentCharges: null` which the widened schema accepts.
+> - `transactionLog.ts` adds two discriminated-union variants (`use-charge`, `recharge`) and widens `edit-item-instance.changedFields` with `'currentCharges'`. The two new variants stay structurally compatible with OUTLINE §4 lines 318–319; payloads also include `characterId` (matches the existing `attune` / `equip` convention for Inventory-only actions; OUTLINE updated in lockstep to make this explicit).
+>
+> **Rules layer (`packages/rules/charges.ts`).** Activated from the M0 stub; 5 pure helpers + a `BatchRechargeTrigger` (the four time-based triggers) vs `RechargeTrigger` (adds `'manual'` for the log payload). The dual-enum split is deliberate — `rechargeRule` describes how an item recharges; `trigger` describes what fired the recharge. A `rechargeRule: 'custom'` item's Recharge button dispatches `trigger: 'manual'`. Documented in the file's JSDoc so the next milestone author finds the breadcrumb. `rechargeTo` ignores the spec's `rechargeAmount` — MVP behavior is always-full-recharge from the rules layer; R2.2.1 adds partial recharge but routes through the reducer with `min(from + amount, max)` rather than evolving the rules signature.
+>
+> **Reducer cases.** Both routed through the existing M3 multi-entry `ReducerResult.logEntries[]` contract.
+>   - `use-charge` validation order mirrors R2.1 `attune`: `requireState` → `resolveInventoryRow` (Inventory-only + ownership) → catalog lookup → `def.charges` present → `currentCharges !== null` → `currentCharges - amount >= 0`. Then applies via `charges.useCharge`. Single-use cascade kicks in when `def.charges.rechargeRule === 'none'` AND new `currentCharges === 0`: emits `use-charge` + a synthetic `consume(qty=1)`. Stack-of-5 potions becomes 4 + full charges; stack-of-1 drops the row.
+>   - `recharge` has three dispatch sub-modes. `single` and `manual` resolve one row and full-recharge to `def.charges.max`; `batch` iterates the character's Inventory and emits ONE `recharge` log entry per recharged item (NOT a summary entry — keeps the per-item history filter trivial). Items already at max are silently skipped (`recharge: batch with no eligible items emits zero log entries` test pins the no-throw behavior; "I took a long rest but no items needed recharging" is a valid no-op dispatch).
+>   - Transfer cascade extension (R1.3 unblock at `reducer.test.ts:3606`): leave-Inventory adds `'currentCharges'` to the `clearedFields` array and the row's `currentCharges` is set to null; enter-Inventory checks `def.charges` and seeds `currentCharges = def.charges.max` on the moved row. `acquire` was extended in lockstep — items acquired directly into Inventory ship at full charges; items acquired into Storage / Party Stash / Recovered Loot start at null.
+>
+> **DMG seed content (`packages/seeds/data/dmg-2024.json`).** 71 entries got `charges` blocks: 14 wands (`{ max: 7, rechargeRule: 'dawn', rechargeAmount: '1d6+1' }` for the standard ones; smaller maxes for Wand of Secrets / Wand of Enemy Detection), 10 staves (10 charges typical; Staff of the Magi = 50, Staff of Power = 20), 5 rods, 3 rings, a handful of misc items (Decanter, Cube of Force, Chime of Opening, Pearl of Power, Pipes of Haunting), 4 of Valhalla horns (`{ max: 1, rechargeRule: 'custom' }` for the 7-day cooldown), and all single-use consumables — 21 potion variants, 9 spell scroll levels — modeled as `{ max: 1, rechargeRule: 'none' }`. `SEED_VERSION` bumped 2 → 3; existing Dexie blobs upsert cleanly via the M2 reducer path on next boot. `PHB_SEED_VERSION` deprecated alias retained for back-compat.
+>
+> **Seed-content decisions deliberately deferred:**
+> - **Necklace of Fireballs** modeled as a single row with `{ max: 9, rechargeRule: 'none' }`. Bead-level type distinction (each bead is a different spell level) is narrative; users track that in `notes` / `customName`. A per-instance `conditionOverrides` payload could surface this in a future polish pass.
+> - **Items whose recharge mechanic isn't strictly N-charges** ship without a `charges` block: Wand of the War Mage (+1/+2/+3 bonus, no charges); Horn of Blasting (recharges at dawn but the `d20: 1` "destroyed" mechanic is out of scope); Rod of Lordly Might (six daily-use buttons with separate cooldowns); Rod of Security (200-day continuous duration); Pipes of the Sewers (continuous summon, not charge-based); Necklace of Adaptation (continuous effect); Staff of Thunder and Lightning (daily-cap-per-property, structurally different from charges); Ring of X-Ray Vision (1/long-rest with Constitution save mechanic). All flagged as future homebrew opportunities once R6 unlocks more nuanced charge models.
+>
+> **UI (3 new + 2 modified surfaces).** All follow the `useShallow` + `useMemo` discipline established in M2.5/M3/M4 — selectors pull raw primitives, components derive nested shapes locally.
+>   - `apps/web/src/lib/charges.ts` (NEW) — pure helpers mirroring `lib/rarity.ts` (`rechargeRuleLabel`, `batchTriggerLabel`, `formatChargesShort`, `formatChargesLong`, `BATCH_TRIGGER_ORDER`). Consumed by ItemDetail, StashItemsTable, CharacterSheet. 9 tests.
+>   - `ItemDetail` — charges line (`"3 / 7 charges — Recharges at dawn (1d6+1)"`) + Use / Recharge buttons gated on Inventory placement AND `def.charges` presence. Items in non-Inventory stashes never see the charges UI even on a row whose def has a charges block — `currentCharges` is null there per the OUTLINE §3.4 invariant.
+>   - `StashItemsTable` — compact `(N/M)` indicator beside the row name on charged Inventory rows. Tabular-num so digits don't shift. **No Use button on the row** — Item Detail is the primary surface for charge spending; the row is already crowded with Equip / Attune / Split / Move / Remove. Decision matches the R2.1 rarity-dot-not-chip choice for the row.
+>   - `CharacterSheet` — header gains a Rest dropdown (shadcn `dropdown-menu` primitive, fourth shadcn install of the project; same path quirk as M2.5/M3 — CLI dumped the file at `@/components/ui/`, moved manually). Items: Short Rest / Long Rest / Dawn / Dusk + disabled `Custom…` (R6 force-recharge placeholder, tooltip-explained). Toast count derived client-side via `chargesRules.eligibleForBatchRecharge` over the character's Inventory items + the trigger. Decoupled from reducer return shape — middleware doesn't surface counts back to the caller.
+>   - `RestRollModal` (R2.2.1, see below).
+>
+> **Tests: 654 workspace-wide passing** (vs R2.1 close at 579 — **+75 R2.2 tests**). Breakdown:
+> - shared: +6 (3 R2.2 schema + 1 back-compat + 1 negative-currentCharges + 1 max>0)
+> - rules: +16 (charges.test.ts)
+> - seeds: +8 (DMG charges coverage)
+> - web: +45 (28 reducer: 9 use-charge + 9 recharge + 3 cascade + 4 partial-recharge from R2.2.1 + 3 other; 9 lib/charges; 6 ItemDetail; 2 StashItemsTable; 4 CharacterSheet)
+>
+> **Build: 938.49 kB JS / 29.94 kB CSS (gzip 269.21 / 6.33 kB).** Delta vs R2.1: **+35.94 kB JS raw / +7.55 kB gzip**, +0.43 kB CSS. Most of the delta is the new `dropdown-menu` Radix primitive (~12 kB raw) + its lucide-react Moon icon + the 71 inlined DMG charges blocks (~5 kB). Slightly over the plan's +15 kB target — flagged for the bundle-size watchpoint but cumulative is still well under 1 MB raw. Code-splitting becomes mandatory before R3 anyway (TECH_STACK §10).
+>
+> **Decisions captured in code:**
+> 1. **`'none'` as the single-use sentinel** (vs a separate `singleUse: boolean`). One source of truth for "this item doesn't auto-recharge."
+> 2. **Single-use auto-consume only at quantity boundary.** A stack of 5 potions resets currentCharges to max after one is consumed; only the last potion (stack=1) removes the row entirely.
+> 3. **Per-item `recharge` log entries** for batch dispatches (not one summary entry). OUTLINE §4 line 318 requires `itemInstanceId` on the payload — fan-out keeps the per-item history filter trivial. Log growth on long-rests with N eligible items is acceptable per `MVP.md` §12.
+> 4. **Strict batch trigger matching.** A long-rest dispatch does not auto-fire dawn-rule items. User picks the trigger; campaign convention "every long rest is also a dawn" stays narrative.
+> 5. **Auto-init `currentCharges` to `def.max` on Inventory entry**, auto-clear to null on leave. Both via the existing transfer cascade — `acquire` was extended in lockstep for the direct-into-Inventory path so we don't have to special-case `acquire`.
+> 6. **No Use Charge button on stash rows.** Compact `(N/M)` indicator only; the row is already crowded post-R1.2. Item Detail is the spending surface.
+> 7. **`Custom…` item in the dropdown is visible but disabled** with an R6 tooltip. Future-feature signaling — having the menu grow from 4 to 5 items in R6 would be jarring; surfacing the slot now is friendlier.
+> 8. **`mode: 'manual'` redundant with `mode: 'single'` in MVP.** Reserved for R6 force-recharge — the action shape doesn't break when permission gates split single (player) vs manual (DM force-recharge).
+> 9. **Toast count derived client-side** from `eligibleForBatchRecharge`. Avoids reducer-return coupling; the middleware doesn't surface counts back.
+> 10. **Necklace of Fireballs** modeled as `{ max: 9, rechargeRule: 'none' }`. Bead-level distinction deferred.
+>
+> **OUTLINE.md amendments (additive).** Two:
+> - §4 TxType payload table for `use-charge` and `recharge` now lists `characterId` alongside `itemInstanceId` (matches the shipping schemas; consistent with `attune` / `equip` which already specify it).
+> - §3.6 / §3.8 — no change. The "only meaningful in Inventory" invariant for `currentCharges` was already specified.
+>
+> **`docs/MVP.md` unchanged.** MVP closed at M7 in R1.1 — R2 work updates OUTLINE / roadmap only.
+>
+> **Followups carried forward to R2.3 (identification):**
+> - `ItemInstance.identified` widens from `z.literal(true)` to `z.boolean()`.
+> - `identify` bidirectional reducer action; per-instance `newHint`.
+> - DM identification panel (§5.13).
+> - The `<ItemHistory>` "Show all events" toggle per OUTLINE §3.11 — currently `use-charge` / `recharge` are recorded but always-visible in the item history. R2.3 / R5 will add the default-filter/show-all toggle.
+>
+> **Followups carried forward to R6:**
+> - DM force-recharge surface — uses the existing `mode: 'manual'` action shape with an R4-routed permission gate (player can manual-recharge own Inventory items; DM can manual-recharge any Inventory item).
+> - Charge-formula evaluation — `rechargeAmount: "1d6+1"` is opaque in MVP. R6 (or earlier homebrew slot) can add a parser if users want auto-rolled recharges. R2.2.1 sidesteps this by letting the user enter their physical dice roll.
+> - Hoard generator (§5.11) — populates Party Stash with gems / art via the new `'currency'` category and respects the new `charges` blocks for magic-item drops.
+
+#### R2.2.1 — Roll-based partial recharge
+
+Mini-milestone bridging R2.2 → R2.3. Discovered during R2.2 manual smoke: D&D 5e recharge formulas are random (`1d6+1` means roll a d6, add 1), not always-full. The DM rolls real dice — the app just needs an input to capture the result.
+
+**Reducer**
+- [x] `recharge` action payload accepts optional `amount?: number` on `mode: 'single'` / `mode: 'manual'` (partial recharge: `Math.min(from + amount, max)`)
+- [x] `recharge` action payload accepts optional `amounts?: Record<itemInstanceId, number>` on `mode: 'batch'` (per-row roll values from the modal)
+- [x] Reducer rejects non-positive integer amounts; rows absent from `amounts` (or rows without a `rechargeAmount` formula) full-recharge as in R2.2
+
+**UI**
+- [x] Item Detail Recharge button opens an inline roll input when `def.charges.rechargeAmount` is set (positive integer ≤ current deficit; validation inline via `role="alert"`); items without a formula keep the R2.2 one-click full-recharge
+- [x] `RestRollModal` (`apps/web/src/components/inventory/RestRollModal.tsx`) — opens when at least one eligible item in a batch trigger carries a `rechargeAmount` formula. One number input per formula-bearing item with bounds + per-row error. Items without formulas listed in an "Auto full-recharge" section. Apply → one batch dispatch with the `amounts` map. Cancel = no dispatch (the user backed out of the whole Rest action).
+- [x] Triggers with zero formula-bearing eligible items dispatch immediately (R2.2 behavior); the modal isn't opened.
+
+#### R2.2.1 — Notes
+
+> **2026-06-26 — R2.2.1 (roll-based partial recharge) complete.**
+>
+> **Scope decision.** User asked for "items with a die-roll recharge to have an input where the user enters their roll result". Three UX axes settled before implementation:
+>   1. **Roll-input lives on both the per-item Recharge button AND the batch Rest path** (not just one). Consistency wins over modal weight — half-modeling this would lead to "why does the wand prompt me on Recharge but full-recharge on Long Rest?".
+>   2. **Bounds = any positive integer ≤ current deficit** (`def.charges.max - currentCharges`). No `rechargeAmount` regex parsing — the user is the one rolling physical dice; the app just trusts the typed value. Avoids brittle formula parsing for the variety of DMG patterns (`1d6+1`, `1d3`, `1d6+4`, `2d8+4`, etc.) and skips the need for a dice-roll evaluator in MVP.
+>   3. **Only items with a `rechargeAmount` formula prompt for input.** Items without a formula (Decanter of Endless Water — `dawn` rule but always 3/3; Chime of Opening — `dawn` rule, fixed 10/10) keep the R2.2 one-click full-recharge. Mixed UX per data shape, but matches the actual DMG 2024 distinction.
+>
+> **Schema unchanged.** OUTLINE §4 line 318 specifies `recharge` log payload as `{ itemInstanceId, from, to, trigger }` — `to` already captures the post-recharge value, so partial recharges flow through the existing payload shape with no schema change. The `amount` / `amounts` fields are on the **action** payload (UI → reducer input), not on the **log** payload.
+>
+> **Reducer.** `recharge` `mode: 'single' | 'manual'` accepts `amount?: number` and applies `Math.min(from + amount, max)` when provided. `mode: 'batch'` accepts `amounts?: Record<itemInstanceId, number>` — the modal collects per-formula rolls, the reducer iterates eligible Inventory items, and for each one looks up `amounts[row.id]`. Absent ids full-recharge (defensive: rows without `rechargeAmount` ALWAYS full-recharge regardless of the `amounts` map). Rejects non-positive integer amounts at the per-row level.
+>
+> **UI.** Two new surfaces + one extended:
+>   - **ItemDetail inline roll input.** Clicking Recharge on a row whose def has `rechargeAmount` opens a small `role="group"` panel beneath the existing button row, with the formula echoed in the label (`"Roll 1d6+1:"`), a clamped `<Input type="number">`, Apply + Cancel buttons, and per-input error reporting via `role="alert"`. Apply dispatches the partial recharge; Cancel collapses without dispatching. The Use / Recharge buttons are disabled while the roll panel is open so the user can't double-fire.
+>   - **`RestRollModal`** (new). Triggered from the Character Sheet Rest dropdown when at least one eligible item has a formula. Each formula-bearing item gets a labeled `<Input type="number">` with its current/max + roll formula + max-bound surfaced in the label. Items without formulas are listed in an "Auto full-recharge" section so the user sees the full picture of what will happen on Apply. Closing without Apply = no dispatch (the non-formula items are NOT auto-recharged in that case — the user backed out of the whole Rest action). Bundle delta: +5.89 kB raw / +1.70 kB gzip vs R2.2 baseline.
+>   - **CharacterSheet's `RestMenu`.** Now branches on `formulaCount > 0`: if any eligible item has a formula, open the modal; otherwise dispatch immediately as in R2.2 and toast the count.
+>
+> **Tests: 663 workspace-wide passing** (+9 R2.2.1 tests vs R2.2 close at 654). Breakdown:
+>   - Reducer: +5 (`mode=single` with partial amount / clamp at max / reject non-positive / `mode=batch` with amounts / non-formula immunity)
+>   - ItemDetail: +3 new (roll → apply, exceeds-deficit alert, cancel, non-formula keeps full recharge) + 1 modified (the original "Recharge button" test now flows through the inline input)
+>   - CharacterSheet: +1 new (non-formula trigger dispatches immediately) + 1 modified (Dawn now opens the modal)
+>
+> **Build: 944.38 kB JS / gzip 270.91 kB** (delta vs R2.2: **+5.89 kB raw / +1.70 kB gzip**).
+>
+> **Decisions captured in code:**
+> 1. **Both per-item and batch paths prompt for rolls** (not just one). Consistency over modal weight.
+> 2. **Bounds = positive integer ≤ deficit, no formula parsing.** The user types their physical dice result; the app trusts it. R6 may add a parser if users want a "roll for me" button.
+> 3. **Items without `rechargeAmount` keep R2.2 full-recharge** (one-click; never prompts). Mixed UX per data shape, matches DMG 2024.
+> 4. **Modal Cancel discards the entire batch** — non-formula items don't auto-recharge if the user backed out. Alternative ("apply partial — full-recharge the non-formula items even on Cancel") was considered and rejected: the modal title says "roll for recharge", so closing it without applying should be a complete no-op for symmetry with the per-item Cancel.
+> 5. **No OUTLINE change.** Spec already accommodates partial recharges via the existing `{ from, to, trigger }` payload shape. The action-payload extension (`amount` / `amounts`) is implementation detail.
 
 #### R2.3 — Identification
 
 **Schema activations (§4)**
-- [ ] `ItemInstance.identified` allowed to be `false`
+- [x] `ItemInstance.identified` allowed to be `false` — **R2.3** (widened `z.literal(true)` → `z.boolean()` in `packages/shared/src/schemas/itemInstance.ts`)
+- [x] `ItemInstance.hint` added (optional string) — **R2.3** (new per-instance DM-set hint field per OUTLINE §3.8; `notes` stays the player-set field)
+- [x] `edit-item-instance.changedFields` widened with `'identified'` and `'hint'` per OUTLINE §4 line 320 — **R2.3** (additive enum extension; existing R2.2 payloads still parse)
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `identify` action + payload schema (`{ itemInstanceId, previousHint?, newHint? }`)
-- [ ] DM-only invariant test for `identify` in 2+-member parties (§8.1)
-- [ ] **`identify` is bidirectional** per OUTLINE §3.8: the DM can flip `identified` from `true → false` (e.g., "actually that was cursed") as well as `false → true`. Reducer test for both directions; both produce their own `identify` log entry with `previousHint` / `newHint` capturing before/after.
-- [ ] **`identify` hint is per-instance** per OUTLINE §3.8: two `ItemInstance`s with the same `definitionId` can each carry a different hint. Reducer test: two unidentified longswords get distinct hints "radiates evil" vs "smells like lavender"; toggling `identified` on one doesn't affect the other.
+- [x] `identify` action + payload schema (`{ itemInstanceId, previousIdentified, newIdentified, previousHint?, newHint? }`) — **R2.3** (OUTLINE amended in lockstep — the `previousIdentified` / `newIdentified` fields make the bidirectional transition explicit in the log payload; mirrors how `recharge` carries `from`/`to`)
+- [x] Reducer routes `identify` to `actorRole: 'dm'` per OUTLINE §8.1 row 459 — **R2.3** (MVP solo user wears both hats so this is structural now; R3+ server-side gate will enforce DM-only for multi-member parties)
+- [x] **`identify` is bidirectional** per OUTLINE §3.8 — **R2.3** (reducer accepts `true → false` and `false → true` flips; both produce their own log entry with the full transition payload; tests for both directions)
+- [x] **`identify` hint is per-instance** per OUTLINE §3.8 — **R2.3** (`row.hint` lives on the instance; identifying one of two identical unidentified items doesn't affect the other; covered by the R2.3 reducer suite)
+- [x] No location restriction on `identify` — **R2.3** (deliberate non-gate; DM identifies anywhere — Storage, Party Stash, Recovered Loot, Shop. Test covers identify-in-Party-Stash succeeding)
+- [x] No magic-item gate on `identify` — **R2.3** (mundane items default to `identified: true` so the display swap never fires on them; identify-on-a-Torch is a harmless write and is rejected by the no-op gate unless the user also writes a hint)
+- [x] No-op rejection — **R2.3** (mirrors `attune` / `use-charge` conventions; an exact same-state dispatch throws `identify: no-op`)
 
 **UI (§5)**
-- [ ] Unidentified items render as "Unknown Magic Item" + DM-set hint (display invariant per §8)
-- [ ] DM identification panel (§5.13): toggle identified, edit hint text
+- [x] Unidentified items render as "Unknown Magic Item" + DM-set hint (display invariant per §8) — **R2.3** (new `apps/web/src/lib/identify.ts` `displayName` helper drives both ItemDetail header and StashItemsTable row; hint renders as italic subtitle on ItemDetail; tooltip on row name via `title=`)
+- [x] Spoiler protection extends to rarity / attunement chip / charges indicator / customName — **R2.3** (all hidden when `row.identified === false`; consistent with how D&D 5e tables play it; explicit decision captured for the retro)
+- [x] DM identification panel (§5.13): toggle identified, edit hint text — **R2.3** (ItemDetail gains an Identification section with a `role="switch"` toggle + hint editor with Save / Clear buttons; both dispatch `identify`; toasts on success)
+- [x] Per-item history (OUTLINE §3.11) default ownership-transition filter + "Show all events" toggle — **R2.3** (closes the R2.2 carry-forward; default surface shows acquire / consume / transfer / split / equip / unequip / attune / unattune / identify; toggle exposes use-charge / recharge / edit-item-instance; component-local state)
 
 #### R2.3 — Notes
 
-> -
+> **2026-06-26 — R2.3 (Identification) complete.** Closes R2 (Magic Items). Smoke-tested loop: "acquire wand → toggle Identified off → row renders as 'Unknown Magic Item' across Inventory + ItemDetail → add hint 'radiates faint magic' → hint surfaces as italic subtitle on ItemDetail and as a tooltip on the Inventory row → toggle Identified back on → real name + rarity + charges all return."
+>
+> **Schema activations (additive, no migration).** Three changes that compose:
+> - `itemInstance.ts` widens `identified: z.literal(true)` → `z.boolean()` and adds optional `hint: z.string().optional()`. The OUTLINE §3.8 invariant "hint is per-instance" is enforced by where the field lives (on `ItemInstance`, not `ItemDefinition`) — two copies of the same magic item can each carry their own hint. R2.2-vintage Dexie blobs still parse: every existing row carries `identified: true` and no `hint`, which the widened schema accepts unchanged.
+> - `transactionLog.ts` adds `identifyEntry` with payload `{ itemInstanceId, previousIdentified, newIdentified, previousHint?, newHint? }`. OUTLINE §4 line 317 originally specified only `{ previousHint?, newHint? }`; the R2.3 amendment adds the two `Identified` fields so a hint-preserving identification flip still produces an unambiguous log entry. Same pattern `recharge` follows with `from`/`to`.
+> - `editItemInstanceEntry.changedFields` widens with `'identified'` and `'hint'`. The dedicated `identify` action remains the only route to mutate these — `edit-item-instance` doesn't accept them at the action level. The schema enum extension exists so future contributors can't silently drift the surface.
+>
+> **Reducer.** Routed through the existing R2.2 multi-entry `ReducerResult.logEntries[]` contract; identify only ever emits exactly one entry. Validation order: `requireState` → row lookup → catalog lookup (defensive — schema can't enforce referential integrity between `item.definitionId` and catalog ids) → diff (`previousIdentified` vs `payload.identified`, `previousHint` vs `payload.hint`) → no-op gate. Three things deliberately omitted:
+>   - **No Inventory-only restriction** (unlike `attune` / `use-charge` / `equip`). DM identifies wherever the row lives. Tested with a row moved to Party Stash before dispatch — succeeds.
+>   - **No magic-item gate.** Mundane items default to `identified: true` and never trigger the display swap; identify-on-a-Torch is a harmless write (rejected by the no-op gate unless the user also writes a hint).
+>   - **No formula / rarity coupling.** The toggle works regardless of `def.rarity` — the display layer reads `row.identified`, not anything from the definition.
+>
+> Hint semantics use the `hint?: string | undefined` action shape under `exactOptionalPropertyTypes: true`:
+>   - `hint` key absent in payload → leave current hint untouched (ItemDetail's toggle preserves hint across flips this way).
+>   - `hint: 'text'` → write that string as the new hint.
+>   - `hint: undefined` (explicit) → clear the hint (Clear button in the panel).
+> The reducer uses `'hint' in payload` to distinguish absent from explicit-undefined. Action type explicitly includes `| undefined` on the union member so the explicit-undefined case is representable.
+>
+> **`actorRole: 'dm'` routing.** The `resolveActor` switch routes `identify` to its own DM-tagged branch (separate from the player-tagged group that covers `attune`, `use-charge`, etc.) per OUTLINE §8.1 row 459. In MVP party-of-one this has no behavioral effect (the sole user has both memberships); R3+ server-side gate will enforce DM-only for multi-member parties.
+>
+> **UI (3 new surfaces + 2 modified).**
+>   - `apps/web/src/lib/identify.ts` (NEW) — pure helpers mirroring `lib/rarity.ts` / `lib/charges.ts`. Exports `UNKNOWN_MAGIC_ITEM_LABEL` (single source of truth for OUTLINE §8 verbatim text) and `displayName(row, def)` (encapsulates the identified ? real-name : 'Unknown Magic Item' decision; also hides `customName` when unidentified — spoiler protection extends to player-set nicknames). 7 tests.
+>   - `ItemDetail` — header rendering switches between "real name + rarity chip + Requires-attunement pill + attunementPrereq advisory" (identified) and "Unknown Magic Item + italic 'Unidentified' badge + italic hint subtitle" (unidentified). The charges section is gated on `identified === true` too — knowing the wand has charges is itself a magic-item tell. New Identification Panel section with a `role="switch"` toggle (uses Tailwind-styled `<button>` per the plan decision to avoid the shadcn `switch` install — saves ~3 kB) and a hint editor with Save / Clear buttons. Both dispatch `identify` actions; toasts on success ("Item identified" / "Item marked unidentified" / "Hint updated" / "Hint cleared"). 7 new tests.
+>   - `StashItemsTable` — row name uses `lib/identify.displayName`. The R2.1 rarity dot is hidden when unidentified; replaced with a small muted `?` glyph. The R2.2 charges indicator is similarly hidden. The hint shows up as a tooltip via the `title=` attribute on the unidentified `?` indicator so the user has fast access without navigating away. 3 new tests.
+>   - `ItemHistory` — type guard widened from M2.5's 5-TxType set to 12 types (added `equip` / `unequip` / `attune` / `unattune` / `use-charge` / `recharge` / `identify`). OUTLINE §3.11 default-filter implemented — the visible set is the "ownership transition" 9-type subset; `use-charge` / `recharge` / `edit-item-instance` are hidden until the user clicks the new "Show all events" checkbox. Component-local toggle (resets per mount per the plan decision; R5 may lift to Zustand). `summarize()` extended with cases for all new entry types — identify's summary is verbose intentionally (each transition variant gets its own one-line summary so the audit log preserves the bidirectional nature). 6 new tests; 2 existing tests updated to toggle Show-all when asserting on hidden entry types.
+>
+> **Tests: 703 workspace-wide passing** (vs R2.2.1 close at 663 — **+40 R2.3 tests**). Breakdown:
+> - shared: +6 (3 schema acceptance + 1 back-compat + 2 reject + 1 widening + the identify-entry round-trip)
+> - rules: 0 (no new rules-layer code — display invariant is UI-enforced, reducer-side logic is local to `identifyAction`)
+> - seeds: 0 (no seed content changes — identification is per-instance, not per-definition)
+> - web: +34 (11 reducer: bidirectional flips + hint writes + no-op rejection + missing-id + missing-def + non-Inventory + actorRole routing + hint-only + identified-only + same-state-different-hint; 7 lib/identify; 7 ItemDetail; 3 StashItemsTable; 6 ItemHistory new + 2 modified)
+>
+> **Build: 949.89 kB JS / 30.68 kB CSS (gzip 272.46 / 6.44 kB).** Delta vs R2.2.1: **+5.51 kB JS raw / +1.55 kB gzip**, +CSS unchanged within rounding. Within the plan estimate (+5-8 kB raw). No new dependencies; the delta is `lib/identify.ts` + Identification Panel JSX + ItemHistory toggle + new summarize cases.
+>
+> **Decisions captured in code:**
+> 1. **`hint` is a new `ItemInstance` field**, not a reuse of `notes`. Different role (DM-set vs player-set), different visibility gate; conflating them at the schema would lose audit clarity.
+> 2. **No location restriction on `identify`.** DM identifies anywhere — Storage / Party Stash / Recovered Loot / Shop. Display gate is location-aware (the "Unknown Magic Item" swap only fires when the row is visible).
+> 3. **No magic-item gate on `identify`.** Mundane items default to `identified: true` and never trigger the display swap; identify-on-a-Torch is a harmless write rejected by the no-op gate.
+> 4. **Unconditional display gate** (per the slice 3 user decision). Even the solo user playing DM sees "Unknown Magic Item" when they've flipped identified off. Toggle in the ItemDetail panel is one click to reveal.
+> 5. **Rarity + attunement chip + charges indicator + customName all hidden when unidentified.** Spoiler-protection consistency across all magic-item-tells. OUTLINE §8 only specifies the name swap; the rest are R2.3 polish decisions captured here.
+> 6. **`previousIdentified` / `newIdentified` on the log entry** (OUTLINE §4 line 317 amendment). Hint-preserving identification flips still produce unambiguous audit rows.
+> 7. **Action payload is "target state"**, reducer diffs and logs. Symmetric with `edit-item-instance` / `edit-character`.
+> 8. **`hint: undefined` in payload clears the hint** (explicit-undefined under `exactOptionalPropertyTypes`). No separate `clearHint: boolean` flag; the reducer uses `'hint' in payload` to distinguish absent (untouched) from explicit-undefined (clear).
+> 9. **Toggle state is component-local** in ItemHistory. Resets per mount; R5 may lift to Zustand if cross-navigation persistence becomes a real need.
+> 10. **No new shadcn primitive for the Identified toggle.** A Tailwind-styled `<button role="switch" aria-checked={identified}>` ticks all accessibility boxes; saves the ~3 kB the shadcn `switch` install would have added.
+>
+> **OUTLINE.md amendments (additive).** One:
+> - §4 TxType payload table for `identify` now lists `{ itemInstanceId, previousIdentified, newIdentified, previousHint?, newHint? }`. The `previousIdentified` / `newIdentified` fields are R2.3 additions to the spec — the original `{ previousHint?, newHint? }` shape can't represent a hint-preserving identification flip.
+>
+> **`docs/MVP.md` unchanged.** MVP closed at M7 — R2 work updates OUTLINE / roadmap only.
+>
+> **Followups carried forward to R3+ (server-authoritative auth):**
+> - Server-side enforcement of OUTLINE §8.1 row 459 (Identify magic item: DM-only). MVP routes the action through the DM membership for audit; the actual permission gate happens server-side once the auth + party-membership tables land.
+> - Multi-member party panel visibility — the Identification Panel is always visible in MVP solo. R4 will hide it from players in 2+-member parties (only the DM sees the toggle / hint editor).
+>
+> **Followups carried forward to R6 (DM tools):**
+> - DM identification panel (§5.13) bulk surface — currently the user identifies items one at a time via ItemDetail. R6's DM tools may add a "all unidentified items" picker that takes a single identify-all action. The current per-instance OUTLINE §3.8 spec doesn't include batch identification (each instance carries its own hint); a bulk action would emit one log entry per row.
+> - `conditionOverrides` editor — placeholder comment now at the bottom of the ItemDetail section. The schema field has been live since M0, but no UI consumes it. Natural R6 polish target along with the homebrew authoring deep-dive.
+>
+> **2026-06-26 — Post-R2.3 follow-up fixes (same day):**
+> - **Bug 1 — free-recharge exploit via Storage round-trip.** The R2.2 transfer cascade cleared `currentCharges` to null on leave-Inventory and re-initialised to `def.max` on enter-Inventory. A spent wand moved Inventory → Storage → Inventory therefore came back fully charged for free. **Fixed by preserving `currentCharges` across moves** — the cascade no longer touches the field on leave; the enter-Inventory init only fires when the source row's `currentCharges` is currently `null` (first-time-into-Inventory case for items acquired directly into Storage). `equipped` / `attuned` still clear on leave-Inventory per the R1.3 cascade. OUTLINE §3.4 and §3.8 amended in lockstep — the "only meaningful in Inventory" rule for charges is now a UI display rule rather than a storage rule. R2.2 cascade tests updated (2 modified, 1 new round-trip-preservation test pinning the fix). Net test count change: +1.
+> - **Bug 2 — equipped unidentified magic items leaked their real name.** `EquippedSlotsPanel` read `row.customName ?? def.name` directly instead of routing through `lib/identify.displayName(row, def)`. An equipped unidentified Cloak of Protection displayed its real name in the Inventory tab's Equipped Slots panel, contradicting OUTLINE §8. **Fixed by routing through the shared `displayName` helper**, mirroring the R2.3 fixes in `ItemDetail` and `StashItemsTable`. +2 new tests covering both equipped and attuned unidentified items.
+> - **Tests: 706 workspace-wide passing** (+3 net vs R2.3 close at 703). Build delta negligible (label routes through an existing import).
+> - **No new OUTLINE §4 schema changes.** The fix is in the reducer's transfer cascade logic and one component-level display lookup; the `currentCharges: number | null` shape stays the same — the change is just *when* it transitions.
 
 #### R2 — Notes
 
-> -
+> **2026-06-26 — R2 (Magic items) complete.** The three slices landed across two days:
+> - R2.1 (2026-06-25) — DMG seed + rarity / attunement display.
+> - R2.2 + R2.2.1 (2026-06-26) — Charges + recharge + roll-based partial recharge.
+> - R2.3 (2026-06-26) — Identification.
+>
+> **OUTLINE coverage check (R2 scope):**
+> - §3.7 (DMG catalog): **complete** — 305 DMG entries seeded, rarity / requiresAttunement / attunementPrereq surfaced, BoH-class containers carry `flatWeight: true`.
+> - §3.8 (Magic items, attunement, charges, identification): **complete** — rarity ✓, attunement ✓ (R1.2 reducer + R2.1 gate), charges ✓ (R2.2 + R2.2.1), identification ✓ (R2.3).
+> - §3.11 (Audit history): **complete** — default ownership-transition filter + Show-all toggle shipped in R2.3 (was R2.2 carry-forward).
+> - §4 ItemDefinition extensions: **complete** — `rarity`, `requiresAttunement`, `attunementPrereq`, `charges` block all active.
+> - §4 ItemInstance: **complete** — `identified` and `currentCharges` widened; `hint` added.
+> - §4 TransactionLog: **complete** — `attune` / `unattune` (R1.2) + `use-charge` / `recharge` (R2.2) + `identify` (R2.3); OUTLINE amended in lockstep for the `recharge.characterId` (R2.2) and `identify.previousIdentified` / `newIdentified` (R2.3) additions.
+> - §6 `charges.ts`: **complete** (R2.2 — 5 pure helpers replacing the M0 stub).
+>
+> **Aggregate test deltas across R2:**
+> - R2.1: +23 (9 seed + 14 reducer / UI)
+> - R2.2: +75
+> - R2.2.1: +9
+> - R2.3: +40
+> - **Total R2 contribution: +147 tests**. Workspace started R2 at 556 (R1.5 close), ended R2 at 703.
+>
+> **Aggregate bundle deltas across R2 (raw JS, gzip):**
+> - R2.1: +114.94 kB / +25.22 kB (mostly the inlined DMG seed JSON ~113 kB)
+> - R2.2: +35.94 kB / +7.55 kB (`dropdown-menu` primitive ~12 kB + charges blocks + UI)
+> - R2.2.1: +5.89 kB / +1.70 kB (RestRollModal + inline roll input)
+> - R2.3: +5.51 kB / +1.55 kB (Identification Panel + display gate + history toggle)
+> - **R2 total: +162.28 kB raw / +36.02 kB gzip.** ~80% of that is the DMG seed JSON; code-splitting becomes mandatory before R3 anyway (TECH_STACK §10).
+>
+> **What's NOT in R2 (carried forward intentionally):**
+> - DM force-actions (`use-charge` / `recharge` on someone else's row, identify-all bulk action). All deferred to R4 (multi-member parties) + R6 (DM tools).
+> - Charge-formula evaluation (`rechargeAmount: "1d6+1"` is opaque in MVP). The R2.2.1 roll input sidesteps this — the user enters their physical dice result.
+> - `conditionOverrides` editor — schema field has been live since M0 but no UI consumes it. Future polish slice.
+> - Necklace of Fireballs bead-level distinction — modeled as `{ max: 9, rechargeRule: 'none' }`. Could surface as `conditionOverrides` if anyone wants per-bead spell levels.
+> - Rod of Lordly Might / Horn of Valhalla / Pipes of the Sewers and similar "structurally different from N charges" items shipped without a `charges` block. Future homebrew opportunities once R6 unlocks more nuanced charge models.
 
 ---
 

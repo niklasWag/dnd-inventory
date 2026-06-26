@@ -5,7 +5,7 @@ import type {
   Stash,
   TransactionLogEntry,
 } from '@app/shared';
-import { attunement, capacity, currency, inventory, weight as weightRules } from '@app/rules';
+import { attunement, capacity, charges, currency, inventory, weight as weightRules } from '@app/rules';
 
 import type { Action, AppState } from './types';
 
@@ -103,6 +103,12 @@ export function reduce(state: AppState, action: Action): ReducerResult {
     case 'attune':
     case 'unattune':
       return attuneOrUnattune(state, action.type, action.payload);
+    case 'use-charge':
+      return spendCharge(state, action.payload);
+    case 'recharge':
+      return rechargeAction(state, action.payload);
+    case 'identify':
+      return identifyAction(state, action.payload);
     case 'edit-character':
       return editCharacter(state, action.payload);
   }
@@ -396,6 +402,18 @@ function acquire(
     );
   } else {
     resolvedItemId = crypto.randomUUID();
+    // R2.2 — if the destination is a character's Inventory AND the
+    // definition has a `charges` block, initialise `currentCharges` to
+    // `def.charges.max`. Items entering non-Inventory stashes start at
+    // null per OUTLINE §3.4 ("only meaningful in Inventory"); the
+    // transfer cascade re-initialises if they later cross into one.
+    const targetStash = s.stashes.find((st) => st.id === payload.stashId);
+    const intoInventory =
+      targetStash !== undefined &&
+      targetStash.scope === 'character' &&
+      targetStash.isCarried === true;
+    const initialCharges: number | null =
+      intoInventory && definition.charges !== undefined ? definition.charges.max : null;
     const newRow: ItemInstance = {
       id: resolvedItemId,
       definitionId: payload.definitionId,
@@ -406,7 +424,7 @@ function acquire(
       equipped: false,
       attuned: false,
       identified: true,
-      currentCharges: null,
+      currentCharges: initialCharges,
     };
     if (effectiveNotes !== undefined) newRow.notes = effectiveNotes;
     nextItems = [...s.items, newRow];
@@ -1117,11 +1135,19 @@ function transfer(
 
   // R1.3 — leave-Inventory cascade (OUTLINE §3.4): when the source row
   // lives in a character's Inventory stash and the destination is
-  // anything else, clear `equipped` / `attuned` / `currentCharges`
-  // atomically. The cascade is a no-op when the source row was already
-  // at the MVP-placeholder values (un-equipped, un-attuned, no charges)
-  // — in that case we don't emit the paired `edit-item-instance` entry
-  // because nothing actually changed.
+  // anything else, clear `equipped` / `attuned` atomically. The cascade
+  // is a no-op when the source row was already at the MVP-placeholder
+  // values (un-equipped, un-attuned) — in that case we don't emit the
+  // paired `edit-item-instance` entry because nothing actually changed.
+  //
+  // R2.3 amendment: `currentCharges` is NO LONGER cleared on leave-
+  // Inventory. The R2.2 design (clear-on-leave + re-init-on-enter) had
+  // an exploit — a spent wand could be moved to Storage and back to
+  // refill its charges for free. R2.3 preserves charge state across
+  // moves: the row keeps its `currentCharges` regardless of location.
+  // The OUTLINE §3.4 "only meaningful in Inventory" invariant becomes
+  // a display rule (UI hides the indicator outside Inventory) rather
+  // than a storage rule. See R2.3 retro decisions.
   const fromStash = s.stashes.find((st) => st.id === fromStashId);
   const leavingInventory =
     fromStash !== undefined &&
@@ -1132,8 +1158,6 @@ function transfer(
   if (leavingInventory) {
     if (source.equipped) clearedFields.push('equipped');
     if (source.attuned) clearedFields.push('attuned');
-    // `currentCharges` is still null-locked (R2.2 widens it); the cascade
-    // has nothing to clear there yet, but the structure is in place.
   }
   // Cross-stash container-orphan check (OUTLINE §3.4 invariant: parent
   // and contents live in the same stash). When the moved row is itself
@@ -1152,6 +1176,25 @@ function transfer(
     source.containerInstanceId !== null &&
     payload.toStashId !== fromStashId;
 
+  // R2.2 — entering-Inventory init: when the destination IS a character's
+  // Inventory stash AND the moved row's definition has a `charges` block
+  // AND the row's `currentCharges` is currently `null` (it's never been
+  // initialised — e.g. a wand acquired directly into Storage), seed
+  // `currentCharges` to `def.charges.max`. R2.3 amendment: only inits
+  // when the row's current value is `null` — non-null values are
+  // preserved, fixing the R2.2 round-trip-recharge exploit.
+  const enteringInventory =
+    toStash.scope === 'character' &&
+    toStash.isCarried === true &&
+    fromStashId !== payload.toStashId;
+  const enteringDef = enteringInventory
+    ? s.catalog.find((d) => d.id === source.definitionId)
+    : undefined;
+  const enteringChargesMax =
+    enteringDef?.charges !== undefined && source.currentCharges === null
+      ? enteringDef.charges.max
+      : undefined;
+
   // Helper: apply the cascade clear-fields + R1.5 parent change + cross-
   // stash orphan-drop to a row (used in every branch below where we
   // either move or split the source row). Container-parent re-assignment
@@ -1160,7 +1203,18 @@ function transfer(
   function applyMovedRowMutations(row: ItemInstance): ItemInstance {
     let next = row;
     if (clearedFields.length > 0) {
-      next = { ...next, equipped: false, attuned: false };
+      next = {
+        ...next,
+        equipped: false,
+        attuned: false,
+      };
+    }
+    // R2.2 enter-Inventory init (R2.3-amended). Only seeds charges when
+    // the row's currentCharges is currently null — non-null values are
+    // preserved across moves. A spent wand transferred to Storage and
+    // back stays spent.
+    if (enteringChargesMax !== undefined) {
+      next = { ...next, currentCharges: enteringChargesMax };
     }
     if (payload.toContainerInstanceId !== undefined) {
       next = { ...next, containerInstanceId: payload.toContainerInstanceId };
@@ -1927,6 +1981,27 @@ function attuneOrUnattune(
   }
 
   if (type === 'attune') {
+    // R2.1 — magic-item gate per OUTLINE §3.8 / PHB 2024 attunement
+    // rules: only items whose `ItemDefinition.requiresAttunement` is
+    // `true` can be attuned. Mundane rows (Torch, Rope, Rations, etc.)
+    // are reducer-rejected here even when the Inventory-only + slot-cap
+    // checks would otherwise pass. Order: Inventory-only (via
+    // `resolveInventoryRow` above) → no-op (above) → magic-item gate
+    // (here) → slot-cap (below). `unattune` deliberately skips this
+    // gate so MVP / R1.2-vintage state with `attuned: true` on a
+    // mundane row can still be cleaned up.
+    const def = s.catalog.find((d) => d.id === row.definitionId);
+    if (def === undefined) {
+      throw new Error(
+        `attune: definition ${row.definitionId} not in catalog for row ${row.id}`,
+      );
+    }
+    if (def.requiresAttunement !== true) {
+      throw new Error(
+        `attune: item "${def.name}" (${def.id}) is not a magic item (requiresAttunement !== true)`,
+      );
+    }
+
     // Slot cap is the character's `maxAttunement` (OUTLINE §3.3, default
     // 3). Counted against the character's currently-attuned rows in
     // Inventory — items in Storage / Party Stash / Recovered Loot / Shop
@@ -1954,6 +2029,379 @@ function attuneOrUnattune(
           itemInstanceId: row.id,
           characterId: payload.characterId,
         },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// use-charge (R2.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Spend one or more charges on an Inventory row. Validation order mirrors
+ * R2.1 `attune`:
+ *   1. `requireState`
+ *   2. `resolveInventoryRow` (Inventory-only + ownership)
+ *   3. catalog-lookup (defensive — schema can't guarantee join)
+ *   4. definition has a `charges` block
+ *   5. `currentCharges` is initialised (not null)
+ *   6. `currentCharges - amount >= 0`
+ *
+ * Then applies via `charges.useCharge`. Emits one `use-charge` log entry.
+ *
+ * Single-use cascade (per `def.charges.rechargeRule === 'none'`): when
+ * the new `currentCharges` lands at 0, the reducer also emits a
+ * synthetic `consume` entry and either drops the row (`quantity === 1`)
+ * or decrements `quantity` and resets `currentCharges` to `def.charges.max`
+ * for the surviving stack. A stack of 5 potions becomes 4 + full
+ * charges; spending the last potion drops the row.
+ */
+function spendCharge(
+  state: AppState,
+  payload: Extract<Action, { type: 'use-charge' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'use-charge');
+  const { row } = resolveInventoryRow(
+    s,
+    'use-charge',
+    payload.itemInstanceId,
+    payload.characterId,
+  );
+
+  const def = s.catalog.find((d) => d.id === row.definitionId);
+  if (def === undefined) {
+    throw new Error(
+      `use-charge: definition ${row.definitionId} not in catalog for row ${row.id}`,
+    );
+  }
+  if (def.charges === undefined) {
+    throw new Error(
+      `use-charge: item "${def.name}" (${def.id}) has no charges defined`,
+    );
+  }
+  if (row.currentCharges === null) {
+    throw new Error(
+      `use-charge: row ${row.id} has no current-charges state (was it just transferred in?)`,
+    );
+  }
+  const amount = payload.amount ?? 1;
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error(`use-charge: amount must be a positive integer, got ${amount}`);
+  }
+  if (row.currentCharges - amount < 0) {
+    throw new Error(
+      `use-charge: insufficient charges on row ${row.id} (have ${row.currentCharges}, want ${amount})`,
+    );
+  }
+
+  const newCharges = charges.useCharge(row.currentCharges, amount);
+  const singleUseConsumed =
+    charges.isSingleUse(def.charges) && newCharges === 0 && row.quantity > 0;
+
+  const logEntries: LogEntrySlice[] = [
+    {
+      type: 'use-charge',
+      payload: {
+        itemInstanceId: row.id,
+        characterId: payload.characterId,
+        amount,
+      },
+    },
+  ];
+
+  let nextItems: ItemInstance[];
+
+  if (singleUseConsumed) {
+    const removed = row.quantity === 1;
+    if (removed) {
+      // Drop the row entirely.
+      nextItems = s.items.filter((i) => i.id !== row.id);
+    } else {
+      // Stack-decrement: one potion consumed, the rest stay fully charged.
+      nextItems = s.items.map((i) =>
+        i.id === row.id
+          ? { ...i, quantity: i.quantity - 1, currentCharges: def.charges!.max }
+          : i,
+      );
+    }
+    // Synthetic `consume` entry alongside `use-charge`. Mirrors the
+    // M3 `delete-stash` cascade pattern — both entries share the same
+    // actor / partyId / timestamp via the middleware in `index.ts`.
+    logEntries.push({
+      type: 'consume',
+      payload: {
+        stashId: row.ownerId,
+        itemInstanceId: row.id,
+        quantity: 1,
+        removed,
+      },
+    });
+  } else {
+    nextItems = s.items.map((i) =>
+      i.id === row.id ? { ...i, currentCharges: newCharges } : i,
+    );
+  }
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntries,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// recharge (R2.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Restore charges on Inventory rows. Three dispatch modes:
+ *
+ *   - `'single'` / `'manual'`: resolve one row, recharge to `def.charges.max`,
+ *     emit one `recharge` log entry with `trigger: 'manual'`.
+ *     `'single'` and `'manual'` are MVP synonyms (same code path); the
+ *     distinct mode names reserve action shapes for R6's permission gates
+ *     (player-driven single vs DM force-recharge) without a future schema
+ *     break.
+ *
+ *   - `'batch'`: iterate the character's Inventory items, recharge every
+ *     row whose `def.charges.rechargeRule` strictly matches the trigger
+ *     (per `rules.charges.eligibleForBatchRecharge`), emit ONE
+ *     `recharge` entry per recharged row. Items at full charges are
+ *     skipped (no-op edits don't log). Empty result is allowed —
+ *     "I took a long rest but no items needed recharging" is a valid
+ *     dispatch.
+ *
+ * Rejects when:
+ *   - the row isn't in the character's Inventory (single/manual modes),
+ *   - the definition has no `charges` block (single/manual modes),
+ *   - the row is already at `def.charges.max` (single/manual modes —
+ *     batch silently skips).
+ */
+function rechargeAction(
+  state: AppState,
+  payload: Extract<Action, { type: 'recharge' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'recharge');
+
+  if (payload.mode === 'single' || payload.mode === 'manual') {
+    const { row } = resolveInventoryRow(
+      s,
+      'recharge',
+      payload.itemInstanceId,
+      payload.characterId,
+    );
+    const def = s.catalog.find((d) => d.id === row.definitionId);
+    if (def === undefined) {
+      throw new Error(
+        `recharge: definition ${row.definitionId} not in catalog for row ${row.id}`,
+      );
+    }
+    if (def.charges === undefined) {
+      throw new Error(
+        `recharge: item "${def.name}" (${def.id}) has no charges defined`,
+      );
+    }
+    const from = row.currentCharges ?? 0;
+    // R2.2.1 — optional partial recharge. When `amount` is provided,
+    // the post-recharge value is `min(from + amount, max)`. Without
+    // `amount`, full-recharge to `def.charges.max` (R2.2 default).
+    let to: number;
+    if (payload.amount !== undefined) {
+      if (!Number.isInteger(payload.amount) || payload.amount <= 0) {
+        throw new Error(
+          `recharge: amount must be a positive integer, got ${payload.amount}`,
+        );
+      }
+      to = Math.min(from + payload.amount, def.charges.max);
+    } else {
+      to = charges.rechargeTo(def.charges);
+    }
+    if (from === to) {
+      throw new Error(
+        `recharge: row ${row.id} already at full charges (${from}/${def.charges.max})`,
+      );
+    }
+    return {
+      state: {
+        ...s,
+        items: s.items.map((i) => (i.id === row.id ? { ...i, currentCharges: to } : i)),
+      },
+      logEntries: [
+        {
+          type: 'recharge',
+          payload: {
+            itemInstanceId: row.id,
+            characterId: payload.characterId,
+            from,
+            to,
+            trigger: 'manual',
+          },
+        },
+      ],
+    };
+  }
+
+  // mode: 'batch'
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`recharge: unknown characterId ${payload.characterId}`);
+  }
+  const trigger = payload.trigger;
+  const amounts = payload.amounts;
+
+  const updated: { row: ItemInstance; from: number; to: number }[] = [];
+  for (const row of s.items) {
+    if (row.ownerId !== character.inventoryStashId) continue;
+    const def = s.catalog.find((d) => d.id === row.definitionId);
+    if (def?.charges === undefined) continue;
+    if (!charges.eligibleForBatchRecharge(def.charges, trigger)) continue;
+    const from = row.currentCharges ?? 0;
+    // R2.2.1 — when the caller supplied a per-item roll amount and
+    // this row's definition has a `rechargeAmount` formula, apply the
+    // partial recharge. Rows without a formula always full-recharge;
+    // rows with a formula whose id is absent from `amounts` also
+    // full-recharge (defensive — the modal should always provide all
+    // formula-bearing rolls, but skipping is harmless).
+    const rollAmount =
+      amounts !== undefined &&
+      def.charges.rechargeAmount !== undefined &&
+      amounts[row.id] !== undefined
+        ? amounts[row.id]
+        : undefined;
+    let to: number;
+    if (rollAmount !== undefined) {
+      if (!Number.isInteger(rollAmount) || rollAmount <= 0) {
+        throw new Error(
+          `recharge: amount for row ${row.id} must be a positive integer, got ${String(rollAmount)}`,
+        );
+      }
+      to = Math.min(from + rollAmount, def.charges.max);
+    } else {
+      to = charges.rechargeTo(def.charges);
+    }
+    if (from === to) continue; // skip no-op rows silently
+    updated.push({ row, from, to });
+  }
+
+  const updatedIds = new Set(updated.map((u) => u.row.id));
+  const nextItems = s.items.map((i) => {
+    if (!updatedIds.has(i.id)) return i;
+    const u = updated.find((x) => x.row.id === i.id)!;
+    return { ...i, currentCharges: u.to };
+  });
+
+  const logEntries: LogEntrySlice[] = updated.map((u) => ({
+    type: 'recharge',
+    payload: {
+      itemInstanceId: u.row.id,
+      characterId: payload.characterId,
+      from: u.from,
+      to: u.to,
+      trigger,
+    },
+  }));
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntries,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// identify (R2.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Identify — DM toggles a row's `identified` flag and / or sets the
+ * unidentified-item hint (OUTLINE §3.8 + §4 line 317). Bidirectional:
+ * `true → false` and `false → true` both produce a log entry; the
+ * payload captures the full `(previousIdentified, newIdentified,
+ * previousHint, newHint)` transition.
+ *
+ * Validation order:
+ *   1. requireState
+ *   2. locate row by id
+ *   3. catalog lookup (defensive — schema can't enforce referential
+ *      integrity between item.definitionId and catalog ids)
+ *   4. compute diff
+ *   5. reject exact no-op (same identified + same hint)
+ *
+ * Deliberate non-gates (captured for the R2.3 retro):
+ *   - NO location restriction. OUTLINE §8.1 doesn't qualify identify
+ *     by location; a DM identifies a chest of loot in Storage just as
+ *     easily as a wand in Inventory.
+ *   - NO magic-item gate. Mundane items default to `identified: true`
+ *     and the display invariant never fires on them, so an errant
+ *     identify on a Torch is harmless (and is rejected by the no-op
+ *     gate unless the user also writes a hint).
+ *
+ * Hint semantics:
+ *   - `hint` key absent in payload: leave the current hint untouched.
+ *   - `hint: 'text'`: write that string as the new hint.
+ *   - `hint: undefined` (explicit): clear the hint.
+ * The action type uses `hint?: string | undefined` to make the
+ * explicit-undefined case representable under
+ * `exactOptionalPropertyTypes: true`.
+ */
+function identifyAction(
+  state: AppState,
+  payload: Extract<Action, { type: 'identify' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'identify');
+
+  const row = s.items.find((i) => i.id === payload.itemInstanceId);
+  if (row === undefined) {
+    throw new Error(`identify: unknown itemInstanceId ${payload.itemInstanceId}`);
+  }
+  const def = s.catalog.find((d) => d.id === row.definitionId);
+  if (def === undefined) {
+    throw new Error(`identify: definition ${row.definitionId} not in catalog`);
+  }
+
+  const previousIdentified = row.identified;
+  const newIdentified = payload.identified;
+  const previousHint = row.hint;
+  // `hint` absent on payload keeps the current hint; present (string OR
+  // explicit undefined) replaces it. The action's
+  // `hint?: string | undefined` shape distinguishes the two cases.
+  const hintInPayload = 'hint' in payload;
+  const newHint = hintInPayload ? payload.hint : previousHint;
+
+  if (previousIdentified === newIdentified && previousHint === newHint) {
+    throw new Error('identify: no-op (same identified state and hint)');
+  }
+
+  const nextRow: ItemInstance = { ...row, identified: newIdentified };
+  if (newHint === undefined) {
+    delete nextRow.hint;
+  } else {
+    nextRow.hint = newHint;
+  }
+  const nextItems = s.items.map((i) => (i.id === row.id ? nextRow : i));
+
+  // Build the log payload conditionally — under exactOptionalPropertyTypes
+  // `previousHint?: string` can't accept `string | undefined`, so only
+  // include the key when the value is a string.
+  const logPayload: {
+    itemInstanceId: string;
+    previousIdentified: boolean;
+    newIdentified: boolean;
+    previousHint?: string;
+    newHint?: string;
+  } = {
+    itemInstanceId: row.id,
+    previousIdentified,
+    newIdentified,
+  };
+  if (previousHint !== undefined) logPayload.previousHint = previousHint;
+  if (newHint !== undefined) logPayload.newHint = newHint;
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntries: [
+      {
+        type: 'identify',
+        payload: logPayload,
       },
     ],
   };

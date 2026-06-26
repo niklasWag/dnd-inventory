@@ -20,8 +20,24 @@ import { z } from 'zod';
  * invariant (OUTLINE §4) is reducer-enforced for `equipped` / `attuned`
  * (the schema has no knowledge of stash scope).
  *
- * `identified` and `currentCharges` stay as MVP-vintage literals — they
- * activate in R2 (magic items + identification + charges).
+ * R2.3 activates `identified` — widened from `z.literal(true)` to
+ * `z.boolean()`. Defaults to `true` on acquire; the DM toggles it
+ * bidirectionally via the `identify` action (OUTLINE §3.8). The
+ * display invariant "render as 'Unknown Magic Item' when
+ * `identified === false`" is UI-enforced (OUTLINE §8).
+ *
+ * R2.3 also adds the optional `hint?: string` — DM-set unidentified-
+ * item hint per OUTLINE §3.8 ("radiates evil", "smells like
+ * lavender"). Per-instance scope; two copies of the same magic item
+ * can each carry their own hint. Populated / cleared by the `identify`
+ * action's `newHint` field. `undefined` means "no hint set."
+ *
+ * R2.2 widens `currentCharges` from `z.null()` to
+ * `z.number().int().nonnegative().nullable()`. The OUTLINE §3.8 / §4
+ * invariant "only meaningful in Inventory" remains reducer-enforced
+ * (the transfer cascade clears `currentCharges` to null when an item
+ * leaves Inventory, and re-initializes to `def.charges.max` when a
+ * charged item enters Inventory).
  *
  * Auto-stack key (enforced by the reducer, not the schema): `(definitionId, notes ?? "")`.
  */
@@ -34,8 +50,9 @@ export const itemInstanceSchema = z.object({
   quantity: z.number().int().positive(),
   equipped: z.boolean(),
   attuned: z.boolean(),
-  identified: z.literal(true),
-  currentCharges: z.null(),
+  identified: z.boolean(),
+  hint: z.string().optional(),
+  currentCharges: z.number().int().nonnegative().nullable(),
   customName: z.string().min(1).optional(),
   notes: z.string().optional(),
   conditionOverrides: z.record(z.string(), z.unknown()).optional(),

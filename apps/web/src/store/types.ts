@@ -310,6 +310,109 @@ export type Action =
       };
     }
   | {
+      // R2.2: spend one or more charges on an Inventory row whose
+      // `ItemDefinition` carries a `charges` block. Reducer rejects when:
+      //   - the row isn't in the character's Inventory (Inventory-only
+      //     per OUTLINE §3.8 "force-use-charge scope"),
+      //   - the definition has no `charges` block,
+      //   - the row's `currentCharges` is null (hasn't been initialised —
+      //     defensive, the transfer cascade init should prevent this),
+      //   - the resulting `currentCharges` would go below 0.
+      //
+      // Single-use cascade (per `def.charges.rechargeRule === 'none'`):
+      // when the new `currentCharges` lands at 0, the reducer emits a
+      // synthetic `consume` entry and either drops the row (stack=1) or
+      // decrements `quantity` and resets `currentCharges` to `max` for
+      // the surviving stack.
+      //
+      // `amount` defaults to 1 (the MVP UI always dispatches 1; R6 may
+      // add a multi-charge spell-level picker).
+      type: 'use-charge';
+      payload: {
+        itemInstanceId: string;
+        characterId: string;
+        amount?: number;
+      };
+    }
+  | {
+      // R2.2: restore charges on Inventory rows. Three dispatch modes:
+      //   - `'single'`: Item Detail single-row Recharge button. Resolves
+      //     one row, sets `currentCharges = def.charges.max`, emits one
+      //     `recharge` entry with `trigger: 'manual'`.
+      //   - `'manual'`: synonym for `'single'` in MVP; reserved for the
+      //     R6 DM force-recharge surface (same action shape, different
+      //     R4/R6 permission gate).
+      //   - `'batch'`: Character Sheet Rest dropdown. Iterates the
+      //     character's Inventory items, recharges every row whose
+      //     `def.charges.rechargeRule` strictly matches the trigger,
+      //     emits ONE `recharge` entry per recharged row (so the
+      //     per-item history filter surfaces each recharge on its row).
+      //     Eligibility check via `rules.charges.eligibleForBatchRecharge`.
+      //
+      // R2.2.1 — optional partial recharge:
+      //   - single/manual: `amount?` clamps the rise to
+      //     `Math.min(currentCharges + amount, max)`. Used by Item
+      //     Detail's roll input on items with a `rechargeAmount` formula.
+      //   - batch: `amounts?` maps `itemInstanceId -> partial amount`
+      //     for the formula-bearing eligible items the modal collected
+      //     rolls for. Items missing from `amounts` (or items with no
+      //     `rechargeAmount` formula) full-recharge as before.
+      type: 'recharge';
+      payload:
+        | {
+            mode: 'single';
+            itemInstanceId: string;
+            characterId: string;
+            amount?: number;
+          }
+        | {
+            mode: 'manual';
+            itemInstanceId: string;
+            characterId: string;
+            amount?: number;
+          }
+        | {
+            mode: 'batch';
+            characterId: string;
+            trigger: 'dawn' | 'dusk' | 'long-rest' | 'short-rest';
+            amounts?: Record<string, number>;
+          };
+    }
+  | {
+      // R2.3: DM toggle for an item's `identified` flag + optional
+      // unidentified-item hint (OUTLINE §3.8). Bidirectional: an item
+      // can flip true → false ("actually that was cursed") or false →
+      // true. The reducer diffs the payload against the current row's
+      // state and rejects exact no-op dispatches; the log entry
+      // captures the full `(previousIdentified, newIdentified,
+      // previousHint, newHint)` transition.
+      //
+      // No location restriction (unlike attune / use-charge / equip):
+      // the DM force-identifies anywhere — Storage, Party Stash,
+      // Recovered Loot, Shop. The "Unknown Magic Item" display
+      // invariant per OUTLINE §8 is UI-enforced; the toggle itself
+      // works on any row.
+      //
+      // No magic-item gate: mundane items default to identified: true
+      // and never trigger the display swap, so a stray identify on a
+      // Torch is a harmless no-op (and is rejected by the no-op gate
+      // unless the user also supplies a new hint, in which case the
+      // hint write is the only mutation).
+      //
+      // `hint` semantics on payload:
+      //   - omitted (key absent): "do not change the existing hint".
+      //   - explicit string: write that string as the new hint.
+      //   - explicit `undefined`: clear the hint.
+      // Under `exactOptionalPropertyTypes` the explicit-undefined case
+      // requires the field type to include `| undefined`.
+      type: 'identify';
+      payload: {
+        itemInstanceId: string;
+        identified: boolean;
+        hint?: string | undefined;
+      };
+    }
+  | {
       // R1.2: catch-all Character editor for fields that compose
       // naturally per OUTLINE §4 line 320. `encumbranceRule` and
       // `enforceEncumbrance` have their own `set-encumbrance` action;

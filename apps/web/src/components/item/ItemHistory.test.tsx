@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { ItemHistory } from './ItemHistory';
 import { useStore } from '@/store';
@@ -19,7 +20,8 @@ describe('ItemHistory', () => {
     expect(screen.getByText(/no log entries for this item yet/i)).toBeInTheDocument();
   });
 
-  it('renders acquire + consume + edit-item-instance entries in chronological order', () => {
+  it('renders acquire + consume + edit-item-instance entries in chronological order (with Show all events toggled)', async () => {
+    const user = userEvent.setup();
     const t1 = '2026-06-23T10:00:00.000Z';
     const t2 = '2026-06-23T10:01:00.000Z';
     const t3 = '2026-06-23T10:02:00.000Z';
@@ -56,6 +58,11 @@ describe('ItemHistory', () => {
 
     render(<ItemHistory itemInstanceId="item-1" />);
 
+    // R2.3 — default filter hides edit-item-instance; only 2 rows visible.
+    // The "Show all events" toggle exposes the hidden entry.
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    await user.click(screen.getByRole('checkbox', { name: /show all events/i }));
+
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(3);
     expect(within(items[0]!).getByText(/acquired/i)).toBeInTheDocument();
@@ -78,7 +85,8 @@ describe('ItemHistory', () => {
     expect(screen.getByText(/removed \(consumed last 2\)/i)).toBeInTheDocument();
   });
 
-  it('summarizes edit-item-instance with both fields as "Edited customName + notes"', () => {
+  it('summarizes edit-item-instance with both fields as "Edited customName + notes" (visible only after Show all toggle)', async () => {
+    const user = userEvent.setup();
     useStore.setState({
       log: [
         makeEntry('edit-item-instance', {
@@ -88,6 +96,9 @@ describe('ItemHistory', () => {
       ],
     });
     render(<ItemHistory itemInstanceId="item-1" />);
+    // Default filter hides edit-item-instance; the empty-rows placeholder shows the hidden count.
+    expect(screen.queryByText(/edited customName \+ notes/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: /show all events/i }));
     expect(screen.getByText(/edited customName \+ notes/i)).toBeInTheDocument();
   });
 
@@ -527,5 +538,118 @@ describe('ItemHistory', () => {
 
     render(<ItemHistory itemInstanceId="item-torch" />);
     expect(screen.getByText(/Packed ×1 into container/i)).toBeInTheDocument();
+  });
+
+  it('R2.3 — default filter hides use-charge / recharge; Show all toggle reveals them', async () => {
+    const user = userEvent.setup();
+    useStore.setState({
+      log: [
+        makeEntry('acquire', {
+          stashId: 'stash-1',
+          itemInstanceId: 'item-wand',
+          definitionId: 'dmg-2024:wand-of-magic-missiles',
+          quantity: 1,
+          source: 'catalog-add',
+        }),
+        makeEntry('use-charge', {
+          itemInstanceId: 'item-wand',
+          characterId: 'char-1',
+          amount: 1,
+        }),
+        makeEntry('recharge', {
+          itemInstanceId: 'item-wand',
+          characterId: 'char-1',
+          from: 6,
+          to: 7,
+          trigger: 'dawn',
+        }),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-wand" />);
+    // Default: only acquire visible (1 of 3).
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.getByText(/Show all events \(\+2\)/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: /show all events/i }));
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(3);
+    expect(within(items[1]!).getByText(/Used ×1 charge/)).toBeInTheDocument();
+    expect(within(items[2]!).getByText(/Recharged \+1 \(6 → 7, dawn\)/)).toBeInTheDocument();
+  });
+
+  it('R2.3 — identify entries are shown by default (ownership-transition filter)', () => {
+    useStore.setState({
+      log: [
+        makeEntry('identify', {
+          itemInstanceId: 'item-1',
+          previousIdentified: true,
+          newIdentified: false,
+        }),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getByText(/Marked unidentified/i)).toBeInTheDocument();
+  });
+
+  it('R2.3 — identify summary: true → false with hint reads "Marked unidentified (hint: ...)"', () => {
+    useStore.setState({
+      log: [
+        makeEntry('identify', {
+          itemInstanceId: 'item-1',
+          previousIdentified: true,
+          newIdentified: false,
+          newHint: 'shimmers faintly',
+        }),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getByText(/Marked unidentified \(hint: "shimmers faintly"\)/)).toBeInTheDocument();
+  });
+
+  it('R2.3 — identify summary: false → true reads "Identified"', () => {
+    useStore.setState({
+      log: [
+        makeEntry('identify', {
+          itemInstanceId: 'item-1',
+          previousIdentified: false,
+          newIdentified: true,
+          previousHint: 'shimmers',
+          newHint: 'shimmers',
+        }),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getByText(/^Identified$/)).toBeInTheDocument();
+  });
+
+  it('R2.3 — identify summary: hint-only change reads "Updated unidentified hint"', () => {
+    useStore.setState({
+      log: [
+        makeEntry('identify', {
+          itemInstanceId: 'item-1',
+          previousIdentified: false,
+          newIdentified: false,
+          previousHint: 'glows blue',
+          newHint: 'glows red',
+        }),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getByText(/Updated unidentified hint to "glows red"/)).toBeInTheDocument();
+  });
+
+  it('R2.3 — identify summary: cleared hint reads "Cleared unidentified hint"', () => {
+    useStore.setState({
+      log: [
+        makeEntry('identify', {
+          itemInstanceId: 'item-1',
+          previousIdentified: false,
+          newIdentified: false,
+          previousHint: 'glows blue',
+        }),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getByText(/Cleared unidentified hint/i)).toBeInTheDocument();
   });
 });

@@ -112,8 +112,13 @@ const seedCatalogEntry = z.object({
  * `equipped` and `attuned`. The dedicated `equip`/`unequip`/`attune`/
  * `unattune` TxTypes (below) cover the explicit reducer actions; this
  * widened enum exists for the future Item Detail screen edit path that
- * mass-edits a row at once. R2 will widen further to include
- * `identified` and `currentCharges`.
+ * mass-edits a row at once. R2.2 widens further to include
+ * `currentCharges`. R2.3 widens with `identified` and `hint` so the
+ * generic editor surface mirrors the OUTLINE §4 line 320 enum; in
+ * practice the reducer routes `identified` / `hint` writes through the
+ * dedicated `identify` action and rejects them via `edit-item-instance`
+ * (the schema accepts the field names so future contributors can't
+ * silently drift the surface).
  *
  * `.min(1)` enforces the "no-op edit" reject rule at the schema boundary
  * (the reducer is the primary defense; this is belt-and-braces).
@@ -124,7 +129,17 @@ const editItemInstanceEntry = z.object({
   payload: z.object({
     itemInstanceId: z.string().min(1),
     changedFields: z
-      .array(z.enum(['customName', 'notes', 'equipped', 'attuned']))
+      .array(
+        z.enum([
+          'customName',
+          'notes',
+          'equipped',
+          'attuned',
+          'currentCharges',
+          'identified',
+          'hint',
+        ]),
+      )
       .min(1),
   }),
 });
@@ -512,6 +527,107 @@ const unattuneEntry = z.object({
 });
 
 /**
+ * `use-charge` — a row in someone's Inventory consumed one or more
+ * charges (OUTLINE §3.8 + §4 line 319). Reducer guards:
+ *   - the item is in a `scope=character, isCarried=true` stash,
+ *   - the stash's `ownerCharacterId === characterId`,
+ *   - the definition has a `charges` block,
+ *   - `(currentCharges ?? 0) - amount \u2265 0`.
+ *
+ * When the spent row's definition has `rechargeRule: 'none'` AND the
+ * new `currentCharges` lands at 0, the reducer emits a synthetic
+ * `consume` entry alongside this one — single-use items (potions,
+ * scrolls, necklace beads) auto-consume. A stack of 5 potions logs one
+ * `use-charge` + one `consume(qty=1)`; the remaining 4 rows reset to
+ * `currentCharges: def.charges.max`.
+ *
+ * Per OUTLINE §3.11 this is hidden from the per-item history default
+ * "ownership-transition" filter; the "Show all events" toggle exposes
+ * it.
+ */
+const useChargeEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('use-charge'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    characterId: z.string().min(1),
+    amount: z.number().int().positive(),
+  }),
+});
+
+/**
+ * `recharge` — a row's `currentCharges` was set back to (or toward)
+ * `def.charges.max` (OUTLINE §3.8 + §4 line 318). The MVP rules engine
+ * always recharges fully; partial-recharge formula evaluation is
+ * deferred to R6.
+ *
+ * `from` and `to` capture before/after for log readability without
+ * forcing a join against the post-mutation `ItemInstance`.
+ *
+ * `trigger` describes WHAT FIRED the recharge:
+ *   - `'dawn' | 'dusk' | 'long-rest' | 'short-rest'` — Character Sheet
+ *     batch dispatch. The reducer fans out one entry PER recharged
+ *     item (keeps the per-item history filter trivial); items whose
+ *     `rechargeRule` doesn't strictly match the trigger are untouched.
+ *   - `'manual'` — Item Detail single-item Recharge button. Also the
+ *     R6 DM force-recharge path (action shape prepared in MVP so R6
+ *     doesn't break the log schema).
+ *
+ * Distinct from `ItemDefinition.charges.rechargeRule` (`'custom'` vs
+ * `'manual'`): the rule describes how an item recharges; the trigger
+ * describes what fired the recharge. A `rechargeRule: 'custom'` item's
+ * Recharge button dispatches `trigger: 'manual'`.
+ *
+ * Per OUTLINE §3.11 this is hidden from the per-item history default
+ * "ownership-transition" filter; the "Show all events" toggle exposes
+ * it.
+ */
+const rechargeEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('recharge'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    characterId: z.string().min(1),
+    from: z.number().int().nonnegative(),
+    to: z.number().int().positive(),
+    trigger: z.enum(['dawn', 'dusk', 'long-rest', 'short-rest', 'manual']),
+  }),
+});
+
+/**
+ * `identify` — DM toggles the per-instance `identified` flag and / or
+ * sets the unidentified-item hint (OUTLINE §3.8 + §4 line 317). The
+ * action is bidirectional: an item can flip `true → false` ("actually
+ * that was cursed all along") just as easily as `false → true`. Each
+ * direction logs its own entry.
+ *
+ * OUTLINE §4 line 317 specifies `{ itemInstanceId, previousHint?,
+ * newHint? }`. R2.3 adds `previousIdentified` / `newIdentified` so a
+ * `true → false` flip with no hint change still records the transition
+ * (mirrors how `recharge` carries `from`/`to` on top of its OUTLINE-
+ * spec'd payload). OUTLINE amended in lockstep.
+ *
+ * Unlike `attune` / `use-charge`, identify has no Inventory restriction
+ * — the DM force-identifies anywhere (Storage, Party Stash, Recovered
+ * Loot, Shop). The "Unknown Magic Item" display invariant per OUTLINE
+ * §8 is UI-enforced; the toggle itself works on any row.
+ *
+ * Per OUTLINE §3.11 this is in the per-item history default
+ * "ownership-transition" filter (changes what the item IS).
+ */
+const identifyEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('identify'),
+  payload: z.object({
+    itemInstanceId: z.string().min(1),
+    previousIdentified: z.boolean(),
+    newIdentified: z.boolean(),
+    previousHint: z.string().optional(),
+    newHint: z.string().optional(),
+  }),
+});
+
+/**
  * `edit-character` — catch-all editor for the mutable Character fields
  * that compose naturally as a single dispatch (OUTLINE §4 line 320). The
  * R1.1 dedicated `set-encumbrance` action stays single-purpose; `size` is
@@ -563,6 +679,9 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   unequipEntry,
   attuneEntry,
   unattuneEntry,
+  useChargeEntry,
+  rechargeEntry,
+  identifyEntry,
   editCharacterEntry,
 ]);
 

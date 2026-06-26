@@ -251,6 +251,43 @@ describe('appStateSchema round-trip', () => {
           newEnforce: false,
         },
       },
+      {
+        // R2.2: use-charge round-trip. Mirrors `attune` shape (player-
+        // role + characterId-on-payload) but also carries an `amount`.
+        id: 'log-10',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-26T09:00:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'use-charge',
+        payload: {
+          itemInstanceId: 'item-wand-1',
+          characterId: 'char-1',
+          amount: 1,
+        },
+      },
+      {
+        // R2.2: recharge round-trip. `trigger: 'manual'` covers the
+        // Item Detail single-item Recharge button and the R6 DM
+        // force-recharge path; batch dispatches fan out into N
+        // entries with `trigger: 'dawn' | 'dusk' | 'long-rest' |
+        // 'short-rest'`.
+        id: 'log-11',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-06-26T09:01:00.000Z',
+        actorUserId: 'user-1',
+        actorRole: 'player',
+        type: 'recharge',
+        payload: {
+          itemInstanceId: 'item-wand-1',
+          characterId: 'char-1',
+          from: 0,
+          to: 7,
+          trigger: 'manual',
+        },
+      },
     ],
   };
 
@@ -435,5 +472,288 @@ describe('appStateSchema round-trip', () => {
     const entry = parsed.log[0]!;
     if (entry.type !== 'transfer') throw new Error('expected transfer entry');
     expect(entry.payload.toContainerInstanceId).toBeNull();
+  });
+
+  it('R2.2 — accepts an ItemDefinition with a charges block', () => {
+    const charged = structuredClone(fixture);
+    charged.catalog = [
+      {
+        id: 'dmg-2024:wand-of-magic-missiles',
+        name: 'Wand of Magic Missiles',
+        source: 'DMG',
+        category: 'magic',
+        rarity: 'uncommon',
+        requiresAttunement: false,
+        charges: { max: 7, rechargeRule: 'dawn', rechargeAmount: '1d6+1' },
+      },
+    ];
+    const parsed = appStateSchema.parse(charged);
+    expect(parsed.catalog[0]!.charges).toEqual({
+      max: 7,
+      rechargeRule: 'dawn',
+      rechargeAmount: '1d6+1',
+    });
+  });
+
+  it('R2.2 — accepts an ItemInstance with currentCharges as a non-negative integer', () => {
+    const withCharges = structuredClone(fixture);
+    withCharges.catalog = [
+      {
+        id: 'dmg-2024:wand-of-magic-missiles',
+        name: 'Wand of Magic Missiles',
+        source: 'DMG',
+        category: 'magic',
+        rarity: 'uncommon',
+        charges: { max: 7, rechargeRule: 'dawn' },
+      },
+    ];
+    withCharges.items = [
+      {
+        id: 'item-wand-1',
+        definitionId: 'dmg-2024:wand-of-magic-missiles',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: 3,
+      },
+    ];
+    const parsed = appStateSchema.parse(withCharges);
+    expect(parsed.items[0]!.currentCharges).toBe(3);
+  });
+
+  it('R2.2 — back-compat: pre-R2.2 ItemInstance with currentCharges: null still parses', () => {
+    // Every M2..R2.1 vintage row carries `currentCharges: null`. The R2.2
+    // widening (`z.null()` -> `z.number().int().nonnegative().nullable()`)
+    // is purely additive — older blobs still validate.
+    const aged = structuredClone(fixture);
+    aged.catalog = [
+      {
+        id: 'phb-2024:torch',
+        name: 'Torch',
+        source: 'PHB',
+        category: 'gear',
+      },
+    ];
+    aged.items = [
+      {
+        id: 'item-torch',
+        definitionId: 'phb-2024:torch',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 3,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+    ];
+    expect(() => appStateSchema.parse(aged)).not.toThrow();
+  });
+
+  it('R2.2 — rejects a negative currentCharges value', () => {
+    const bad = structuredClone(fixture);
+    bad.catalog = [
+      {
+        id: 'dmg-2024:wand-of-magic-missiles',
+        name: 'Wand of Magic Missiles',
+        source: 'DMG',
+        category: 'magic',
+        rarity: 'uncommon',
+        charges: { max: 7, rechargeRule: 'dawn' },
+      },
+    ];
+    bad.items = [
+      {
+        id: 'item-wand-1',
+        definitionId: 'dmg-2024:wand-of-magic-missiles',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: -1,
+      },
+    ];
+    expect(() => appStateSchema.parse(bad)).toThrow();
+  });
+
+  it('R2.2 — rejects a charges block with max: 0', () => {
+    const bad = structuredClone(fixture);
+    bad.catalog = [
+      {
+        id: 'dmg-2024:broken-wand',
+        name: 'Broken Wand',
+        source: 'DMG',
+        category: 'magic',
+        rarity: 'common',
+        charges: { max: 0, rechargeRule: 'dawn' },
+      } as unknown as (typeof bad.catalog)[number],
+    ];
+    expect(() => appStateSchema.parse(bad)).toThrow();
+  });
+
+  it('R2.2 — edit-item-instance accepts currentCharges in changedFields', () => {
+    const editEntry = structuredClone(fixture);
+    editEntry.log = [
+      {
+        id: 'log-edit-charges',
+        partyId: editEntry.party.id,
+        sessionId: null,
+        timestamp: '2026-06-26T10:00:00.000Z',
+        actorUserId: editEntry.user.id,
+        actorRole: 'player',
+        type: 'edit-item-instance',
+        payload: {
+          itemInstanceId: 'item-wand-1',
+          changedFields: ['currentCharges'],
+        },
+      },
+    ];
+    expect(() => appStateSchema.parse(editEntry)).not.toThrow();
+  });
+
+  it('R2.3 — accepts an ItemInstance with identified: false and a hint', () => {
+    const unidentified = structuredClone(fixture);
+    unidentified.catalog = [
+      {
+        id: 'dmg-2024:cloak-of-protection',
+        name: 'Cloak of Protection',
+        source: 'DMG',
+        category: 'magic',
+        rarity: 'uncommon',
+        requiresAttunement: true,
+      },
+    ];
+    unidentified.items = [
+      {
+        id: 'item-cloak-1',
+        definitionId: 'dmg-2024:cloak-of-protection',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: false,
+        hint: 'shimmers faintly',
+        currentCharges: null,
+      },
+    ];
+    const parsed = appStateSchema.parse(unidentified);
+    expect(parsed.items[0]!.identified).toBe(false);
+    expect(parsed.items[0]!.hint).toBe('shimmers faintly');
+  });
+
+  it('R2.3 — back-compat: pre-R2.3 ItemInstance with identified: true and no hint still parses', () => {
+    // Every M2..R2.2 vintage row carries `identified: true` and no `hint`.
+    // The R2.3 widening (`z.literal(true)` -> `z.boolean()`) + optional
+    // `hint` are purely additive — older blobs validate unchanged.
+    const aged = structuredClone(fixture);
+    expect(() => appStateSchema.parse(aged)).not.toThrow();
+  });
+
+  it('R2.3 — rejects a hint that is not a string', () => {
+    const bad = structuredClone(fixture);
+    bad.catalog = [
+      {
+        id: 'phb-2024:torch',
+        name: 'Torch',
+        source: 'PHB',
+        category: 'gear',
+      },
+    ];
+    bad.items = [
+      {
+        id: 'item-x',
+        definitionId: 'phb-2024:torch',
+        ownerType: 'stash',
+        ownerId: 'stash-inv',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        // hint must be a string when present.
+        hint: 42 as unknown as string,
+        currentCharges: null,
+      },
+    ];
+    expect(() => appStateSchema.parse(bad)).toThrow();
+  });
+
+  it('R2.3 — identify log entry round-trips with full transition payload', () => {
+    const identified = structuredClone(fixture);
+    identified.log = [
+      {
+        id: 'log-identify-1',
+        partyId: identified.party.id,
+        sessionId: null,
+        timestamp: '2026-06-26T11:00:00.000Z',
+        actorUserId: identified.user.id,
+        actorRole: 'dm',
+        type: 'identify',
+        payload: {
+          itemInstanceId: 'item-cloak-1',
+          previousIdentified: false,
+          newIdentified: true,
+          previousHint: 'shimmers faintly',
+        },
+      },
+    ];
+    const parsed = appStateSchema.parse(identified);
+    const entry = parsed.log[0]!;
+    expect(entry.type).toBe('identify');
+    if (entry.type !== 'identify') throw new Error('expected identify');
+    expect(entry.payload.previousIdentified).toBe(false);
+    expect(entry.payload.newIdentified).toBe(true);
+    expect(entry.payload.previousHint).toBe('shimmers faintly');
+    expect(entry.payload.newHint).toBeUndefined();
+  });
+
+  it('R2.3 — identify log entry rejects when previousIdentified / newIdentified are missing', () => {
+    const bad = structuredClone(fixture);
+    bad.log = [
+      {
+        id: 'log-identify-bad',
+        partyId: bad.party.id,
+        sessionId: null,
+        timestamp: '2026-06-26T11:00:00.000Z',
+        actorUserId: bad.user.id,
+        actorRole: 'dm',
+        type: 'identify',
+        // Missing previousIdentified / newIdentified — required by R2.3 schema.
+        payload: {
+          itemInstanceId: 'item-cloak-1',
+        },
+      } as unknown as (typeof bad.log)[number],
+    ];
+    expect(() => appStateSchema.parse(bad)).toThrow();
+  });
+
+  it('R2.3 — edit-item-instance accepts identified and hint in changedFields', () => {
+    const editEntry = structuredClone(fixture);
+    editEntry.log = [
+      {
+        id: 'log-edit-identified',
+        partyId: editEntry.party.id,
+        sessionId: null,
+        timestamp: '2026-06-26T11:00:00.000Z',
+        actorUserId: editEntry.user.id,
+        actorRole: 'player',
+        type: 'edit-item-instance',
+        payload: {
+          itemInstanceId: 'item-wand-1',
+          changedFields: ['identified', 'hint'],
+        },
+      },
+    ];
+    expect(() => appStateSchema.parse(editEntry)).not.toThrow();
   });
 });
