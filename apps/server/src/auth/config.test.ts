@@ -50,7 +50,7 @@ describe('isDiscordAuthEnabled', () => {
         ...baseEnv,
         DISCORD_CLIENT_ID: 'cid',
         DISCORD_CLIENT_SECRET: 'csec',
-        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
+        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/callback/discord',
       }),
     ).toBe(true);
   });
@@ -99,7 +99,7 @@ describe('buildAuthConfig', () => {
         ...baseEnv,
         DISCORD_CLIENT_ID: 'cid',
         DISCORD_CLIENT_SECRET: 'csec',
-        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
+        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/callback/discord',
       },
     });
     expect(cfg.providers).toHaveLength(1);

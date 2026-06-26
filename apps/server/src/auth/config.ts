@@ -46,7 +46,7 @@ function sessionCookieConfig(env: Env) {
     options: {
       httpOnly: true,
       // 'lax' allows the cookie to ride along on the top-level redirect
-      // from discord.com back to /auth/discord/callback (which is the
+      // from discord.com back to /auth/callback/discord (Auth.js's
       // entire point of the OAuth flow). 'strict' would break the flow.
       sameSite: 'lax' as const,
       path: '/',
@@ -119,6 +119,44 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
     },
     cookies: {
       sessionToken: sessionCookieConfig(env),
+    },
+    callbacks: {
+      /**
+       * R3 — shape `/auth/session` to match the web's `sessionUserSchema`
+       * (packages/shared/src/schemas/api.ts). Auth.js's default session
+       * payload only carries `{ id?, name, email, image }`; the web parser
+       * requires `displayName` + `needsDisplayName` (and tolerates the
+       * other app-specific fields). With the database session strategy,
+       * Auth.js passes the adapter-loaded `User` row in here so we just
+       * project the canonical columns onto `session.user`.
+       *
+       * If a future call path returns a logged-out shape (`{}`), Auth.js
+       * doesn't invoke this callback — so we don't need a null branch.
+       */
+      session: ({ session, user }) => {
+        const u = user as unknown as {
+          id: string;
+          displayName: string;
+          needsDisplayName: boolean;
+          email: string | null;
+          emailVerified: Date | null;
+          avatarUrl: string | null;
+          discordId: string | null;
+        };
+        return {
+          ...session,
+          user: {
+            ...session.user,
+            id: u.id,
+            displayName: u.displayName,
+            needsDisplayName: u.needsDisplayName,
+            email: u.email,
+            emailVerified: u.emailVerified?.toISOString() ?? null,
+            avatarUrl: u.avatarUrl,
+            discordId: u.discordId,
+          },
+        };
+      },
     },
     events: {
       /**

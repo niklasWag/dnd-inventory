@@ -224,7 +224,7 @@ export function registerDiscordLinkRoutes(
       httpOnly: true,
       sameSite: 'lax',
       // Scope to the callback path so it never leaks to other routes.
-      path: '/auth/discord/link/callback',
+      path: '/auth/callback/discord/link',
       secure: env.NODE_ENV === 'production',
       maxAge: Math.floor(LINK_EXPIRY_MS / 1000),
     });
@@ -244,7 +244,7 @@ export function registerDiscordLinkRoutes(
    * 302 to `${WEB_ORIGIN}/settings?linked=discord` (or
    * `?linkError=...` on failure).
    */
-  app.get('/auth/discord/link/callback', async (req, reply) => {
+  app.get('/auth/callback/discord/link', async (req, reply) => {
     if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET || !env.DISCORD_REDIRECT_URI) {
       return reply.code(503).send({ error: 'discord_auth_disabled' });
     }
@@ -302,7 +302,7 @@ export function registerDiscordLinkRoutes(
       return redirectWithLinkError(reply, env, 'invalid_pkce');
     }
     // Clear the PKCE cookie regardless of outcome.
-    reply.clearCookie(PKCE_COOKIE_NAME, { path: '/auth/discord/link/callback' });
+    reply.clearCookie(PKCE_COOKIE_NAME, { path: '/auth/callback/discord/link' });
 
     // Exchange the code for a token at Discord's token endpoint.
     let tokenRes: Response;
@@ -380,12 +380,11 @@ export function registerDiscordLinkRoutes(
 function linkCallbackUri(env: Env): string {
   // Derive from `DISCORD_REDIRECT_URI` (the primary callback) by
   // swapping the path. Operators only have to register two redirect
-  // URIs in the Discord developer portal: the primary `/auth/discord/
-  // callback` AND `/auth/discord/link/callback`. We could ship a
-  // separate env var, but deriving keeps the surface narrow — the
-  // origin is the same.
+  // URIs in the Discord developer portal: the primary
+  // `/auth/callback/discord` AND `/auth/callback/discord/link`.
+  // Symmetric with Auth.js's `/auth/callback/<provider>` convention.
   const url = new URL(env.DISCORD_REDIRECT_URI!);
-  url.pathname = '/auth/discord/link/callback';
+  url.pathname = '/auth/callback/discord/link';
   return url.toString();
 }
 

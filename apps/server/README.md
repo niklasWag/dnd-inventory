@@ -210,12 +210,12 @@ Returns the user's active parties (one entry per Party with `roles[]` collapsed 
 
 - `GET /auth/discord/login?link=1` — short-circuits to `/auth/discord/link/initiate`, which mints an ephemeral `PendingDiscordLink(token, userId, expires)` row.
 - `GET /auth/discord/link/start?token=...` — builds PKCE + HMAC-signed state, 302s to `discord.com`.
-- `GET /auth/discord/link/callback?code=...&state=...` — exchanges the code, fetches identity via the `identify` scope, attaches `discordId` + `avatarUrl` to the EXISTING session user (does NOT delegate to Auth.js — keeps the live session cookie intact). On unique-snowflake conflict 302s to `${WEB_ORIGIN}/settings?linkError=discord_already_linked`; happy path lands on `?linked=discord`.
+- `GET /auth/callback/discord/link?code=...&state=...` — exchanges the code, fetches identity via the `identify` scope, attaches `discordId` + `avatarUrl` to the EXISTING session user (does NOT delegate to Auth.js — keeps the live session cookie intact). On unique-snowflake conflict 302s to `${WEB_ORIGIN}/settings?linkError=discord_already_linked`; happy path lands on `?linked=discord`.
 
-**Operator note:** the Discord developer portal must list TWO redirect URIs:
+**Operator note:** the Discord developer portal must list TWO redirect URIs (both follow Auth.js's `${basePath}/callback/${provider}` convention — the framework hardcodes that shape, so the URIs registered must match):
 
-1. `https://<your-domain>/auth/discord/callback` (primary OAuth flow)
-2. `https://<your-domain>/auth/discord/link/callback` (link flow)
+1. `https://<your-domain>/auth/callback/discord` (primary OAuth flow)
+2. `https://<your-domain>/auth/callback/discord/link` (link flow)
 
 ## Forward references
 

@@ -38,7 +38,7 @@ const envWithDiscord: Env = {
   ...baseEnv,
   DISCORD_CLIENT_ID: 'test-client-id',
   DISCORD_CLIENT_SECRET: 'test-client-secret',
-  DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
+  DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/callback/discord',
 };
 
 let prisma: PrismaClient;

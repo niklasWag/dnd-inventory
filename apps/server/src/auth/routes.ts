@@ -11,9 +11,15 @@
  *
  * The four routes proxy four well-known Auth.js endpoints:
  *   - `GET /auth/discord/login`     → /auth/signin/discord       (302 to Discord)
- *   - `GET /auth/discord/callback`  → /auth/callback/discord     (token exchange + session cookie)
+ *   - `GET /auth/callback/discord`  → /auth/callback/discord     (token exchange + session cookie)
  *   - `POST /auth/signout`           → /auth/signout             (session row deletion + cookie clear)
  *   - `GET /auth/session`            → /auth/session             (current session JSON, or 401)
+ *
+ * The callback path is `/auth/callback/discord` (NOT `/auth/discord/callback`)
+ * because Auth.js's `parseProviders` hardcodes `callbackUrl =
+ * ${basePath}/callback/${providerId}` (see @auth/core/lib/utils/providers.js).
+ * That is the URI Discord will redirect back to, so the Fastify route
+ * MUST live at that exact path.
  *
  * When `DISCORD_*` env vars are absent, the OAuth routes return 503
  * (SECURITY §1.2 SMTP-disabled parallel). `GET /auth/session` keeps
@@ -152,15 +158,13 @@ async function webResponseToFastifyReply(
 /**
  * Rewrite the Fastify request URL so Auth.js sees the path it expects.
  * Auth.js's internal action router dispatches on `/<basePath>/<action>/<provider>?`,
- * with default basePath = '/auth'. Our public routes are:
- *   /auth/discord/login    → maps to /auth/signin/discord
- *   /auth/discord/callback → maps to /auth/callback/discord
- *   /auth/signout          → already correct
- *   /auth/session          → already correct
+ * The Fastify routes mirror Auth.js's internal paths so we forward straight
+ * through without a rewrite. The only special case is the GET-ified login
+ * (`/auth/discord/login`) that internally fires Auth.js's POST-only
+ * `/auth/signin/discord` action — see the comment on that route.
  */
 function authJsPathFor(publicPath: string): string {
   if (publicPath === '/auth/discord/login') return '/auth/signin/discord';
-  if (publicPath === '/auth/discord/callback') return '/auth/callback/discord';
   return publicPath;
 }
 
@@ -271,11 +275,16 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
     return reply.send(await signInRes.text());
   });
 
-  app.get('/auth/discord/callback', async (req, reply) => {
+  // Auth.js hardcodes the OAuth `redirect_uri` to `${basePath}/callback/${id}`
+  // (see `@auth/core/lib/utils/providers.js` `callbackUrl` construction).
+  // With basePath `/auth` the URI is `/auth/callback/discord`, so that's
+  // where Discord will redirect back to. We register a Fastify route at
+  // that exact path and forward directly to Auth.js without a path rewrite.
+  app.get('/auth/callback/discord', async (req, reply) => {
     if (!isDiscordAuthEnabled(env)) {
       return reply.code(503).send({ error: 'discord_auth_disabled' });
     }
-    return delegateToAuthJs(req, reply, '/auth/discord/callback');
+    return delegateToAuthJs(req, reply, '/auth/callback/discord');
   });
 
   // ---------------- Always-on routes ----------------
@@ -488,6 +497,10 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         id: user.id,
         displayName: user.displayName,
         needsDisplayName: user.needsDisplayName,
+        email: user.email,
+        emailVerified: user.emailVerified?.toISOString() ?? null,
+        avatarUrl: user.avatarUrl,
+        discordId: user.discordId,
       },
       expires: expires.toISOString(),
     });
@@ -612,6 +625,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
       user: {
         id: updated.id,
         displayName: updated.displayName,
+        needsDisplayName: updated.needsDisplayName,
         email: updated.email,
         emailVerified: updated.emailVerified?.toISOString() ?? null,
       },
@@ -648,6 +662,10 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         id: updated.id,
         displayName: updated.displayName,
         needsDisplayName: updated.needsDisplayName,
+        email: updated.email,
+        emailVerified: updated.emailVerified?.toISOString() ?? null,
+        avatarUrl: updated.avatarUrl,
+        discordId: updated.discordId,
       },
     });
   });
