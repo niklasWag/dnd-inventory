@@ -61,8 +61,16 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # R3.4.b — nightly snapshots. The volume mount below maps
+      # SNAPSHOT_DIR to a named docker volume so files survive
+      # container restarts.
+      SNAPSHOTS_ENABLED: ${SNAPSHOTS_ENABLED:-true}
+      SNAPSHOT_DIR: ${SNAPSHOT_DIR:-/data/snapshots}
+      SNAPSHOT_RETENTION_DAYS: ${SNAPSHOT_RETENTION_DAYS:-30}
     ports:
       - '${SERVER_PORT:-3000}:3000'
+    volumes:
+      - snapshots-data:${SNAPSHOT_DIR:-/data/snapshots}
     # Boot sequence inside the container:
     #   1. `prisma migrate deploy` — applies migrations (no-op when up-to-date).
     #   2. `node apps/server/dist/index.js` — runs the seed runner then listens.
@@ -91,3 +99,4 @@ services:
 
 volumes:
   postgres-data:
+  snapshots-data:

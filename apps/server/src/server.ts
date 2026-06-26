@@ -30,6 +30,7 @@ import { buildMailService, type MailService } from './auth/email/smtp.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { getSession, type SessionAndUser } from './auth/session.js';
 import { registerHealthRoute } from './routes/health.js';
+import { startSnapshotCron } from './snapshots/scheduler.js';
 import { registerSyncRoutes } from './sync/routes.js';
 
 export interface BuildOptions {
@@ -97,6 +98,20 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
   // `app.getSession` decorator; enforces the §8.1 guard map; runs
   // the shared reducer authoritatively before applying Prisma deltas.
   registerSyncRoutes(app, opts.prisma);
+
+  // R3.4.b — nightly snapshot cron (03:07 local; disabled when
+  // SNAPSHOTS_ENABLED=false). Stops on Fastify close so SIGTERM
+  // doesn't leave the timer dangling.
+  const snapshotCron = startSnapshotCron({
+    env: opts.env,
+    prisma: opts.prisma,
+    log: (msg, meta) => app.log.info(meta ?? {}, msg),
+  });
+  if (snapshotCron !== null) {
+    app.addHook('onClose', async () => {
+      await snapshotCron.stop();
+    });
+  }
 
   return app;
 }

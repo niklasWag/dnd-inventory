@@ -168,10 +168,40 @@ Responses:
 
 The §8.1 matrix is codified as `{ actionType → Guard }` in `packages/shared/src/guards/map.ts`. Solo parties (`memberCount === 1`) bypass the matrix per OUTLINE §8.2 — the sole member gets the union of DM + Player rights. Multi-member parties enforce the matrix; `Actor.role` is derived server-side via `deriveActorRole(party, membership)` and never trusted from the request body (per SECURITY §2.1).
 
+## Snapshots (R3.4.b)
+
+The server writes a per-party JSON snapshot of every party's `AppState` nightly at 03:07 local, alongside a SHA-256 sidecar for restore-time integrity verification (SECURITY §8). Files land under `${SNAPSHOT_DIR}/${partyId}/${ISO_TIMESTAMP}.json` + `.sha256`. Files older than `SNAPSHOT_RETENTION_DAYS` (default 30) are swept after each tick.
+
+### Config
+
+| Env var                   | Default       | Notes                                                                                                            |
+| ------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `SNAPSHOTS_ENABLED`       | `true`        | Set to `false` to skip cron registration. Tests use false.                                                       |
+| `SNAPSHOT_DIR`            | `./snapshots` | Filesystem path. The docker-compose layer should mount this as a volume so snapshots survive container restarts. |
+| `SNAPSHOT_RETENTION_DAYS` | `30`          | Files older than this are deleted after each tick.                                                               |
+
+### Manual restore
+
+Operator-only — NOT exposed over HTTP per SECURITY §8.
+
+```
+pnpm --filter @app/server snapshot:restore ./snapshots/<partyId>/<timestamp>.json
+```
+
+Verifies the SHA-256 against the sidecar (sha256sum-compatible `<digest>  <filename>` format), Zod-parses the envelope, then wipes + reapplies the party's rows inside one transaction. A digest mismatch exits non-zero before touching the DB. The sidecar can also be verified with the standard CLI:
+
+```
+cd snapshots/<partyId> && sha256sum -c <timestamp>.json.sha256
+```
+
+### Export endpoint
+
+`GET /sync/export?partyId=<id>` returns the same `exportEnvelope` shape the snapshot writer produces, gated by the same auth + display-name + party-membership checks as `/sync/state`. Used by the web client (R3.5) for user-driven JSON exports without round-tripping through Dexie.
+
 ## Forward references
 
 - **R3.2**: ~~`@fastify/cookie`, Auth.js wiring; new `User` columns~~ — **shipped**.
 - **R3.3**: ~~email OTP + backup-email link + first-login displayName gate~~ — **shipped**. Discord-link `?link=1` flow deferred to R3.5 (folds into the web-side OAuth redirect handling).
-- **R3.4**: ~~authoritative reducer + `/sync` route~~ — **shipped as R3.4.a** (`GET /sync/state` + `POST /sync/actions`; §8.1 guard layer in `@app/shared/guards`; reducer moved to `@app/rules` with `ReducerContext` injection). Nightly snapshot job deferred to R3.4.b.
+- **R3.4**: ~~authoritative reducer + `/sync` route + nightly snapshots~~ — **shipped as R3.4.a + R3.4.b** (R3.4.a: `GET /sync/state` + `POST /sync/actions`; §8.1 guard layer in `@app/shared/guards`; reducer moved to `@app/rules` with `ReducerContext` injection. R3.4.b: nightly node-cron snapshots + retention sweeper + `GET /sync/export` + `snapshot:restore` CLI).
 - **R3.5**: web client points at the server; offline-first Dexie cache. Adds `shadcn/ui input-otp` for the verify screen + the Settings → Linked accounts UI.
 - **R5**: WebSocket (Socket.IO) per-party broadcast.

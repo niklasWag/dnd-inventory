@@ -1664,13 +1664,34 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 #### R3.4.b — Snapshots + JSON export parity
 
-- [ ] **Nightly snapshot job (`node-cron` at 03:00 local)** — carryforward from R3.4.a (MVP §11 / OUTLINE §9 mandates nightly snapshots; in-process `node-cron` runs in the Fastify process so a single `docker compose up` stays the deployment unit). Per party: assemble the same `AppState` shape that `GET /sync/state` returns, write to `${SNAPSHOT_DIR}/${partyId}/${ISO_TIMESTAMP}.json`, alongside a `.sha256` checksum file. Retention sweeper deletes files older than `SNAPSHOT_RETENTION_DAYS` (default 30, env-configurable). Disabled by env flag for tests.
-- [ ] **Server-side JSON export endpoint** — carryforward from R3.4.a (web JSON export works today against Dexie; R3.4.b adds the same export from the server side so a sync'd user can export their authoritative data without round-tripping through the web). `GET /sync/export?partyId=...` returns the `exportEnvelope` schema's shape; reuses `loadAppStateForUser`.
-- [ ] **Snapshot restore admin command** — operator-facing CLI / endpoint to reload a snapshot file into the DB. Verifies the SHA-256 checksum before applying. Per SECURITY §8: snapshot files MUST be opt-in restored (no auto-restore on boot).
+- [x] **Nightly snapshot job (`node-cron` at 03:07 local)** — **R3.4.b** (in-process `node-cron@4.5.0`, registered by `buildServer` and stopped via Fastify's `onClose` hook so SIGTERM doesn't leak the timer. Per tick: enumerates every Party, calls `writeSnapshot` per party (state via `loadAppStateForParty` admin loader), then `sweepSnapshots` for retention. Per-party write failures are collected and logged but don't abort the tick. Disabled when `SNAPSHOTS_ENABLED=false`).
+- [x] **Server-side JSON export endpoint** — **R3.4.b** (`GET /sync/export?partyId=...`. Same auth + `needsDisplayName` + party-membership gates as `/sync/state`; reuses `loadAppStateForUser`; wraps the result in `exportEnvelope` with `schemaVersion: 1`, `exportedAt`, `appVersion`, `seedVersion`, and boundary-parses the envelope before sending. Per-status: 401 / 403 / 404 / 409 / 200).
+- [x] **Snapshot restore admin command** — **R3.4.b** (`pnpm --filter @app/server snapshot:restore <path>`. Reads the snapshot JSON, verifies SHA-256 against the `.sha256` sidecar (sha256sum-compatible `<digest>  <filename>` format), Zod-parses the envelope, then wipes + reapplies the party's rows inside one `$transaction` with a 60s timeout. NOT exposed over HTTP — operator-only per SECURITY §8 "opt-in restore." A digest mismatch exits non-zero before touching the DB).
 
 #### R3.4.b — Snapshots notes
 
-> -
+> **2026-06-26 — R3.4.b (Snapshots + JSON export parity) complete.** Server now writes per-party snapshot JSON files + SHA-256 sidecars nightly at 03:07 local, sweeps files older than `SNAPSHOT_RETENTION_DAYS` (default 30), and surfaces an HTTP export endpoint that hands the web client the same `exportEnvelope` shape it's been writing locally. A `snapshot:restore` CLI lets the operator roll any snapshot file back into the DB after verifying its checksum.
+>
+> **node-cron@4.5.0.** v4 ships its own TypeScript types (no `@types/node-cron` needed) and exposes the same `schedule(expr, fn, opts)` surface as v3 plus richer events (`task:started`, `execution:overlap`, etc.). The R3.4.b `startSnapshotCron` uses only the v3-shape (`schedule()` + `task.stop()`); the v4 extras are available without a refactor when R3.4.c or a later slice wants them. v3's `@types/node-cron@3.0.11` is intentionally NOT installed — it would conflict with v4's bundled types.
+>
+> **Per-party file layout.** `${SNAPSHOT_DIR}/${partyId}/${ISO_TIMESTAMP}.json` + `.sha256` sidecar per file. Per-party folders make it trivial for an operator to copy / restore one party at a time without grepping a monolithic file. Filenames sanitize `:` to `-` (Windows portability); the full ISO timestamp is preserved inside the envelope's `exportedAt` regardless. The retention sweeper walks one level deep and leaves empty party folders in place (cheap; the next writer pass fills them back in).
+>
+> **SHA-256 sidecar format.** Standard `sha256sum` output — `<64-hex-digits>  <filename>` (two spaces). Verifiable with the canonical CLI: `cd <dir> && sha256sum -c <file>.sha256`. The restore CLI extracts the digest with `split(/\s+/, 1)[0]` so a hand-edited file using tabs / single-spaces still parses.
+>
+> **Admin-scoped state loader.** `loadAppStateForParty` is a sibling of `loadAppStateForUser` that skips the per-user membership check and anchors the AppState's `user` field to the party's owner row. Used by the snapshot writer (the cron job has no session). Internal `assembleAppState` is shared by both — only the entry-condition checks differ.
+>
+> **Export envelope appVersion.** Hard-coded to `'0.0.0'` (the server package's declared private-version). Wiring a build-time injection of the real package.json version would require a build step the MVP doesn't have; the constant is a placeholder that R5+ can wire up to a real version when the deployment story matures. Bumping `exportEnvelopeSchema.schemaVersion` from 1 → 2 would force a reader-side incompatibility check before the parse fans out.
+>
+> **`SNAPSHOTS_ENABLED=false` in tests.** Test fixtures across 7 files (`auth/{config,routes,routes.email,session,email/smtp}.test.ts`, `routes/health.test.ts`, `sync/routes.test.ts`) set the flag to false so `buildServer` doesn't register a cron timer per test app instance. The snapshot tests explicitly drive `runSnapshotTick` instead of waiting for a cron fire. CI never lands snapshot files.
+>
+> **Restore transaction order matches bootstrap.** The DEFERRABLE FK on `Character.inventoryStashId → Stash` lets `applyRestore` create Character before Stash (same as `applyBootstrapDelta` in R3.4.a). Wipe order is simpler — `prisma.party.deleteMany` cascades to PartyMembership, Character, Stash, ItemInstance, CurrencyHolding, and TransactionLog via the existing `onDelete: Cascade` declarations. Homebrew ItemDefinitions are wiped separately via `partyId` filter because their FK is `onDelete: Restrict`.
+>
+> **Schema-invariants test untouched.** No new tables; no Prisma migrations. The snapshot files live entirely on the filesystem.
+>
+> **Followups (no slice carries them forward):**
+> - Operator metric: "snapshot age per party" gauge — surfaces a stuck cron / disk-full situation. Could be wired into a future `/admin/health` endpoint.
+> - Multi-replica deployment: cron runs in every replica, which would write duplicate snapshots. node-cron@4's `runCoordinator` / `distributed` options solve this when R5+ ships multi-instance deployments — for the single-binary MVP it's a non-concern.
+> - Snapshot encryption at rest. Right now files are plaintext JSON. If the operator wants encryption, they handle it at the volume layer (LUKS, EBS-encryption, etc.) — same pattern as the Postgres data directory. Documented in the server README's hosting notes.
 
 #### R3.5 — Web integration
 

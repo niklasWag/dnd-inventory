@@ -56,6 +56,9 @@ const env: Env = {
   SMTP_USER: 'test-user',
   SMTP_PASS: 'test-pass',
   SMTP_FROM: 'dnd@test.example',
+  SNAPSHOTS_ENABLED: false,
+  SNAPSHOT_DIR: './snapshots',
+  SNAPSHOT_RETENTION_DAYS: 30,
 };
 
 beforeEach(() => {

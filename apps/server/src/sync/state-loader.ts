@@ -70,6 +70,67 @@ export async function loadAppStateForUser(
     throw new StateLoaderError('not_a_member');
   }
 
+  return assembleAppState(tx, userRow, partyRow, membershipRows);
+}
+
+/**
+ * R3.4.b — admin-scoped state loader for the nightly snapshot job. Skips
+ * the per-user membership check; anchors the AppState's `user` field to
+ * the party's owner row. Tested in `snapshots/writer.test.ts`.
+ *
+ * Throws `StateLoaderError('party_not_found')` for unknown partyIds
+ * and `StateLoaderError('user_not_found')` if the party's owner row
+ * has been deleted (which would be a referential-integrity failure
+ * since `Party.ownerUserId` is a FK — the catch is defensive).
+ */
+export async function loadAppStateForParty(tx: Tx, partyId: string): Promise<AppState> {
+  const partyRow = await tx.party.findUnique({ where: { id: partyId } });
+  if (partyRow === null) throw new StateLoaderError('party_not_found');
+
+  const [ownerRow, membershipRows] = await Promise.all([
+    tx.user.findUnique({ where: { id: partyRow.ownerUserId } }),
+    tx.partyMembership.findMany({ where: { partyId, leftAt: null } }),
+  ]);
+  if (ownerRow === null) throw new StateLoaderError('user_not_found');
+
+  return assembleAppState(tx, ownerRow, partyRow, membershipRows);
+}
+
+interface UserRowSubset {
+  id: string;
+  displayName: string;
+  createdAt: Date;
+  discordId: string | null;
+  email: string | null;
+  emailVerified: Date | null;
+  avatarUrl: string | null;
+  needsDisplayName: boolean;
+}
+
+interface PartyRowSubset {
+  id: string;
+  ownerUserId: string;
+}
+
+interface MembershipRowSubset {
+  userId: string;
+  partyId: string;
+}
+
+/**
+ * Internal assembler shared by `loadAppStateForUser` (per-user pull) and
+ * `loadAppStateForParty` (admin snapshot reader). Both surfaces fan out
+ * the same 8 reads and pass the resulting rows through the same Zod
+ * boundary validator; only the entry-condition checks differ.
+ */
+async function assembleAppState(
+  tx: Tx,
+  userRow: UserRowSubset,
+  partyRow: PartyRowSubset & Parameters<typeof fromPrismaParty>[0],
+  membershipRows: (MembershipRowSubset & Parameters<typeof fromPrismaPartyMembership>[0])[],
+): Promise<AppState> {
+  const partyId = partyRow.id;
+
   // Find character ids in the party so we can scope stash + item reads.
   const characterRows = await tx.character.findMany({ where: { partyId } });
   const characterIds = characterRows.map((c) => c.id);

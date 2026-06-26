@@ -20,8 +20,13 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import type { Actor, Action as SchemaAction, TransactionLogEntry } from '@app/shared';
-import { checkGuard } from '@app/shared';
+import type {
+  Actor,
+  Action as SchemaAction,
+  ExportEnvelope,
+  TransactionLogEntry,
+} from '@app/shared';
+import { checkGuard, exportEnvelopeSchema } from '@app/shared';
 import {
   generateInviteCode,
   reduce,
@@ -73,6 +78,56 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     try {
       const state = await loadAppStateForUser(prisma, su.user.id, partyId);
       return reply.code(200).send({ state, serverTime: new Date().toISOString() });
+    } catch (e) {
+      if (e instanceof StateLoaderError) {
+        const code = e.code === 'party_not_found' ? 404 : e.code === 'not_a_member' ? 403 : 404;
+        return reply.code(code).send({ error: e.code });
+      }
+      throw e;
+    }
+  });
+
+  // ----- GET /sync/export?partyId=... (R3.4.b) -----
+  //
+  // Server-side parity for the web's JSON export (§3.13 / SECURITY §7).
+  // Returns an `exportEnvelope`-shaped JSON wrapper carrying the same
+  // AppState the user would see via `/sync/state`, plus the metadata
+  // the v1 envelope mandates (schemaVersion, exportedAt, appVersion,
+  // seedVersion). Same auth + display-name + party-membership gates
+  // as `/sync/state`.
+  app.get('/sync/export', async (req, reply) => {
+    const su = await app.getSession(req);
+    if (su === null) {
+      return reply.code(401).send({ error: 'unauthenticated' });
+    }
+    if (su.user.needsDisplayName) {
+      return reply.code(409).send({ error: 'display_name_required' });
+    }
+
+    const queryParse = z.object({ partyId: z.string().min(1) }).safeParse(req.query);
+    if (!queryParse.success) {
+      return reply.code(400).send({ error: 'invalid_query', issues: queryParse.error.issues });
+    }
+    const { partyId } = queryParse.data;
+
+    try {
+      const state = await loadAppStateForUser(prisma, su.user.id, partyId);
+      if (state === null) {
+        // Defensive: a party with a successful membership check should
+        // always materialize to a non-null AppState. If we ever hit
+        // this branch it's a schema-invariant violation.
+        return reply.code(500).send({ error: 'state_null' });
+      }
+      const envelope: ExportEnvelope = {
+        schemaVersion: 1,
+        exportedAt: new Date().toISOString(),
+        appVersion: '0.0.0',
+        seedVersion: state.seedVersion,
+        payload: { appState: state, log: state.log },
+      };
+      // Boundary parse — surfaces any drift between the loader's output
+      // and the envelope schema before bytes hit the wire.
+      return reply.code(200).send(exportEnvelopeSchema.parse(envelope));
     } catch (e) {
       if (e instanceof StateLoaderError) {
         const code = e.code === 'party_not_found' ? 404 : e.code === 'not_a_member' ? 403 : 404;

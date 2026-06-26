@@ -56,6 +56,26 @@ const envSchema = z.object({
   SMTP_USER: z.string().min(1).optional(),
   SMTP_PASS: z.string().min(1).optional(),
   SMTP_FROM: z.email().optional(),
+
+  // -------- R3.4.b — Nightly snapshots --------
+  //
+  // OUTLINE §9 / MVP §11: server takes nightly snapshots of every party's
+  // AppState to disk. Each snapshot is a Zod-validated `exportEnvelope`
+  // wrapper + a sidecar SHA-256 file for restore-time integrity check
+  // (SECURITY §8). Retention sweep deletes files older than
+  // SNAPSHOT_RETENTION_DAYS so the on-disk footprint stays bounded.
+  //
+  // SNAPSHOTS_ENABLED defaults true (production wants snapshots by
+  // default). Tests disable it via the build option override or by
+  // setting SNAPSHOTS_ENABLED=false in the test env so the cron timer
+  // never schedules. CI doesn't need to land snapshot files.
+  //
+  // SNAPSHOT_DIR is a filesystem path. The cron job mkdirs it on first
+  // write; the docker-compose layer mounts it as a volume so snapshots
+  // survive container restarts (R3.4.b README addition).
+  SNAPSHOTS_ENABLED: z.coerce.boolean().default(true),
+  SNAPSHOT_DIR: z.string().min(1).default('./snapshots'),
+  SNAPSHOT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 });
 
 export type Env = z.infer<typeof envSchema>;
