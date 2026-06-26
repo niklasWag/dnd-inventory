@@ -7,6 +7,15 @@ RUN corepack enable && corepack prepare pnpm@11.8.0 --activate
 
 WORKDIR /repo
 
+# `prisma generate` loads `prisma.config.ts` which reads `DATABASE_URL` at
+# config-load time (see apps/server/prisma.config.ts). The build never
+# CONNECTS to a database — only the URL string needs to be parseable.
+# A placeholder is fine; compose passes the real value at runtime via
+# the `environment:` block. This ENV only exists in the build stage and
+# is not inherited by the runtime stage (multi-stage isolation).
+ARG DATABASE_URL=postgresql://placeholder:placeholder@placeholder:5432/placeholder
+ENV DATABASE_URL=${DATABASE_URL}
+
 # Copy workspace manifest + lockfile + tsconfig first so dep installs are
 # cacheable when only source changes.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json tsconfig.json ./
