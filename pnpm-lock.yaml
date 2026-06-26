@@ -32,6 +32,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@app/rules':
+        specifier: workspace:*
+        version: link:../../packages/rules
       '@app/seeds':
         specifier: workspace:*
         version: link:../../packages/seeds

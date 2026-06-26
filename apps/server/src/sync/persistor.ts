@@ -1,0 +1,731 @@
+/**
+ * R3.4.a — server-side persistor.
+ *
+ * For each reducer action type, applies the corresponding DELTA WRITES
+ * to the Prisma transaction client. Called from the `/sync/actions`
+ * handler INSIDE a `$transaction` block; the matching `TransactionLog`
+ * row is appended separately (see `log-builder.ts`).
+ *
+ * Why a per-action switch (rather than diffing `result.state`)? Most
+ * actions touch a small, known set of rows. Naively diffing AppState
+ * would require walking every array on every dispatch — wasteful for
+ * the common case where a single row changes. The switch also makes
+ * each action's DB footprint reviewable: anything stored in Postgres
+ * for action X is the set of writes in the matching `persist*` helper.
+ *
+ * **CLAUDE.md / SECURITY §3.4 invariants re-checked here**:
+ *   - currency math is integer CP only (the reducer enforced it; we
+ *     defensively re-assert via the Zod schema parse on the way IN to
+ *     this function, which is the boundary that matters)
+ *   - stash invariants enforced by the migration's CHECK constraints
+ *   - item ownership invariants enforced by FKs + CHECKs
+ *
+ * Each persist helper is named `persist<Action>`. They are intentionally
+ * small; share helpers via private functions at the bottom of the file
+ * if a pattern emerges (e.g. `applyItemDelta`).
+ */
+import type { Action, Actor, AppState } from '@app/shared';
+import type { ReducerContext } from '@app/rules';
+
+import type { Prisma } from '../../prisma/generated/prisma/client.js';
+import {
+  toDbMembershipRole,
+  toDbRarity,
+  toDbRechargeRule,
+  toDbStashScope,
+  toPrismaItemDefinition,
+} from '../db/mappers.js';
+
+/**
+ * Apply one action's DELTA WRITES inside the running transaction.
+ *
+ * The action type's TS-narrowing carries through the switch so each
+ * case's payload is fully typed. The `_actor` and `_ctx` parameters are
+ * threaded for actions that need ctx for fresh IDs / timestamps when
+ * the persist generates secondary rows (e.g. `create-character`
+ * provisions a User + Party + memberships + character + 3 stashes +
+ * 3 currencies; `create-stash` provisions a Stash + CurrencyHolding).
+ */
+export async function applyDelta(
+  tx: Prisma.TransactionClient,
+  action: Action,
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  switch (action.type) {
+    case 'create-character':
+      // R3.4.a bootstrap is handled by `applyBootstrapDelta` (called
+      // directly from the routes handler with the reducer's result
+      // state) so the IDs the reducer minted are the same IDs the
+      // persistor writes. This switch arm is unreachable in the
+      // normal flow; it's a defensive fallback that surfaces as a
+      // 500 if a bug ever skips the special-case path.
+      throw new Error('create-character must be applied via applyBootstrapDelta');
+    case 'acquire':
+      return persistAcquire(tx, action.payload, ctx);
+    case 'consume':
+      return persistConsume(tx, action.payload);
+    case 'seed-catalog':
+      return persistSeedCatalog(tx, action.payload);
+    case 'edit-item-instance':
+      return persistEditItemInstance(tx, action.payload);
+    case 'create-stash':
+      return persistCreateStash(tx, action.payload, ctx);
+    case 'rename-stash':
+      return persistRenameStash(tx, action.payload);
+    case 'delete-stash':
+      return persistDeleteStash(tx, action.payload, ctx);
+    case 'currency-change':
+      return persistCurrencyChange(tx, action.payload);
+    case 'transfer':
+      return persistTransfer(tx, action.payload, ctx);
+    case 'split':
+      return persistSplit(tx, action.payload, ctx);
+    case 'currency-transfer':
+      return persistCurrencyTransfer(tx, action.payload);
+    case 'create-homebrew':
+      return persistCreateHomebrew(tx, action.payload, actor, ctx);
+    case 'edit-homebrew':
+      return persistEditHomebrew(tx, action.payload);
+    case 'delete-homebrew':
+      return persistDeleteHomebrew(tx, action.payload);
+    case 'rename-character':
+      return persistRenameCharacter(tx, action.payload);
+    case 'rename-party':
+      return persistRenameParty(tx, action.payload);
+    case 'set-encumbrance':
+      return persistSetEncumbrance(tx, action.payload);
+    case 'equip':
+      return persistSetEquipped(tx, action.payload.itemInstanceId, true);
+    case 'unequip':
+      return persistSetEquipped(tx, action.payload.itemInstanceId, false);
+    case 'attune':
+      return persistSetAttuned(tx, action.payload.itemInstanceId, true);
+    case 'unattune':
+      return persistSetAttuned(tx, action.payload.itemInstanceId, false);
+    case 'use-charge':
+      return persistUseCharge(tx, action.payload);
+    case 'recharge':
+      return persistRecharge(tx, action.payload);
+    case 'identify':
+      return persistIdentify(tx, action.payload);
+    case 'edit-character':
+      return persistEditCharacter(tx, action.payload);
+  }
+}
+
+// -------------------- per-action persistors --------------------
+
+/**
+ * R3.4.a — bootstrap persistor. Writes the rows the reducer's
+ * `create-character` result describes, using the SAME ids the reducer
+ * minted (so the log entry's partyId / actorUserId references stay
+ * consistent across the transaction).
+ *
+ * Diverges from the per-action switch because the reducer's bootstrap
+ * shape includes a synthetic User row that conflicts with the existing
+ * authenticated User. The User table is left alone here; everything
+ * else (Party, memberships, character, stashes, currencies) is created.
+ */
+export async function applyBootstrapDelta(
+  tx: Prisma.TransactionClient,
+  resultState: NonNullable<AppState>,
+  authenticatedUserId: string,
+  _payload: Extract<Action, { type: 'create-character' }>['payload'],
+): Promise<void> {
+  const party = resultState.party;
+  const characters = resultState.characters;
+  const memberships = resultState.memberships;
+  const stashes = resultState.stashes;
+  const currencies = resultState.currencies;
+
+  await tx.party.create({
+    data: {
+      id: party.id,
+      name: party.name,
+      // The reducer mints a synthetic ownerUserId equal to its synthetic
+      // user.id. Override with the actual authenticated user (the session
+      // user we resolved upstream) — that user already exists.
+      ownerUserId: authenticatedUserId,
+      inviteCode: party.inviteCode,
+      recoveredLootStashId: party.recoveredLootStashId,
+      bankerUserId: party.bankerUserId,
+      isSoloShortcut: party.isSoloShortcut,
+      createdAt: new Date(party.createdAt),
+    },
+  });
+
+  // Creation order matters: Stash.ownerCharacterId → Character is NOT
+  // deferrable, but Character.inventoryStashId → Stash IS (migration tail).
+  // So create Character FIRST (referencing the not-yet-existing inventory
+  // stash via the deferred FK) and Stashes AFTER (their ownerCharacterId
+  // points at the now-existing Character).
+  for (const ch of characters) {
+    await tx.character.create({
+      data: {
+        id: ch.id,
+        partyId: ch.partyId,
+        ownerUserId: authenticatedUserId,
+        name: ch.name,
+        species: ch.species,
+        size: ch.size,
+        class: ch.class,
+        level: ch.level,
+        strScore: ch.abilityScores.STR,
+        maxAttunement: ch.maxAttunement,
+        encumbranceRule: ch.encumbranceRule,
+        enforceEncumbrance: ch.enforceEncumbrance,
+        inventoryStashId: ch.inventoryStashId,
+      },
+    });
+  }
+
+  await tx.stash.createMany({
+    data: stashes.map((s) => ({
+      id: s.id,
+      name: s.name,
+      isCarried: s.isCarried,
+      createdAt: new Date(s.createdAt),
+      scope: toDbStashScope(s.scope),
+      ownerCharacterId: s.ownerCharacterId,
+      partyId: s.partyId,
+    })),
+  });
+
+  await tx.partyMembership.createMany({
+    data: memberships.map((m) => ({
+      userId: authenticatedUserId,
+      partyId: m.partyId,
+      role: toDbMembershipRole(m.role),
+      characterId: m.characterId,
+      joinedAt: new Date(m.joinedAt),
+      leftAt: m.leftAt === null ? null : new Date(m.leftAt),
+    })),
+  });
+
+  await tx.currencyHolding.createMany({
+    data: currencies.map((c) => ({
+      id: c.id,
+      stashId: c.stashId,
+      cp: c.cp,
+      sp: c.sp,
+      ep: c.ep,
+      gp: c.gp,
+      pp: c.pp,
+    })),
+  });
+}
+
+async function persistAcquire(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'acquire' }>['payload'],
+  ctx: ReducerContext,
+): Promise<void> {
+  // Auto-stack: if a row exists with matching (stashId, definitionId,
+  // notes ?? ''), bump its quantity; otherwise insert a new row.
+  const existing = await tx.itemInstance.findFirst({
+    where: {
+      ownerId: payload.stashId,
+      definitionId: payload.definitionId,
+      // SQL: notes IS NOT DISTINCT FROM payload.notes ?? null. Prisma's
+      // `equals` against `null` does match SQL `IS NULL`.
+      notes: payload.notes ?? null,
+    },
+  });
+  if (existing !== null) {
+    await tx.itemInstance.update({
+      where: { id: existing.id },
+      data: { quantity: existing.quantity + payload.quantity },
+    });
+    return;
+  }
+  await tx.itemInstance.create({
+    data: {
+      id: ctx.newId(),
+      definitionId: payload.definitionId,
+      ownerType: 'stash',
+      ownerId: payload.stashId,
+      containerInstanceId: null,
+      quantity: payload.quantity,
+      equipped: false,
+      attuned: false,
+      identified: true, // R2.3 — mundane items default true; magic items get false via the reducer's intoInventory branch + DM identify.
+      hint: null,
+      currentCharges: null,
+      customName: null,
+      notes: payload.notes ?? null,
+    },
+  });
+}
+
+async function persistConsume(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'consume' }>['payload'],
+): Promise<void> {
+  const row = await tx.itemInstance.findUniqueOrThrow({ where: { id: payload.itemInstanceId } });
+  const next = row.quantity - payload.quantity;
+  if (next <= 0) {
+    await tx.itemInstance.delete({ where: { id: row.id } });
+  } else {
+    await tx.itemInstance.update({ where: { id: row.id }, data: { quantity: next } });
+  }
+}
+
+async function persistSeedCatalog(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'seed-catalog' }>['payload'],
+): Promise<void> {
+  // Upsert each ItemDefinition; update the Metadata seedVersion row.
+  for (const entry of payload.entries) {
+    const data = toPrismaItemDefinition(entry);
+    await tx.itemDefinition.upsert({
+      where: { id: entry.id },
+      create: data,
+      update: data,
+    });
+  }
+  await tx.metadata.upsert({
+    where: { key: 'seedVersion' },
+    create: { key: 'seedVersion', value: payload.seedVersion },
+    update: { value: payload.seedVersion },
+  });
+}
+
+async function persistEditItemInstance(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'edit-item-instance' }>['payload'],
+): Promise<void> {
+  const data: Prisma.ItemInstanceUpdateInput = {};
+  if (payload.patch.customName !== undefined) data.customName = payload.patch.customName;
+  if (payload.patch.notes !== undefined) data.notes = payload.patch.notes;
+  await tx.itemInstance.update({ where: { id: payload.itemInstanceId }, data });
+}
+
+async function persistCreateStash(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'create-stash' }>['payload'],
+  ctx: ReducerContext,
+): Promise<void> {
+  const stashId = ctx.newId();
+  await tx.stash.create({
+    data: {
+      id: stashId,
+      name: payload.name.trim(),
+      isCarried: false,
+      createdAt: new Date(ctx.now()),
+      scope: toDbStashScope('character'),
+      ownerCharacterId: payload.ownerCharacterId,
+      partyId: null,
+    },
+  });
+  await tx.currencyHolding.create({
+    data: { id: ctx.newId(), stashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+  });
+}
+
+async function persistRenameStash(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'rename-stash' }>['payload'],
+): Promise<void> {
+  await tx.stash.update({ where: { id: payload.stashId }, data: { name: payload.newName.trim() } });
+}
+
+async function persistDeleteStash(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'delete-stash' }>['payload'],
+  _ctx: ReducerContext,
+): Promise<void> {
+  // Cascade: move all items to recovered-loot, roll currency into recovered-
+  // loot's holding, then delete the stash (which cascades to its currency
+  // via the FK). The reducer emits per-item `transfer` slices + an
+  // optional `currency-change` slice + the `delete-stash` slice; the
+  // log-builder writes each. The DB cascade here moves the actual rows.
+  //
+  // Find the recovered-loot stash for this party.
+  const stash = await tx.stash.findUniqueOrThrow({ where: { id: payload.stashId } });
+  if (stash.scope !== 'character' || stash.isCarried) {
+    // The reducer rejects this case but defense-in-depth.
+    throw new Error('delete-stash: only character-scope, non-carried stashes can be deleted');
+  }
+  // Find the recovered-loot stash for the owning party (look up via
+  // character's partyId).
+  const owner = await tx.character.findUniqueOrThrow({
+    where: { id: stash.ownerCharacterId! },
+  });
+  const recoveredLoot = await tx.stash.findFirstOrThrow({
+    where: { partyId: owner.partyId, scope: toDbStashScope('recovered-loot') },
+  });
+  // Move items.
+  await tx.itemInstance.updateMany({
+    where: { ownerId: stash.id },
+    data: { ownerId: recoveredLoot.id, containerInstanceId: null, equipped: false, attuned: false },
+  });
+  // Roll currency.
+  const fromCurrency = await tx.currencyHolding.findUniqueOrThrow({ where: { stashId: stash.id } });
+  const hasCurrency =
+    fromCurrency.cp !== 0 ||
+    fromCurrency.sp !== 0 ||
+    fromCurrency.ep !== 0 ||
+    fromCurrency.gp !== 0 ||
+    fromCurrency.pp !== 0;
+  if (hasCurrency) {
+    await tx.currencyHolding.update({
+      where: { stashId: recoveredLoot.id },
+      data: {
+        cp: { increment: fromCurrency.cp },
+        sp: { increment: fromCurrency.sp },
+        ep: { increment: fromCurrency.ep },
+        gp: { increment: fromCurrency.gp },
+        pp: { increment: fromCurrency.pp },
+      },
+    });
+  }
+  // Delete stash (currency cascades via FK).
+  await tx.stash.delete({ where: { id: stash.id } });
+}
+
+async function persistCurrencyChange(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'currency-change' }>['payload'],
+): Promise<void> {
+  await tx.currencyHolding.update({
+    where: { stashId: payload.stashId },
+    data: {
+      cp: { increment: payload.delta.cp },
+      sp: { increment: payload.delta.sp },
+      ep: { increment: payload.delta.ep },
+      gp: { increment: payload.delta.gp },
+      pp: { increment: payload.delta.pp },
+    },
+  });
+}
+
+async function persistTransfer(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'transfer' }>['payload'],
+  ctx: ReducerContext,
+): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({
+    where: { id: payload.itemInstanceId },
+  });
+  const moveAll = payload.quantity >= source.quantity;
+
+  if (moveAll) {
+    // Full move: update the row's ownerId to the destination stash.
+    // Auto-stack onto any existing row at the destination with matching
+    // (definitionId, notes ?? '').
+    const dest = await tx.itemInstance.findFirst({
+      where: {
+        ownerId: payload.toStashId,
+        definitionId: source.definitionId,
+        notes: source.notes,
+        id: { not: source.id },
+      },
+    });
+    if (dest !== null) {
+      await tx.itemInstance.update({
+        where: { id: dest.id },
+        data: { quantity: dest.quantity + source.quantity },
+      });
+      await tx.itemInstance.delete({ where: { id: source.id } });
+    } else {
+      const data: Prisma.ItemInstanceUpdateInput = {
+        stash: { connect: { id: payload.toStashId } },
+        // Equip/attune cleared when leaving inventory per OUTLINE §3.4 R1.3.
+        equipped: false,
+        attuned: false,
+      };
+      if (payload.toContainerInstanceId !== undefined) {
+        data.containerInstanceId = payload.toContainerInstanceId;
+      }
+      await tx.itemInstance.update({ where: { id: source.id }, data });
+    }
+  } else {
+    // Partial: decrement source, add a new instance to destination.
+    await tx.itemInstance.update({
+      where: { id: source.id },
+      data: { quantity: source.quantity - payload.quantity },
+    });
+    await tx.itemInstance.create({
+      data: {
+        id: ctx.newId(),
+        definitionId: source.definitionId,
+        ownerType: 'stash',
+        ownerId: payload.toStashId,
+        containerInstanceId:
+          payload.toContainerInstanceId !== undefined ? payload.toContainerInstanceId : null,
+        quantity: payload.quantity,
+        equipped: false,
+        attuned: false,
+        identified: source.identified,
+        hint: source.hint,
+        currentCharges: source.currentCharges,
+        customName: source.customName,
+        notes: source.notes,
+        ...(source.conditionOverrides !== null && source.conditionOverrides !== undefined
+          ? { conditionOverrides: source.conditionOverrides }
+          : {}),
+      },
+    });
+  }
+}
+
+async function persistSplit(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'split' }>['payload'],
+  ctx: ReducerContext,
+): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({
+    where: { id: payload.itemInstanceId },
+  });
+  await tx.itemInstance.update({
+    where: { id: source.id },
+    data: { quantity: source.quantity - payload.quantity },
+  });
+  await tx.itemInstance.create({
+    data: {
+      id: ctx.newId(),
+      definitionId: source.definitionId,
+      ownerType: source.ownerType,
+      ownerId: source.ownerId,
+      containerInstanceId: source.containerInstanceId,
+      quantity: payload.quantity,
+      equipped: false,
+      attuned: false,
+      identified: source.identified,
+      hint: source.hint,
+      currentCharges: source.currentCharges,
+      customName: source.customName,
+      notes: source.notes,
+      ...(source.conditionOverrides !== null && source.conditionOverrides !== undefined
+        ? { conditionOverrides: source.conditionOverrides }
+        : {}),
+    },
+  });
+}
+
+async function persistCurrencyTransfer(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'currency-transfer' }>['payload'],
+): Promise<void> {
+  await tx.currencyHolding.update({
+    where: { stashId: payload.fromStashId },
+    data: {
+      cp: { decrement: payload.delta.cp },
+      sp: { decrement: payload.delta.sp },
+      ep: { decrement: payload.delta.ep },
+      gp: { decrement: payload.delta.gp },
+      pp: { decrement: payload.delta.pp },
+    },
+  });
+  await tx.currencyHolding.update({
+    where: { stashId: payload.toStashId },
+    data: {
+      cp: { increment: payload.delta.cp },
+      sp: { increment: payload.delta.sp },
+      ep: { increment: payload.delta.ep },
+      gp: { increment: payload.delta.gp },
+      pp: { increment: payload.delta.pp },
+    },
+  });
+}
+
+async function persistCreateHomebrew(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'create-homebrew' }>['payload'],
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  const data: Prisma.ItemDefinitionUncheckedCreateInput = {
+    id: ctx.newId(),
+    name: payload.name,
+    source: 'homebrew',
+    category: payload.category,
+    tags: payload.tags ?? [],
+    createdBy: actor.userId,
+    partyId: actor.partyId,
+  };
+  if (payload.weight !== undefined) data.weight = payload.weight;
+  if (payload.cost !== undefined) {
+    data.costAmount = payload.cost.amount;
+    data.costCurrency = payload.cost.currency;
+  }
+  if (payload.description !== undefined) data.description = payload.description;
+  if (payload.duplicatedFromId !== undefined) data.duplicatedFromId = payload.duplicatedFromId;
+  await tx.itemDefinition.create({ data });
+}
+
+async function persistEditHomebrew(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'edit-homebrew' }>['payload'],
+): Promise<void> {
+  const data: Prisma.ItemDefinitionUpdateInput = {};
+  if (payload.patch.name !== undefined) data.name = payload.patch.name;
+  if (payload.patch.category !== undefined) data.category = payload.patch.category;
+  if (payload.patch.weight !== undefined) data.weight = payload.patch.weight;
+  if (payload.patch.cost !== undefined) {
+    data.costAmount = payload.patch.cost.amount;
+    data.costCurrency = payload.patch.cost.currency;
+  }
+  if (payload.patch.description !== undefined) data.description = payload.patch.description;
+  if (payload.patch.tags !== undefined) data.tags = payload.patch.tags;
+  await tx.itemDefinition.update({ where: { id: payload.definitionId }, data });
+}
+
+async function persistDeleteHomebrew(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'delete-homebrew' }>['payload'],
+): Promise<void> {
+  // Reducer guard: no ItemInstance may reference this definition. The
+  // Prisma FK is onDelete: Restrict so a violation here would surface
+  // as a P2003 — defense-in-depth.
+  await tx.itemDefinition.delete({ where: { id: payload.definitionId } });
+}
+
+async function persistRenameCharacter(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'rename-character' }>['payload'],
+): Promise<void> {
+  await tx.character.update({
+    where: { id: payload.characterId },
+    data: { name: payload.newName.trim() },
+  });
+}
+
+async function persistRenameParty(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'rename-party' }>['payload'],
+): Promise<void> {
+  await tx.party.update({ where: { id: payload.partyId }, data: { name: payload.newName.trim() } });
+}
+
+async function persistSetEncumbrance(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'set-encumbrance' }>['payload'],
+): Promise<void> {
+  await tx.character.update({
+    where: { id: payload.characterId },
+    data: { encumbranceRule: payload.rule, enforceEncumbrance: payload.enforce },
+  });
+}
+
+async function persistSetEquipped(
+  tx: Prisma.TransactionClient,
+  itemInstanceId: string,
+  equipped: boolean,
+): Promise<void> {
+  await tx.itemInstance.update({ where: { id: itemInstanceId }, data: { equipped } });
+}
+
+async function persistSetAttuned(
+  tx: Prisma.TransactionClient,
+  itemInstanceId: string,
+  attuned: boolean,
+): Promise<void> {
+  await tx.itemInstance.update({ where: { id: itemInstanceId }, data: { attuned } });
+}
+
+async function persistUseCharge(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'use-charge' }>['payload'],
+): Promise<void> {
+  const amount = payload.amount ?? 1;
+  const row = await tx.itemInstance.findUniqueOrThrow({ where: { id: payload.itemInstanceId } });
+  if (row.currentCharges === null) {
+    throw new Error('use-charge: row has no currentCharges; reducer should have rejected.');
+  }
+  const next = row.currentCharges - amount;
+  if (next < 0) throw new Error('use-charge: would go below 0.');
+  await tx.itemInstance.update({
+    where: { id: row.id },
+    data: { currentCharges: next },
+  });
+}
+
+async function persistRecharge(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'recharge' }>['payload'],
+): Promise<void> {
+  if (payload.mode === 'batch') {
+    // Find all Inventory items for the character whose def's rechargeRule
+    // matches `trigger`, and full-recharge or partial-recharge each.
+    const character = await tx.character.findUniqueOrThrow({
+      where: { id: payload.characterId },
+    });
+    const inventoryItems = await tx.itemInstance.findMany({
+      where: { ownerId: character.inventoryStashId },
+      include: { definition: true },
+    });
+    for (const row of inventoryItems) {
+      if (
+        row.definition.chargesMax === null ||
+        row.definition.chargesRechargeRule === null ||
+        row.currentCharges === null
+      ) {
+        continue;
+      }
+      // Translate underscore back to kebab for trigger compare.
+      const defTrigger = row.definition.chargesRechargeRule.replace('_', '-') as
+        | 'dawn'
+        | 'dusk'
+        | 'long-rest'
+        | 'short-rest'
+        | 'custom'
+        | 'none';
+      if (defTrigger !== payload.trigger) continue;
+      const amount = payload.amounts?.[row.id];
+      const max = row.definition.chargesMax;
+      const next = amount === undefined ? max : Math.min(row.currentCharges + amount, max);
+      await tx.itemInstance.update({
+        where: { id: row.id },
+        data: { currentCharges: next },
+      });
+    }
+    return;
+  }
+  // single / manual
+  const row = await tx.itemInstance.findUniqueOrThrow({
+    where: { id: payload.itemInstanceId },
+    include: { definition: true },
+  });
+  if (row.definition.chargesMax === null || row.currentCharges === null) {
+    throw new Error('recharge: row has no charges block.');
+  }
+  const max = row.definition.chargesMax;
+  const amount = payload.amount;
+  const next = amount === undefined ? max : Math.min(row.currentCharges + amount, max);
+  await tx.itemInstance.update({
+    where: { id: row.id },
+    data: { currentCharges: next },
+  });
+}
+
+async function persistIdentify(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'identify' }>['payload'],
+): Promise<void> {
+  const data: Prisma.ItemInstanceUpdateInput = { identified: payload.identified };
+  if (Object.prototype.hasOwnProperty.call(payload, 'hint')) {
+    // Distinguish "key absent" (don't touch) from "key present"
+    // (set, including undefined = clear).
+    data.hint = payload.hint ?? null;
+  }
+  await tx.itemInstance.update({ where: { id: payload.itemInstanceId }, data });
+}
+
+async function persistEditCharacter(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'edit-character' }>['payload'],
+): Promise<void> {
+  const data: Prisma.CharacterUpdateInput = {};
+  if (payload.patch.species !== undefined) data.species = payload.patch.species;
+  if (payload.patch.class !== undefined) data.class = payload.patch.class;
+  if (payload.patch.level !== undefined) data.level = payload.patch.level;
+  if (payload.patch.str !== undefined) data.strScore = payload.patch.str;
+  if (payload.patch.maxAttunement !== undefined) data.maxAttunement = payload.patch.maxAttunement;
+  await tx.character.update({ where: { id: payload.characterId }, data });
+}
+
+// Silence unused-import lint for translators that future actions will use.
+void toDbRarity;
+void toDbRechargeRule;

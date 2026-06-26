@@ -18,8 +18,30 @@
  *      We use conditional-assignment instead of object-spread to avoid
  *      emitting `undefined` keys.
  */
-import type { ChargesRechargeRule, ItemDefinition, Rarity, Stash, User } from '@app/shared';
-import { itemDefinitionSchema, userSchema } from '@app/shared';
+import type {
+  Character,
+  ChargesRechargeRule,
+  CurrencyHolding,
+  ItemDefinition,
+  ItemInstance,
+  Party,
+  PartyMembership,
+  Rarity,
+  Stash,
+  TransactionLogEntry,
+  User,
+} from '@app/shared';
+import {
+  characterSchema,
+  currencyHoldingSchema,
+  itemDefinitionSchema,
+  itemInstanceSchema,
+  partyMembershipSchema,
+  partySchema,
+  stashSchema,
+  transactionLogEntrySchema,
+  userSchema,
+} from '@app/shared';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
 import { $Enums } from '../../prisma/generated/prisma/client.js';
@@ -381,4 +403,221 @@ export function fromPrismaItemDefinition(row: ItemDefinitionRow): ItemDefinition
   if (row.partyId !== null) def.partyId = row.partyId;
   // Validate against the Zod schema — surfaces drift as a parse error.
   return itemDefinitionSchema.parse(def);
+}
+
+// -------- R3.4.a: Domain entity row→entity mappers --------
+//
+// The /sync/state pull endpoint materializes the full AppState by reading
+// every domain row for a (user, party) pair and assembling them into the
+// Zod-validated `AppState` shape. Each mapper below converts ONE Prisma
+// row into ONE Zod entity, parsing through the schema for boundary
+// validation per CLAUDE.md ("trust at the boundary").
+//
+// Naming: `fromPrismaX` for read; the write direction lives in the
+// per-action persistor (`apps/server/src/sync/persistor.ts`) which
+// constructs typed Prisma create/update inputs directly.
+
+/** Row shape mirror — same trick as `ItemDefinitionRow`: an inline
+ * interface lets tests stub a row without depending on the generated
+ * Prisma client. The `Party` model in the Prisma schema. */
+export interface PartyRow {
+  id: string;
+  name: string;
+  ownerUserId: string;
+  inviteCode: string;
+  recoveredLootStashId: string;
+  bankerUserId: string | null;
+  isSoloShortcut: boolean;
+  createdAt: Date;
+}
+
+export function fromPrismaParty(row: PartyRow): Party {
+  return partySchema.parse({
+    id: row.id,
+    name: row.name,
+    ownerUserId: row.ownerUserId,
+    inviteCode: row.inviteCode,
+    recoveredLootStashId: row.recoveredLootStashId,
+    // MVP schema is z.null() — bankerUserId is always null in MVP-validated
+    // state. Cast handles the schema constraint; if a non-null value sneaks
+    // in (R4.2+), the parse below surfaces the schema-drift error.
+    bankerUserId: row.bankerUserId,
+    isSoloShortcut: row.isSoloShortcut,
+    createdAt: row.createdAt.toISOString(),
+  });
+}
+
+export interface PartyMembershipRow {
+  userId: string;
+  partyId: string;
+  role: $Enums.MembershipRole;
+  characterId: string | null;
+  joinedAt: Date;
+  leftAt: Date | null;
+}
+
+export function fromPrismaPartyMembership(row: PartyMembershipRow): PartyMembership {
+  // fromDbMembershipRole throws if role === 'banker' (per OUTLINE §3.14:
+  // banker is denormalized on Party.bankerUserId, never a membership row).
+  // R3.4.a defense-in-depth: also surfaces as a Zod parse error since
+  // partyMembershipSchema.role is `enum(['dm', 'player'])`.
+  return partyMembershipSchema.parse({
+    userId: row.userId,
+    partyId: row.partyId,
+    role: fromDbMembershipRole(row.role),
+    characterId: row.characterId,
+    joinedAt: row.joinedAt.toISOString(),
+    leftAt: row.leftAt === null ? null : row.leftAt.toISOString(),
+  });
+}
+
+export interface CharacterRow {
+  id: string;
+  partyId: string;
+  ownerUserId: string;
+  name: string;
+  species: string;
+  size: $Enums.CreatureSize;
+  class: string;
+  level: number;
+  strScore: number;
+  maxAttunement: number;
+  encumbranceRule: $Enums.EncumbranceRule;
+  enforceEncumbrance: boolean;
+  inventoryStashId: string;
+}
+
+export function fromPrismaCharacter(row: CharacterRow): Character {
+  return characterSchema.parse({
+    id: row.id,
+    partyId: row.partyId,
+    ownerUserId: row.ownerUserId,
+    name: row.name,
+    species: row.species,
+    size: row.size,
+    class: row.class,
+    level: row.level,
+    // R3.1 schema flattens abilityScores.STR → strScore column.
+    abilityScores: { STR: row.strScore },
+    maxAttunement: row.maxAttunement,
+    encumbranceRule: row.encumbranceRule,
+    enforceEncumbrance: row.enforceEncumbrance,
+    inventoryStashId: row.inventoryStashId,
+  });
+}
+
+export interface StashRow {
+  id: string;
+  name: string;
+  isCarried: boolean;
+  createdAt: Date;
+  scope: $Enums.StashScope;
+  ownerCharacterId: string | null;
+  partyId: string | null;
+}
+
+export function fromPrismaStash(row: StashRow): Stash {
+  return stashSchema.parse({
+    id: row.id,
+    name: row.name,
+    isCarried: row.isCarried,
+    createdAt: row.createdAt.toISOString(),
+    scope: fromDbStashScope(row.scope),
+    ownerCharacterId: row.ownerCharacterId,
+    partyId: row.partyId,
+  });
+}
+
+export interface ItemInstanceRow {
+  id: string;
+  definitionId: string;
+  ownerType: string;
+  ownerId: string;
+  containerInstanceId: string | null;
+  quantity: number;
+  equipped: boolean;
+  attuned: boolean;
+  identified: boolean;
+  hint: string | null;
+  currentCharges: number | null;
+  customName: string | null;
+  notes: string | null;
+  conditionOverrides: unknown;
+}
+
+export function fromPrismaItemInstance(row: ItemInstanceRow): ItemInstance {
+  const instance: Record<string, unknown> = {
+    id: row.id,
+    definitionId: row.definitionId,
+    ownerType: row.ownerType,
+    ownerId: row.ownerId,
+    containerInstanceId: row.containerInstanceId,
+    quantity: row.quantity,
+    equipped: row.equipped,
+    attuned: row.attuned,
+    identified: row.identified,
+    currentCharges: row.currentCharges,
+  };
+  if (row.hint !== null) instance['hint'] = row.hint;
+  if (row.customName !== null) instance['customName'] = row.customName;
+  if (row.notes !== null) instance['notes'] = row.notes;
+  if (row.conditionOverrides !== null && row.conditionOverrides !== undefined) {
+    instance['conditionOverrides'] = row.conditionOverrides;
+  }
+  return itemInstanceSchema.parse(instance);
+}
+
+export interface CurrencyHoldingRow {
+  id: string;
+  stashId: string;
+  cp: number;
+  sp: number;
+  ep: number;
+  gp: number;
+  pp: number;
+}
+
+export function fromPrismaCurrencyHolding(row: CurrencyHoldingRow): CurrencyHolding {
+  return currencyHoldingSchema.parse({
+    id: row.id,
+    stashId: row.stashId,
+    cp: row.cp,
+    sp: row.sp,
+    ep: row.ep,
+    gp: row.gp,
+    pp: row.pp,
+  });
+}
+
+export interface TransactionLogRow {
+  id: string;
+  partyId: string;
+  sessionId: string | null;
+  timestamp: Date;
+  actorUserId: string;
+  actorRole: $Enums.MembershipRole;
+  type: string;
+  payload: unknown;
+}
+
+/**
+ * R3.4.a — read a TransactionLog row, validating its `payload` JSONB
+ * against the full Zod transactionLogEntrySchema discriminated union.
+ *
+ * The schema's `actorRole` accepts `'dm' | 'player' | 'banker'` per
+ * OUTLINE §4 line 309; `fromDbActorRole` is a 1:1 translator (no
+ * hyphens in the enum so it's effectively a passthrough with a typed
+ * narrowing). MVP-vintage rows always have `'dm'` or `'player'`.
+ */
+export function fromPrismaTransactionLog(row: TransactionLogRow): TransactionLogEntry {
+  return transactionLogEntrySchema.parse({
+    id: row.id,
+    partyId: row.partyId,
+    sessionId: row.sessionId,
+    timestamp: row.timestamp.toISOString(),
+    actorUserId: row.actorUserId,
+    actorRole: fromDbActorRole(row.actorRole),
+    type: row.type,
+    payload: row.payload,
+  });
 }

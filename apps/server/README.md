@@ -131,10 +131,47 @@ SMTP_FROM=dnd-inv@localhost
 # Inspect mail at http://localhost:8025
 ```
 
+## Sync API (R3.4.a)
+
+Two routes that make the server authoritative for AppState mutations and reads. Both require an authenticated session (the R3.2 / R3.3 cookie); both return `409 { error: 'display_name_required' }` when the user's `needsDisplayName` is still true (R3.3 carryforward).
+
+### `GET /sync/state?partyId=<id>`
+
+Pulls the user's full `AppState` for the requested party — eight Prisma queries, mapped through `db/mappers.ts`, validated against `appStateSchema` per CLAUDE.md "trust at the boundary".
+
+Responses:
+
+- `200 { state: AppState, serverTime }` — happy path.
+- `400 { error: 'invalid_query', issues }` — missing / invalid `partyId`.
+- `401 { error: 'unauthenticated' }` — no session cookie.
+- `403 { error: 'not_a_member' }` — actor isn't an active member of the requested party.
+- `404 { error: 'party_not_found' }` — unknown party.
+- `409 { error: 'display_name_required' }` — R3.3 carryforward.
+
+### `POST /sync/actions { partyId, actions: Action[] }`
+
+Pushes a batch of typed reducer actions. Server validates each via the §8.1 guard map (`packages/shared/src/guards/`), re-runs the shared reducer authoritatively, persists Prisma deltas, and appends one `TransactionLog` entry per emitted log slice. The WHOLE batch runs inside one `prisma.$transaction` with a 30-second timeout; on any guard rejection the batch rolls back.
+
+Batch cap: 100 actions per request.
+
+Responses:
+
+- `200 { applied: TransactionLogEntry[], serverTime }` — every action applied; one or more log entries per action.
+- `400 { error: 'invalid_body', issues }` — Zod validation failed.
+- `401 { error: 'unauthenticated' }` — no session cookie.
+- `403 { error: 'not_a_member' }` — actor isn't an active member.
+- `404 { error: 'party_not_found' }` — unknown party.
+- `409 { error: 'display_name_required' }` — R3.3 carryforward.
+- `422 { rejected: { index, code, message } }` — action at `index` failed its §8.1 guard; whole batch rolled back. `code` is from `GuardRejectionCode` in `@app/shared/guards`.
+
+### Permission codification
+
+The §8.1 matrix is codified as `{ actionType → Guard }` in `packages/shared/src/guards/map.ts`. Solo parties (`memberCount === 1`) bypass the matrix per OUTLINE §8.2 — the sole member gets the union of DM + Player rights. Multi-member parties enforce the matrix; `Actor.role` is derived server-side via `deriveActorRole(party, membership)` and never trusted from the request body (per SECURITY §2.1).
+
 ## Forward references
 
 - **R3.2**: ~~`@fastify/cookie`, Auth.js wiring; new `User` columns~~ — **shipped**.
 - **R3.3**: ~~email OTP + backup-email link + first-login displayName gate~~ — **shipped**. Discord-link `?link=1` flow deferred to R3.5 (folds into the web-side OAuth redirect handling).
-- **R3.4**: authoritative reducer + `/sync` route; nightly snapshot job. Uses `app.getSession(req)` decorated by R3.2; gates email-only users on `needsDisplayName === false`.
+- **R3.4**: ~~authoritative reducer + `/sync` route~~ — **shipped as R3.4.a** (`GET /sync/state` + `POST /sync/actions`; §8.1 guard layer in `@app/shared/guards`; reducer moved to `@app/rules` with `ReducerContext` injection). Nightly snapshot job deferred to R3.4.b.
 - **R3.5**: web client points at the server; offline-first Dexie cache. Adds `shadcn/ui input-otp` for the verify screen + the Settings → Linked accounts UI.
 - **R5**: WebSocket (Socket.IO) per-party broadcast.

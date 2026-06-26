@@ -1617,16 +1617,58 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 #### R3.4 — Authoritative sync
 
-- [ ] Per-user AppState sync endpoint (push reducer actions)
-- [ ] Per-user AppState pull/snapshot endpoint
-- [ ] Authoritative validation: server re-runs reducer against incoming actions
-- [ ] Nightly snapshot job to disk (default 30-day retention; configurable per §11)
-- [ ] User-triggered JSON export still works client-side (parity with §3.13)
-- [ ] **§8.1 guard layer reads `user.needsDisplayName` and returns `409 display_name_required` on every protected route except `POST /auth/email/set-display-name`** — carryforward from R3.3 (the column + the unblocking route shipped in R3.3; this slice is the guard that uses them).
-- [ ] **Guard rejects writes of `PartyMembership.role = 'banker'`** — carryforward from R3.2 (`MembershipRole.banker` enum value exists; banker membership is forbidden per OUTLINE §3.14 because banker is denormalized on `Party.bankerUserId`).
-- [ ] **Reducer emits `actorRole: 'banker'` on `TransactionLog` entries when `Party.bankerUserId === actorUserId`** — carryforward from R3.2 (the Zod union entry exists; this is the reducer-side write).
+- [x] Per-user AppState sync endpoint (push reducer actions) — **R3.4.a** (`POST /sync/actions { partyId, actions: Action[] }` — batched. Session-derived actor; §8.1 guard map dispatched per action; reducer re-run authoritatively; one `prisma.$transaction` with 30s timeout + 100-action batch cap. Whole-batch rollback on any guard rejection → `422 { rejected: { index, code, message } }`)
+- [x] Per-user AppState pull/snapshot endpoint — **R3.4.a** (`GET /sync/state?partyId=...`. Eight Prisma queries fan-out via `Promise.all`; mapped through `db/mappers.ts` extensions; final result `appStateSchema.parse`d per CLAUDE.md "trust at the boundary")
+- [x] Authoritative validation: server re-runs reducer against incoming actions — **R3.4.a** (reducer moved to `packages/rules/src/reducer/` with `ReducerContext { newId; now; newInviteCode }` injected; web and server both call `reduce(state, action, ctx)` with their own ctx — tests inject deterministic ctx)
+- [ ] Nightly snapshot job to disk (default 30-day retention; configurable per §11) — **deferred to R3.4.b** (R3.5's web-side OAuth callback work doesn't depend on snapshots existing, so we shipped sync first; snapshot scheduler lands as a follow-on)
+- [ ] User-triggered JSON export still works client-side (parity with §3.13) — **deferred to R3.4.b** (web export-import is intact in MVP; serverside parity is a R3.4.b concern)
+- [x] **§8.1 guard layer reads `user.needsDisplayName` and returns `409 display_name_required` on every protected route except `POST /auth/email/set-display-name`** — **R3.4.a** (top-level check in both `/sync/state` and `/sync/actions` handlers; the column shipped in R3.3 and the unblock-route exists; R3.4.a closes the carryforward)
+- [x] **Guard rejects writes of `PartyMembership.role = 'banker'`** — **R3.4.a** (structural defense-in-depth: the `partyMembershipSchema.role` enum in `@app/shared` is narrowed to `['dm', 'player']` — banker is denormalized on `Party.bankerUserId` per OUTLINE §3.14. The guard map's `banker_membership_forbidden` rejection code is reserved for future regressions; no R3.4.a action writes this directly)
+- [x] **Reducer emits `actorRole: 'banker'` on `TransactionLog` entries when `Party.bankerUserId === actorUserId`** — **R3.4.a** (the `deriveActorRole(party, membership)` helper in `packages/shared/src/guards/actor.ts` returns `'banker'` iff `bankerUserId === membership.userId`; server's `resolveActor` calls it once per request to build the `Actor`, and `buildLogEntryServer` uses `actor.role` as the log entry's `actorRole`. MVP-validated state has `bankerUserId: null` so the banker branch is structurally unreachable until R4.2 widens the schema — but the code path is in place)
 
-#### R3.4 — Authoritative sync notes
+#### R3.4.a — Authoritative sync notes
+
+> **2026-06-26 — R3.4.a (Authoritative sync — guard + push/pull) complete.** Server gains its first domain-mutation surface: `POST /sync/actions` accepts batches of typed reducer actions, validates each via the shared §8.1 guard map, runs the moved-to-`@app/rules` reducer authoritatively, and persists the resulting deltas + `TransactionLog` entries in one `prisma.$transaction`. `GET /sync/state?partyId=...` assembles the full `AppState` from 8 Prisma queries and validates through `appStateSchema`. R3.4.b ships nightly snapshots + retention as a follow-on so R3.5's web-client work isn't blocked.
+>
+> **Reducer moved to `@app/rules` with `ReducerContext` injection.** The 2484-line web reducer relocated to `packages/rules/src/reducer/`. The 13 non-pure references (`crypto.randomUUID` / `new Date()` / `crypto.getRandomValues`) became `ctx.newId()` / `ctx.now()` / `ctx.newInviteCode()`. Web injects real impls in `apps/web/src/store/index.ts`; server injects identical ones in `sync/routes.ts`. Tests can inject deterministic sequences for reproducibility. The web's `apps/web/src/store/{reducer,types}.ts` are now thin re-exports — every web-side import path is preserved.
+>
+> **Action schema in `@app/shared/schemas/action.ts`.** The reducer's TS `Action` union (25 variants) had no Zod counterpart before R3.4.a. The new `actionSchema` mirrors it 1:1 for wire-validation in `/sync/actions`. A compile-time `types.drift.test.ts` in `@app/rules` cross-checks the discriminator sets — adding a variant to one without the other becomes a TS error. Field-level optionals differ between Zod (`field?: T | undefined`) and reducer (`field?: T`) under `exactOptionalPropertyTypes: true`; the routes handler casts at the boundary with a documented `toReducerAction(schemaAction)` shim. Discriminator set equality is the load-bearing invariant; the optional-field flavor difference is cosmetic.
+>
+> **Guard layer in `@app/shared/src/guards/`.** Codifies OUTLINE §8.1 as a map `{ actionType → Guard }`. `checkGuard()` short-circuits to `{ ok: true }` for solo parties (OUTLINE §8.2 — the sole member gets the UNION of DM + Player rights). Multi-member tests cover the matrix: DM-only actions (`create-homebrew`, `edit-homebrew`, `delete-homebrew`, `identify`, `set-encumbrance`, `rename-party`, `seed-catalog`), ownership checks (`acquire`, `equip`, `attune`, `rename-character`, `create-stash`, `edit-character`), and the `maxAttunement`-only DM-gate inside `edit-character`'s patch. The actor's `role` is derived server-side via `deriveActorRole(party, membership)` — `'banker'` iff `Party.bankerUserId === actorUserId`; never from a `PartyMembership.role = 'banker'` row.
+>
+> **`POST /sync/actions` lifecycle.** Per request: (1) session cookie → `userId`; (2) `needsDisplayName === true` → 409; (3) Zod-parse body; (4) if every action is `create-character`, the actor is a "bootstrap actor" — otherwise `resolveActor` reads the user's `PartyMembership` + `Party` rows. (5) Open one `$transaction` with 30s timeout. (6) Per action: load state, run `checkGuard`, run `reduce(state, action, ctx)`, run `applyBootstrapDelta` (for create-character) or `applyDelta` (for everything else), then `appendTransactionLog` for each emitted `LogEntrySlice`. The persistor runs BEFORE the log writes so the `TransactionLog.partyId` / `actorUserId` FKs resolve. (7) Any guard rejection throws `BatchRejected` which rolls back the whole batch and surfaces as `422 { rejected: { index, code, message } }`.
+>
+> **Bootstrap special case (`create-character`).** The reducer's bootstrap path mints a synthetic `user` row (because the web has no pre-existing auth). The server already has the authenticated user via the session; `applyBootstrapDelta` writes the Party / Character / Stashes / Memberships / Currencies using the reducer's IDs but substitutes the authenticated `userId` everywhere the reducer wrote its synthetic one. The actor's `partyId` (initially the request's placeholder) is promoted to the reducer's freshly-minted party.id before building the log entry, so the `TransactionLog.partyId` FK resolves.
+>
+> **DEFERRABLE FK creation order.** `Character.inventoryStashId → Stash` is DEFERRABLE INITIALLY DEFERRED (migration tail workaround for prisma#8807); `Stash.ownerCharacterId → Character` is NOT. So the bootstrap creates `Character` FIRST (pointing at the not-yet-existing inventory stash; the deferred FK resolves at commit) and `Stash` SECOND (`ownerCharacterId` now points at the existing Character). This is documented inline in `applyBootstrapDelta`.
+>
+> **Mapper extensions.** `apps/server/src/db/mappers.ts` gained 7 new `fromPrismaX` mappers for the entities `loadAppStateForUser` reads: Party, PartyMembership, Character, Stash, ItemInstance, CurrencyHolding, TransactionLog. Each validates through its Zod schema per CLAUDE.md "trust at the boundary". The PartyMembership mapper goes through the R3.2 `fromDbMembershipRole` translator which throws on `'banker'` (per OUTLINE §3.14 banker is never a membership row).
+>
+> **State assembler.** `loadAppStateForUser` makes 3 lead queries (User, Party, active memberships) sequentially to short-circuit unauthorized requests early, then fans out 4 more in parallel (Character, Stash, ItemDefinition, ItemInstance/CurrencyHolding/TransactionLog). Catalog reads include PHB+DMG (system-wide) plus homebrew scoped to this party. The final result is parsed through `appStateSchema` — the entry-level boundary check that surfaces any DB↔Zod drift.
+>
+> **`schema-invariants.test.ts` defensive checks unchanged.** No new tables in R3.4.a; no Prisma migrations.
+>
+> **Followups carried forward to R3.4.b:**
+> - Nightly snapshot job (`node-cron` at 03:00 local) writing a SHA-256-checksummed AppState dump per party to disk, with default 30-day retention.
+> - Server-side JSON export endpoint (parity with web export).
+>
+> **Followups carried forward to R3.5 (web slice):**
+> - Wire `apps/web/src/store/` to call `/sync/state` on hydrate and `/sync/actions` after each dispatch (replacing the Dexie-only persistence).
+> - Optimistic UI: web reducer runs first against local state; server response either confirms or rolls back via `applied[]` / `rejected`.
+> - Display-name prompt UX (`needsDisplayName: true` → block hub render).
+>
+> **Followups for R4.2 (Banker):**
+> - Widen `partyMembershipSchema.role` to include `'banker'`? No — keep narrow per OUTLINE §3.14 (banker is denormalized only). Widen `party.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`.
+> - Add `appoint-banker` / `revoke-banker` action variants + matching guards + reducer cases + persistor handlers.
+> - The R3.4.a guard's `banker_membership_forbidden` code becomes load-bearing — first triggered by a misbehaving `appoint-banker` payload that wrote to `PartyMembership.role` instead of `Party.bankerUserId`.
+
+#### R3.4.b — Snapshots + JSON export parity
+
+- [ ] **Nightly snapshot job (`node-cron` at 03:00 local)** — carryforward from R3.4.a (MVP §11 / OUTLINE §9 mandates nightly snapshots; in-process `node-cron` runs in the Fastify process so a single `docker compose up` stays the deployment unit). Per party: assemble the same `AppState` shape that `GET /sync/state` returns, write to `${SNAPSHOT_DIR}/${partyId}/${ISO_TIMESTAMP}.json`, alongside a `.sha256` checksum file. Retention sweeper deletes files older than `SNAPSHOT_RETENTION_DAYS` (default 30, env-configurable). Disabled by env flag for tests.
+- [ ] **Server-side JSON export endpoint** — carryforward from R3.4.a (web JSON export works today against Dexie; R3.4.b adds the same export from the server side so a sync'd user can export their authoritative data without round-tripping through the web). `GET /sync/export?partyId=...` returns the `exportEnvelope` schema's shape; reuses `loadAppStateForUser`.
+- [ ] **Snapshot restore admin command** — operator-facing CLI / endpoint to reload a snapshot file into the DB. Verifies the SHA-256 checksum before applying. Per SECURITY §8: snapshot files MUST be opt-in restored (no auto-restore on boot).
+
+#### R3.4.b — Snapshots notes
 
 > -
 
@@ -1635,6 +1677,7 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 - [ ] Login screen: "Sign in with Discord" + "Sign in with email" buttons (§5.1 / OUTLINE §3.1)
 - [ ] Hub screen (§5.2): Create party / Join party / Create solo cards + existing parties list
 - [ ] Web sync client pushes reducer actions to server
+- [ ] **Web reducer runs optimistically against local Dexie state; server response (`200 applied[]` or `422 rejected`) either confirms or rolls back** — carryforward from R3.4.a (the server endpoints + the `applied[]`/`rejected` response shapes locked in R3.4.a; this slice is the client integration that consumes them). Rollback uses the `applied[]` indices to know which actions persisted.
 - [ ] Web reconciles server events back into the store
 - [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9)
 - [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
@@ -1697,7 +1740,7 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 #### R4.2 — Banker role
 
 **Schema activations (§4)**
-- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP)
+- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP) — **carryforward from R3.4.a**: widen `partySchema.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`. Keep `partyMembershipSchema.role` narrow (`['dm', 'player']`) per OUTLINE §3.14 — banker is denormalized on Party, never a membership row.
 
 **Reducer actions (§4 TransactionLog union)**
 - [ ] `appoint-banker` action + payload schema
@@ -1713,10 +1756,10 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] Action: Banker gives currency / items to a specific player from Party Stash
 - [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
 - [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
-- [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4)
+- [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4) — **shipped in R3.4.a** for the derivation path (`deriveActorRole` in `@app/shared/guards/actor.ts`); R4.2 makes it load-bearing by allowing `bankerUserId` to be non-null.
 
 **Server-side**
-- [ ] Server authoritative checks for every Banker action above
+- [ ] Server authoritative checks for every Banker action above — extends R3.4.a's `@app/shared/guards/map.ts`. The `banker_membership_forbidden` rejection code (already declared in R3.4.a's `GuardRejectionCode`) becomes load-bearing here — first triggered by a regression where a banker payload writes to `PartyMembership.role` instead of `Party.bankerUserId`.
 
 **UI**
 - [ ] Party Settings screen (§5.15): appoint / revoke Banker

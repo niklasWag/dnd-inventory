@@ -30,6 +30,7 @@ import { buildMailService, type MailService } from './auth/email/smtp.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { getSession, type SessionAndUser } from './auth/session.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerSyncRoutes } from './sync/routes.js';
 
 export interface BuildOptions {
   env: Env;
@@ -92,6 +93,10 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
     prisma: opts.prisma,
     ...(mailService !== undefined ? { mailService } : {}),
   });
+  // R3.4.a — domain mutation surface. Reads the session via the
+  // `app.getSession` decorator; enforces the §8.1 guard map; runs
+  // the shared reducer authoritatively before applying Prisma deltas.
+  registerSyncRoutes(app, opts.prisma);
 
   return app;
 }

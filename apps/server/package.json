@@ -18,6 +18,7 @@
     "db:reset": "prisma migrate reset --force"
   },
   "dependencies": {
+    "@app/rules": "workspace:*",
     "@app/seeds": "workspace:*",
     "@app/shared": "workspace:*",
     "@auth/core": "^0.34.3",
