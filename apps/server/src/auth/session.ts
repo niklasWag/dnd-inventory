@@ -122,3 +122,31 @@ export async function getSession(
 
   return { session: row, user: row.user };
 }
+
+/**
+ * R3.3 — Create a fresh Session row for a verified user and return the
+ * cookie value + expiry.
+ *
+ * Auth.js's Prisma adapter creates session rows the same way during the
+ * Discord OAuth callback (its `createSession` adapter method writes a row
+ * with the same shape). We own this helper because the email OTP verify
+ * route does NOT go through `Auth(request, config)` — we have the user id
+ * in hand after a successful OTP comparison and just need a session row
+ * + a Set-Cookie. Reusing the same lifetime constants keeps the dev-prod
+ * cookie semantics aligned across both signin paths.
+ *
+ * The session token format mirrors what Auth.js generates — two
+ * concatenated UUIDs separated by a hyphen. The cookie's confidentiality
+ * comes from `HttpOnly` + `Secure` + the 256+ bits of entropy in the
+ * combined UUIDs; signing is enforced at the cookie layer by
+ * `@fastify/cookie` using `AUTH_SECRET`.
+ */
+export async function createSessionForUser(
+  prisma: PrismaClient,
+  userId: string,
+): Promise<{ sessionToken: string; expires: Date }> {
+  const sessionToken = `${crypto.randomUUID()}-${crypto.randomUUID()}`;
+  const expires = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
+  await prisma.session.create({ data: { sessionToken, userId, expires } });
+  return { sessionToken, expires };
+}

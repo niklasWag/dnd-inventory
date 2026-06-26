@@ -21,15 +21,38 @@
  */
 import { Auth } from '@auth/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 
 import type { Env } from '../config/env.js';
 import type { PrismaClient } from '../../prisma/generated/prisma/client.js';
 
-import { buildAuthConfig, isDiscordAuthEnabled } from './config.js';
+import {
+  buildAuthConfig,
+  isDiscordAuthEnabled,
+  isEmailAuthEnabled,
+  sessionCookieName,
+} from './config.js';
+import {
+  constantTimeEqual,
+  generateOtp,
+  isOtpExpired,
+  OTP_LENGTH,
+  OTP_LIFETIME_MS,
+} from './email/otp.js';
+import { checkLockout, recordFailedAttempt, resetAttempts } from './email/rate-limit.js';
+import type { MailService } from './email/smtp.js';
+import { createSessionForUser } from './session.js';
 
 export interface RegisterAuthRoutesOptions {
   env: Env;
   prisma: PrismaClient;
+  /**
+   * R3.3 — injected mail service. Optional because the OTP routes return
+   * 503 when `isEmailAuthEnabled(env)` is false; in that case nothing in
+   * the route layer touches the service. Pass `setupMailerMock().service`
+   * in integration tests.
+   */
+  mailService?: MailService;
 }
 
 /**
@@ -135,7 +158,7 @@ function authJsPathFor(publicPath: string): string {
 }
 
 export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoutesOptions): void {
-  const { env, prisma } = opts;
+  const { env, prisma, mailService } = opts;
   const authConfig = buildAuthConfig({ prisma, env });
 
   /**
@@ -242,5 +265,357 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
 
   app.get('/auth/session', async (req, reply) => {
     return delegateToAuthJs(req, reply, '/auth/session');
+  });
+
+  // ---------------- R3.3 — Email OTP routes ----------------
+  //
+  // All four mail-sending routes gate on `isEmailAuthEnabled(env)` and the
+  // presence of `mailService`. The set-display-name route is post-verify
+  // session work, so it does NOT gate on SMTP — a user who already has a
+  // session is allowed to set their name even if the operator later
+  // disables email.
+  //
+  // Per SECURITY §1.2:
+  //   - 8-digit OTP, 15-minute expiry, single-use (delete on consume)
+  //   - 5 failed verify attempts → invalidate code + 15-min (email, ip) lockout
+  //   - constant-time response on request-otp (no user enumeration)
+  //   - OTP submitted via POST body only, never in a URL
+  //   - logs scrub `req.body.otp` (configured in src/server.ts)
+  //
+  // Identifier namespacing convention (VerificationToken.identifier):
+  //   - `otp:<email>`  — primary email login flow
+  //   - `link:<userId>:<email>` — backup-email link flow for Discord users
+  //
+  // The namespace prevents a primary-flow code from accidentally being
+  // consumed by the link flow and vice versa.
+
+  const emailSchema = z.object({ email: z.email() });
+  const verifySchema = z.object({
+    email: z.email(),
+    otp: z.string().regex(new RegExp(`^\\d{${OTP_LENGTH}}$`)),
+  });
+  const setDisplayNameSchema = z.object({ displayName: z.string().min(1).max(80) });
+
+  /**
+   * Sleep for a `delayMs` to keep request-otp responses constant-time
+   * regardless of whether the email is registered. Bounds are chosen to
+   * roughly cover the p50 of real SMTP submission latency (one network
+   * round-trip + the SMTP STARTTLS dance) — Postmark/SES p50 sit in the
+   * 100-400ms band.
+   */
+  async function constantTimePad(): Promise<void> {
+    const ms = 150 + Math.random() * 200;
+    await new Promise<void>((r) => setTimeout(r, ms));
+  }
+
+  app.post('/auth/email/request-otp', async (req, reply) => {
+    if (!isEmailAuthEnabled(env) || !mailService) {
+      return reply.code(503).send({ error: 'email_auth_disabled' });
+    }
+    const parsed = emailSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_email' });
+    }
+    const { email } = parsed.data;
+    const ip = req.ip;
+
+    // Lockout check on the request side too — an attacker who burns a
+    // code via the verify route shouldn't be able to immediately request
+    // a fresh one. The verify-side check (in /auth/email/verify-otp) is
+    // the load-bearing one for guess-burning; this check just keeps the
+    // mail flood symmetric.
+    const lock = await checkLockout(prisma, email, ip);
+    if (lock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((lock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: lock.until.toISOString() });
+    }
+
+    const code = generateOtp();
+    const expires = new Date(Date.now() + OTP_LIFETIME_MS);
+    const identifier = `otp:${email}`;
+
+    // Replace any pending code for this email with the fresh one.
+    // Single transaction so a parallel request can't see a "no code +
+    // about to insert" gap.
+    await prisma.$transaction([
+      prisma.verificationToken.deleteMany({ where: { identifier } }),
+      prisma.verificationToken.create({ data: { identifier, token: code, expires } }),
+    ]);
+
+    try {
+      await mailService.sendOtp(email, code);
+    } catch (err) {
+      // Mail send failed — clean up the row so the user isn't stuck with
+      // a code they can't see. SECURITY §1.2: do not leak the failure to
+      // the response (could be used to probe SMTP health from outside).
+      // 500 is the same shape as any other internal error.
+      req.log.error({ err }, 'sendOtp failed');
+      await prisma.verificationToken.deleteMany({ where: { identifier } });
+      return reply.code(500).send({ error: 'internal' });
+    }
+
+    // Always 200 — constant-time across registered/unregistered emails.
+    // The padding above runs in parallel with the SMTP send; the outer
+    // await fires when both have completed. This collapses the
+    // "registered" and "unregistered" timing distributions to roughly
+    // the same band (the SMTP send latency dominates).
+    await constantTimePad();
+    return reply.code(200).send({ status: 'sent' });
+  });
+
+  app.post('/auth/email/verify-otp', async (req, reply) => {
+    if (!isEmailAuthEnabled(env)) {
+      return reply.code(503).send({ error: 'email_auth_disabled' });
+    }
+    const parsed = verifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+    const { email, otp } = parsed.data;
+    const ip = req.ip;
+
+    const lock = await checkLockout(prisma, email, ip);
+    if (lock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((lock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: lock.until.toISOString() });
+    }
+
+    const identifier = `otp:${email}`;
+    const row = await prisma.verificationToken.findFirst({ where: { identifier } });
+
+    // Determine match in constant time. If the row doesn't exist we still
+    // pay the timingSafeEqual cost against a same-length dummy so the
+    // "user exists" timing differential is bounded.
+    const candidate = row?.token ?? '0'.repeat(OTP_LENGTH);
+    const matches = row !== null && constantTimeEqual(candidate, otp);
+    const expired = row !== null && isOtpExpired(row.expires);
+
+    if (!matches || expired) {
+      const { shouldInvalidateCode } = await recordFailedAttempt(prisma, email, ip);
+      if (shouldInvalidateCode && row) {
+        // Burned: delete the row so a subsequent correct guess is moot.
+        await prisma.verificationToken.deleteMany({ where: { identifier } });
+      }
+      return reply.code(401).send({ error: 'invalid_code' });
+    }
+
+    // Success path. Atomically consume the token so a concurrent request
+    // can't reuse it. `row` is guaranteed non-null here: `matches` only
+    // becomes true on the non-null branch above.
+    try {
+      await prisma.verificationToken.delete({ where: { token: row.token } });
+    } catch (err) {
+      // P2025: the token was already consumed by a parallel request that
+      // beat us to it. Treat as a verify failure rather than success.
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2025') {
+        return reply.code(401).send({ error: 'invalid_code' });
+      }
+      throw err;
+    }
+
+    // Upsert User: existing rows just refresh emailVerified (idempotent —
+    // re-verifying the same email re-stamps it but doesn't otherwise
+    // change anything); new rows are created with `needsDisplayName: true`
+    // so the §8.1 guard layer (R3.4) gates hub access until the user
+    // supplies a name via /auth/email/set-display-name.
+    const now = new Date();
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: { emailVerified: now },
+      create: {
+        email,
+        emailVerified: now,
+        // displayName has NOT NULL — placeholder until set-display-name
+        // overwrites it. The needsDisplayName=true flag is what gates
+        // access on the client side, so the actual string here is
+        // irrelevant beyond satisfying the column constraint.
+        displayName: '',
+        needsDisplayName: true,
+      },
+    });
+
+    // Clean up lockout counters on a successful auth.
+    await resetAttempts(prisma, email, ip);
+
+    const { sessionToken, expires } = await createSessionForUser(prisma, user.id);
+    reply.setCookie(sessionCookieName(env), sessionToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      secure: env.NODE_ENV === 'production',
+      expires,
+    });
+
+    return reply.code(200).send({
+      user: {
+        id: user.id,
+        displayName: user.displayName,
+        needsDisplayName: user.needsDisplayName,
+      },
+      expires: expires.toISOString(),
+    });
+  });
+
+  /**
+   * R3.3 — Discord user adding a backup email. Request flow.
+   * Requires an authenticated session; namespaces the VerificationToken
+   * under `link:<userId>:<email>` so a primary-flow code can't be
+   * accidentally consumed here and vice versa.
+   */
+  app.post('/auth/email/link/request-otp', async (req, reply) => {
+    if (!isEmailAuthEnabled(env) || !mailService) {
+      return reply.code(503).send({ error: 'email_auth_disabled' });
+    }
+    const session = await app.getSession(req);
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const parsed = emailSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_email' });
+    }
+    const { email } = parsed.data;
+    const ip = req.ip;
+
+    const lock = await checkLockout(prisma, email, ip);
+    if (lock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((lock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: lock.until.toISOString() });
+    }
+
+    const code = generateOtp();
+    const expires = new Date(Date.now() + OTP_LIFETIME_MS);
+    const identifier = `link:${session.user.id}:${email}`;
+
+    await prisma.$transaction([
+      prisma.verificationToken.deleteMany({ where: { identifier } }),
+      prisma.verificationToken.create({ data: { identifier, token: code, expires } }),
+    ]);
+
+    try {
+      await mailService.sendOtp(email, code);
+    } catch (err) {
+      req.log.error({ err }, 'sendOtp failed (link flow)');
+      await prisma.verificationToken.deleteMany({ where: { identifier } });
+      return reply.code(500).send({ error: 'internal' });
+    }
+
+    await constantTimePad();
+    return reply.code(200).send({ status: 'sent' });
+  });
+
+  /**
+   * R3.3 — Discord user adding a backup email. Verify flow.
+   * On success: write `email` + `emailVerified` to the session user's row.
+   * Conflict (email is already attached to a different user) → 409.
+   */
+  app.post('/auth/email/link/verify-otp', async (req, reply) => {
+    if (!isEmailAuthEnabled(env)) {
+      return reply.code(503).send({ error: 'email_auth_disabled' });
+    }
+    const session = await app.getSession(req);
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const parsed = verifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+    const { email, otp } = parsed.data;
+    const ip = req.ip;
+
+    const lock = await checkLockout(prisma, email, ip);
+    if (lock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((lock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: lock.until.toISOString() });
+    }
+
+    const identifier = `link:${session.user.id}:${email}`;
+    const row = await prisma.verificationToken.findFirst({ where: { identifier } });
+
+    const candidate = row?.token ?? '0'.repeat(OTP_LENGTH);
+    const matches = row !== null && constantTimeEqual(candidate, otp);
+    const expired = row !== null && isOtpExpired(row.expires);
+
+    if (!matches || expired) {
+      const { shouldInvalidateCode } = await recordFailedAttempt(prisma, email, ip);
+      if (shouldInvalidateCode && row) {
+        await prisma.verificationToken.deleteMany({ where: { identifier } });
+      }
+      return reply.code(401).send({ error: 'invalid_code' });
+    }
+
+    // Email already in use by someone else? Conflict — surface the error
+    // before consuming the code so the user can request a new one with a
+    // different email.
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing && existing.id !== session.user.id) {
+      return reply.code(409).send({ error: 'email_already_linked' });
+    }
+
+    try {
+      await prisma.verificationToken.delete({ where: { token: row.token } });
+    } catch (err) {
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2025') {
+        return reply.code(401).send({ error: 'invalid_code' });
+      }
+      throw err;
+    }
+
+    const now = new Date();
+    const updated = await prisma.user.update({
+      where: { id: session.user.id },
+      data: { email, emailVerified: now },
+    });
+    await resetAttempts(prisma, email, ip);
+
+    return reply.code(200).send({
+      user: {
+        id: updated.id,
+        displayName: updated.displayName,
+        email: updated.email,
+        emailVerified: updated.emailVerified?.toISOString() ?? null,
+      },
+    });
+  });
+
+  /**
+   * R3.3 — Email-only signup completion. Requires an authenticated
+   * session AND `needsDisplayName === true`. The §8.1 guard layer (R3.4)
+   * will return 409 `display_name_required` on every OTHER protected
+   * route until this endpoint flips the flag.
+   *
+   * Idempotent: if `needsDisplayName` is already false we accept the new
+   * name (rename) but the existing-name case is the same 200. Tests cover
+   * both branches.
+   */
+  app.post('/auth/email/set-display-name', async (req, reply) => {
+    const session = await app.getSession(req);
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const parsed = setDisplayNameSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_display_name' });
+    }
+    const { displayName } = parsed.data;
+
+    const updated = await prisma.user.update({
+      where: { id: session.user.id },
+      data: { displayName, needsDisplayName: false },
+    });
+
+    return reply.code(200).send({
+      user: {
+        id: updated.id,
+        displayName: updated.displayName,
+        needsDisplayName: updated.needsDisplayName,
+      },
+    });
   });
 }

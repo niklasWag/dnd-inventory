@@ -195,6 +195,10 @@ export interface UserRow {
   email: string | null;
   emailVerified: Date | null;
   avatarUrl: string | null;
+  // R3.3 — true for new email-only signups that have not yet supplied a
+  // display name. Prisma `@default(false)` so existing rows + the Discord
+  // path stay false.
+  needsDisplayName: boolean;
   createdAt: Date;
 }
 
@@ -202,6 +206,11 @@ export interface UserRow {
  * Auth.js's `AdapterUser` shape, copy-defined here to avoid pulling
  * `@auth/core` types into the mapper layer (keeps mappers pure / testable
  * without auth-runtime deps).
+ *
+ * `needsDisplayName` is NOT part of Auth.js's standard `AdapterUser` — it's
+ * R3.3's first-login gate, surfaced here so callers reading `toAuthJsUser`
+ * can pass it through to the session-response shape without having to
+ * round-trip through the Prisma row a second time.
  */
 export interface AuthJsUserShape {
   id: string;
@@ -209,6 +218,7 @@ export interface AuthJsUserShape {
   email: string | null;
   emailVerified: Date | null;
   image: string | null;
+  needsDisplayName: boolean;
 }
 
 export function toAuthJsUser(row: UserRow): AuthJsUserShape {
@@ -218,6 +228,7 @@ export function toAuthJsUser(row: UserRow): AuthJsUserShape {
     email: row.email,
     emailVerified: row.emailVerified,
     image: row.avatarUrl,
+    needsDisplayName: row.needsDisplayName,
   };
 }
 
@@ -247,6 +258,9 @@ export function fromAuthJsUser(adapter: AuthJsUserShape & { discordId?: string |
     u['emailVerified'] = adapter.emailVerified.toISOString();
   }
   if (adapter.image !== null) u['avatarUrl'] = adapter.image;
+  // R3.3 — only emit on the truthy branch; the Zod field is optional so
+  // false-by-default rows can leave the key absent.
+  if (adapter.needsDisplayName) u['needsDisplayName'] = true;
   return userSchema.parse(u);
 }
 

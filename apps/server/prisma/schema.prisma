@@ -117,6 +117,13 @@ model User {
   // R3.2 — Discord CDN URL (or null). Mapped to adapter's `image` field via
   // mappers.ts. Resynced on every Discord login per events.signIn callback.
   avatarUrl     String?
+  // R3.3 — gates hub access for email-only signups. On first OTP verify for
+  // a new email we create the User with `needsDisplayName: true` and an empty
+  // displayName; the §8.1 guard layer (R3.4) returns 409 `display_name_required`
+  // on every protected route except POST /auth/email/set-display-name until
+  // this flag flips false. Discord signups stay false because the
+  // events.signIn callback fills displayName from the Discord profile.
+  needsDisplayName Boolean @default(false)
   createdAt     DateTime  @default(now())
 
   // R3.2 — Auth.js adapter relations.
@@ -396,4 +403,24 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+// R3.3 — durable rate-limit / lockout state for the email OTP verify flow.
+// Keyed by (email, ip) so a single attacker IP hitting many emails is rate
+// limited per-email AND a single email attacked from many IPs is rate limited
+// per-IP — both axes checked at request time.
+//
+// On 5 failed verify attempts within a code's lifetime we set
+// `lockedUntil = now + 15min` (SECURITY §1.2). Cleanup of dead rows is a
+// followup — the @@index([lockedUntil]) keeps a future cron sweep cheap.
+model EmailAuthAttempt {
+  id          String    @id @default(cuid())
+  email       String
+  ip          String
+  failedCount Int       @default(0)
+  lockedUntil DateTime?
+  lastAttempt DateTime  @default(now())
+
+  @@unique([email, ip])
+  @@index([lockedUntil])
 }

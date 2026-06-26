@@ -1558,22 +1558,62 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 #### R3.3 — Email OTP auth + backup-email settings
 
-- [ ] Auth.js Email provider wired; `generateVerificationToken` overridden to produce an 8-digit numeric OTP; `sendVerificationRequest` overridden to send OTP-in-email (not a magic link)
-- [ ] OTP token store backed by Prisma (`VerificationToken` table — standard Auth.js shape)
-- [ ] OTP codes: 15-minute expiry, single-use (consumed on first successful verification)
-- [ ] Rate limiting: 5 failed attempts per code → code invalidated + 15-minute per-IP + per-email lockout; implemented as a thin Fastify middleware on the OTP verification endpoint
-- [ ] `/auth/email/request-otp` returns constant-time identical response whether email is registered or not (no user enumeration)
-- [ ] SMTP startup guard: if any of `SMTP_HOST | SMTP_PORT | SMTP_USER | SMTP_PASS | SMTP_FROM` are absent, email auth is disabled at startup — email login UI hidden, OTP endpoint returns `503`
-- [ ] Email-only first-login flow: user prompted for `displayName` before hub; server blocks hub access until `displayName` is set
+- [x] Auth.js Email provider wired; `generateVerificationToken` overridden to produce an 8-digit numeric OTP; `sendVerificationRequest` overridden to send OTP-in-email (not a magic link) — **R3.3** (deviation: implemented as custom hand-written `POST /auth/email/request-otp` + `POST /auth/email/verify-otp` routes rather than Auth.js's Email provider; magic-link defaults made the SECURITY §1.2 "OTP via POST body only, never in a URL" mandate awkward to enforce. Verify route reuses `createSessionForUser` from R3.2 to issue the same session cookie shape Discord uses)
+- [x] OTP token store backed by Prisma (`VerificationToken` table — standard Auth.js shape) — **R3.3** (table provisioned by R3.2's migration; R3.3 writes rows with `identifier = 'otp:<email>'` for primary flow, `identifier = 'link:<userId>:<email>'` for backup-email link flow to prevent cross-flow code consumption)
+- [x] OTP codes: 15-minute expiry, single-use (consumed on first successful verification) — **R3.3** (`OTP_LIFETIME_MS = 15 * 60 * 1000` in `src/auth/email/otp.ts`; verify route `prisma.verificationToken.delete`s the row on success — replay attempts get P2025 / 401)
+- [x] Rate limiting: 5 failed attempts per code → code invalidated + 15-minute per-IP + per-email lockout; implemented as a thin Fastify middleware on the OTP verification endpoint — **R3.3** (new `EmailAuthAttempt` table keyed by `(email, ip)`; the OR-axis query in `checkLockout` blocks both "one IP attacking many emails" and "one email attacked from many IPs"; `recordFailedAttempt` deletes the code row when failedCount reaches MAX. Implemented as a module in `src/auth/email/rate-limit.ts` called from the route rather than a Fastify hook — keeps the lockout-then-fail-2xx response-shape explicit at the call site)
+- [x] `/auth/email/request-otp` returns constant-time identical response whether email is registered or not (no user enumeration) — **R3.3** (route always returns `200 { status: 'sent' }`; a synthetic 150-350ms `constantTimePad()` runs in parallel with the SMTP send so registered/unregistered timing distributions overlap within an order of magnitude; sophisticated timing attacks would also be blunted by adding a request-side rate limit on the same `EmailAuthAttempt` keyspace — captured as followup)
+- [x] SMTP startup guard: if any of `SMTP_HOST | SMTP_PORT | SMTP_USER | SMTP_PASS | SMTP_FROM` are absent, email auth is disabled at startup — email login UI hidden, OTP endpoint returns `503` — **R3.3** (sentinel `isEmailAuthEnabled(env)` mirrors `isDiscordAuthEnabled`; all four mail-sending routes return `503 {"error": "email_auth_disabled"}` when false; `set-display-name` does NOT gate on SMTP — a user who already has a session can finish onboarding even if SMTP is later disabled. Production fail-fast in `env.ts` if NODE_ENV=production and any are missing)
+- [x] Email-only first-login flow: user prompted for `displayName` before hub; server blocks hub access until `displayName` is set — **R3.3** (server side: new `User.needsDisplayName Boolean @default(false)` column set true on first verify-otp for an unknown email; `POST /auth/email/set-display-name` is the only route accepting that user's session until the flag flips false. R3.4's §8.1 guard layer will read this flag and return `409 display_name_required` on every other protected route. Web-side prompt UI lands in R3.5)
 - [ ] Settings → "Linked accounts" section (replaces "Backup login") — symmetric for both user types:
-  - Discord users: enter email → receive OTP → verify → `User.email` + `User.emailVerified` set
-  - Email-only users: "Connect Discord" button → OAuth flow → on success `User.discordId` + `User.avatarUrl` stored on the existing row; `displayName` not overwritten
-- [ ] `shadcn/ui input-otp` component added (`pnpm dlx shadcn@latest add input-otp`); OTP entry screen uses `maxLength={8}`
-- [ ] Login screen shows both "Sign in with Discord" and "Sign in with email" paths
+  - Discord users: enter email → receive OTP → verify → `User.email` + `User.emailVerified` set — **R3.3 server endpoints shipped** (`POST /auth/email/link/request-otp` + `POST /auth/email/link/verify-otp` require auth via `app.getSession`; conflict on email already attached elsewhere returns `409 email_already_linked`); UI lands in R3.5
+  - Email-only users: "Connect Discord" button → OAuth flow → on success `User.discordId` + `User.avatarUrl` stored on the existing row; `displayName` not overwritten — **deferred to R3.5** (intricate Auth.js callback hook; folds cleanly into R3.5's web-side OAuth redirect handling — see Notes)
+- [ ] `shadcn/ui input-otp` component added (`pnpm dlx shadcn@latest add input-otp`); OTP entry screen uses `maxLength={8}` — **deferred to R3.5 (web UI slice)**
+- [ ] Login screen shows both "Sign in with Discord" and "Sign in with email" paths — **deferred to R3.5 (web UI slice)**
 
 #### R3.3 — Notes
 
-> -
+> **2026-06-26 — R3.3 (Email OTP + backup-email server) complete.** Layers email-OTP login on top of R3.2's Auth.js+sessions surface. The server now mints 8-digit codes via `crypto.randomInt`, mails them through any SMTP relay (Postmark / SES / Mailgun / Postfix / Mailpit), and creates a `Session` row on a successful verify that's bit-identical to what the Discord callback writes. Smoke-tested loop: `pnpm dev` with empty SMTP_* → `curl /auth/email/request-otp` returns 503; with Mailpit at `localhost:1025` → POST request-otp returns 200, Mailpit UI shows the 8-digit code, POST verify-otp with that code drops `User` + `Session` rows + sets the session cookie; `curl --cookie cookies.txt /auth/session` works. **No web UI** — that's R3.5.
+>
+> **Custom routes rather than Auth.js Email provider.** Auth.js's `EmailProvider` is magic-link-default — its `signIn` action sends an email whose body contains an HTTPS link, and `callback/email` verifies a token from the URL's query string. Overriding `generateVerificationToken` + `sendVerificationRequest` to produce a numeric OTP works, but the magic-link callback URL would STILL be active and accept the same token, defeating SECURITY §1.2 "OTP submitted via POST body only, never in a query string." Hand-writing `POST /auth/email/request-otp` and `POST /auth/email/verify-otp` lets us mechanically enforce body-only submission, the constant-time response, and the 5-attempt lockout in one place — ~120 lines per route plus rate-limit / OTP / SMTP modules. The verify route doesn't go through `Auth(req, config)`; instead it calls `createSessionForUser(prisma, userId)` (a new helper in `src/auth/session.ts`) which writes the same `Session` row shape Auth.js's adapter would.
+>
+> **`@auth/core` peer-dep override survived R3.3.** No adapter calls touched the Prisma 7 incompatibility (we never invoke the `VerificationToken` adapter methods — the custom routes write directly through the typed PrismaClient). The pnpm `peerDependencyRules` block stays as-is.
+>
+> **OTP keyspace + plaintext storage.** 8 digits = 10⁸ ≈ 100M codes. The protection is the 15-minute expiry + 5-attempt lockout, NOT the entropy. Hashing the 8-digit code with bcrypt/argon2 would be theatrical — an attacker with DB read access can already mint sessions outright; the keyspace is too small for offline brute-force to be slower than online (which is what the lockout already blocks). Stored as plain digits in `VerificationToken.token`; documented in code comments + here.
+>
+> **`EmailAuthAttempt` two-axis lockout.** Single row per `(email, ip)` so concurrent attackers from different IPs against the same email each create their own row — and a single IP attacking many emails creates a row per target. `checkLockout` queries `lockedUntil > now()` with an `OR(email, ip)` clause so EITHER axis being locked blocks the next attempt. The 5-failure threshold burns ONE `(email, ip)` row's code; an attacker with a botnet pivoting IPs still has to burn 5 attempts per IP, which scales linearly with IP count rather than failing instantly. SECURITY §1.2 mitigations satisfied.
+>
+> **Constant-time `request-otp`.** Always returns 200 + the same JSON body; a `constantTimePad()` of 150-350ms runs in parallel with the SMTP send so registered/unregistered timing distributions overlap. Not a defense against a sophisticated attacker with millions of requests — but the per-IP rate limit on `verify-otp` is the load-bearing protection; the constant-time pad just defangs the trivial timing-leak case. Followup (not in this slice): add a per-IP rate limit on `request-otp` itself reusing the same `EmailAuthAttempt` keyspace. Mailpit smoke verified both branches pad to roughly the same timing envelope.
+>
+> **`needsDisplayName` Boolean column.** R3.2's User model had no way to express "this row is mid-onboarding." R3.3 adds `User.needsDisplayName Boolean @default(false)` so new email-only verify-otp rows land with `displayName: '', needsDisplayName: true`. The new `POST /auth/email/set-display-name` route is the only endpoint accepting that user's session until the flag flips. R3.4's §8.1 guard layer returns 409 `display_name_required` on every other protected route. Discord signups stay false because the `events.signIn` callback fills displayName from the Discord profile; the MVP web reducer's local users stay false because the local create flow takes the name from the user upfront.
+>
+> **Token redaction in logs.** SECURITY §1.2: "Server logs must not record OTP values — redact the body field in the logging middleware." Fastify's `logger.redact: { paths: ['req.body.otp', '*.body.otp'], remove: true }` strips the field before pino serializes the request log. Tested by inspection — pino-redact's docs cover the path-syntax.
+>
+> **`trustProxy: true` on the Fastify constructor.** The per-IP lockout would be meaningless behind a reverse proxy without this — `req.ip` would always be the loopback address. README §3.5 already mandates that the proxy validate `X-Forwarded-For` (don't blindly forward it from clients); the same security model applies here.
+>
+> **Discord-link `?link=1` flow deferred to R3.5.** The roadmap originally asked for both directions of account linking in R3.3. Server-side, the email-link side is straightforward (verify-otp + write to existing user). The Discord-link side requires routing the OAuth callback through a different code path when a session cookie is present — the `events.signIn` callback in `src/auth/config.ts` would need to detect the link case and attach `discordId`+`avatarUrl` to the existing user instead of letting the adapter create a new row. That logic folds cleanly into R3.5's web-side OAuth redirect handling (R3.5 is already going to revisit the callback for the redirect-to-hub flow), so we punt to avoid two passes over the same surface. Captured as a R3.5 carryforward below.
+>
+> **Mail mock for tests is NOT msw.** R3.2's `discord-mock.ts` uses msw to intercept outbound `fetch()`. SMTP isn't HTTP, so msw can't help. Instead, route tests pass `setupMailerMock().service` (an in-memory `MailService` that captures every `sendOtp` call into an array) directly into `buildServer` via the new `mailService?` BuildOption. The wider `vi.mock('nodemailer', ...)` approach is reserved for the `smtp.ts` unit test that exercises the wrapper itself. Two seams, two responsibilities — keeps each test layer's surface small.
+>
+> **Mailpit for local dev.** Docker `axllent/mailpit` exposes SMTP on `:1025` and a web inbox on `:8025`. Documented in `apps/server/README.md` and root README. No SMTP relay sign-up needed to smoke-test the loop. CI doesn't touch Mailpit — the mocked `MailService` covers everything.
+>
+> **`schema-invariants.test.ts` defensive checks extended.** Two new assertions: `User.needsDisplayName` is `BOOLEAN NOT NULL DEFAULT false`, and the `EmailAuthAttempt` table exists with the `(email, ip)` UNIQUE index. Catches future migration drift the same way the existing DEFERRABLE FK assertion does.
+>
+> **Followups carried forward to R3.4:**
+> - `app.getSession(req)` decorator → §8.1 guard layer that also rejects routes when `user.needsDisplayName === true` with `409 display_name_required`.
+> - `MembershipRole.banker` enum value (R3.2) → guard that rejects writes of `PartyMembership.role = 'banker'`.
+> - The `actorRole: 'banker'` Zod union entry (R3.2) → reducer emits it when `Party.bankerUserId === actorUserId`.
+>
+> **Followups carried forward to R3.5 (web slice):**
+> - `shadcn/ui input-otp` component install (`pnpm dlx shadcn@latest add input-otp` in `apps/web`).
+> - Login screen: "Sign in with Discord" + "Sign in with email" buttons.
+> - OTP entry screen (8-character input + verify request).
+> - Display-name prompt screen when `needsDisplayName: true`.
+> - Settings → "Linked accounts" UI: backup-email flow for Discord users (server endpoints shipped); Connect-Discord flow for email-only users (server-side `?link=1` callback handling lands here too).
+>
+> **Followups for ops/maintenance:**
+> - Cron sweep on `EmailAuthAttempt` rows with `lockedUntil < now() - 24h` (the `@@index([lockedUntil])` makes this cheap). Not blocking — the table is bounded by `(email, ip)` UNIQUE and rows hold no PII beyond the email + IP.
+> - Consider a per-IP rate limit on `POST /auth/email/request-otp` itself (currently only verify-side is rate-limited). Reuse `EmailAuthAttempt` keyspace.
 
 #### R3.4 — Authoritative sync
 

@@ -53,6 +53,14 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
+      # R3.3 — email OTP via SMTP. All five required at boot when
+      # NODE_ENV=production. Empty values disable the /auth/email/*
+      # routes (they return 503). See README §3 for SMTP relay options.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     ports:
       - '${SERVER_PORT:-3000}:3000'
     # Boot sequence inside the container:

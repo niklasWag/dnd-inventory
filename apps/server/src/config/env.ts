@@ -41,6 +41,21 @@ const envSchema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1).optional(),
   DISCORD_CLIENT_SECRET: z.string().min(1).optional(),
   DISCORD_REDIRECT_URI: z.url().optional(),
+
+  // -------- R3.3 — Email OTP (SMTP) --------
+  //
+  // SMTP transport for the 8-digit one-time-code email login flow. All five
+  // must be set together — the `isEmailAuthEnabled(env)` sentinel in
+  // `src/auth/config.ts` checks all of them, and the /auth/email/* routes
+  // return 503 `{error: 'email_auth_disabled'}` when any is missing.
+  // SECURITY §1.2 explicitly requires the misconfig-disables-the-feature
+  // pattern so users don't sit waiting for an email that will never arrive.
+  // Production booting without these is rejected by the post-parse check.
+  SMTP_HOST: z.string().min(1).optional(),
+  SMTP_PORT: z.coerce.number().int().positive().optional(),
+  SMTP_USER: z.string().min(1).optional(),
+  SMTP_PASS: z.string().min(1).optional(),
+  SMTP_FROM: z.email().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -59,6 +74,24 @@ export function loadEnv(): Env {
     if (missing.length > 0) {
       throw new Error(
         `R3.2 — these env vars are required when NODE_ENV=production: ${missing.join(', ')}. ` +
+          `Set them in the deployment environment or revert NODE_ENV.`,
+      );
+    }
+  }
+
+  // R3.3 — production-only fail-fast on missing SMTP creds. Same shape as
+  // the Discord block above; mirrors SECURITY §1.2's hard-fail-on-SMTP-
+  // misconfig stance so silent email-delivery failures cannot ship.
+  if (env.NODE_ENV === 'production') {
+    const missingSmtp: string[] = [];
+    if (!env.SMTP_HOST) missingSmtp.push('SMTP_HOST');
+    if (!env.SMTP_PORT) missingSmtp.push('SMTP_PORT');
+    if (!env.SMTP_USER) missingSmtp.push('SMTP_USER');
+    if (!env.SMTP_PASS) missingSmtp.push('SMTP_PASS');
+    if (!env.SMTP_FROM) missingSmtp.push('SMTP_FROM');
+    if (missingSmtp.length > 0) {
+      throw new Error(
+        `R3.3 — these env vars are required when NODE_ENV=production: ${missingSmtp.join(', ')}. ` +
           `Set them in the deployment environment or revert NODE_ENV.`,
       );
     }

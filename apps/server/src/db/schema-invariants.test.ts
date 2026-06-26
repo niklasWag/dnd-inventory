@@ -81,4 +81,48 @@ describe('schema invariants — DB-level (hand-tailed in migration.sql)', () => 
       'User_auth_present_check missing — the R3.2 migration tail did not run.',
     ).toHaveLength(1);
   });
+
+  it('User.needsDisplayName column is BOOLEAN NOT NULL DEFAULT false (R3.3)', async () => {
+    const rows = await prisma.$queryRawUnsafe<
+      {
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }[]
+    >(
+      `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+       WHERE table_name = 'User' AND column_name = 'needsDisplayName'`,
+    );
+    expect(rows, 'User.needsDisplayName missing — R3.3 migration did not run.').toHaveLength(1);
+    const col = rows[0]!;
+    expect(col.data_type).toBe('boolean');
+    expect(col.is_nullable).toBe('NO');
+    expect(col.column_default).toBe('false');
+  });
+
+  it('EmailAuthAttempt table exists with (email, ip) UNIQUE (R3.3)', async () => {
+    const tableRows = await prisma.$queryRawUnsafe<{ table_name: string }[]>(
+      `SELECT table_name
+       FROM information_schema.tables
+       WHERE table_name = 'EmailAuthAttempt'`,
+    );
+    expect(tableRows, 'EmailAuthAttempt table missing — R3.3 migration did not run.').toHaveLength(
+      1,
+    );
+
+    // Confirm the composite UNIQUE index is present. Postgres stores the
+    // constraint as an index with `indisunique = true` and a `conname` row
+    // in pg_constraint. We query the simpler pg_indexes view here.
+    const idxRows = await prisma.$queryRawUnsafe<{ indexname: string }[]>(
+      `SELECT indexname
+       FROM pg_indexes
+       WHERE tablename = 'EmailAuthAttempt' AND indexname = 'EmailAuthAttempt_email_ip_key'`,
+    );
+    expect(
+      idxRows,
+      'EmailAuthAttempt (email, ip) UNIQUE index missing — schema drift.',
+    ).toHaveLength(1);
+  });
 });

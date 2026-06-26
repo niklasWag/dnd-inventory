@@ -40,6 +40,14 @@ export const userSchema = z
     // on every successful Discord login per
     // `apps/server/src/auth/config.ts events.signIn`.
     avatarUrl: z.string().url().optional(),
+    // R3.3 — gates hub access for email-only signups. Set true on first
+    // OTP verify for a new email (no Discord profile to source a name
+    // from). The §8.1 guard layer (R3.4) returns 409 `display_name_required`
+    // on every protected route except POST /auth/email/set-display-name
+    // until the user supplies a name and this flips false. Optional in
+    // the Zod boundary because the column has a Prisma `@default(false)`
+    // and most users (Discord, local-MVP) leave it unset.
+    needsDisplayName: z.boolean().optional(),
     createdAt: z.string().datetime(),
   })
   .refine((u) => u.discordId !== undefined || u.emailVerified !== undefined, {

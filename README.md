@@ -63,6 +63,10 @@ This app is designed to run on **a single Linux box behind a reverse proxy** —
 - A domain name pointed at the server (`dnd.example.com` in the examples below).
 - TLS certificates — easiest via [Caddy](https://caddyserver.com/) (auto-issues Let's Encrypt) or [nginx + certbot](https://certbot.eff.org/).
 - A Discord application registered at [https://discord.com/developers/applications](https://discord.com/developers/applications) — gives users a way to log in.
+- An SMTP relay that can submit mail on your behalf — used by **email OTP login (R3.3)**. Options:
+  - A transactional provider — [Postmark](https://postmarkapp.com/), [AWS SES](https://aws.amazon.com/ses/), [Mailgun](https://www.mailgun.com/), [SendGrid](https://sendgrid.com/). Set their submission host + the API key they hand you.
+  - Self-hosted Postfix on the same Linux box if you'd rather not depend on a third party.
+  - For local testing: [Mailpit](https://github.com/axllent/mailpit) (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`) gives you a zero-config SMTP server with a web inbox at `http://localhost:8025`.
 
 ### 2. Register a Discord application
 
@@ -91,6 +95,11 @@ Set these in `infra/docker/.env`:
 | `DISCORD_CLIENT_ID`     | From step 2.                                                                                        |
 | `DISCORD_CLIENT_SECRET` | From step 2.                                                                                        |
 | `DISCORD_REDIRECT_URI`  | `https://<your-domain>/auth/discord/callback` — must match the Discord registration exactly.        |
+| `SMTP_HOST`             | SMTP submission host from your transactional provider (e.g. `smtp.postmarkapp.com`).                |
+| `SMTP_PORT`             | `587` for STARTTLS, `465` for implicit TLS. Most providers use `587`.                               |
+| `SMTP_USER`             | SMTP auth username (often a provider API-key id).                                                   |
+| `SMTP_PASS`             | SMTP auth password (often a provider API-key secret). Treat like a password.                        |
+| `SMTP_FROM`             | From-address on outgoing OTP mail. Must be a domain your relay is authorized to send for.           |
 | `SERVER_PORT`           | Internal port the server listens on (default `3000`). Keep firewalled; only the proxy reaches it.   |
 | `WEB_PORT`              | Internal port for the web container (default `5173`). Same firewalling note.                        |
 | `POSTGRES_PORT`         | Host-side Postgres port (default `5433`). Bind to `127.0.0.1` only; never expose Postgres publicly. |
@@ -198,7 +207,7 @@ Issue certs with `sudo certbot --nginx -d dnd.example.com`.
 - The server cookie is `HttpOnly`, `SameSite=Lax`, `Secure`, with the `__Host-` prefix in production (browser-enforced HTTPS).
 - Discord tokens never reach the database (`access_token` / `refresh_token` / `id_token` are written as `NULL` by `apps/server/src/auth/adapter-overrides.ts`).
 - Sliding 30-day session expiry; deleting a `Session` row instantly revokes that device.
-- `NODE_ENV=production` makes the server **refuse to boot** without `AUTH_SECRET` + all three `DISCORD_*` vars — no silent misconfig.
+- `NODE_ENV=production` makes the server **refuse to boot** without `AUTH_SECRET` + all three `DISCORD_*` vars + all five `SMTP_*` vars — no silent misconfig.
 - See `docs/SECURITY.md` for the full threat model.
 
 ### Per-app deeper details

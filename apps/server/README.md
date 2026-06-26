@@ -12,19 +12,24 @@ Fastify + Postgres + Prisma 7 server. R3.1 ships the scaffold (no auth, no sync)
 
 ## Env vars
 
-| Var                     | Purpose                                                                                                                                                       | Default                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `DATABASE_URL`          | Postgres connection string. Required.                                                                                                                         | _none_                                      |
-| `DATABASE_URL_TEST`     | Test DB connection string. Used by Vitest setup.                                                                                                              | falls back to `…/dnd_inv_test` on port 5433 |
-| `PORT`                  | HTTP listen port.                                                                                                                                             | `3000`                                      |
-| `HOST`                  | Network interface to bind. Loopback by default so local dev never exposes the port on Wi-Fi / VPN. Compose / production override to `0.0.0.0`.                | `127.0.0.1`                                 |
-| `WEB_ORIGIN`            | CORS allow-origin for the SPA.                                                                                                                                | `http://localhost:5173`                     |
-| `LOG_LEVEL`             | Pino level (`fatal` … `trace`, or `silent`).                                                                                                                  | `info`                                      |
-| `NODE_ENV`              | `development` / `test` / `production`.                                                                                                                        | `development`                               |
-| `AUTH_SECRET`           | **R3.2** Auth.js cookie/session signing key. 32+ chars. Rotating it invalidates all existing sessions. Generate with `openssl rand -base64 32`. **Required.** | _none_                                      |
-| `DISCORD_CLIENT_ID`     | **R3.2** Discord application client ID. Leave blank in dev/test to disable the OAuth routes (they return 503). Required at boot when `NODE_ENV=production`.   | _none_                                      |
-| `DISCORD_CLIENT_SECRET` | **R3.2** Discord application client secret. Same rules as `DISCORD_CLIENT_ID`.                                                                                | _none_                                      |
-| `DISCORD_REDIRECT_URI`  | **R3.2** Full callback URL registered with Discord. Must match the registration EXACTLY (including trailing slash).                                           | _none_                                      |
+| Var                     | Purpose                                                                                                                                                                                      | Default                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `DATABASE_URL`          | Postgres connection string. Required.                                                                                                                                                        | _none_                                      |
+| `DATABASE_URL_TEST`     | Test DB connection string. Used by Vitest setup.                                                                                                                                             | falls back to `…/dnd_inv_test` on port 5433 |
+| `PORT`                  | HTTP listen port.                                                                                                                                                                            | `3000`                                      |
+| `HOST`                  | Network interface to bind. Loopback by default so local dev never exposes the port on Wi-Fi / VPN. Compose / production override to `0.0.0.0`.                                               | `127.0.0.1`                                 |
+| `WEB_ORIGIN`            | CORS allow-origin for the SPA.                                                                                                                                                               | `http://localhost:5173`                     |
+| `LOG_LEVEL`             | Pino level (`fatal` … `trace`, or `silent`).                                                                                                                                                 | `info`                                      |
+| `NODE_ENV`              | `development` / `test` / `production`.                                                                                                                                                       | `development`                               |
+| `AUTH_SECRET`           | **R3.2** Auth.js cookie/session signing key. 32+ chars. Rotating it invalidates all existing sessions. Generate with `openssl rand -base64 32`. **Required.**                                | _none_                                      |
+| `DISCORD_CLIENT_ID`     | **R3.2** Discord application client ID. Leave blank in dev/test to disable the OAuth routes (they return 503). Required at boot when `NODE_ENV=production`.                                  | _none_                                      |
+| `DISCORD_CLIENT_SECRET` | **R3.2** Discord application client secret. Same rules as `DISCORD_CLIENT_ID`.                                                                                                               | _none_                                      |
+| `DISCORD_REDIRECT_URI`  | **R3.2** Full callback URL registered with Discord. Must match the registration EXACTLY (including trailing slash).                                                                          | _none_                                      |
+| `SMTP_HOST`             | **R3.3** SMTP submission host (e.g. `smtp.postmarkapp.com`, `email-smtp.us-east-1.amazonaws.com`, `localhost` for Mailpit). Leave blank to disable `/auth/email/*` routes (they return 503). | _none_                                      |
+| `SMTP_PORT`             | **R3.3** SMTP submission port. `587` STARTTLS, `465` implicit-TLS, `1025` for Mailpit / Mailhog.                                                                                             | _none_                                      |
+| `SMTP_USER`             | **R3.3** SMTP auth username. Postmark / SES / Mailgun all use their API-key forms here.                                                                                                      | _none_                                      |
+| `SMTP_PASS`             | **R3.3** SMTP auth password / API-key secret. Required when `SMTP_USER` is set.                                                                                                              | _none_                                      |
+| `SMTP_FROM`             | **R3.3** RFC-5322 From address used on outgoing OTP mail. Must be a domain your SMTP relay is authorized to send for.                                                                        | _none_                                      |
 
 Local dev reads `apps/server/.env` (see `.env.example`); production / Docker pass env vars directly.
 
@@ -101,10 +106,35 @@ Discord OAuth2 + PKCE flow with database-backed sessions via `@auth/core` + `@au
 - **Cookie shape.** `__Host-auth-session-token` in production (HTTPS-pinned by browser), `auth-session-token` in dev. Always `HttpOnly`, `SameSite=lax`, `Path=/`. `Secure` is auto-set in production.
 - **Sliding 30-day expiry.** Sessions refresh their `expires` timestamp once per day of activity, matching SECURITY §1.1.
 
+## Email OTP (R3.3)
+
+8-digit one-time-code email login. Used both as the sole login method for users with no Discord account AND as a backup credential a Discord user can add later. See `docs/SECURITY.md` §1.2 for the threat model.
+
+- **Boot-time graceful degradation.** Same pattern as Discord: when any of `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` is unset, the `/auth/email/*` routes return `503 {"error": "email_auth_disabled"}`. `NODE_ENV=production` overrides and fails at boot.
+- **Custom flow, not Auth.js Email provider.** R3.3 implements `/auth/email/request-otp` + `/auth/email/verify-otp` directly so the SECURITY §1.2 "OTP submitted via POST body only, never in a query string" mandate is mechanically enforced. The session row is created via the same `createSessionForUser` helper the R3.2 Discord callback uses.
+- **5-attempt lockout.** `EmailAuthAttempt` table tracks `(email, ip)` pairs. After 5 failed verify attempts the code is deleted AND a 15-minute lockout is imposed across both axes. Per SECURITY §1.2.
+- **Constant-time `/auth/email/request-otp`.** Returns `200 { status: 'sent' }` regardless of whether the email is registered. A synthetic 150–350ms pad runs in parallel with the SMTP send to keep registered/unregistered timing distributions roughly overlapping. SECURITY §1.2: no user enumeration.
+- **Single-use codes, 15-minute expiry.** OTP rows live in `VerificationToken` with `identifier = 'otp:<email>'` (primary flow) or `'link:<userId>:<email>'` (backup-email link flow). The row is `delete`d on a successful verify; replay returns 401.
+- **OTP never logged.** `logger.redact` strips `req.body.otp` so the digits don't land in pino's log stream. Configured in `src/server.ts`.
+- **First-login displayName gate.** Email-only signups create a User row with `needsDisplayName: true`. The `POST /auth/email/set-display-name` endpoint flips the flag; the §8.1 guard layer (R3.4) will return 409 on every other protected route until it does.
+
+**Local dev tip:** run [Mailpit](https://github.com/axllent/mailpit) for a zero-config SMTP server with a web UI that captures every sent email:
+
+```bash
+docker run -p 1025:1025 -p 8025:8025 axllent/mailpit
+# Then in .env:
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_USER=anything
+SMTP_PASS=anything
+SMTP_FROM=dnd-inv@localhost
+# Inspect mail at http://localhost:8025
+```
+
 ## Forward references
 
 - **R3.2**: ~~`@fastify/cookie`, Auth.js wiring; new `User` columns~~ — **shipped**.
-- **R3.3**: email OTP (`@auth/core`'s Email provider with custom `generateVerificationToken` / `sendVerificationRequest` per SECURITY §1.2). `VerificationToken` table is already provisioned by R3.2's migration.
-- **R3.4**: authoritative reducer + `/sync` route; nightly snapshot job. Uses `app.getSession(req)` decorated by R3.2.
-- **R3.5**: web client points at the server; offline-first Dexie cache.
+- **R3.3**: ~~email OTP + backup-email link + first-login displayName gate~~ — **shipped**. Discord-link `?link=1` flow deferred to R3.5 (folds into the web-side OAuth redirect handling).
+- **R3.4**: authoritative reducer + `/sync` route; nightly snapshot job. Uses `app.getSession(req)` decorated by R3.2; gates email-only users on `needsDisplayName === false`.
+- **R3.5**: web client points at the server; offline-first Dexie cache. Adds `shadcn/ui input-otp` for the verify screen + the Settings → Linked accounts UI.
 - **R5**: WebSocket (Socket.IO) per-party broadcast.

@@ -161,3 +161,15 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
 export function isDiscordAuthEnabled(env: Env): boolean {
   return Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET && env.DISCORD_REDIRECT_URI);
 }
+
+/**
+ * R3.3 — Sentinel for the email OTP routes. Mirrors `isDiscordAuthEnabled`:
+ * when ANY of the five SMTP env vars is missing, the /auth/email/* routes
+ * return 503 with `{error: 'email_auth_disabled'}` rather than silently
+ * failing to send mail. Per SECURITY §1.2: "SMTP misconfiguration — at
+ * server startup, if SMTP_HOST/PORT/USER/PASS/FROM are absent or incomplete,
+ * email auth is disabled entirely."
+ */
+export function isEmailAuthEnabled(env: Env): boolean {
+  return Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS && env.SMTP_FROM);
+}

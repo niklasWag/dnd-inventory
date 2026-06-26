@@ -6,7 +6,7 @@ import type { Account, Profile } from '@auth/core/types';
 import type { Env } from '../config/env.js';
 import type { PrismaClient } from '../../prisma/generated/prisma/client.js';
 
-import { buildAuthConfig, isDiscordAuthEnabled } from './config.js';
+import { buildAuthConfig, isDiscordAuthEnabled, isEmailAuthEnabled } from './config.js';
 import { makeAdapter } from './adapter-overrides.js';
 
 /**
@@ -50,6 +50,34 @@ describe('isDiscordAuthEnabled', () => {
         DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
       }),
     ).toBe(true);
+  });
+});
+
+describe('isEmailAuthEnabled (R3.3)', () => {
+  const allFive = {
+    SMTP_HOST: 'smtp.test',
+    SMTP_PORT: 587,
+    SMTP_USER: 'u',
+    SMTP_PASS: 'p',
+    SMTP_FROM: 'a@b.test',
+  };
+
+  it('returns false when no SMTP_* vars are set', () => {
+    expect(isEmailAuthEnabled(baseEnv)).toBe(false);
+  });
+
+  it('returns false when any single var is missing', () => {
+    for (const omit of Object.keys(allFive) as Array<keyof typeof allFive>) {
+      const partial: Record<string, unknown> = { ...allFive };
+      delete partial[omit];
+      // partial is a subset of `allFive`; spreading over baseEnv yields
+      // an Env-compatible shape without an explicit assertion.
+      expect(isEmailAuthEnabled({ ...baseEnv, ...partial })).toBe(false);
+    }
+  });
+
+  it('returns true when all five SMTP_* vars are set', () => {
+    expect(isEmailAuthEnabled({ ...baseEnv, ...allFive })).toBe(true);
   });
 });
 

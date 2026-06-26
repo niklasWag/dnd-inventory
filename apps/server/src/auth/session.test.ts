@@ -6,7 +6,7 @@ import type { FastifyRequest } from 'fastify';
 import { PrismaClient } from '../../prisma/generated/prisma/client.js';
 import type { Env } from '../config/env.js';
 
-import { getSession, sessionCookieName } from './session.js';
+import { getSession, sessionCookieName, createSessionForUser } from './session.js';
 
 /**
  * R3.2 — integration tests for `getSession()` against the local test DB.
@@ -142,5 +142,43 @@ describe('getSession (R3.2)', () => {
   it('uses the prod cookie name when NODE_ENV=production', () => {
     expect(sessionCookieName({ ...env, NODE_ENV: 'production' })).toBe('__Host-auth-session-token');
     expect(sessionCookieName({ ...env, NODE_ENV: 'development' })).toBe('auth-session-token');
+  });
+});
+
+describe('createSessionForUser (R3.3)', () => {
+  it('creates a Session row with a 30-day expiry and returns the token', async () => {
+    const userId = 'user-' + crypto.randomUUID();
+    await prisma.user.create({
+      data: { id: userId, displayName: 'Created For', discordId: 'discord-' + userId },
+    });
+
+    const before = Date.now();
+    const { sessionToken, expires } = await createSessionForUser(prisma, userId);
+
+    // Token shape: two UUIDs joined with '-'. UUID v4 is 36 chars
+    // (including hyphens); joined with a separator hyphen gives 73.
+    expect(sessionToken).toHaveLength(73);
+    expect(sessionToken).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const row = await prisma.session.findUniqueOrThrow({ where: { sessionToken } });
+    expect(row.userId).toBe(userId);
+    expect(row.expires.getTime()).toBe(expires.getTime());
+
+    // Within ~5s of (before + 30 days).
+    const expected = before + 60 * 60 * 24 * 30 * 1000;
+    expect(Math.abs(expires.getTime() - expected)).toBeLessThan(5000);
+  });
+
+  it('issues a unique token on every call', async () => {
+    const userId = 'user-' + crypto.randomUUID();
+    await prisma.user.create({
+      data: { id: userId, displayName: 'Many Sessions', discordId: 'discord-' + userId },
+    });
+
+    const a = await createSessionForUser(prisma, userId);
+    const b = await createSessionForUser(prisma, userId);
+    expect(a.sessionToken).not.toBe(b.sessionToken);
   });
 });

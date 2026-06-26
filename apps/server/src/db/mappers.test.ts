@@ -78,6 +78,7 @@ describe('mappers: R3.2 User (Auth.js adapter compatibility)', () => {
       email: null,
       emailVerified: null,
       avatarUrl: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      needsDisplayName: false,
       createdAt: fixed,
     };
     const out = toAuthJsUser(row);
@@ -87,6 +88,7 @@ describe('mappers: R3.2 User (Auth.js adapter compatibility)', () => {
       email: null,
       emailVerified: null,
       image: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      needsDisplayName: false,
     });
   });
 
@@ -98,6 +100,7 @@ describe('mappers: R3.2 User (Auth.js adapter compatibility)', () => {
       emailVerified: null,
       image: 'https://cdn.discordapp.com/avatars/123/abc.png',
       discordId: '123456789012345678',
+      needsDisplayName: false,
     };
     const u = fromAuthJsUser(adapter);
     expect(u.id).toBe('u1');
@@ -106,6 +109,8 @@ describe('mappers: R3.2 User (Auth.js adapter compatibility)', () => {
     expect(u.avatarUrl).toBe('https://cdn.discordapp.com/avatars/123/abc.png');
     expect(u.email).toBeUndefined();
     expect(u.emailVerified).toBeUndefined();
+    // R3.3 — false-by-default omits the key from the Zod parsed shape.
+    expect(u.needsDisplayName).toBeUndefined();
   });
 
   it('fromAuthJsUser rejects a user that violates the SECURITY §1.2 refine()', () => {
@@ -117,6 +122,7 @@ describe('mappers: R3.2 User (Auth.js adapter compatibility)', () => {
         email: null,
         emailVerified: null,
         image: null,
+        needsDisplayName: false,
       }),
     ).toThrow();
   });
@@ -128,10 +134,33 @@ describe('mappers: R3.2 User (Auth.js adapter compatibility)', () => {
       email: 'a@example.com',
       emailVerified: fixed,
       image: null,
+      needsDisplayName: false,
     });
     expect(u.discordId).toBeUndefined();
     expect(u.email).toBe('a@example.com');
     expect(u.emailVerified).toBe(fixed.toISOString());
+  });
+
+  it('fromAuthJsUser surfaces needsDisplayName: true for first-login email signups (R3.3)', () => {
+    // Email-only user whose first OTP verify just landed — displayName is
+    // still empty in the DB, and the server has set needsDisplayName=true
+    // so the §8.1 guard layer (R3.4) returns 409 until set-display-name
+    // runs.
+    const u = fromAuthJsUser({
+      id: 'u3',
+      // displayName at the row level may be '' for these rows, but the
+      // Zod schema requires min(1). Auth.js's signin response builds the
+      // session payload through fromAuthJsUser, so we feed it a sentinel
+      // until the user has supplied a real name. The session route
+      // surfaces `needsDisplayName: true` so the client can short-circuit
+      // to the prompt screen.
+      name: 'Pending',
+      email: 'pending@example.com',
+      emailVerified: fixed,
+      image: null,
+      needsDisplayName: true,
+    });
+    expect(u.needsDisplayName).toBe(true);
   });
 });
 
