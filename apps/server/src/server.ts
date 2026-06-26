@@ -43,6 +43,12 @@ export interface BuildOptions {
    * server.
    */
   mailService?: MailService;
+  /**
+   * R3.5 — optional fetch impl for the Discord-link OAuth flow. Tests
+   * pass a stub that pretends to be `discord.com`. Production leaves
+   * it `undefined`, which falls through to global `fetch`.
+   */
+  authFetchImpl?: typeof fetch;
 }
 
 export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> {
@@ -93,6 +99,7 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
     env: opts.env,
     prisma: opts.prisma,
     ...(mailService !== undefined ? { mailService } : {}),
+    ...(opts.authFetchImpl !== undefined ? { fetchImpl: opts.authFetchImpl } : {}),
   });
   // R3.4.a — domain mutation surface. Reads the session via the
   // `app.getSession` decorator; enforces the §8.1 guard map; runs

@@ -134,6 +134,7 @@ model User {
   characters      Character[]
   memberships     PartyMembership[]
   transactionLogs TransactionLog[]
+  pendingLinks    PendingDiscordLink[]
 
   // CHECK: discordId IS NOT NULL OR emailVerified IS NOT NULL — added in
   // migration tail per SECURITY §1.2 / OUTLINE §4 invariant. Prisma DSL
@@ -403,6 +404,35 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+// R3.5 — ephemeral handoff row for the Discord-account-link OAuth flow.
+// When an authenticated user clicks "Connect Discord" in Settings →
+// Linked accounts, the web hits `GET /auth/discord/login?link=1`, which
+// writes a PendingDiscordLink row keyed by a random token and redirects
+// to a NEW link-flow OAuth entry point (`/auth/discord/link/start?token=
+// ...`). The flow then runs the OAuth code-exchange at the route layer
+// (NOT via Auth.js) and consumes the row in the callback, attaching
+// `discordId` + `avatarUrl` to the session user's row instead of creating
+// a new User. Rows are short-lived (10-min `expires`) and swept inline on
+// every link initiation; an unscheduled cron sweeper is tracked in
+// roadmap.md "Operational followups (unscheduled)".
+//
+// Owning the link flow at the route layer (instead of inside Auth.js's
+// `events.signIn`) keeps the Auth.js adapter untouched and lets us
+// surface snowflake-conflict cleanly via a 302 redirect to
+// `${WEB_ORIGIN}/settings?linkError=discord_already_linked`.
+model PendingDiscordLink {
+  // The token doubles as primary key and as the lookup the callback uses.
+  token     String   @id
+  userId    String
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expires])
 }
 
 // R3.3 — durable rate-limit / lockout state for the email OTP verify flow.

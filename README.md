@@ -29,6 +29,48 @@ See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut,
 
 See `docs/roadmap.md` for the full slice history.
 
+## Local-only vs server modes (R3.5)
+
+The web app has two operating modes, selected at **build time** via `VITE_SERVER_URL`:
+
+- **Local mode** (`VITE_SERVER_URL` unset / empty) — exactly today's MVP UX. Dexie/IndexedDB is the only backend, no login, no logout, no account chrome. The Hub still appears as the front door but auth-related cards (Login, Join party) are hidden.
+- **Server mode** (`VITE_SERVER_URL=https://...`) — the web app pulls `AppState` from the server, pushes mutations through the sync queue (optimistic dispatch with 422 rollback), and surfaces Login / Settings → Account / Linked accounts / Logout.
+
+### Building each mode
+
+The value is **inlined into the JavaScript bundle** by Vite at build time — flipping modes means rebuilding the bundle, not restarting the container.
+
+**Local-only build (default):**
+
+```bash
+# Local development
+pnpm --filter @app/web dev          # vite dev server, local mode
+
+# Local production build
+pnpm --filter @app/web build        # outputs apps/web/dist (local mode)
+
+# Docker compose (compose up builds the web image with no VITE_SERVER_URL)
+cd infra/docker && docker compose up --build
+```
+
+**Server-mode build:**
+
+```bash
+# Local development pointing at a same-origin server (Vite dev proxy
+# preferred; or run server + web on the same host:port via reverse proxy).
+VITE_SERVER_URL=http://localhost:3000 pnpm --filter @app/web dev
+
+# Local production build for a self-hosted deployment
+VITE_SERVER_URL=https://dnd.example.com pnpm --filter @app/web build
+
+# Docker compose: set VITE_SERVER_URL in infra/docker/.env, then rebuild
+# the web image. A plain `docker compose up` will keep serving the
+# previous bundle — you MUST pass --build.
+cd infra/docker && docker compose up -d --build web
+```
+
+In server mode the web↔server origin must match (`SameSite=Lax` cookie). In production this is handled by the reverse proxy (per `docs/TECH_STACK.md` §7.1); in development, run web on the same origin as the server (Vite proxy or matching `localhost:<port>`).
+
 ## Requirements
 
 - Node ≥ 22
@@ -88,21 +130,22 @@ $EDITOR .env   # fill in the values below
 
 Set these in `infra/docker/.env`:
 
-| Variable                | Value                                                                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`     | Long random string. **Change from the default `dnd`.**                                              |
-| `AUTH_SECRET`           | Output of `openssl rand -base64 32`. Rotating this signs everyone out.                              |
-| `DISCORD_CLIENT_ID`     | From step 2.                                                                                        |
-| `DISCORD_CLIENT_SECRET` | From step 2.                                                                                        |
-| `DISCORD_REDIRECT_URI`  | `https://<your-domain>/auth/discord/callback` — must match the Discord registration exactly.        |
-| `SMTP_HOST`             | SMTP submission host from your transactional provider (e.g. `smtp.postmarkapp.com`).                |
-| `SMTP_PORT`             | `587` for STARTTLS, `465` for implicit TLS. Most providers use `587`.                               |
-| `SMTP_USER`             | SMTP auth username (often a provider API-key id).                                                   |
-| `SMTP_PASS`             | SMTP auth password (often a provider API-key secret). Treat like a password.                        |
-| `SMTP_FROM`             | From-address on outgoing OTP mail. Must be a domain your relay is authorized to send for.           |
-| `SERVER_PORT`           | Internal port the server listens on (default `3000`). Keep firewalled; only the proxy reaches it.   |
-| `WEB_PORT`              | Internal port for the web container (default `5173`). Same firewalling note.                        |
-| `POSTGRES_PORT`         | Host-side Postgres port (default `5433`). Bind to `127.0.0.1` only; never expose Postgres publicly. |
+| Variable                 | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`      | Long random string. **Change from the default `dnd`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `AUTH_SECRET`            | Output of `openssl rand -base64 32`. Rotating this signs everyone out.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `DISCORD_CLIENT_ID`      | From step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `DISCORD_CLIENT_SECRET`  | From step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `DISCORD_REDIRECT_URI`   | `https://<your-domain>/auth/discord/callback` — must match the Discord registration exactly.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `SMTP_HOST`              | SMTP submission host from your transactional provider (e.g. `smtp.postmarkapp.com`).                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `SMTP_PORT`              | `587` for STARTTLS, `465` for implicit TLS. Most providers use `587`.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `SMTP_USER`              | SMTP auth username (often a provider API-key id).                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `SMTP_PASS`              | SMTP auth password (often a provider API-key secret). Treat like a password.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `SMTP_FROM`              | From-address on outgoing OTP mail. Must be a domain your relay is authorized to send for.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `SERVER_PORT`            | Internal port the server listens on (default `3000`). Keep firewalled; only the proxy reaches it.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `WEB_PORT`               | Internal port for the web container (default `5173`). Same firewalling note.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `POSTGRES_PORT`          | Host-side Postgres port (default `5433`). Bind to `127.0.0.1` only; never expose Postgres publicly.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `VITE_SERVER_URL` (R3.5) | **Build-time** flag for the web bundle. **Required for production server-mode deployments** — set to the public origin you'll serve the web from (e.g. `https://dnd.example.com`). Leaving it blank produces a local-only bundle with NO login UI. The value is inlined into the JS bundle by Vite, so any change requires `docker compose up -d --build web` (a bare restart keeps the old build). For Discord OAuth + email OTP to work, this MUST be **same-origin** as the server (handled by the reverse proxy in step 5). |
 
 Once migrated, you can drop the `POSTGRES_PORT` host mapping entirely — nothing outside the compose network needs to reach Postgres.
 
@@ -119,7 +162,9 @@ What this does:
 1. Postgres starts and waits for healthcheck.
 2. Server container runs `prisma migrate deploy` (idempotent) then the boot-time PHB+DMG seed runner.
 3. Server begins listening on `0.0.0.0:${SERVER_PORT}` **inside the container** — see step 5 for exposing it to the world.
-4. Web container serves the SPA via `vite preview`.
+4. Web container builds with the `VITE_SERVER_URL` you set in `.env`, then serves the SPA via `vite preview`.
+
+**Important about the web build:** if you initially brought the stack up with an empty `VITE_SERVER_URL` (the default — a local-only bundle), then later set the value and `docker compose up -d` without `--build`, the old bundle keeps serving. Always pass `--build` (or run `docker compose build web` separately) after changing `VITE_SERVER_URL`.
 
 Smoke-check from the host:
 

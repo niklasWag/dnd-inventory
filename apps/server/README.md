@@ -198,10 +198,29 @@ cd snapshots/<partyId> && sha256sum -c <timestamp>.json.sha256
 
 `GET /sync/export?partyId=<id>` returns the same `exportEnvelope` shape the snapshot writer produces, gated by the same auth + display-name + party-membership checks as `/sync/state`. Used by the web client (R3.5) for user-driven JSON exports without round-tripping through Dexie.
 
+## R3.5 — additional surfaces
+
+### `GET /sync/parties`
+
+Returns the user's active parties (one entry per Party with `roles[]` collapsed for party-of-one). Same auth + display-name gate as the rest of `/sync/*`. Consumed by the Hub screen.
+
+### Discord account-link OAuth flow
+
+`apps/server/src/auth/discord-link.ts` owns a separate OAuth code-exchange path used by **Settings → Linked accounts → Connect Discord**. Three new routes:
+
+- `GET /auth/discord/login?link=1` — short-circuits to `/auth/discord/link/initiate`, which mints an ephemeral `PendingDiscordLink(token, userId, expires)` row.
+- `GET /auth/discord/link/start?token=...` — builds PKCE + HMAC-signed state, 302s to `discord.com`.
+- `GET /auth/discord/link/callback?code=...&state=...` — exchanges the code, fetches identity via the `identify` scope, attaches `discordId` + `avatarUrl` to the EXISTING session user (does NOT delegate to Auth.js — keeps the live session cookie intact). On unique-snowflake conflict 302s to `${WEB_ORIGIN}/settings?linkError=discord_already_linked`; happy path lands on `?linked=discord`.
+
+**Operator note:** the Discord developer portal must list TWO redirect URIs:
+
+1. `https://<your-domain>/auth/discord/callback` (primary OAuth flow)
+2. `https://<your-domain>/auth/discord/link/callback` (link flow)
+
 ## Forward references
 
 - **R3.2**: ~~`@fastify/cookie`, Auth.js wiring; new `User` columns~~ — **shipped**.
-- **R3.3**: ~~email OTP + backup-email link + first-login displayName gate~~ — **shipped**. Discord-link `?link=1` flow deferred to R3.5 (folds into the web-side OAuth redirect handling).
+- **R3.3**: ~~email OTP + backup-email link + first-login displayName gate~~ — **shipped**. Discord-link `?link=1` flow ~~deferred to R3.5~~ **shipped in R3.5**.
 - **R3.4**: ~~authoritative reducer + `/sync` route + nightly snapshots~~ — **shipped as R3.4.a + R3.4.b** (R3.4.a: `GET /sync/state` + `POST /sync/actions`; §8.1 guard layer in `@app/shared/guards`; reducer moved to `@app/rules` with `ReducerContext` injection. R3.4.b: nightly node-cron snapshots + retention sweeper + `GET /sync/export` + `snapshot:restore` CLI).
-- **R3.5**: web client points at the server; offline-first Dexie cache. Adds `shadcn/ui input-otp` for the verify screen + the Settings → Linked accounts UI.
+- **R3.5**: ~~web client points at the server; offline-first Dexie cache~~ — **web integration shipped** (login screens + Hub + sync queue + linked accounts + `GET /sync/parties` + Discord-link route-layer flow + `PendingDiscordLink` migration). Offline-first Dexie cache deferred to R5.
 - **R5**: WebSocket (Socket.IO) per-party broadcast.

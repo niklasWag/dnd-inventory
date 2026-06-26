@@ -1690,23 +1690,33 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 #### R3.5 — Web integration
 
-- [ ] Login screen: "Sign in with Discord" + "Sign in with email" buttons (§5.1 / OUTLINE §3.1)
-- [ ] Hub screen (§5.2): Create party / Join party / Create solo cards + existing parties list
-- [ ] Web sync client pushes reducer actions to server
-- [ ] **Web reducer runs optimistically against local Dexie state; server response (`200 applied[]` or `422 rejected`) either confirms or rolls back** — carryforward from R3.4.a (the server endpoints + the `applied[]`/`rejected` response shapes locked in R3.4.a; this slice is the client integration that consumes them). Rollback uses the `applied[]` indices to know which actions persisted.
-- [ ] Web reconciles server events back into the store
-- [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9)
+- [x] Login screen: "Sign in with Discord" + "Sign in with email" buttons (§5.1 / OUTLINE §3.1)
+- [x] Hub screen (§5.2): Create party / Join party / Create solo cards + existing parties list
+- [x] Web sync client pushes reducer actions to server
+- [x] **Web reducer runs optimistically against local Dexie state; server response (`200 applied[]` or `422 rejected`) either confirms or rolls back** — carryforward from R3.4.a (the server endpoints + the `applied[]`/`rejected` response shapes locked in R3.4.a; this slice is the client integration that consumes them). Rollback uses **snapshot-before-flush** (single pre-batch snapshot is restored wholesale on 422) rather than per-applied index — simpler and correct by construction for the multi-slice cascades (`delete-stash`, currency-transfer).
+- [x] Web reconciles server events back into the store (bootstrap pull-after-push canonicalises ids; subsequent mutations rely on the server's `applied[]` log entries)
+- [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9) — **deferred to R5 along with the WebSocket reconnect work**. R3.5 assumes online in server mode; Dexie remains a survival cache for the active party only.
 - [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
-- [ ] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
-- [ ] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
-- [ ] **Discord-link `?link=1` callback handling** — carryforward from R3.3 (the `events.signIn` callback detects the link case from a request-context flag, attaches `discordId` + `avatarUrl` to the existing session's user instead of letting the adapter create a new row; conflict on snowflake already linked elsewhere → `409 discord_already_linked`). Lands here because R3.5 is already revisiting the OAuth callback for the redirect-to-hub flow.
-- [ ] **OTP entry uses `shadcn/ui input-otp` with `maxLength={8}`** — carryforward from R3.3 (`pnpm dlx shadcn@latest add input-otp` in `apps/web`).
-- [ ] **Display-name prompt screen when `needsDisplayName: true`** — carryforward from R3.3 (the server-side `POST /auth/email/set-display-name` shipped; this is the UI that calls it, plus the gate that prevents the client from rendering the hub until the flag flips).
-- [ ] Settings: Logout button clears session cookie and returns to Login screen
+- [x] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
+- [x] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
+- [x] **Discord-link `?link=1` callback handling** — carryforward from R3.3. R3.5 ships a route-layer OAuth code-exchange path (NOT via Auth.js) so the link flow keeps the existing session cookie + attaches `discordId`/`avatarUrl` to the live User row. Conflict on snowflake already linked elsewhere → `302 ${WEB_ORIGIN}/settings?linkError=discord_already_linked`. The handshake uses a new `PendingDiscordLink(token, userId, expires)` table for the state nonce + an HMAC-signed OAuth `state` parameter.
+- [x] **OTP entry uses `shadcn/ui input-otp` with `maxLength={8}`** — carryforward from R3.3. Added via `pnpm dlx shadcn@latest add input-otp` in `apps/web`; one tiny edit to the generated `input-otp.tsx` (slot fallback for `noUncheckedIndexedAccess`).
+- [x] **Display-name prompt screen when `needsDisplayName: true`** — carryforward from R3.3.
+- [x] Settings: Logout button clears session cookie and returns to Login screen (also surfaced in the Layout header)
 
 #### R3.5 — Notes
 
-> -
+> - **Mode flag**: `VITE_SERVER_URL` build-time env. Unset/empty → local mode (no login UI, no logout, no account section; Hub stays as the front door); set → server mode. Captured once at module load by `apps/web/src/lib/serverMode.ts`. No runtime probe — rebuild to switch modes.
+> - **Local-mode invariant**: in local mode the web app behaves exactly like the pre-R3.5 MVP. `<ProtectedRoute />` is a no-op; `<PublicOnlyRoute />` redirects to `/hub`. Hub renders Create-solo / Create-party cards; Join card is hidden with a "Coming in R4" caption. Settings shows Backup / Character&Party / Encumbrance / Wipe only (no Account, Linked accounts, or Logout).
+> - **Storage model**: server-first. Boot sequence in server mode: `session.hydrate()` → if authenticated and `currentPartyId` is in Dexie meta, `pullState(partyId)` → write canonical AppState into the store + Dexie. Subsequent dispatches go optimistically through the reducer + Dexie save + sync queue.
+> - **Snapshot-before-flush rollback**: the sync queue caches the pre-batch `{appState, log}` before the first network call. On `422` it calls the store's new `restoreSnapshot` action (no Dexie save, no re-enqueue) and surfaces a toast carrying the server's `code` + `message`. Multi-slice actions roll back atomically by construction.
+> - **Bootstrap pull-after-push**: the first `create-character` action goes through the queue like any other. After the server returns `200`, the queue re-pulls `/sync/state` for the freshly-minted party so reducer-minted IDs are canonicalised before the Hub's submit handler navigates to `/character/:id`. This is the only mandatory pull-after-push in R3.5.
+> - **Discord-link uses a route-layer code-exchange**: `apps/server/src/auth/discord-link.ts` owns three new routes (`/auth/discord/link/initiate`, `/.../start`, `/.../callback`) that handle PKCE + state + token exchange directly. Auth.js's adapter is untouched. The flow consumes a `PendingDiscordLink` row that the `?link=1` short-circuit minted on `/auth/discord/login`. Operators must register `${SERVER_URL}/auth/discord/link/callback` as a second redirect URI in the Discord developer portal.
+> - **New shared API schemas**: `packages/shared/src/schemas/api.ts` co-locates the response Zods consumed by both the web `apiFetch` and the server route handlers (`sessionResponseSchema`, `partiesListResponseSchema`, `pullStateResponseSchema`, `pushActionsResponseSchema`, `verifyOtpResponseSchema`, etc.). Keeps the two sides from drifting.
+> - **New `GET /sync/parties`** endpoint. Same auth + display-name gate as the rest of `/sync/*`. Collapses `(dm, player)` rows for a party-of-one into a single response entry with both roles in `roles[]`. `lastActivityAt` is `max(TransactionLog.timestamp)`. Future-proofs R4.1.
+> - **MSW** for web test HTTP mocking. `apps/web/src/test/msw.ts` exports `setupServer(...defaultHandlers)`; `apps/web/src/test/setup.ts` wires `beforeAll/afterEach/afterAll` with `onUnhandledRequest: 'error'`. Mode-aware tests stub `VITE_SERVER_URL` per-test via `vi.stubEnv` + `vi.resetModules()`.
+> - **Cookie same-origin assumption**: the server-side session cookie is `SameSite=Lax`. In production this requires same-origin web↔server (reverse proxy per TECH_STACK §7.1). In dev, run web on the same origin as the server (Vite proxy or matching localhost ports). R3.5 does not touch cookie config.
+> - **`Welcome.tsx` and `CreateCharacter.tsx` are kept as legacy fixtures** for the existing screen tests (which mount them directly). They are no longer routed; the index redirects to `/hub` and the character-creation form moved into `apps/web/src/components/CharacterForm.tsx` used by the Hub dialogs.
 
 #### R3 — Notes
 
@@ -2175,6 +2185,7 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 
 - [ ] **`EmailAuthAttempt` cron sweep** — periodically delete rows with `lockedUntil < now() - 24h`. The `@@index([lockedUntil])` makes this cheap. Not blocking — the table is bounded by the `(email, ip)` UNIQUE and rows hold no PII beyond email + IP. Inline pointer: `apps/server/src/auth/email/rate-limit.ts:18`. (Source: R3.3 Notes.)
 - [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** — verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
+- [ ] **`PendingDiscordLink` cron sweep** — R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
 - [ ] **Snapshot-age operator metric** — "snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). (Source: R3.4.b Notes.)
 
 ### Multi-replica / scale

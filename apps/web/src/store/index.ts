@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { createDebouncedSaver } from '@/db/save';
+import { isServerMode } from '@/lib/serverMode';
 import { generateInviteCode, reduce, type LogEntrySlice, type ReducerContext } from './reducer';
 import type { Action, AppState, TransactionLogEntry } from './types';
 
@@ -23,6 +24,7 @@ export interface StoreState {
   log: TransactionLogEntry[];
   dispatch: (action: Action) => void;
   hydrate: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
+  restoreSnapshot: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
 }
 
 const saver = createDebouncedSaver();
@@ -206,8 +208,29 @@ export const useStore = create<StoreState>()(
 
       const snapshot = get();
       saver.save({ appState: snapshot.appState, log: snapshot.log });
+
+      // R3.5 — in server mode, optimistically push the action to the
+      // sync queue. The queue debounces + handles 422 rollback +
+      // bootstrap pull-after-push. The dynamic import avoids a static
+      // cycle (queue → store → queue) at module load.
+      if (isServerMode) {
+        void import('@/sync/queue').then(({ enqueue }) => {
+          enqueue(action);
+        });
+      }
     },
     hydrate: (snapshot) => {
+      set((draft) => {
+        draft.appState = snapshot.appState;
+        draft.log = snapshot.log;
+      });
+    },
+    /**
+     * R3.5 — restore state wholesale WITHOUT triggering a Dexie save
+     * or a queue enqueue. Used by `sync/queue.ts` for rollback on 422
+     * and for the bootstrap pull-after-push canonicalisation.
+     */
+    restoreSnapshot: (snapshot) => {
       set((draft) => {
         draft.appState = snapshot.appState;
         draft.log = snapshot.log;

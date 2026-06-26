@@ -59,6 +59,89 @@ function toReducerAction(action: SchemaAction): ReducerAction {
 }
 
 export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+  // ----- GET /sync/parties (R3.5) -----
+  //
+  // The Hub screen lists the user's parties. One row per Party, with
+  // the user's `roles` collapsed (a party-of-one user holds both
+  // 'dm' and 'player' membership rows; we surface them as one array).
+  // `lastActivityAt` is the max(TransactionLog.timestamp) so the Hub
+  // can sort by recency.
+  app.get('/sync/parties', async (req, reply) => {
+    const su = await app.getSession(req);
+    if (su === null) {
+      return reply.code(401).send({ error: 'unauthenticated' });
+    }
+    if (su.user.needsDisplayName) {
+      return reply.code(409).send({ error: 'display_name_required' });
+    }
+
+    // Active memberships only (`leftAt` null). Includes the related
+    // Party in one round-trip so we can build the response shape
+    // without an N+1.
+    const memberships = await prisma.partyMembership.findMany({
+      where: { userId: su.user.id, leftAt: null },
+      include: { party: true },
+    });
+
+    // Group by partyId so a user with both dm + player rows in a
+    // party-of-one collapses to a single response entry with both
+    // roles listed.
+    const byPartyId = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        roles: ('dm' | 'player')[];
+        memberCount: number;
+        isSoloShortcut: boolean;
+        lastActivityAt: string | null;
+      }
+    >();
+
+    // We need memberCount + lastActivityAt per party; fetch both in one
+    // additional aggregation per party. Cardinality is tiny in the
+    // R3.5 timeframe (single-digit parties per user) — a multi-query
+    // batch later is a micro-optimization, not a correctness concern.
+    for (const m of memberships) {
+      // Banker shows up at the column level but is denormalized on
+      // Party.bankerUserId, not as a membership row (the §2.2 guard
+      // rejects banker writes). If we somehow see a 'banker' row we
+      // skip it here — it would otherwise widen the response role
+      // enum and crash the shared Zod parse.
+      if (m.role !== 'dm' && m.role !== 'player') continue;
+
+      const existing = byPartyId.get(m.partyId);
+      if (existing !== undefined) {
+        if (!existing.roles.includes(m.role)) existing.roles.push(m.role);
+        continue;
+      }
+
+      const [memberRows, latest] = await Promise.all([
+        prisma.partyMembership.findMany({
+          where: { partyId: m.partyId, leftAt: null },
+          select: { userId: true },
+        }),
+        prisma.transactionLog.findFirst({
+          where: { partyId: m.partyId },
+          orderBy: { timestamp: 'desc' },
+          select: { timestamp: true },
+        }),
+      ]);
+      const uniqueUserIds = new Set(memberRows.map((r) => r.userId));
+
+      byPartyId.set(m.partyId, {
+        id: m.partyId,
+        name: m.party.name,
+        roles: [m.role],
+        memberCount: uniqueUserIds.size,
+        isSoloShortcut: m.party.isSoloShortcut,
+        lastActivityAt: latest?.timestamp.toISOString() ?? null,
+      });
+    }
+
+    return reply.code(200).send({ parties: Array.from(byPartyId.values()) });
+  });
+
   // ----- GET /sync/state?partyId=... -----
   app.get('/sync/state', async (req, reply) => {
     const su = await app.getSession(req);

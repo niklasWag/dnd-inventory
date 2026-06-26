@@ -1,5 +1,20 @@
 # Multi-stage Dockerfile for `apps/web` (R3.1).
 # Serves the production build via `vite preview` (nginx deferred to R7).
+#
+# R3.5 — build-time `VITE_SERVER_URL` selects between local-only and
+# server modes. **Vite inlines this value at build time**, so it MUST
+# be supplied as a `--build-arg` to `docker build` (or as the matching
+# key in docker-compose's `build.args` block). Leaving it unset / empty
+# produces the local-only bundle (no Login / Logout / Account chrome).
+#
+# Build manually:
+#   docker build \
+#     -f infra/docker/Dockerfile.web \
+#     --build-arg VITE_SERVER_URL=https://dnd.example.com \
+#     -t dnd-inv-web ../..
+#
+# Build via compose: set `VITE_SERVER_URL` in `infra/docker/.env`; the
+# compose file passes it through to this stage's `ARG`.
 
 # ---------- Stage 1: builder ----------
 FROM node:22-alpine AS build
@@ -18,6 +33,15 @@ RUN pnpm install --frozen-lockfile
 
 COPY packages/ packages/
 COPY apps/web/ apps/web/
+
+# R3.5 — mode flag. Unset → local-only build (today's MVP UX). Set to
+# a fully-qualified origin (e.g. https://dnd.example.com) → server-mode
+# bundle. Vite reads this from `process.env.VITE_SERVER_URL` at build
+# time and inlines it into the bundle (see
+# apps/web/src/lib/serverMode.ts). Default empty keeps `docker compose
+# up` a friendly local-only build for first-time setup.
+ARG VITE_SERVER_URL=""
+ENV VITE_SERVER_URL=$VITE_SERVER_URL
 
 RUN pnpm --filter @app/web build
 

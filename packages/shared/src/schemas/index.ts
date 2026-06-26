@@ -1,4 +1,5 @@
 export * from './action';
+export * from './api';
 export * from './appState';
 export * from './character';
 export * from './currencyHolding';

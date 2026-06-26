@@ -90,6 +90,16 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.web
+      args:
+        # R3.5 — `VITE_SERVER_URL` is read by Vite at BUILD time and
+        # inlined into the bundle. Empty / unset → local-only build
+        # (no Login / Logout / Account chrome). Set to the full
+        # origin under which the server is reachable from a browser
+        # (e.g. `https://dnd.example.com`) → server-mode bundle.
+        # IMPORTANT: changing this value requires a rebuild
+        # (`docker compose up -d --build web`); a bare restart will
+        # serve the same bundle.
+        VITE_SERVER_URL: ${VITE_SERVER_URL:-}
     restart: unless-stopped
     depends_on:
       server:

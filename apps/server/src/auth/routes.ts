@@ -32,6 +32,7 @@ import {
   isEmailAuthEnabled,
   sessionCookieName,
 } from './config.js';
+import { handleLoginLinkBranch, registerDiscordLinkRoutes } from './discord-link.js';
 import {
   constantTimeEqual,
   generateOtp,
@@ -53,6 +54,12 @@ export interface RegisterAuthRoutesOptions {
    * in integration tests.
    */
   mailService?: MailService;
+  /**
+   * R3.5 — injected fetch implementation for the Discord-link OAuth
+   * flow. Tests pass a stub so they don't hit Discord. Production
+   * leaves it `undefined`, defaulting to global `fetch`.
+   */
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -161,6 +168,17 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
   const { env, prisma, mailService } = opts;
   const authConfig = buildAuthConfig({ prisma, env });
 
+  // R3.5 — register the Discord-link sub-routes BEFORE the primary
+  // `/auth/discord/login` handler. They live in their own module
+  // (`./discord-link.ts`) because the OAuth code-exchange is owned at
+  // the route layer (does NOT delegate to Auth.js); keeping the logic
+  // separate prevents the two flows from interfering with each other.
+  registerDiscordLinkRoutes(app, {
+    env,
+    prisma,
+    ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+
   /**
    * Helper that takes a Fastify req/reply, rewrites the path for Auth.js's
    * router, calls `Auth(request, config)`, and copies the result back.
@@ -199,6 +217,11 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
     if (!isDiscordAuthEnabled(env)) {
       return reply.code(503).send({ error: 'discord_auth_disabled' });
     }
+
+    // R3.5 — `?link=1` is the link-flow entry. Hand off to the
+    // dedicated handler that owns the OAuth code-exchange at the
+    // route layer (rather than delegating to Auth.js).
+    if (await handleLoginLinkBranch(req, reply)) return reply;
 
     const protocol = req.protocol;
     const host = req.headers.host ?? 'localhost';
