@@ -1,0 +1,305 @@
+// Prisma 7 — schema mirrors packages/shared/src/schemas (Zod is source of truth).
+// Every model has a round-trip test asserting Prisma row → Zod schema parity.
+//
+// DB URL is sourced from prisma.config.ts at the project root (apps/server/).
+// Driver adapter (@prisma/adapter-pg + pg) wires the connection at runtime —
+// the datasource block here just declares the provider for migration codegen.
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -------- Enums (mirror Zod enums; hyphens → underscore in DB) --------
+
+enum CreatureSize {
+  tiny
+  small
+  medium
+  large
+  huge
+  gargantuan
+}
+
+enum EncumbranceRule {
+  off
+  phb
+  variant
+}
+
+enum ItemCategory {
+  weapon
+  armor
+  gear
+  tool
+  ammunition
+  consumable
+  magic
+  currency
+  container
+  other
+}
+
+enum ItemSource {
+  PHB
+  DMG
+  homebrew
+}
+
+// 'very-rare' in Zod → 'very_rare' in DB (Prisma enum values can't contain hyphens).
+// src/db/mappers.ts translates at the read/write boundary.
+enum Rarity {
+  common
+  uncommon
+  rare
+  very_rare
+  legendary
+  artifact
+}
+
+enum CurrencyDenomination {
+  cp
+  sp
+  ep
+  gp
+  pp
+}
+
+// 'long-rest' / 'short-rest' in Zod → 'long_rest' / 'short_rest' in DB.
+enum ChargesRechargeRule {
+  dawn
+  dusk
+  long_rest
+  short_rest
+  custom
+  none
+}
+
+// 'recovered-loot' in Zod → 'recovered_loot' in DB.
+enum StashScope {
+  character
+  party
+  recovered_loot
+}
+
+enum MembershipRole {
+  dm
+  player
+}
+
+// -------- Models --------
+
+model User {
+  id          String   @id
+  displayName String
+  createdAt   DateTime @default(now())
+
+  ownedParties    Party[]           @relation("PartyOwner")
+  characters      Character[]
+  memberships     PartyMembership[]
+  transactionLogs TransactionLog[]
+}
+
+model Party {
+  id                   String   @id
+  name                 String
+  ownerUserId          String
+  inviteCode           String   @unique
+  recoveredLootStashId String
+  // MVP writes null (no Banker until 2+ members per OUTLINE §3.14).
+  bankerUserId         String?
+  // MVP writes true (party-of-one). Deprecated post-R4 per OUTLINE §4 amendment 2026-06-24.
+  isSoloShortcut       Boolean
+  createdAt            DateTime @default(now())
+
+  owner       User              @relation("PartyOwner", fields: [ownerUserId], references: [id])
+  memberships PartyMembership[]
+  characters  Character[]
+  stashes     Stash[]
+  txLog       TransactionLog[]
+
+  @@index([ownerUserId])
+}
+
+model PartyMembership {
+  userId      String
+  partyId     String
+  role        MembershipRole
+  characterId String?
+  joinedAt    DateTime  @default(now())
+  // MVP writes null (no member departures until R5).
+  leftAt      DateTime?
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  party     Party      @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  character Character? @relation(fields: [characterId], references: [id])
+
+  // Composite primary key per OUTLINE §4: a user with both dm + player roles
+  // in the same party has two rows.
+  @@id([userId, partyId, role])
+  @@index([partyId])
+}
+
+model Character {
+  id                 String          @id
+  partyId            String
+  ownerUserId        String
+  name               String
+  species            String
+  size               CreatureSize
+  // 'class' is reserved in some Prisma contexts; keeping the column name
+  // identical to the Zod field for round-trip parity. Prisma quotes it.
+  class              String
+  // CHECK: level BETWEEN 1 AND 20 (added in migration tail).
+  level              Int
+  // Flatten of Zod abilityScores.STR — CHECK: 1-30 in migration tail.
+  strScore           Int
+  // CHECK: >= 0 in migration tail.
+  maxAttunement      Int
+  encumbranceRule    EncumbranceRule
+  enforceEncumbrance Boolean
+  // FK to Stash; made DEFERRABLE INITIALLY DEFERRED in migration tail to
+  // break the Character ↔ Stash cycle inside a single transaction.
+  inventoryStashId   String          @unique
+
+  party        Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  owner        User              @relation(fields: [ownerUserId], references: [id])
+  inventory    Stash             @relation("CharacterInventory", fields: [inventoryStashId], references: [id])
+  ownedStashes Stash[]           @relation("StashOwner")
+  memberships  PartyMembership[]
+
+  @@index([partyId])
+  @@index([ownerUserId])
+}
+
+model Stash {
+  id               String     @id
+  name             String
+  isCarried        Boolean
+  createdAt        DateTime   @default(now())
+  scope            StashScope
+  // Set iff scope=character.
+  ownerCharacterId String?
+  // Set iff scope=party or scope=recovered_loot.
+  partyId          String?
+
+  ownerCharacter Character?       @relation("StashOwner", fields: [ownerCharacterId], references: [id], onDelete: Cascade)
+  party          Party?           @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  inventoryFor   Character?       @relation("CharacterInventory")
+  items          ItemInstance[]
+  currency       CurrencyHolding?
+
+  // Stash 3-arm scope/owner/party/isCarried invariant enforced by CHECK
+  // constraint in migration tail (see prisma/migrations/<ts>_init/migration.sql).
+
+  @@index([ownerCharacterId])
+  @@index([partyId])
+}
+
+model ItemDefinition {
+  id                    String                @id
+  name                  String
+  source                ItemSource
+  category              ItemCategory
+  // CHECK: >= 0 in migration tail.
+  weight                Float?
+  flatWeight            Boolean?
+  // Flatten of Zod cost: { amount, currency }. Paired CHECK in migration tail:
+  // both set or both null.
+  costAmount            Float?
+  costCurrency          CurrencyDenomination?
+  description           String?
+  // Native Postgres text[]; GIN-indexable later without schema change.
+  tags                  String[]              @default([])
+  rarity                Rarity?
+  requiresAttunement    Boolean?
+  attunementPrereq      String?
+  // Flatten of Zod charges block. Paired CHECK in migration tail: chargesMax +
+  // chargesRechargeRule both set or both null.
+  chargesMax            Int?
+  chargesRechargeRule   ChargesRechargeRule?
+  chargesRechargeAmount String?
+  duplicatedFromId      String?
+  createdBy             String?
+  partyId               String?
+
+  instances ItemInstance[]
+
+  @@index([source])
+  @@index([category])
+}
+
+model ItemInstance {
+  id                  String  @id
+  definitionId        String
+  // Literal 'stash' in MVP per OUTLINE §4; kept as String for forward-compat
+  // (a future 'shop' value lands in R5+ shop work).
+  ownerType           String
+  // stashId (the only currently-legal owner type).
+  ownerId             String
+  containerInstanceId String?
+  // CHECK: > 0 in migration tail.
+  quantity            Int
+  equipped            Boolean
+  attuned             Boolean
+  identified          Boolean
+  hint                String?
+  // CHECK: >= 0 OR NULL in migration tail.
+  currentCharges      Int?
+  customName          String?
+  notes               String?
+  // Record<string, unknown> per Zod — open-shape per-instance metadata.
+  conditionOverrides  Json?
+
+  definition ItemDefinition @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  stash      Stash          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([definitionId])
+  @@index([ownerId])
+  @@index([ownerId, definitionId])
+}
+
+model CurrencyHolding {
+  id      String @id
+  stashId String @unique
+  // CHECK: cp >= 0 AND sp >= 0 AND ep >= 0 AND gp >= 0 AND pp >= 0 in migration tail.
+  cp      Int
+  sp      Int
+  ep      Int
+  gp      Int
+  pp      Int
+
+  stash Stash @relation(fields: [stashId], references: [id], onDelete: Cascade)
+}
+
+model TransactionLog {
+  id          String         @id
+  partyId     String
+  // Null in MVP per OUTLINE §4; R5+ Session entity will populate.
+  sessionId   String?
+  timestamp   DateTime
+  actorUserId String
+  actorRole   MembershipRole
+  // 25-variant discriminator; payload shape validated by Zod
+  // transactionLogEntrySchema at the read/write boundary.
+  type        String
+  payload     Json
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  actor User  @relation(fields: [actorUserId], references: [id])
+
+  @@index([partyId, timestamp])
+  @@index([type])
+}
+
+// Server-only — key/value table for canonical metadata (currently just
+// `seedVersion`; future keys per OUTLINE §4). Single-row pattern keyed by
+// `key` so new metadata kinds don't require migrations.
+model Metadata {
+  key   String @id
+  value Json
+}

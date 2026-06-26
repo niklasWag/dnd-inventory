@@ -342,6 +342,7 @@ No HP, spells, AC, proficiencies in v1.
 
 ### `Metadata` (server-side) / `AppState.seedVersion` (client-side)
 - Server: a small key/value `Metadata` table tracks `seedVersion` for the canonical PHB/DMG content.
+  - **R3.1 row shape**: `{ key: String @id, value: Json }`. The single canonical key is `'seedVersion'` with an integer value (matches `@app/seeds`'s `SEED_VERSION`). The key/value design lets future metadata kinds (e.g., last-snapshot-at, last-migration-at) land without table churn.
 - Client: `AppState.seedVersion` mirrors the value used at last seed; bumping triggers a re-seed (upserts PHB/DMG entries, preserves homebrew).
 
 ---

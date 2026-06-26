@@ -31,3 +31,8 @@ pnpm-debug.log*
 # private seed content (PHB/DMG — not for redistribution, per CLAUDE.md)
 packages/seeds/data/phb-*.json
 packages/seeds/data/dmg-*.json
+
+# Prisma generated client (R3.1+) — `prisma generate` output. Regenerated
+# from schema.prisma; never hand-edited. Migration files in
+# apps/server/prisma/migrations/ ARE committed.
+apps/server/prisma/generated/

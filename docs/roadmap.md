@@ -1441,17 +1441,68 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 #### R3.1 — Server scaffold + Postgres + Prisma + seed runner
 
-- [ ] `apps/server` Fastify + TypeScript scaffolded
-- [ ] Postgres + Prisma set up
-- [ ] Prisma schema mirrors `packages/shared/schemas` Zod definitions
-- [ ] Initial migration generated and applied
-- [ ] `Metadata` table tracking canonical `seedVersion` (§4)
-- [ ] PHB + DMG seed runner on server boot (upsert)
-- [ ] `infra/docker/` compose: web + server + postgres for local dev
+- [x] `apps/server` Fastify + TypeScript scaffolded — **R3.1** (Fastify 5 + `@fastify/cors` + `@fastify/sensible`; ESM-only; `tsx watch` dev loop; same workspace tooling as `apps/web` — TS 5.7 strict, ESLint 9 flat config, Vitest 4)
+- [x] Postgres + Prisma set up — **R3.1** (Postgres 18-alpine; Prisma 7.8 with the driver-adapter model — `@prisma/adapter-pg` + `pg`; mandatory `prisma.config.ts` at `apps/server/`; client generated to gitignored `prisma/generated/prisma/`)
+- [x] Prisma schema mirrors `packages/shared/schemas` Zod definitions — **R3.1** (10 models / 9 enums; hyphenated Zod enum values stored underscore-form in DB and translated by `src/db/mappers.ts`; `cost` / `charges` nested blocks flattened to sibling columns; `tags` as native Postgres `text[]`; `conditionOverrides` + `TransactionLog.payload` as `Json`; `Character.inventoryStashId` ↔ `Stash.ownerCharacterId` cycle resolved via `DEFERRABLE INITIALLY DEFERRED` FK appended to the init migration)
+- [x] Initial migration generated and applied — **R3.1** (`prisma migrate dev --name init`; hand-tail appended with `DEFERRABLE` FK + 10 CHECK constraints encoding Zod invariants — Character level 1-20 / strScore 1-30 / maxAttunement ≥0; ItemInstance quantity >0 / currentCharges ≥0-or-null; CurrencyHolding all 5 denoms ≥0; ItemDefinition weight ≥0; cost-pair + charges-pair "both null or both set"; Stash 3-arm scope/owner/party/isCarried discriminator)
+- [x] `Metadata` table tracking canonical `seedVersion` (§4) — **R3.1** (`{ key: String @id, value: Json }` shape; single canonical key `'seedVersion'` with integer value; OUTLINE §4 amended in lockstep)
+- [x] PHB + DMG seed runner on server boot (upsert) — **R3.1** (`src/db/seed-runner.ts` reads `@app/seeds` `loadPhbSeed()` + `loadDmgSeed()`, maps each row through `toPrismaItemDefinition`, upserts by id inside a single `$transaction`, stamps `Metadata.seedVersion`; idempotent — boots after the first one short-circuit at the version check; tampered rows revert when the version is bumped backwards)
+- [x] `infra/docker/` compose: web + server + postgres for local dev — **R3.1** (`postgres:18-alpine` healthcheck-gated; `Dockerfile.server` multi-stage Node 22 alpine running `prisma migrate deploy` then `node dist/index.js`; `Dockerfile.web` serves the SAPUI5 production build via `vite preview` per the slice 6 user decision — nginx deferred to R7; `postgres-init/00-databases.sh` provisions `dnd_inv_test` on first-init for the integration suite)
 
 #### R3.1 — Notes
 
-> -
+> **2026-06-26 — R3.1 (Server scaffold) complete.** Opens R3 (Backend skeleton). First non-`apps/web` workspace app — `apps/server` now sits alongside `apps/web` with shared `packages/{shared,rules,seeds}` deps. Smoke-tested loop: `cd apps/server && pnpm dev` → seed runner logs `upserted 486 rows; vnone → v3` → `curl localhost:3000/healthz` returns `{"status":"ok","db":"ok","seedVersion":3}` → second boot logs `skipped (already at v3)`. Compose stack builds and runs the same path inside containers.
+>
+> **Stack delta vs the plan.** Prisma 7.8 went GA recently; planned for v6 but used `npm view` mid-slice and confirmed Postgres 18 + Node 22 + ESM compat in the migration guide. Switched mid-slice. Prisma 7's breaking-changes set reshapes 4 files vs the v6 blueprint: (1) `prisma.config.ts` is mandatory (no more `url = env(...)` in `schema.prisma`); (2) generator `provider = "prisma-client"` + mandatory `output` field, client emits TypeScript source instead of pre-compiled `.js`; (3) driver-adapter mandatory — every PrismaClient instantiates as `new PrismaClient({ adapter: new PrismaPg({ connectionString }) })`; (4) `dotenv/config` is no longer auto-loaded — every entrypoint (`src/index.ts`, `prisma/seed.ts`, `prisma.config.ts`, `src/test/setup.ts`) imports it explicitly. Net: 1 extra config file, ~3 extra import lines, no behavioral surprises after the migration guide pass.
+>
+> **Schema port — translation boundary at `src/db/mappers.ts`.** Hyphenated Zod enum values (`'very-rare'` / `'long-rest'` / `'short-rest'` / `'recovered-loot'`) translate to underscore form in Postgres because Prisma enum values can't contain hyphens. The mapper provides bidirectional pure functions per enum (`toDbRarity` / `fromDbRarity`, etc.) and round-trip parity is asserted in `mappers.test.ts` — every Zod enum value passes through `fromDb(toDb(v)) === v`. `ItemDefinition.cost` (nested `{ amount, currency }`) and `.charges` (nested `{ max, rechargeRule, rechargeAmount? }`) flatten to sibling columns (`costAmount` / `costCurrency`; `chargesMax` / `chargesRechargeRule` / `chargesRechargeAmount`) so future server-side queries can filter without `Json` casts; paired CHECK constraints enforce "both null or both set." Tags ship as native Postgres `text[]` (GIN-indexable later without a schema change); `conditionOverrides` + `TransactionLog.payload` stay `Json` (open shape; Zod validates at the boundary).
+>
+> **Cycle resolution.** `Character.inventoryStashId` references a `Stash`, but `Stash.ownerCharacterId` references the `Character` — chicken-and-egg in the `create-character` flow (R3.4). Prisma's DSL can't express deferrable FKs, so the init migration's hand-tail drops + recreates the FK with `DEFERRABLE INITIALLY DEFERRED`. Inside R3.4's `create-character` transaction the FK check waits until COMMIT, letting the two rows insert in either order. Verified via `pg_constraint`: `condeferrable=t, condeferred=t`.
+>
+> **Reducer side stays on `apps/web` for now.** R3.1's seed runner doesn't replicate the client's `seed-catalog` reducer action — it just upserts. R3.4 lands the authoritative server-side reducer; R3.5 wires `apps/web` to push actions through HTTP rather than mutating Dexie directly. Until then the server is "DB + catalog" only.
+>
+> **Tests: +17 in `apps/server`** (workspace total 706 → 723). Breakdown:
+>   - **mappers (11)** — Rarity / ChargesRechargeRule / StashScope enum round-trip; cost+charges flatten/unflatten; hyphen→underscore mapping; minimal PHB row round-trip; maximal DMG row round-trip; `exactOptionalPropertyTypes` discipline (no `undefined` keys emitted).
+>   - **seed-runner (4)** — first-run inserts all rows + stamps version; second run is `{ skipped: true }`; version mismatch reverts tampered rows; sampled rows round-trip through `itemDefinitionSchema`.
+>   - **health route (2)** — `GET /healthz` returns 200 / `{status:'ok',db:'ok',seedVersion:3}`; returns 503 / `degraded` when Metadata is empty.
+>
+> **Row counts.** Seed runner upserts **486 ItemDefinition rows** on first boot — 181 PHB (mundane gear) + 305 DMG (magic items). Matches `pnpm --filter @app/seeds test` row-count assertions; sanity-checked via direct Prisma query against the test DB.
+>
+> **`@app/server` deps added (not yet in `apps/web`):** `fastify@5.8` + `@fastify/cors@11.2` + `@fastify/sensible@6.0` (server); `@prisma/client@7.8` + `@prisma/adapter-pg@7.8` + `pg@8.22` (DB); `prisma@7.8` (CLI, devDep); `tsx@4.22` (devDep, runtime); `dotenv@17.x` (env loading). All on latest stable; no peer-warning fallout.
+>
+> **`pnpm-workspace.yaml` change.** `allowBuilds` / `onlyBuiltDependencies` extended with `@prisma/client` / `@prisma/engines` / `prisma` — Prisma's postinstalls download the query-engine binary used by the adapter (esbuild is already allow-listed). The deny-by-default stance from the M0 commit is preserved.
+>
+> **Docker compose layout.** `postgres:18-alpine` healthcheck-gated; `Dockerfile.server` multi-stage (Node 22 alpine; `pnpm install --frozen-lockfile` in build stage, `prisma generate` + `pnpm build`, runtime stage copies `dist/` + `prisma/` + `node_modules/`); compose `server.command` runs `prisma migrate deploy` then `node dist/index.js`; `Dockerfile.web` serves the production build via `vite preview --host 0.0.0.0 --port 5173`. Postgres on host port `5433` to avoid clashing with any host Postgres on 5432. `postgres-init/00-databases.sh` provisions the secondary `dnd_inv_test` database on first-init of the named volume (Docker entrypoint contract — runs only when the volume is empty).
+>
+> **Prisma 7 AI safety gate.** `prisma migrate reset` refuses to run from an AI agent's session without an explicit user-consent env var (`PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="<verbatim user message>"`). Documented for future slices that need a destructive reset: pause, explain the action, get explicit consent, then run with the consent env var attached. Hit during the slice when applying the hand-tail to the dev DB; resolved by asking + getting explicit "Yes, reset dev DB" from the user.
+>
+> **Test DB strategy.** `src/test/setup.ts` redirects `DATABASE_URL` to `DATABASE_URL_TEST` (`…/dnd_inv_test`) so DB-touching tests never hit the dev DB. Vitest's `fileParallelism: false` keeps the shared test DB safe; for R3.4's expanded test surface we may switch to per-test-file schema isolation.
+>
+> **Decisions captured in code:**
+> 1. **Hand-write Prisma schema, mirror Zod shapes.** No codegen tool; we control indexes / CHECKs / FKs directly. Zod stays the source of truth; the mapper layer + `fromPrismaItemDefinition` Zod-parse-on-read makes drift fail loudly.
+> 2. **Normalized tables per AppState entity.** Each entity is its own table (User / Party / PartyMembership / Character / Stash / ItemDefinition / ItemInstance / CurrencyHolding / TransactionLog / Metadata). Enables R3.4 server-side reducer + R5 broadcast model. No JSONB-blob shortcut.
+> 3. **`TransactionLog` is a single table** with `type: String` discriminator + `payload: Json`. The 25 variant types stay in the Zod discriminated union; Zod validates the payload at the boundary. Avoids 25 sibling tables for what's already a 1:1 reducer-action-to-log-type contract.
+> 4. **Flatten `cost` / `charges` to sibling columns.** Both are small fixed-shape nested objects with non-trivial query value (filter by rarity AND attunement requirements, for example). Paired CHECK constraints encode "both null or both set."
+> 5. **Hyphenated enum mapping via `mappers.ts`.** Prisma enum values can't contain hyphens — `'very-rare'` becomes `'very_rare'` in the DB; the mapper is the single point of translation. Round-trip parity unit-tested per value.
+> 6. **`Character.inventoryStashId` FK is `DEFERRABLE INITIALLY DEFERRED`.** Resolves the Character↔Stash cycle inside R3.4's `create-character` transaction. Plain Prisma DSL can't express it; appended to the init migration's SQL by hand.
+> 7. **No auth + no HTTP-routed mutations in R3.1.** Only `GET /healthz`. R3.2 layers Auth.js; R3.4 lands the authoritative reducer. Keeps the slice small enough to verify end-to-end in one PR.
+> 8. **Postgres 18 + Prisma 7.** Latest stable on both. Both adopted mid-slice after the version audit found 17 / 6.x in the original plan were unnecessarily conservative. Prisma 7's breaking-changes set is small and well-documented; no downstream surprises.
+> 9. **Web container uses `vite preview`** (per the slice 6 user decision). Nginx deferred to R7. Keeps the slice from growing an nginx.conf maintenance surface for a use case (production deployment) that R3.1 doesn't have yet.
+>
+> **OUTLINE.md amendments (additive).** One:
+> - §4 `Metadata` row shape now explicitly documented as `{ key: String @id, value: Json }` with canonical key `'seedVersion'` (integer value).
+>
+> **`docs/MVP.md` unchanged.** MVP closed at M7; R3+ work is OUTLINE-scoped only.
+>
+> **Followups carried forward to R3.2:**
+> - `User` columns `discordId` / `email` / `emailVerified` / `avatarUrl` are NOT in the R3.1 schema. R3.2 will add them via `prisma migrate dev --name r32_user_auth_columns` along with the unique constraint on `email` and the DB-level check constraint `discordId IS NOT NULL OR emailVerified IS NOT NULL` per OUTLINE §4 / SECURITY §1.
+> - Auth.js requires the standard `Account` / `Session` / `VerificationToken` tables (Prisma adapter shape) — R3.2 will add them.
+> - `@fastify/cookie` + Auth.js handler routes are not yet wired. The Fastify scaffold + CORS in R3.1 are sufficient prep.
+>
+> **Followups carried forward to R3.4:**
+> - The authoritative reducer (server re-runs `apps/web/src/store/reducer.ts` semantics against incoming actions). The pure parts of the reducer should hoist to a shared package (`packages/rules`?) so client + server share the same code; identify which actions are pure-state-update vs which need server-side side-effects (e.g., `acquire` source `'hoard'` is purely state; `dm-transfer` may need server-side party-ownership validation).
+> - Per-user AppState sync endpoint (push + pull) — Fastify routes mounted under `/sync` consuming the dispatched action shape from the client.
+> - Nightly snapshot job — likely a small Fastify-Cron plugin or a separate worker process; persists snapshots to disk per `OUTLINE §11`.
 
 #### R3.2 — Discord OAuth + sessions + User model
 
