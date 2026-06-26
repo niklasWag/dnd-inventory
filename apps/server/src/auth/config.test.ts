@@ -296,9 +296,12 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     const adapter = makeAdapter(fakePrisma);
 
     // Auth.js calls createUser with the AdapterUser-shaped payload —
-    // `name`, `email`, `emailVerified`, `image`. No `displayName`.
+    // `name`, `email`, `emailVerified`, `image`. No `displayName`. The
+    // `id` field carries the Discord snowflake (Auth.js spreads
+    // `profile` into createUser; Discord's profile function returns
+    // `id: <snowflake>`).
     const result = await adapter.createUser!({
-      id: 'placeholder',
+      id: '948271362817273856',
       email: 'gandalf@example.com',
       emailVerified: null,
       name: 'GandalfTheGrey',
@@ -314,6 +317,12 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     // Adapter-side field names must NOT leak through.
     expect(writtenData['name']).toBeUndefined();
     expect(writtenData['image']).toBeUndefined();
+    // The provider snowflake MUST land as discordId so the
+    // User_auth_present_check CHECK constraint is satisfied at INSERT —
+    // events.signIn would otherwise be too late.
+    expect(writtenData['discordId']).toBe('948271362817273856');
+    // Discord signups skip the OTP display-name gate.
+    expect(writtenData['needsDisplayName']).toBe(false);
     // The returned AdapterUser uses Auth.js's field names again.
     expect(result.name).toBe('GandalfTheGrey');
     expect(result.image).toBe('https://cdn.discordapp.com/avatars/123/abc.png');

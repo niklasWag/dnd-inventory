@@ -128,8 +128,32 @@ export function makeAdapter(prisma: PrismaClient): Adapter {
   return {
     ...base,
     createUser: async (data) => {
-      const { id: _ignored, ...rest } = data as { id?: string } & Partial<AdapterUser>;
-      const created = await p.user.create({ data: adapterToDbUser(rest) });
+      // `data.id` arrives as the provider's external user id (Auth.js
+      // spreads the OAuth `profile` into createUser, and Discord's profile
+      // function returns `id: <snowflake>`). The base adapter destructures
+      // `id` away so Prisma can mint its own cuid. We DO need the snowflake
+      // — it satisfies the `User_auth_present_check` constraint
+      // (discordId IS NOT NULL OR emailVerified IS NOT NULL) at INSERT time,
+      // before Auth.js's separate linkAccount + events.signIn calls fire.
+      // The constraint would otherwise trip because Discord's `identify`
+      // scope returns no email and Auth.js calls createUser with
+      // `emailVerified: null` on the OAuth-new-user path
+      // (@auth/core/lib/actions/callback/handle-login.js:259).
+      //
+      // Currently this app's only OAuth provider is Discord. If another
+      // provider is added later, route on the provider id instead of
+      // blindly assigning the snowflake to discordId.
+      const { id: providerSnowflake, ...rest } = data as { id?: string } & Partial<AdapterUser>;
+      const writeData: Record<string, unknown> = adapterToDbUser(rest);
+      if (providerSnowflake !== undefined && writeData['discordId'] === undefined) {
+        writeData['discordId'] = providerSnowflake;
+        // Discord supplies a displayName via profile.global_name/username;
+        // events.signIn keeps it fresh on every login. We treat the Discord
+        // signup as not needing the OTP-flow display-name gate
+        // (apps/server/prisma/schema.prisma:124-125).
+        writeData['needsDisplayName'] = false;
+      }
+      const created = await p.user.create({ data: writeData });
       return dbToAdapterUser(created);
     },
     updateUser: async (data) => {
