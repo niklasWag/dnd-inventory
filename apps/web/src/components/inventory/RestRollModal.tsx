@@ -181,7 +181,8 @@ export function RestRollModal({
         <DialogHeader>
           <DialogTitle>{batchTriggerLabel(trigger)} — roll for recharge</DialogTitle>
           <DialogDescription>
-            Enter your dice roll for each item below. Items without a formula will fully recharge automatically.
+            Enter your dice roll for each item below. Items without a formula will fully recharge
+            automatically.
           </DialogDescription>
         </DialogHeader>
 
@@ -193,10 +194,7 @@ export function RestRollModal({
           ) : (
             formulaRows.map((row) => (
               <div key={row.itemInstanceId} className="space-y-1">
-                <Label
-                  htmlFor={`roll-${row.itemInstanceId}`}
-                  className="text-sm font-medium"
-                >
+                <Label htmlFor={`roll-${row.itemInstanceId}`} className="text-sm font-medium">
                   {row.displayName}{' '}
                   <span className="text-xs text-muted-foreground tabular-nums">
                     ({row.current}/{row.max}, roll {row.rechargeAmount}, max +{row.deficit})

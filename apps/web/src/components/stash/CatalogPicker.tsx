@@ -83,10 +83,7 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="catalog-category">Category</Label>
-          <Select
-            value={category}
-            onValueChange={(v) => setCategory(v as 'all' | ItemCategory)}
-          >
+          <Select value={category} onValueChange={(v) => setCategory(v as 'all' | ItemCategory)}>
             <SelectTrigger id="catalog-category">
               <SelectValue />
             </SelectTrigger>

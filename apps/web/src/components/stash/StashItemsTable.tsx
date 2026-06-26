@@ -54,10 +54,7 @@ interface StashItemsTableProps {
  * `CharacterSheet` mounts `AddItemModal` once per tab). The active
  * `itemInstanceId` is stored in component state.
  */
-export function StashItemsTable({
-  stashId,
-  characterId,
-}: StashItemsTableProps): ReactElement {
+export function StashItemsTable({ stashId, characterId }: StashItemsTableProps): ReactElement {
   const navigate = useNavigate();
   const items = useStore(
     useShallow((s) =>
@@ -103,9 +100,7 @@ export function StashItemsTable({
 
   if (items.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Nothing here yet. Add items from the catalog.
-      </p>
+      <p className="text-sm text-muted-foreground">Nothing here yet. Add items from the catalog.</p>
     );
   }
 
@@ -222,16 +217,12 @@ export function StashItemsTable({
             // themselves don't get the button (no container-in-container
             // by OUTLINE §3.6). Already-contained rows don't get it
             // either (the user can take out first, or use Move).
-            const canPack =
-              hasTopLevelContainer && !isContainer && !isContained;
+            const canPack = hasTopLevelContainer && !isContainer && !isContained;
             return (
               <tr key={row.id} className="border-b border-border/50 last:border-0">
                 <td className={`py-2 pr-2${depth === 1 ? ' pl-6' : ''}`}>
                   {depth === 1 ? (
-                    <span
-                      aria-hidden="true"
-                      className="mr-2 text-muted-foreground"
-                    >
+                    <span aria-hidden="true" className="mr-2 text-muted-foreground">
                       ↳
                     </span>
                   ) : null}

@@ -7,9 +7,9 @@ import { readFileSync } from 'node:fs';
 // app version into the bundle as a `__APP_VERSION__` global. The
 // Settings screen + the M7 export envelope both pull from this one
 // constant so they can never drift.
-const pkg = JSON.parse(
-  readFileSync(path.resolve(__dirname, './package.json'), 'utf8'),
-) as { version: string };
+const pkg = JSON.parse(readFileSync(path.resolve(__dirname, './package.json'), 'utf8')) as {
+  version: string;
+};
 
 // https://vitejs.dev/config/
 export default defineConfig({

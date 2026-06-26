@@ -76,10 +76,8 @@ function toDmgItemDefinition(entry: DmgSeedEntry): ItemDefinition {
   if (entry.cost !== undefined) def.cost = entry.cost;
   if (entry.description !== undefined) def.description = entry.description;
   if (entry.tags !== undefined) def.tags = entry.tags;
-  if (entry.requiresAttunement !== undefined)
-    def.requiresAttunement = entry.requiresAttunement;
-  if (entry.attunementPrereq !== undefined)
-    def.attunementPrereq = entry.attunementPrereq;
+  if (entry.requiresAttunement !== undefined) def.requiresAttunement = entry.requiresAttunement;
+  if (entry.attunementPrereq !== undefined) def.attunementPrereq = entry.attunementPrereq;
   if (entry.flatWeight !== undefined) def.flatWeight = entry.flatWeight;
   if (entry.charges !== undefined) def.charges = entry.charges;
   return def;

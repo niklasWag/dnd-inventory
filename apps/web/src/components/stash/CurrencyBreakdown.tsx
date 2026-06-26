@@ -34,15 +34,8 @@ export function CurrencyBreakdown({ stashId }: CurrencyBreakdownProps): ReactEle
 
   return (
     <span className="tabular-nums">
-      <span>{holding.cp}c</span>
-      {' '}
-      <span>{holding.sp}s</span>
-      {' '}
-      <span>{holding.ep}e</span>
-      {' '}
-      <span>{holding.gp}g</span>
-      {' '}
-      <span>{holding.pp}p</span>
+      <span>{holding.cp}c</span> <span>{holding.sp}s</span> <span>{holding.ep}e</span>{' '}
+      <span>{holding.gp}g</span> <span>{holding.pp}p</span>
     </span>
   );
 }

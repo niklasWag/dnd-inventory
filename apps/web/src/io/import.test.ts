@@ -131,8 +131,6 @@ describe('round-trip identity (MVP DoD)', () => {
     // Also: the snapshot's log entry ids and timestamps are preserved
     // — exporting must NOT mint new ids on the way out.
     expect(r.snapshot.log.map((e) => e.id)).toEqual(before.log.map((e) => e.id));
-    expect(r.snapshot.log.map((e) => e.timestamp)).toEqual(
-      before.log.map((e) => e.timestamp),
-    );
+    expect(r.snapshot.log.map((e) => e.timestamp)).toEqual(before.log.map((e) => e.timestamp));
   });
 });

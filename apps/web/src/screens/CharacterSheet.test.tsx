@@ -41,7 +41,14 @@ describe('CharacterSheet (M1)', () => {
   it('renders the character header after create-character', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'Thorin', species: 'Dwarf', size: 'medium', class: 'Fighter', level: 3, str: 16 },
+      payload: {
+        name: 'Thorin',
+        species: 'Dwarf',
+        size: 'medium',
+        class: 'Fighter',
+        level: 3,
+        str: 16,
+      },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
 
@@ -84,9 +91,7 @@ describe('CharacterSheet (M2)', () => {
 
   it('shows an acquired item row with the correct name and qty', () => {
     const { characterId: id, inventoryStashId } = bootstrap();
-    const torch = useStore
-      .getState()
-      .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
       payload: {
@@ -106,9 +111,7 @@ describe('CharacterSheet (M2)', () => {
 
   it('auto-stacks: two acquires of the same item yield one row, qty 2', () => {
     const { characterId: id, inventoryStashId } = bootstrap();
-    const torch = useStore
-      .getState()
-      .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
     dispatch({
       type: 'acquire',
@@ -140,9 +143,7 @@ describe('CharacterSheet (M2)', () => {
   it('clicking − dispatches consume and updates the DOM', async () => {
     const user = userEvent.setup();
     const { characterId: id, inventoryStashId } = bootstrap();
-    const torch = useStore
-      .getState()
-      .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
       payload: {
@@ -189,9 +190,7 @@ describe('CharacterSheet (M2)', () => {
   it('clicking a row name navigates to /item/:id (M2.5)', async () => {
     const user = userEvent.setup();
     const { characterId: id, inventoryStashId } = bootstrap();
-    const torch = useStore
-      .getState()
-      .appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
       payload: {
@@ -222,9 +221,7 @@ describe('CharacterSheet (M4)', () => {
     renderAt(`/character/${id}`);
 
     // The CurrencyRow renders a "Currency" header and a Convert button.
-    expect(
-      screen.getByRole('heading', { name: /^currency$/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^currency$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /convert/i })).toBeInTheDocument();
     expect(screen.getByText(/total: 0 gp/i)).toBeInTheDocument();
   });
@@ -286,7 +283,12 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     return { characterId: base.characterId };
   }
@@ -331,9 +333,9 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/dawn — roll for recharge/i)).toBeInTheDocument();
     // No dispatch yet — wand still at 6/7.
-    expect(
-      useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges,
-    ).toBe(6);
+    expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBe(
+      6,
+    );
 
     // Enter a roll value and apply.
     const input = screen.getByLabelText(/roll result for wand of magic missiles/i);
@@ -341,9 +343,9 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     await user.click(screen.getByRole('button', { name: /^apply$/i }));
 
     // Wand recharged by 1, toast displayed.
-    expect(
-      useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges,
-    ).toBe(7);
+    expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBe(
+      7,
+    );
     expect(await screen.findByText(/1 item recharged/i)).toBeInTheDocument();
   });
 
@@ -366,9 +368,16 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     const decanter = base.catalog.find((d) => d.id === 'dmg-2024:decanter-of-endless-water')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: base.inventoryStashId, definitionId: decanter.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: decanter.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const decanterId = useStore.getState().appState!.items.find((i) => i.definitionId === decanter.id)!.id;
+    const decanterId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === decanter.id)!.id;
     useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: decanterId, characterId: base.characterId },

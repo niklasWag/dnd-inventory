@@ -23,12 +23,7 @@ function setup(initialName: string): { stashId: string; rerender: () => void } {
   const stashId = useStore.getState().appState!.stashes.at(-1)!.id;
   const view = render(
     <>
-      <RenameStashModal
-        open
-        onOpenChange={() => {}}
-        stashId={stashId}
-        currentName={initialName}
-      />
+      <RenameStashModal open onOpenChange={() => {}} stashId={stashId} currentName={initialName} />
       <Toaster />
     </>,
   );

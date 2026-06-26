@@ -34,10 +34,7 @@ export const dmgSeedEntrySchema = z.object({
   slug: z
     .string()
     .min(1)
-    .regex(
-      /^[a-z0-9][a-z0-9-]*$/,
-      'slug must be lowercase kebab-case (a-z, 0-9, hyphens)',
-    ),
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'slug must be lowercase kebab-case (a-z, 0-9, hyphens)'),
   name: z.string().min(1),
   category: itemCategorySchema,
   rarity: raritySchema,

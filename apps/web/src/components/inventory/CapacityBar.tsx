@@ -76,12 +76,7 @@ export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | n
   if (data.rule === 'off') return null;
 
   const capacityLb = capacity.carryCapacity(data.str, data.size);
-  const state = capacity.encumbranceState(
-    data.currentWeight,
-    data.str,
-    data.size,
-    data.rule,
-  );
+  const state = capacity.encumbranceState(data.currentWeight, data.str, data.size, data.rule);
   const threshold = capacity.heavyThreshold(data.str, data.size, data.rule);
 
   const pct =
@@ -92,8 +87,7 @@ export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | n
   const stateLabel: Record<typeof state, string> = {
     unencumbered: '',
     encumbered: ' (encumbered)',
-    'heavily-encumbered':
-      data.rule === 'phb' ? ' (over capacity)' : ' (heavily encumbered)',
+    'heavily-encumbered': data.rule === 'phb' ? ' (over capacity)' : ' (heavily encumbered)',
   };
   const textClass: Record<typeof state, string> = {
     unencumbered: 'text-muted-foreground',
@@ -121,7 +115,8 @@ export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | n
         <span className="font-semibold">
           Encumbrance{' '}
           <span className="font-normal text-xs text-muted-foreground">
-            ({sizeBadge} · {ruleBadge}{enforceBadge})
+            ({sizeBadge} · {ruleBadge}
+            {enforceBadge})
           </span>
         </span>
         <span className={textClass[state]}>

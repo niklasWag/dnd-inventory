@@ -131,16 +131,8 @@ export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
 
       <p className="text-xs text-muted-foreground tabular-nums">Total: {totalGp} gp</p>
 
-      <ConvertCurrencyModal
-        stashId={stashId}
-        open={convertOpen}
-        onOpenChange={setConvertOpen}
-      />
-      <CurrencyTransferModal
-        stashId={stashId}
-        open={transferOpen}
-        onOpenChange={setTransferOpen}
-      />
+      <ConvertCurrencyModal stashId={stashId} open={convertOpen} onOpenChange={setConvertOpen} />
+      <CurrencyTransferModal stashId={stashId} open={transferOpen} onOpenChange={setTransferOpen} />
     </section>
   );
 }

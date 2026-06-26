@@ -84,7 +84,9 @@ describe('EquippedSlotsPanel (R1.2)', () => {
   it('counts attuned items against the cap (X/max)', () => {
     const { characterId, rowIds } = bootstrapWithMagicItems(3);
     for (const id of rowIds) {
-      useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId: id } });
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: id } });
     }
     render(<EquippedSlotsPanel characterId={characterId} />);
     expect(screen.getByLabelText('Attunement slots').textContent).toMatch(/3\s*\/\s*3/);
@@ -104,9 +106,16 @@ describe('EquippedSlotsPanel (R1.2)', () => {
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const cloakId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    const cloakId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === cloak.id)!.id;
     useStore.getState().dispatch({
       type: 'equip',
       payload: { characterId, itemInstanceId: cloakId },
@@ -125,9 +134,16 @@ describe('EquippedSlotsPanel (R1.2)', () => {
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const cloakId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    const cloakId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === cloak.id)!.id;
     useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: cloakId },

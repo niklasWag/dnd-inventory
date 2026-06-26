@@ -16,10 +16,9 @@ beforeEach(async () => {
 });
 
 function renderBrowser(): void {
-  const router = createMemoryRouter(
-    [{ path: '/catalog', Component: CatalogBrowser }],
-    { initialEntries: ['/catalog'] },
-  );
+  const router = createMemoryRouter([{ path: '/catalog', Component: CatalogBrowser }], {
+    initialEntries: ['/catalog'],
+  });
   render(
     <>
       <RouterProvider router={router} />
@@ -198,4 +197,3 @@ describe('CatalogBrowser', () => {
     ).not.toBeInTheDocument();
   });
 });
-

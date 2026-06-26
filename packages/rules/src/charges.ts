@@ -105,10 +105,7 @@ export function rechargeTo(spec: ChargeSpec): number {
  * Trigger type is the narrower `BatchRechargeTrigger`; the `'manual'`
  * value never reaches this function (batch dispatches don't pass it).
  */
-export function eligibleForBatchRecharge(
-  spec: ChargeSpec,
-  trigger: BatchRechargeTrigger,
-): boolean {
+export function eligibleForBatchRecharge(spec: ChargeSpec, trigger: BatchRechargeTrigger): boolean {
   return spec.rechargeRule === trigger;
 }
 

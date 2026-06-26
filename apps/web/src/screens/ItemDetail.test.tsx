@@ -97,9 +97,9 @@ describe('ItemDetail (M2.5)', () => {
     await user.click(screen.getByRole('button', { name: /^save$/i }));
 
     // Reducer applied the patch.
-    expect(
-      useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.notes,
-    ).toBe('made of moonsilver');
+    expect(useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.notes).toBe(
+      'made of moonsilver',
+    );
 
     // Force the debounced persist to land in Dexie, then simulate a reload.
     await flushPendingPersist();
@@ -129,11 +129,9 @@ describe('ItemDetail (M2.5)', () => {
     renderAt(`/item/${itemInstanceId}`);
 
     // Stub dispatch to throw. Wrap in vi.spyOn so we can restore.
-    const dispatchSpy = vi
-      .spyOn(useStore.getState(), 'dispatch')
-      .mockImplementation(() => {
-        throw new Error('mock reducer failure');
-      });
+    const dispatchSpy = vi.spyOn(useStore.getState(), 'dispatch').mockImplementation(() => {
+      throw new Error('mock reducer failure');
+    });
 
     await user.type(screen.getByLabelText(/notes/i), 'x');
     await user.click(screen.getByRole('button', { name: /^save$/i }));
@@ -176,7 +174,12 @@ describe('ItemDetail — R2.1 rarity + attunement display', () => {
     if (def === undefined) throw new Error(`bootstrapWithDmgRow: ${definitionId} not in catalog`);
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: def.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: def.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     const itemInstanceId = useStore
       .getState()
@@ -229,7 +232,8 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
   } {
     const base = bootstrap();
     const def = base.catalog.find((d) => d.id === definitionId);
-    if (def === undefined) throw new Error(`bootstrapWithChargedRow: ${definitionId} not in catalog`);
+    if (def === undefined)
+      throw new Error(`bootstrapWithChargedRow: ${definitionId} not in catalog`);
     useStore.getState().dispatch({
       type: 'acquire',
       payload: { stashId: base.inventoryStashId, definitionId, quantity: 1, source: 'catalog-add' },
@@ -407,9 +411,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
   it('identified row renders the real name + rarity chip + attunement pill', () => {
     const { itemInstanceId } = bootstrapWithCloak();
     renderAt(`/item/${itemInstanceId}`);
-    expect(
-      screen.getByRole('heading', { name: 'Cloak of Protection' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Cloak of Protection' })).toBeInTheDocument();
     expect(screen.getByLabelText(/^Rarity:/)).toBeInTheDocument();
     expect(screen.getByLabelText('Requires attunement')).toBeInTheDocument();
     expect(screen.queryByLabelText('Unidentified')).not.toBeInTheDocument();
@@ -422,13 +424,9 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
       payload: { itemInstanceId, identified: false, hint: 'shimmers faintly' },
     });
     renderAt(`/item/${itemInstanceId}`);
-    expect(
-      screen.getByRole('heading', { name: 'Unknown Magic Item' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Unknown Magic Item' })).toBeInTheDocument();
     expect(screen.getByLabelText('Unidentified')).toBeInTheDocument();
-    expect(screen.getByLabelText('Unidentified hint')).toHaveTextContent(
-      'shimmers faintly',
-    );
+    expect(screen.getByLabelText('Unidentified hint')).toHaveTextContent('shimmers faintly');
     expect(screen.queryByLabelText(/^Rarity:/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Requires attunement')).not.toBeInTheDocument();
   });
@@ -507,7 +505,12 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: base.inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     useStore.getState().dispatch({

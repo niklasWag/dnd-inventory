@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { buildStashLabels, shortStashId } from './stashLabels';
 import type { Character, Stash, TransactionLogEntry } from '@app/shared';
 
-function characterStash(id: string, name: string, ownerCharacterId: string, isCarried = false): Stash {
+function characterStash(
+  id: string,
+  name: string,
+  ownerCharacterId: string,
+  isCarried = false,
+): Stash {
   return {
     id,
     scope: 'character',
@@ -57,7 +62,11 @@ function makeChar(id: string, name: string): Character {
   };
 }
 
-function deleteEntry(stashId: string, name: string, ownerCharacterId?: string): TransactionLogEntry {
+function deleteEntry(
+  stashId: string,
+  name: string,
+  ownerCharacterId?: string,
+): TransactionLogEntry {
   return {
     id: `log-${stashId}`,
     partyId: 'p',
@@ -89,7 +98,10 @@ describe('lib.stashLabels.buildStashLabels (M5)', () => {
   });
 
   it('uses bare names for party-scope and recovered-loot stashes', () => {
-    const stashes = [partyStash('p1', 'Party Stash', 'p'), recoveredLootStash('l1', 'Recovered Loot', 'p')];
+    const stashes = [
+      partyStash('p1', 'Party Stash', 'p'),
+      recoveredLootStash('l1', 'Recovered Loot', 'p'),
+    ];
     const labels = buildStashLabels(stashes, [], []);
     expect(labels.get('p1')).toBe('Party Stash');
     expect(labels.get('l1')).toBe('Recovered Loot');
@@ -109,7 +121,7 @@ describe('lib.stashLabels.buildStashLabels (M5)', () => {
     expect(labels.get('gone-2')).toBe('Mystery Stash (deleted)');
   });
 
-  it('live stashes win over delete-log entries with the same id (shouldn\'t happen but defends the order)', () => {
+  it("live stashes win over delete-log entries with the same id (shouldn't happen but defends the order)", () => {
     const stashes = [partyStash('s1', 'Live Name', 'p')];
     const log = [deleteEntry('s1', 'Old Name')];
     const labels = buildStashLabels(stashes, [], log);

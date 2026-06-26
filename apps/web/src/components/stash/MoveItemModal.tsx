@@ -101,9 +101,7 @@ export function MoveItemModal({
   // user *before* they confirm so they're not surprised when the row
   // comes back un-equipped after a round trip.
   const willLoseFlags =
-    source !== null &&
-    source.isInInventory === true &&
-    (source.equipped || source.attuned);
+    source !== null && source.isInInventory === true && (source.equipped || source.attuned);
   const lostFlagNames: string[] = [];
   if (source?.equipped) lostFlagNames.push('equipped');
   if (source?.attuned) lostFlagNames.push('attuned');
@@ -257,7 +255,8 @@ export function MoveItemModal({
             >
               <span className="font-medium">Heads up:</span> this item is{' '}
               {lostFlagNames.join(' and ')}. Moving it out of Inventory will clear{' '}
-              {lostFlagNames.length === 1 ? 'that' : 'those'} state{lostFlagNames.length === 1 ? '' : 's'}.
+              {lostFlagNames.length === 1 ? 'that' : 'those'} state
+              {lostFlagNames.length === 1 ? '' : 's'}.
             </p>
           ) : null}
 

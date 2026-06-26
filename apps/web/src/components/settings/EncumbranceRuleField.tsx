@@ -51,8 +51,7 @@ export function EncumbranceRuleField({
   // to false so the checkbox state stays coherent with what'll be
   // dispatched.
   const effectiveEnforce = draftRule === 'off' ? false : draftEnforce;
-  const isNoOp =
-    draftRule === currentRule && effectiveEnforce === currentEnforce;
+  const isNoOp = draftRule === currentRule && effectiveEnforce === currentEnforce;
   const selectId = 'encumbrance-rule';
   const checkboxId = 'encumbrance-enforce';
 
@@ -115,8 +114,8 @@ export function EncumbranceRuleField({
               Enforce encumbrance
             </Label>
             <p className="text-xs text-muted-foreground">
-              When on, the reducer rejects acquires and transfers that
-              would push your Inventory weight over the rule's limit.
+              When on, the reducer rejects acquires and transfers that would push your Inventory
+              weight over the rule's limit.
             </p>
           </div>
         </div>

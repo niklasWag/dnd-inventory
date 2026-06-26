@@ -117,8 +117,8 @@ export function Settings(): ReactElement {
         <div>
           <h2 className="font-semibold">Backup</h2>
           <p className="text-sm text-muted-foreground">
-            Export your local data to a JSON file, or restore from a previous export.
-            Import will replace all current data — you'll get a confirm dialog first.
+            Export your local data to a JSON file, or restore from a previous export. Import will
+            replace all current data — you'll get a confirm dialog first.
           </p>
         </div>
         <div className="flex gap-2">

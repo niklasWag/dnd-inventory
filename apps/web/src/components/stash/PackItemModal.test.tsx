@@ -44,9 +44,7 @@ function setupTorchAndBackpack(): Fixture {
   const backpackId = useStore
     .getState()
     .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
-  const torchId = useStore
-    .getState()
-    .appState!.items.find((i) => i.definitionId === torch.id)!.id;
+  const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
   return { inventoryStashId, backpackId, torchId };
 }
 

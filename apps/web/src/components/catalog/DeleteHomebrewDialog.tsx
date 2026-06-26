@@ -66,8 +66,8 @@ export function DeleteHomebrewDialog({
                   {referenceStashCount === 1 ? '' : 'es'} hold
                   {referenceStashCount === 1 ? 's' : ''} this item.
                 </strong>{' '}
-                Remove every instance from those stashes before deleting the
-                definition. (We refuse to silently delete items in use.)
+                Remove every instance from those stashes before deleting the definition. (We refuse
+                to silently delete items in use.)
               </>
             ) : (
               'This removes the homebrew row from the catalog. PHB rows are unaffected.'
@@ -83,11 +83,7 @@ export function DeleteHomebrewDialog({
 
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={confirm}
-            disabled={inUse}
-            aria-disabled={inUse}
-          >
+          <AlertDialogAction onClick={confirm} disabled={inUse} aria-disabled={inUse}>
             Delete
           </AlertDialogAction>
         </AlertDialogFooter>

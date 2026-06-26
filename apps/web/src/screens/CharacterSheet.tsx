@@ -21,11 +21,7 @@ import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
 import { StorageStashList } from '@/components/stash/StorageStashList';
 import { useStore } from '@/store';
-import {
-  BATCH_TRIGGER_ORDER,
-  batchTriggerLabel,
-  type BatchRechargeTrigger,
-} from '@/lib/charges';
+import { BATCH_TRIGGER_ORDER, batchTriggerLabel, type BatchRechargeTrigger } from '@/lib/charges';
 
 type Tab = 'inventory' | 'storage' | 'party' | 'recovered-loot';
 
@@ -125,13 +121,9 @@ export function CharacterSheet(): ReactElement {
           <div className="space-y-4">
             <CurrencyRow stashId={targetStash} />
             {tab === 'inventory' ? <CapacityBar characterId={character.id} /> : null}
-            {tab === 'inventory' ? (
-              <EquippedSlotsPanel characterId={character.id} />
-            ) : null}
+            {tab === 'inventory' ? <EquippedSlotsPanel characterId={character.id} /> : null}
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-muted-foreground">
-                {labelForTab(tab)}
-              </h2>
+              <h2 className="text-sm font-semibold text-muted-foreground">{labelForTab(tab)}</h2>
               <Button
                 type="button"
                 size="sm"

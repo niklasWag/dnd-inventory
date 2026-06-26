@@ -56,9 +56,7 @@ export function DeleteStashDialog({
   }
 
   const itemsCopy =
-    itemCount === 0
-      ? 'no items'
-      : `${itemCount.toString()} ${itemCount === 1 ? 'item' : 'items'}`;
+    itemCount === 0 ? 'no items' : `${itemCount.toString()} ${itemCount === 1 ? 'item' : 'items'}`;
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -66,8 +64,8 @@ export function DeleteStashDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete {stashName}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will move {itemsCopy} to Recovered Loot, then remove the stash.
-            Currency (currently 0 gp; M4 will surface real totals) rolls in too.
+            This will move {itemsCopy} to Recovered Loot, then remove the stash. Currency (currently
+            0 gp; M4 will surface real totals) rolls in too.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
