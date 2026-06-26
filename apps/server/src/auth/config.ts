@@ -86,6 +86,27 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
     // and serve on localhost in dev — both modes derive the URL from the
     // incoming Host header. Setting `trustHost: true` is the explicit
     // "yes, we trust the proxy's Host" knob.
+    // Surface Auth.js's internal exceptions to the server log. Without
+    // this, an error during the OAuth callback (createUser, linkAccount,
+    // adapter shapes) gets wrapped as a generic `Configuration` error and
+    // the user lands on `/auth/error?error=Configuration` with no clue
+    // what went wrong server-side. The `logger` is invoked for every
+    // internal error / warning / debug message.
+    logger: {
+      error(error) {
+        // Print both the message AND the cause chain — Auth.js often
+        // wraps the root error as `.cause`.
+        // eslint-disable-next-line no-console
+        console.error('[auth] error:', error);
+      },
+      warn(code) {
+        // eslint-disable-next-line no-console
+        console.warn('[auth] warn:', code);
+      },
+      debug() {
+        // No-op in prod; uncomment for deep debugging.
+      },
+    },
     trustHost: true,
     providers: discordEnabled
       ? [
@@ -121,6 +142,26 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
       sessionToken: sessionCookieConfig(env),
     },
     callbacks: {
+      /**
+       * R3 — Auth.js's default `redirect` callback returns `baseUrl` (the
+       * server origin) when a `callbackUrl` parameter points at a
+       * different origin. In split-origin deployments (web on :5173,
+       * server on :3000) that strands the user on the server's root
+       * after a successful OAuth flow. We accept the configured
+       * `WEB_ORIGIN` as a trusted target so the post-callback redirect
+       * lands on the SPA. Same-origin URLs continue to pass through.
+       */
+      redirect: ({ url, baseUrl }) => {
+        if (url.startsWith('/')) return `${baseUrl}${url}`;
+        try {
+          const target = new URL(url);
+          if (target.origin === baseUrl) return url;
+          if (target.origin === env.WEB_ORIGIN) return url;
+        } catch {
+          // Fall through to baseUrl below.
+        }
+        return baseUrl;
+      },
       /**
        * R3 — shape `/auth/session` to match the web's `sessionUserSchema`
        * (packages/shared/src/schemas/api.ts). Auth.js's default session
