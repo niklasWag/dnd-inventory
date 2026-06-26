@@ -94,6 +94,15 @@ export function enqueue(action: Action): void {
   if (deps === null) {
     throw new Error('queue.enqueue: configureQueue was never called');
   }
+  // `seed-catalog` is a local-only optimistic seed (`store/seed.ts`):
+  // it populates the client's `appState.catalog` mirror so the UI has
+  // items to show immediately after `create-character`. The server
+  // already has the canonical PHB+DMG catalog (seed-runner writes it
+  // at boot; `/sync/state` returns it). Pushing seed-catalog here would
+  // (a) duplicate the data and (b) violate the bootstrap batch invariant
+  // in `apps/server/src/sync/routes.ts:244` which requires every action
+  // in a bootstrap batch to be `create-character`.
+  if (action.type === 'seed-catalog') return;
   if (queue.length === 0) {
     preBatchSnapshot = deps.getSnapshot();
   }

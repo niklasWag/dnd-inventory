@@ -1,19 +1,21 @@
 import { loadDmgSeed, loadPhbSeed, SEED_VERSION } from '@app/seeds';
 
-import { isServerMode } from '@/lib/serverMode';
 import { useStore } from '@/store';
 
 /**
  * Bootstrap-time catalog seed (MVP §9 + R2.1).
  *
  * Strategy:
- *   - **Server mode**: no-op. The server runs the canonical PHB+DMG seed
- *     runner at boot (`apps/server/src/db/seed-runner.ts`) and ships the
- *     catalog inside every `GET /sync/state` response. The web client
- *     pulls the catalog from there — dispatching `seed-catalog` here
- *     would (a) duplicate data, and (b) ride alongside `create-character`
- *     in the bootstrap batch, which the server's `/sync/actions` only
- *     accepts as a pure-`create-character` batch.
+ *   - The `seed-catalog` action is LOCAL-ONLY: it populates the client's
+ *     in-memory `appState.catalog` so the UI has items to show
+ *     immediately after `create-character` (before the bootstrap
+ *     `/sync/state` round-trip completes). In server mode the sync
+ *     queue filters `seed-catalog` out before pushing, so the server's
+ *     bootstrap batch stays pure-`create-character` per
+ *     `apps/server/src/sync/routes.ts:244`. The canonical catalog still
+ *     comes from the server (PHB+DMG rows are written by
+ *     `apps/server/src/db/seed-runner.ts` at boot and returned by every
+ *     `/sync/state` response).
  *   - If there's no AppState yet (fresh user, pre-character) → no-op.
  *     `createCharacter` lands `seedVersion: 0`, and the next call to this
  *     function (right after the create-character dispatch) does the
@@ -30,7 +32,6 @@ import { useStore } from '@/store';
  * synchronously here since Vite inlines the JSON at build time.
  */
 export function seedCatalogIfNeeded(): void {
-  if (isServerMode) return;
   const { appState, dispatch } = useStore.getState();
   if (appState === null) return;
   if (appState.seedVersion >= SEED_VERSION) return;
