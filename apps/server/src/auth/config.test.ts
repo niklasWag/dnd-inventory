@@ -276,4 +276,46 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     // Non-sensitive metadata may still pass through (token_type, scope).
     expect(dataArg['type']).toBe('oauth');
   });
+
+  it('createUser maps AdapterUser name → schema displayName (B7 regression)', async () => {
+    // The @auth/prisma-adapter passes Auth.js's `AdapterUser` shape directly
+    // to prisma.user.create — but our schema column is `displayName`, not
+    // `name`. Without the field mapping in makeAdapter, this throws
+    // "Argument `displayName` missing" on every Discord-first signup.
+    const createMock = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: 'minted-id',
+      displayName: (data['displayName'] as string | undefined) ?? '',
+      email: (data['email'] as string | null | undefined) ?? null,
+      emailVerified: (data['emailVerified'] as Date | null | undefined) ?? null,
+      avatarUrl: (data['avatarUrl'] as string | null | undefined) ?? null,
+    }));
+    const fakePrisma = {
+      account: { create: vi.fn() },
+      user: { create: createMock },
+    } as unknown as PrismaClient;
+    const adapter = makeAdapter(fakePrisma);
+
+    // Auth.js calls createUser with the AdapterUser-shaped payload —
+    // `name`, `email`, `emailVerified`, `image`. No `displayName`.
+    const result = await adapter.createUser!({
+      id: 'placeholder',
+      email: 'gandalf@example.com',
+      emailVerified: null,
+      name: 'GandalfTheGrey',
+      image: 'https://cdn.discordapp.com/avatars/123/abc.png',
+    });
+
+    expect(createMock.mock.calls).toHaveLength(1);
+    const writtenData = createMock.mock.calls[0]![0]!.data;
+    // Schema column names are what hit Prisma.
+    expect(writtenData['displayName']).toBe('GandalfTheGrey');
+    expect(writtenData['avatarUrl']).toBe('https://cdn.discordapp.com/avatars/123/abc.png');
+    expect(writtenData['email']).toBe('gandalf@example.com');
+    // Adapter-side field names must NOT leak through.
+    expect(writtenData['name']).toBeUndefined();
+    expect(writtenData['image']).toBeUndefined();
+    // The returned AdapterUser uses Auth.js's field names again.
+    expect(result.name).toBe('GandalfTheGrey');
+    expect(result.image).toBe('https://cdn.discordapp.com/avatars/123/abc.png');
+  });
 });

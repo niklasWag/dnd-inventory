@@ -252,6 +252,24 @@ describe('POST /auth/email/verify-otp (R3.3)', () => {
         where: { userId: body.user.id },
       });
       expect(sessions).toHaveLength(1);
+
+      // B7 regression: GET /auth/session must return the User row through
+      // the adapter-overrides `getSessionAndUser` shim, which translates
+      // schema columns (`displayName`, `avatarUrl`) onto Auth.js's
+      // `AdapterUser` (`name`, `image`). Our `callbacks.session` then
+      // projects them back as `displayName` etc. so the web's schema
+      // validates. Round-tripping this here locks in that the override
+      // doesn't drop the User on the read side.
+      const sessionRes = await app.inject({
+        method: 'GET',
+        url: '/auth/session',
+        headers: { cookie: cookieHeader },
+      });
+      expect(sessionRes.statusCode).toBe(200);
+      const sessionBody = sessionRes.json<{ user?: { id: string; displayName: string; needsDisplayName: boolean } }>();
+      expect(sessionBody.user?.id).toBe(body.user.id);
+      expect(sessionBody.user?.displayName).toBe('');
+      expect(sessionBody.user?.needsDisplayName).toBe(true);
     } finally {
       await app.close();
     }
