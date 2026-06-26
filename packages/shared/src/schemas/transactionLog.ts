@@ -10,11 +10,13 @@ import { encumbranceRuleSchema } from './character';
  * Adding a new mutation in a later milestone means BOTH adding a reducer
  * case AND extending this union with the new variant.
  *
- * `actorRole` is derived at write time: in MVP everything is `"player"`
- * for player-driven actions and `"dm"` for DM-only ones; in MVP there is
- * only one user wearing both hats, so reducer cases that are conceptually
- * DM-driven log as `"dm"` for forward-compat (e.g. `create-character`
- * provisions the party).
+ * `actorRole` is derived at write time. The full enum is
+ * `'dm' | 'player' | 'banker'` per OUTLINE §4 line 309. In MVP party-of-one
+ * a single user wears both `dm` and `player` hats (banker doesn't apply
+ * until a party has 2+ members per OUTLINE §3.14). `banker` was added in
+ * R3.2 ahead of R3.4's authoritative reducer so the enum and the Prisma
+ * `MembershipRole` move together in a single migration; R3.4 lands the
+ * §2.2 guard layer that actually writes banker rows.
  *
  * `sessionId` is `null` until R5 (`Session` entity).
  */
@@ -25,7 +27,7 @@ const baseLogFields = {
   sessionId: z.null(),
   timestamp: z.string().datetime(),
   actorUserId: z.string().min(1),
-  actorRole: z.enum(['dm', 'player']),
+  actorRole: z.enum(['dm', 'player', 'banker']),
 };
 
 const createCharacterEntry = z.object({
@@ -648,9 +650,7 @@ const editCharacterEntry = z.object({
   type: z.literal('edit-character'),
   payload: z.object({
     characterId: z.string().min(1),
-    changedFields: z
-      .array(z.enum(['species', 'class', 'level', 'str', 'maxAttunement']))
-      .min(1),
+    changedFields: z.array(z.enum(['species', 'class', 'level', 'str', 'maxAttunement'])).min(1),
   }),
 });
 

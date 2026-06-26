@@ -5,7 +5,14 @@ import type {
   Stash,
   TransactionLogEntry,
 } from '@app/shared';
-import { attunement, capacity, charges, currency, inventory, weight as weightRules } from '@app/rules';
+import {
+  attunement,
+  capacity,
+  charges,
+  currency,
+  inventory,
+  weight as weightRules,
+} from '@app/rules';
 
 import type { Action, AppState } from './types';
 
@@ -119,10 +126,7 @@ export function reduce(state: AppState, action: Action): ReducerResult {
  * with the action name if state is null. Centralizes the boilerplate that
  * every post-bootstrap reducer case needs.
  */
-function requireState(
-  state: AppState,
-  action: string,
-): NonNullable<AppState> {
+function requireState(state: AppState, action: string): NonNullable<AppState> {
   if (state === null) {
     throw new Error(`${action}: no AppState (create-character must run first)`);
   }
@@ -231,6 +235,12 @@ function createCharacter(
     seedVersion: 0,
     user: {
       id: userId,
+      // R3.2 — userSchema requires at least one of discordId or
+      // emailVerified per SECURITY §1.2 / OUTLINE §4. The browser-only MVP
+      // has no OAuth or OTP flow yet, so we synthesize discordId === id as
+      // a placeholder. R3.5 (web ↔ server integration) will overwrite this
+      // with the real Discord snowflake once the user authenticates.
+      discordId: userId,
       displayName: 'You',
       createdAt: now,
     },
@@ -320,18 +330,20 @@ function createCharacter(
 
   return {
     state: nextState,
-    logEntries: [{
-      type: 'create-character',
-      payload: {
-        characterId,
-        userId,
-        partyId,
-        name: payload.name,
-        inventoryStashId,
-        partyStashId,
-        recoveredLootStashId,
+    logEntries: [
+      {
+        type: 'create-character',
+        payload: {
+          characterId,
+          userId,
+          partyId,
+          name: payload.name,
+          inventoryStashId,
+          partyStashId,
+          recoveredLootStashId,
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -437,16 +449,18 @@ function acquire(
 
   return {
     state: { ...s, items: nextItems },
-    logEntries: [{
-      type: 'acquire',
-      payload: {
-        stashId: payload.stashId,
-        itemInstanceId: resolvedItemId,
-        definitionId: payload.definitionId,
-        quantity: payload.quantity,
-        source: payload.source,
+    logEntries: [
+      {
+        type: 'acquire',
+        payload: {
+          stashId: payload.stashId,
+          itemInstanceId: resolvedItemId,
+          definitionId: payload.definitionId,
+          quantity: payload.quantity,
+          source: payload.source,
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -519,15 +533,17 @@ function consume(
 
   return {
     state: { ...s, items: nextItems },
-    logEntries: [{
-      type: 'consume',
-      payload: {
-        stashId: row.ownerId,
-        itemInstanceId: row.id,
-        quantity: payload.quantity,
-        removed,
+    logEntries: [
+      {
+        type: 'consume',
+        payload: {
+          stashId: row.ownerId,
+          itemInstanceId: row.id,
+          quantity: payload.quantity,
+          removed,
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -575,14 +591,16 @@ function seedCatalog(
 
   return {
     state: { ...s, catalog: nextCatalog, seedVersion: payload.seedVersion },
-    logEntries: [{
-      type: 'seed-catalog',
-      payload: {
-        seedVersion: payload.seedVersion,
-        addedDefinitionIds: added,
-        updatedDefinitionIds: updated,
+    logEntries: [
+      {
+        type: 'seed-catalog',
+        payload: {
+          seedVersion: payload.seedVersion,
+          addedDefinitionIds: added,
+          updatedDefinitionIds: updated,
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -652,13 +670,15 @@ function editItemInstance(
 
   return {
     state: { ...s, items: nextItems },
-    logEntries: [{
-      type: 'edit-item-instance',
-      payload: {
-        itemInstanceId: row.id,
-        changedFields,
+    logEntries: [
+      {
+        type: 'edit-item-instance',
+        payload: {
+          itemInstanceId: row.id,
+          changedFields,
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -729,15 +749,17 @@ function createStash(
       stashes: [...s.stashes, newStash],
       currencies: [...s.currencies, newCurrency],
     },
-    logEntries: [{
-      type: 'create-stash',
-      payload: {
-        stashId,
-        scope: 'character',
-        name,
-        ownerCharacterId: owner.id,
+    logEntries: [
+      {
+        type: 'create-stash',
+        payload: {
+          stashId,
+          scope: 'character',
+          name,
+          ownerCharacterId: owner.id,
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -783,10 +805,12 @@ function renameStash(
       ...s,
       stashes: s.stashes.map((st) => (st.id === stash.id ? next : st)),
     },
-    logEntries: [{
-      type: 'rename-stash',
-      payload: { stashId: stash.id, oldName, newName },
-    }],
+    logEntries: [
+      {
+        type: 'rename-stash',
+        payload: { stashId: stash.id, oldName, newName },
+      },
+    ],
   };
 }
 
@@ -1001,17 +1025,13 @@ function currencyChange(
     nextHolding.gp < 0 ||
     nextHolding.pp < 0
   ) {
-    throw new Error(
-      `currency-change: would push a denomination negative on ${payload.stashId}`,
-    );
+    throw new Error(`currency-change: would push a denomination negative on ${payload.stashId}`);
   }
 
   return {
     state: {
       ...s,
-      currencies: s.currencies.map((c) =>
-        c.stashId === payload.stashId ? nextHolding : c,
-      ),
+      currencies: s.currencies.map((c) => (c.stashId === payload.stashId ? nextHolding : c)),
     },
     logEntries: [
       {
@@ -1082,35 +1102,26 @@ function transfer(
   }
 
   // R1.5 guards on the destination container, if any:
-  if (
-    payload.toContainerInstanceId !== undefined &&
-    payload.toContainerInstanceId !== null
-  ) {
+  if (payload.toContainerInstanceId !== undefined && payload.toContainerInstanceId !== null) {
     // Self-reference: a row can't contain itself.
     if (payload.toContainerInstanceId === payload.itemInstanceId) {
       throw new Error('transfer: cannot pack a row into itself (self-reference)');
     }
     const parent = s.items.find((i) => i.id === payload.toContainerInstanceId);
     if (parent === undefined) {
-      throw new Error(
-        `transfer: unknown toContainerInstanceId ${payload.toContainerInstanceId}`,
-      );
+      throw new Error(`transfer: unknown toContainerInstanceId ${payload.toContainerInstanceId}`);
     }
     // One-level-deep (OUTLINE §3.6): the destination container itself
     // must be top-level (no parent), otherwise this pack would create
     // two-level nesting.
     if (parent.containerInstanceId !== null) {
-      throw new Error(
-        'transfer: destination container is already nested (one level deep only)',
-      );
+      throw new Error('transfer: destination container is already nested (one level deep only)');
     }
     // Same-stash (v1): destination container must live in the same stash
     // as the moved row's destination. Cross-stash pack is a 2-step (move
     // then pack) per the R1.5 scope.
     if (parent.ownerId !== payload.toStashId) {
-      throw new Error(
-        'transfer: destination container must live in the same stash as toStashId',
-      );
+      throw new Error('transfer: destination container must live in the same stash as toStashId');
     }
   }
 
@@ -1246,9 +1257,7 @@ function transfer(
   // when the destination matches the source stash.
   const childRows =
     isFullMove && target === undefined && source.ownerId !== payload.toStashId
-      ? s.items.filter(
-          (i) => i.containerInstanceId === source.id && i.ownerId === fromStashId,
-        )
+      ? s.items.filter((i) => i.containerInstanceId === source.id && i.ownerId === fromStashId)
       : [];
 
   if (target !== undefined) {
@@ -1283,8 +1292,7 @@ function transfer(
     survivingId = source.id;
     const childIds = new Set(childRows.map((c) => c.id));
     nextItems = s.items.map((i) => {
-      if (i.id === source.id)
-        return applyMovedRowMutations({ ...i, ownerId: payload.toStashId });
+      if (i.id === source.id) return applyMovedRowMutations({ ...i, ownerId: payload.toStashId });
       if (childIds.has(i.id)) return { ...i, ownerId: payload.toStashId };
       return i;
     });
@@ -1463,7 +1471,9 @@ function currencyTransfer(
   // Negative inputs rejected — direction lives on `from/to`, not on the
   // sign of the delta.
   if (delta.cp < 0 || delta.sp < 0 || delta.ep < 0 || delta.gp < 0 || delta.pp < 0) {
-    throw new Error('currency-transfer: delta values must be non-negative (use the from/to ids to encode direction)');
+    throw new Error(
+      'currency-transfer: delta values must be non-negative (use the from/to ids to encode direction)',
+    );
   }
 
   const fromStash = s.stashes.find((st) => st.id === payload.fromStashId);
@@ -1491,7 +1501,10 @@ function currencyTransfer(
   // `currency.subtract` throws when any denomination would go negative.
   // We let that error bubble — it's the "insufficient funds" boundary
   // the M5.5 plan describes.
-  const nextSource: CurrencyHolding = { ...sourceHolding, ...currency.subtract(sourceHolding, delta) };
+  const nextSource: CurrencyHolding = {
+    ...sourceHolding,
+    ...currency.subtract(sourceHolding, delta),
+  };
   const nextDest: CurrencyHolding = { ...destHolding, ...currency.add(destHolding, delta) };
 
   return {
@@ -1754,9 +1767,7 @@ function renameCharacter(
   return {
     state: {
       ...s,
-      characters: s.characters.map((c) =>
-        c.id === character.id ? { ...c, name: newName } : c,
-      ),
+      characters: s.characters.map((c) => (c.id === character.id ? { ...c, name: newName } : c)),
     },
     logEntries: [
       {
@@ -1992,9 +2003,7 @@ function attuneOrUnattune(
     // mundane row can still be cleaned up.
     const def = s.catalog.find((d) => d.id === row.definitionId);
     if (def === undefined) {
-      throw new Error(
-        `attune: definition ${row.definitionId} not in catalog for row ${row.id}`,
-      );
+      throw new Error(`attune: definition ${row.definitionId} not in catalog for row ${row.id}`);
     }
     if (def.requiresAttunement !== true) {
       throw new Error(
@@ -2062,23 +2071,14 @@ function spendCharge(
   payload: Extract<Action, { type: 'use-charge' }>['payload'],
 ): ReducerResult {
   const s = requireState(state, 'use-charge');
-  const { row } = resolveInventoryRow(
-    s,
-    'use-charge',
-    payload.itemInstanceId,
-    payload.characterId,
-  );
+  const { row } = resolveInventoryRow(s, 'use-charge', payload.itemInstanceId, payload.characterId);
 
   const def = s.catalog.find((d) => d.id === row.definitionId);
   if (def === undefined) {
-    throw new Error(
-      `use-charge: definition ${row.definitionId} not in catalog for row ${row.id}`,
-    );
+    throw new Error(`use-charge: definition ${row.definitionId} not in catalog for row ${row.id}`);
   }
   if (def.charges === undefined) {
-    throw new Error(
-      `use-charge: item "${def.name}" (${def.id}) has no charges defined`,
-    );
+    throw new Error(`use-charge: item "${def.name}" (${def.id}) has no charges defined`);
   }
   if (row.currentCharges === null) {
     throw new Error(
@@ -2120,9 +2120,7 @@ function spendCharge(
     } else {
       // Stack-decrement: one potion consumed, the rest stay fully charged.
       nextItems = s.items.map((i) =>
-        i.id === row.id
-          ? { ...i, quantity: i.quantity - 1, currentCharges: def.charges!.max }
-          : i,
+        i.id === row.id ? { ...i, quantity: i.quantity - 1, currentCharges: def.charges!.max } : i,
       );
     }
     // Synthetic `consume` entry alongside `use-charge`. Mirrors the
@@ -2138,9 +2136,7 @@ function spendCharge(
       },
     });
   } else {
-    nextItems = s.items.map((i) =>
-      i.id === row.id ? { ...i, currentCharges: newCharges } : i,
-    );
+    nextItems = s.items.map((i) => (i.id === row.id ? { ...i, currentCharges: newCharges } : i));
   }
 
   return {
@@ -2184,22 +2180,13 @@ function rechargeAction(
   const s = requireState(state, 'recharge');
 
   if (payload.mode === 'single' || payload.mode === 'manual') {
-    const { row } = resolveInventoryRow(
-      s,
-      'recharge',
-      payload.itemInstanceId,
-      payload.characterId,
-    );
+    const { row } = resolveInventoryRow(s, 'recharge', payload.itemInstanceId, payload.characterId);
     const def = s.catalog.find((d) => d.id === row.definitionId);
     if (def === undefined) {
-      throw new Error(
-        `recharge: definition ${row.definitionId} not in catalog for row ${row.id}`,
-      );
+      throw new Error(`recharge: definition ${row.definitionId} not in catalog for row ${row.id}`);
     }
     if (def.charges === undefined) {
-      throw new Error(
-        `recharge: item "${def.name}" (${def.id}) has no charges defined`,
-      );
+      throw new Error(`recharge: item "${def.name}" (${def.id}) has no charges defined`);
     }
     const from = row.currentCharges ?? 0;
     // R2.2.1 — optional partial recharge. When `amount` is provided,
@@ -2208,9 +2195,7 @@ function rechargeAction(
     let to: number;
     if (payload.amount !== undefined) {
       if (!Number.isInteger(payload.amount) || payload.amount <= 0) {
-        throw new Error(
-          `recharge: amount must be a positive integer, got ${payload.amount}`,
-        );
+        throw new Error(`recharge: amount must be a positive integer, got ${payload.amount}`);
       }
       to = Math.min(from + payload.amount, def.charges.max);
     } else {

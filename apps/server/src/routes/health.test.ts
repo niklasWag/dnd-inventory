@@ -16,6 +16,13 @@ const env = {
   LOG_LEVEL: 'silent' as const,
   DATABASE_URL: TEST_DB_URL,
   WEB_ORIGIN: 'http://localhost:5173',
+  // R3.2 — buildServer no longer parses env; we construct it as a literal
+  // and rely on TS to keep it aligned with the Env type. AUTH_SECRET is
+  // required at the schema level (min 32 chars) so test envs supply a
+  // dev-only placeholder. DISCORD_* are absent so the /auth/discord/*
+  // routes return 503 in this suite — R3.2 routes have their own test
+  // file with msw fixtures.
+  AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
 };
 
 let prisma: PrismaClient;

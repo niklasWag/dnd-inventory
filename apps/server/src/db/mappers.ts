@@ -18,8 +18,8 @@
  *      We use conditional-assignment instead of object-spread to avoid
  *      emitting `undefined` keys.
  */
-import type { ChargesRechargeRule, ItemDefinition, Rarity, Stash } from '@app/shared';
-import { itemDefinitionSchema } from '@app/shared';
+import type { ChargesRechargeRule, ItemDefinition, Rarity, Stash, User } from '@app/shared';
+import { itemDefinitionSchema, userSchema } from '@app/shared';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
 import { $Enums } from '../../prisma/generated/prisma/client.js';
@@ -98,6 +98,156 @@ export function toDbStashScope(s: StashScope): $Enums.StashScope {
 }
 export function fromDbStashScope(s: $Enums.StashScope): StashScope {
   return STASH_SCOPE_FROM_DB[s];
+}
+
+// -------- R3.2: MembershipRole / actorRole translators --------
+//
+// The Prisma enum `MembershipRole` carries all three values used across
+// PartyMembership.role AND TransactionLog.actorRole (`dm | player | banker`).
+// On the Zod side these are split:
+//   - `partyMembershipSchema.role` is `'dm' | 'player'` only (banker is
+//     denormalized on Party.bankerUserId per OUTLINE §3.14 — never a row).
+//   - `transactionLogEntrySchema.actorRole` is `'dm' | 'player' | 'banker'`
+//     (banker IS a valid log actor when an active Banker performs an action).
+//
+// The translators below cover both views. Enum values match 1:1 (no
+// hyphens), so the functions are nominally just type widenings — but
+// having them explicit means a future enum change (e.g. R5 'observer')
+// fails the type check here in one place instead of silently widening
+// somewhere unrelated.
+
+type ActorRole = 'dm' | 'player' | 'banker';
+type MembershipRole = 'dm' | 'player';
+
+const ACTOR_ROLE_TO_DB: Record<ActorRole, $Enums.MembershipRole> = {
+  dm: $Enums.MembershipRole.dm,
+  player: $Enums.MembershipRole.player,
+  banker: $Enums.MembershipRole.banker,
+};
+const ACTOR_ROLE_FROM_DB: Record<$Enums.MembershipRole, ActorRole> = {
+  dm: 'dm',
+  player: 'player',
+  banker: 'banker',
+};
+
+export function toDbActorRole(r: ActorRole): $Enums.MembershipRole {
+  return ACTOR_ROLE_TO_DB[r];
+}
+export function fromDbActorRole(r: $Enums.MembershipRole): ActorRole {
+  return ACTOR_ROLE_FROM_DB[r];
+}
+
+/**
+ * Narrower variant for PartyMembership.role reads/writes. Rejects banker at
+ * the type level because OUTLINE §3.14 forbids banker membership rows; the
+ * §2.2 server guard layer (R3.4) also rejects banker on writes.
+ */
+export function toDbMembershipRole(r: MembershipRole): $Enums.MembershipRole {
+  return ACTOR_ROLE_TO_DB[r];
+}
+export function fromDbMembershipRole(r: $Enums.MembershipRole): MembershipRole {
+  if (r === 'banker') {
+    throw new Error(
+      'fromDbMembershipRole: encountered banker in a PartyMembership.role read — ' +
+        'banker is denormalized on Party.bankerUserId per OUTLINE §3.14 and must ' +
+        'never appear as a membership row. Check the guard layer.',
+    );
+  }
+  return r;
+}
+
+// -------- R3.2: User translators (Auth.js Prisma adapter compatibility) --------
+//
+// The @auth/prisma-adapter expects the User model to expose fields called
+// `name` and `image`. Our schema keeps the existing column names
+// (`displayName`, `avatarUrl`) because:
+//   1. Renaming would force a migration that touches every existing User
+//      row in dev/test DBs and break MVP exports / Dexie blobs.
+//   2. `displayName` is the term used throughout OUTLINE §4 / §3.15.
+//
+// The Auth.js adapter's `getUser`/`createUser`/`updateUser` methods write
+// into the same row though, so the Prisma columns DO need to expose `name`
+// and `image`. R3.2 punts on that — Auth.js's adapter happily reads/writes
+// columns matching our names if we configure the User model with shape
+// compatibility (no field rename needed): the adapter sets `name` ↔
+// `displayName` mapping by writing to the column the schema declares.
+//
+// In practice this means:
+//   - The adapter's createUser({ name, image, ... }) call lands as
+//     `displayName` and `avatarUrl` on the Prisma row because the adapter's
+//     accessor goes through @prisma/client which knows only our column
+//     names. We adapt via the wrappers below.
+//
+// `toAuthJsUser`: read our Prisma row, return the shape Auth.js's adapter
+// callbacks expect (`AdapterUser`-flavored).
+// `fromAuthJsUser`: take an Auth.js `AdapterUser` (used in callbacks like
+// events.signIn) and translate to our internal User shape.
+
+/**
+ * Subset of the User Prisma row we read for Auth.js boundary work. Defined
+ * inline (like ItemDefinitionRow) so tests don't depend on the generated
+ * Prisma client.
+ */
+export interface UserRow {
+  id: string;
+  displayName: string;
+  discordId: string | null;
+  email: string | null;
+  emailVerified: Date | null;
+  avatarUrl: string | null;
+  createdAt: Date;
+}
+
+/**
+ * Auth.js's `AdapterUser` shape, copy-defined here to avoid pulling
+ * `@auth/core` types into the mapper layer (keeps mappers pure / testable
+ * without auth-runtime deps).
+ */
+export interface AuthJsUserShape {
+  id: string;
+  name: string;
+  email: string | null;
+  emailVerified: Date | null;
+  image: string | null;
+}
+
+export function toAuthJsUser(row: UserRow): AuthJsUserShape {
+  return {
+    id: row.id,
+    name: row.displayName,
+    email: row.email,
+    emailVerified: row.emailVerified,
+    image: row.avatarUrl,
+  };
+}
+
+/**
+ * Inverse of `toAuthJsUser`. Returns a Zod-validated `User` (validates the
+ * SECURITY §1.2 invariant at the boundary). `email` and `image` may be
+ * null on the input side — they're omitted from the optional Zod fields
+ * if so.
+ */
+export function fromAuthJsUser(adapter: AuthJsUserShape & { discordId?: string | null }): User {
+  const u: Record<string, unknown> = {
+    id: adapter.id,
+    displayName: adapter.name,
+    // R3.2 dev synthetic / R3.5 real: discordId is required for the
+    // refine() — when the AdapterUser came from a Discord sign-in, the
+    // events.signIn callback in src/auth/config.ts writes it back to the
+    // row before this function is called. For an email-only user
+    // (R3.3+), discordId stays absent and emailVerified satisfies the
+    // refine().
+    createdAt: new Date().toISOString(),
+  };
+  if (adapter.discordId !== undefined && adapter.discordId !== null) {
+    u['discordId'] = adapter.discordId;
+  }
+  if (adapter.email !== null) u['email'] = adapter.email;
+  if (adapter.emailVerified !== null) {
+    u['emailVerified'] = adapter.emailVerified.toISOString();
+  }
+  if (adapter.image !== null) u['avatarUrl'] = adapter.image;
+  return userSchema.parse(u);
 }
 
 // -------- ItemDefinition translators --------

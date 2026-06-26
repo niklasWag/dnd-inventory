@@ -3,15 +3,22 @@ import { describe, it, expect } from 'vitest';
 import type { ItemDefinition } from '@app/shared';
 
 import {
+  fromAuthJsUser,
+  fromDbActorRole,
+  fromDbMembershipRole,
   fromDbRarity,
   fromDbRechargeRule,
   fromDbStashScope,
   fromPrismaItemDefinition,
+  toAuthJsUser,
+  toDbActorRole,
+  toDbMembershipRole,
   toDbRarity,
   toDbRechargeRule,
   toDbStashScope,
   toPrismaItemDefinition,
   type ItemDefinitionRow,
+  type UserRow,
 } from './mappers.js';
 
 describe('mappers: enum round-trip (Zod kebab-case ↔ Prisma underscore)', () => {
@@ -34,6 +41,97 @@ describe('mappers: enum round-trip (Zod kebab-case ↔ Prisma underscore)', () =
     for (const v of values) {
       expect(fromDbStashScope(toDbStashScope(v))).toBe(v);
     }
+  });
+});
+
+describe('mappers: R3.2 actorRole / MembershipRole', () => {
+  it('actorRole — every value (dm/player/banker) survives a round trip', () => {
+    const values = ['dm', 'player', 'banker'] as const;
+    for (const v of values) {
+      expect(fromDbActorRole(toDbActorRole(v))).toBe(v);
+    }
+  });
+
+  it('MembershipRole — dm and player survive a round trip', () => {
+    expect(fromDbMembershipRole(toDbMembershipRole('dm'))).toBe('dm');
+    expect(fromDbMembershipRole(toDbMembershipRole('player'))).toBe('player');
+  });
+
+  it('fromDbMembershipRole throws if banker appears in a PartyMembership.role read', () => {
+    // Simulates a R3.4 §2.2 guard-layer regression where a banker row leaked
+    // into the PartyMembership table despite the guard refusing the write.
+    // `'banker'` is a valid `$Enums.MembershipRole` value but the function
+    // throws at runtime — a defense against the R3.4 §2.2 guard layer
+    // ever letting a banker row leak into PartyMembership.role.
+    expect(() => fromDbMembershipRole('banker')).toThrow(/denormalized/);
+  });
+});
+
+describe('mappers: R3.2 User (Auth.js adapter compatibility)', () => {
+  const fixed = new Date('2026-06-26T12:00:00.000Z');
+
+  it('toAuthJsUser renames displayName→name and avatarUrl→image', () => {
+    const row: UserRow = {
+      id: 'u1',
+      displayName: 'GandalfTheGrey',
+      discordId: '123456789012345678',
+      email: null,
+      emailVerified: null,
+      avatarUrl: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      createdAt: fixed,
+    };
+    const out = toAuthJsUser(row);
+    expect(out).toEqual({
+      id: 'u1',
+      name: 'GandalfTheGrey',
+      email: null,
+      emailVerified: null,
+      image: 'https://cdn.discordapp.com/avatars/123/abc.png',
+    });
+  });
+
+  it('fromAuthJsUser inverts the rename and parses through userSchema', () => {
+    const adapter = {
+      id: 'u1',
+      name: 'GandalfTheGrey',
+      email: null,
+      emailVerified: null,
+      image: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      discordId: '123456789012345678',
+    };
+    const u = fromAuthJsUser(adapter);
+    expect(u.id).toBe('u1');
+    expect(u.displayName).toBe('GandalfTheGrey');
+    expect(u.discordId).toBe('123456789012345678');
+    expect(u.avatarUrl).toBe('https://cdn.discordapp.com/avatars/123/abc.png');
+    expect(u.email).toBeUndefined();
+    expect(u.emailVerified).toBeUndefined();
+  });
+
+  it('fromAuthJsUser rejects a user that violates the SECURITY §1.2 refine()', () => {
+    // Neither discordId nor emailVerified present — must fail the refine().
+    expect(() =>
+      fromAuthJsUser({
+        id: 'u1',
+        name: 'Anon',
+        email: null,
+        emailVerified: null,
+        image: null,
+      }),
+    ).toThrow();
+  });
+
+  it('fromAuthJsUser allows an email-verified user with no discordId', () => {
+    const u = fromAuthJsUser({
+      id: 'u2',
+      name: 'EmailOnly',
+      email: 'a@example.com',
+      emailVerified: fixed,
+      image: null,
+    });
+    expect(u.discordId).toBeUndefined();
+    expect(u.email).toBe('a@example.com');
+    expect(u.emailVerified).toBe(fixed.toISOString());
   });
 });
 

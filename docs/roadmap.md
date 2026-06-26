@@ -1506,15 +1506,55 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 #### R3.2 — Discord OAuth + sessions + User model
 
-- [ ] Auth.js + Discord provider wired (authorization code + PKCE, scope `identify`)
-- [ ] Session cookie issuance after token exchange
-- [ ] `User.id` linked via `discordId`; `avatarUrl` populated
-- [ ] `User.email` and `User.emailVerified` columns added to Prisma schema (nullable; unique constraint on `email`)
-- [ ] DB-level `CHECK` constraint: `discordId IS NOT NULL OR "emailVerified" IS NOT NULL`
+- [x] Auth.js + Discord provider wired (authorization code + PKCE, scope `identify`) — **R3.2** (`@auth/core@^0.34` directly + hand-written Fastify route wrappers in `src/auth/routes.ts`; PKCE+state per SECURITY §1.1; scope hardcoded to `identify` via authorization URL override since `@auth/core/providers/discord`'s default is `identify+email`)
+- [x] Session cookie issuance after token exchange — **R3.2** (database-backed session strategy via `@auth/prisma-adapter`; cookie name `__Host-auth-session-token` in production, `auth-session-token` in dev; `HttpOnly` + `SameSite=lax` + `Secure` in production; sliding 30-day idle expiry with daily-resolution updates per SECURITY §1.1)
+- [x] `User.id` linked via `discordId`; `avatarUrl` populated — **R3.2** (`User.id` stays opaque cuid; `discordId` is a separate `String? @unique` column carrying the Discord snowflake; OUTLINE §4 amended in lockstep; `events.signIn` callback resyncs `displayName` + `avatarUrl` from the Discord profile on every login)
+- [x] `User.email` and `User.emailVerified` columns added to Prisma schema (nullable; unique constraint on `email`) — **R3.2** (`emailVerified` typed as `DateTime?` per Auth.js adapter convention + OUTLINE §4 line 231; `email` has UNIQUE per SECURITY §1.2; both will be populated by R3.3's OTP flow)
+- [x] DB-level `CHECK` constraint: `discordId IS NOT NULL OR "emailVerified" IS NOT NULL` — **R3.2** (`User_auth_present_check` in `prisma/migrations/<ts>_r32_auth/migration.sql` tail; mirrored in Zod via `userSchema.refine()`; defended by `src/db/schema-invariants.test.ts`)
 
 #### R3.2 — Notes
 
-> -
+> **2026-06-26 — R3.2 (Discord OAuth + DB sessions) complete.** Layers auth on top of R3.1's scaffold. The server now identifies users via a session cookie issued at the end of a Discord OAuth2 + PKCE flow; `User` carries the canonical OAuth identity columns; the DB enforces the SECURITY §1.2 "at least one of `discordId` or `emailVerified`" invariant. Smoke-tested loop: `pnpm dev` with empty `DISCORD_CLIENT_ID` → `curl /auth/discord/login` returns 503 `{"error":"discord_auth_disabled"}`; with creds set → 302 to `https://discord.com/api/oauth2/authorize?scope=identify&...&code_challenge=...&state=...`; full OAuth flow in a browser drops `User` + `Account` + `Session` rows + sets the session cookie; `curl --cookie cookies.txt /auth/session` returns the user. **No web client wiring** — that's R3.5.
+>
+> **Auth library: `@auth/core` directly, no community adapter.** TECH_STACK §6.6 + §9 Decision Log lock in "Auth.js over Lucia / hand-rolled". The community `@auth/fastify` adapter was rejected as less battle-tested; instead we ship ~50 lines of glue in `src/auth/routes.ts` that wrap Fastify req/reply into Web `Request`/`Response` and call `Auth(request, config)`. The two `GET` routes (`/auth/discord/login`, `/auth/discord/callback`) collapse the Auth.js v5 CSRF dance: `/login` internally fetches a CSRF token, POSTs `/auth/signin/discord` with it, and forwards the resulting 302 to Discord. End user sees a single `GET` → 302 hop.
+>
+> **DB-backed sessions over JWT.** SECURITY-modern: instant revocation (`DELETE FROM Session`), surgical key rotation, opaque tokens, no JWT-class CVEs. Aligns with OWASP ASVS guidance for first-party monoliths and Auth.js's default-when-adapter-present strategy. The "1 DB read per authenticated request" cost is bounded by `src/auth/session.ts`'s `getSession()` — a single `findUnique` with `include: {user: true}`. Sliding expiry: when remaining lifetime drops below `maxAge - updateAge` (= 29 days), `expires` is bumped to `now + 30d`. The integration test asserts this.
+>
+> **`@auth/prisma-adapter` ↔ Prisma 7 peer-dep override.** `@auth/prisma-adapter@2.11.2`'s peerDependencies range is `@prisma/client>=2.26.0 || >=3 || >=4 || >=5` — explicitly excludes Prisma 7. The adapter is thin CRUD over stable `PrismaClient` methods (`findUnique`/`create`/`update`/`delete`/`$transaction`) so it works in practice; we suppress the peer-dep warning via pnpm `peerDependencyRules` in `pnpm-workspace.yaml`. **TODO**: remove the override when `@auth/prisma-adapter` formally supports Prisma 7. If it ever breaks at runtime, R3.3 ejects to a custom adapter (~150 lines) — we already need to customize the `VerificationToken` path for email OTP there.
+>
+> **Discord token persistence stripping.** SECURITY §1.1: "Discord tokens are not persisted in the DB — only `discordId`, `displayName`, `avatarUrl`." `src/auth/adapter-overrides.ts` wraps `PrismaAdapter(prisma)` and intercepts `linkAccount` to write `null` for `access_token` / `refresh_token` / `id_token` / `expires_at` / `session_state`. The `Account` row still exists (Auth.js needs the provider linkage to resolve "the user signed in via Discord" semantics in `events.signIn`) but holds no Discord-issued credentials. Unit test asserts the five fields are nulled on the underlying `prisma.account.create` call.
+>
+> **`User.id` vs `discordId` split — OUTLINE §4 deviation.** OUTLINE §4 originally said "post-R3 the id becomes the Discord snowflake (`discordId`)." In practice the Auth.js Prisma adapter mints its own cuid for new users during the OAuth flow, and existing R3.1 / MVP users already have UUID ids. Co-locating both on `User.id` would force a destructive backfill on every existing row. R3.2 instead adds `discordId String? @unique` as a separate column; `User.id` stays an opaque internal cuid that survives provider changes. OUTLINE §4 amended in lockstep. The MVP web reducer now sets `discordId === id` for local-only users (placeholder; R3.5 overwrites with the real snowflake on first login).
+>
+> **`emailVerified DateTime?` (not Boolean).** Roadmap checklist line 1513 just said "emailVerified"; OUTLINE §4 line 231 specifies "ISO timestamp, nullable — set on first successful OTP verification". `DateTime?` matches OUTLINE wording AND the @auth/prisma-adapter convention — clean two-fold consistency.
+>
+> **`MembershipRole.banker` added in this slice.** OUTLINE §4 line 309 lists `dm | player | banker` for `TransactionLog.actorRole`. SECURITY §2.2 says banker is denormalized on `Party.bankerUserId` per OUTLINE §3.14 — never a row in `PartyMembership`. Adding `banker` to the Prisma `MembershipRole` enum now (rather than waiting for R3.4) keeps R3.4's migration surface from touching two enum types. R3.2 ships ONLY the enum value; the §2.2 guard layer that rejects writes of `PartyMembership.role = 'banker'` lands in R3.4. `src/db/mappers.ts` exposes a narrower `fromDbMembershipRole` that throws if it ever reads a banker row — defensive trip-wire against R3.4 regressions.
+>
+> **PKCE + state, not just PKCE.** Auth.js's default for OAuth providers is `checks: ['pkce']` only. PKCE alone defends against code-injection (RFC 7636) but SECURITY §1.1 explicitly requires "state parameter bound to the user's pre-auth session; reject mismatched callbacks." We opt in via `checks: ['pkce', 'state']` on the Discord provider config. Defense-in-depth against session-fixation attacks via crafted callback URLs.
+>
+> **503-when-unconfigured pattern (SECURITY §1.2 parallel).** When `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` are absent, the `/auth/discord/*` routes return `503 {"error": "discord_auth_disabled"}` (graceful — local dev / CI / smoke tests work without a real Discord app). `NODE_ENV=production` overrides this and the env loader throws at boot, matching SECURITY §1.2's hard-fail-on-SMTP-misconfig stance. `GET /auth/session` keeps working even when Discord is disabled — useful for the R3.5 web client probing whether anyone is logged in.
+>
+> **Cookie naming: `__Host-` prefix in production.** Browser-enforced contract: no `Domain` attribute, `Path=/`, `Secure` required. Stricter than any flag we could set — if a misconfigured response strips `Secure`, the cookie is rejected on receipt. In dev (HTTP localhost) the `__Host-` prefix would break the cookie, so we fall back to a plain `auth-session-token` name. The switch is `env.NODE_ENV === 'production'`.
+>
+> **`trustHost: true` in AuthConfig.** Auth.js v5 refuses to run unless either `AUTH_URL` env / `AUTH_TRUST_HOST` env is set, or `trustHost: true` is on the config. We're behind a reverse proxy in production (nginx/caddy/traefik per TECH_STACK §7.1) and serve on localhost in dev — both modes derive the URL from the incoming `Host` header. Setting `trustHost: true` is the explicit "yes, we trust the proxy's Host" knob.
+>
+> **`app.getSession(req)` decorator on Fastify.** R3.4+ guards will call `await app.getSession(req)` to resolve the actor. Wrapping it as a decorator keeps future route code from re-implementing token lookup ad-hoc. The decorator delegates to `src/auth/session.ts`'s `getSession()`, which slides expiry forward when due.
+>
+> **Test fixture: `msw@2` Discord mock in `src/test/discord-mock.ts`.** Intercepts the two outbound calls (`POST /oauth2/token`, `GET /users/@me`) via undici's request interceptor in Node. Auth.js uses native fetch (undici under the hood) so interception is transparent. Reusable in R3.3 (SMTP send) and R5+ (websocket). Profile-per-test via the `withUser()` setter.
+>
+> **`userSchema.refine()` widened.** SECURITY §1.2 invariant ("at least one of `discordId` or `emailVerified`") now lives at the Zod boundary too — not just the DB CHECK. The MVP web reducer's `create-character` action was updated to set `discordId === id` so existing in-browser flows still parse. (User-confirmed acceptable: "Data of current mvp users is no concern because its just me.") R3.5 overwrites `discordId` with the real Discord snowflake on first server-side login.
+>
+> **DEFERRABLE FK drift (Prisma #8807) defended.** R3.2's migration touched `Character` indirectly (via the migrate engine's re-emit pass), reverting R3.1's `DEFERRABLE INITIALLY DEFERRED` on `Character_inventoryStashId_fkey`. The hand-tail of `r32_auth/migration.sql` drops + re-adds the FK with DEFERRABLE. A new test in `src/db/schema-invariants.test.ts` queries `pg_constraint` and CI-fails with a pointed error message if any future migration loses the deferral. Documented in `apps/server/prisma/schema.prisma` as a DRIFT WARNING comment on the `inventoryStashId` field.
+>
+> **Followups carried forward to R3.3:**
+> - `VerificationToken` table is already provisioned by R3.2's migration — R3.3 just writes to it.
+> - `@auth/core`'s Email provider can be drop-in registered alongside Discord; the SMTP misconfig guard (SECURITY §1.2) lives in `src/config/env.ts`.
+> - The "503 when unconfigured" pattern from R3.2 is the template for the `/auth/email/*` routes in R3.3.
+>
+> **Followups carried forward to R3.4:**
+> - `app.getSession(req)` decorator (R3.2) is the single source-of-truth identity resolver for the §8.1 guard layer.
+> - `MembershipRole.banker` is in the enum; R3.4 adds the guard that rejects `PartyMembership.role = 'banker'` writes.
+> - `actorRole: 'banker'` on `TransactionLog` is in the Zod union; R3.4's reducer emits it when `Party.bankerUserId === actorUserId`.
 
 #### R3.3 — Email OTP auth + backup-email settings
 

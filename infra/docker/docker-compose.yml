@@ -46,6 +46,13 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-dnd}:${POSTGRES_PASSWORD:-dnd}@postgres:5432/${POSTGRES_DB:-dnd_inv}
       WEB_ORIGIN: http://localhost:${WEB_PORT:-5173}
       LOG_LEVEL: info
+      # R3.2 — Auth.js. AUTH_SECRET is required at all times; DISCORD_*
+      # vars are required at boot when NODE_ENV=production (see
+      # src/config/env.ts). The compose .env file forwards them.
+      AUTH_SECRET: ${AUTH_SECRET}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
     ports:
       - '${SERVER_PORT:-3000}:3000'
     # Boot sequence inside the container:

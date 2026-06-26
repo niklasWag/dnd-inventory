@@ -6,6 +6,10 @@ allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
   esbuild: true
+  # msw's postinstall copies a service worker into ./public/ for *browser*
+  # interception. We only use msw's Node mode (setupServer) for outbound-fetch
+  # interception in vitest, so the SW asset is dead weight.
+  msw: false
   prisma: true
 
 # esbuild ships a postinstall to fetch its native binary.
@@ -17,3 +21,11 @@ onlyBuiltDependencies:
   - '@prisma/engines'
   - prisma
 
+# R3.2 — @auth/prisma-adapter@2.11.x's peerDependencies range tops out at
+# @prisma/client >=5 and explicitly excludes Prisma 7. The adapter is a thin
+# CRUD layer that uses only stable client APIs (findUnique/create/update/
+# delete/$transaction), so running it against Prisma 7 works in practice.
+# Revisit when @auth/prisma-adapter formally supports Prisma 7.
+peerDependencyRules:
+  allowedVersions:
+    '@auth/prisma-adapter>@prisma/client': '7'

@@ -226,7 +226,7 @@ No HP, spells, AC, proficiencies in v1.
 > Stack-agnostic; tables/collections. Deployment mode (local vs synced) is **not** a data attribute — it's an environment/install choice. **Every user is always in at least one Party**; "solo" is just a party-of-one.
 
 ### `User`
-- id, discordId (nullable — absent for email-only accounts), displayName, avatarUrl (nullable), createdAt
+- id (opaque internal string — **R3.2 amendment**: stays a server-generated cuid and does NOT become the Discord snowflake; an earlier draft suggested `id === discordId` but the @auth/prisma-adapter mints its own ids during the OAuth flow, and a stable internal id decouples our identity from any one OAuth provider), discordId (nullable — absent for email-only accounts; UNIQUE), displayName, avatarUrl (nullable), createdAt
 - email (nullable — set for email-only users or Discord users who added a backup login; **unique** constraint)
 - emailVerified (ISO timestamp, nullable — email login is only accepted once this is set; set on first successful OTP verification)
 - Single global identity; party-specific role lives on `PartyMembership`.

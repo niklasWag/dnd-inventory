@@ -89,19 +89,48 @@ enum StashScope {
 enum MembershipRole {
   dm
   player
+  // R3.2 — banker is denormalized on Party.bankerUserId per OUTLINE §3.14 /
+  // §4 but is also a valid actorRole on TransactionLog. PartyMembership.role
+  // accepts the value at the column level; the §2.2 server guard layer (R3.4)
+  // rejects writes of PartyMembership.role = 'banker'.
+  banker
 }
 
 // -------- Models --------
 
 model User {
-  id          String   @id
-  displayName String
-  createdAt   DateTime @default(now())
+  // R3.2 — switched from caller-provided UUID to cuid() default so the
+  // @auth/prisma-adapter can generate ids during the OAuth flow. Existing
+  // R3.1-era rows keep their UUIDs (the column is just String).
+  id            String    @id @default(cuid())
+  // Existing column. The @auth/prisma-adapter expects a `name` field on User;
+  // src/db/mappers.ts translates displayName ↔ name at the boundary.
+  displayName   String
+  // R3.2 — OAuth identity. Discord snowflake, optional because R3.3 allows
+  // email-only accounts. UNIQUE so two rows can't claim the same Discord id.
+  discordId     String?   @unique
+  // R3.2 — populated by the email OTP flow (R3.3). UNIQUE per SECURITY §1.2.
+  email         String?   @unique
+  // R3.2 — DateTime? matches @auth/prisma-adapter convention AND OUTLINE §4
+  // "ISO timestamp, nullable — set on first successful OTP verification".
+  emailVerified DateTime?
+  // R3.2 — Discord CDN URL (or null). Mapped to adapter's `image` field via
+  // mappers.ts. Resynced on every Discord login per events.signIn callback.
+  avatarUrl     String?
+  createdAt     DateTime  @default(now())
+
+  // R3.2 — Auth.js adapter relations.
+  accounts Account[]
+  sessions Session[]
 
   ownedParties    Party[]           @relation("PartyOwner")
   characters      Character[]
   memberships     PartyMembership[]
   transactionLogs TransactionLog[]
+
+  // CHECK: discordId IS NOT NULL OR emailVerified IS NOT NULL — added in
+  // migration tail per SECURITY §1.2 / OUTLINE §4 invariant. Prisma DSL
+  // cannot express it.
 }
 
 model Party {
@@ -164,6 +193,14 @@ model Character {
   enforceEncumbrance Boolean
   // FK to Stash; made DEFERRABLE INITIALLY DEFERRED in migration tail to
   // break the Character ↔ Stash cycle inside a single transaction.
+  //
+  // ⚠️  DRIFT WARNING: Prisma's DSL cannot express DEFERRABLE (prisma#8807,
+  // open). Every `prisma migrate dev` run that touches Character OR Stash
+  // diffs the DB's DEFERRABLE FK against the schema's "plain" FK and emits a
+  // drop+add pair that reverts the deferral. ANY new migration touching
+  // either table MUST append the R3.1/R3.2-style re-DEFERRABLE block to its
+  // migration.sql tail. See apps/server/prisma/migrations/*/migration.sql
+  // for the canonical pattern.
   inventoryStashId   String          @unique
 
   party        Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)
@@ -302,4 +339,61 @@ model TransactionLog {
 model Metadata {
   key   String @id
   value Json
+}
+
+// -------- R3.2 — Auth.js adapter tables --------
+//
+// Standard @auth/prisma-adapter shapes. Snake_case columns (refresh_token,
+// access_token, etc.) are the adapter's convention; we keep them verbatim
+// so the adapter works without column-name remapping.
+//
+// SECURITY §1.1: Discord-issued tokens are NEVER persisted. The adapter
+// is wrapped by src/auth/adapter-overrides.ts which writes NULL for
+// access_token / refresh_token / id_token / expires_at in linkAccount.
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  // The next four fields exist for adapter compatibility but are written as
+  // NULL by makeAdapter() in src/auth/adapter-overrides.ts (SECURITY §1.1).
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Adapter looks accounts up by (provider, providerAccountId) on signIn.
+  @@unique([provider, providerAccountId])
+  // Adapter queries findFirst({where: {userId}}) for "list a user's accounts".
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  // The opaque cookie value the client presents. UNIQUE so the adapter can
+  // findUnique({where: {sessionToken}}) on every authenticated request.
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// R3.3 will use this for email OTP — adding it here keeps R3.3 from needing
+// a second migration. Empty in R3.2.
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
 }
