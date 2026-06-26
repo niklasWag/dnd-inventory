@@ -37,7 +37,12 @@ function setupWithStacks(quantity: number): SetupResult {
   const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
   useStore.getState().dispatch({
     type: 'acquire',
-    payload: { stashId: base.inventoryStashId, definitionId: torch.id, quantity, source: 'catalog-add' },
+    payload: {
+      stashId: base.inventoryStashId,
+      definitionId: torch.id,
+      quantity,
+      source: 'catalog-add',
+    },
   });
   const itemInstanceId = useStore.getState().appState!.items[0]!.id;
   return {
@@ -169,7 +174,9 @@ describe('MoveItemModal (M5)', () => {
     renderWith(true, itemInstanceId);
 
     const select = screen.getByLabelText(/target stash/i);
-    const opt = Array.from(select.querySelectorAll('option')).find((o) => o.value === storageStashId);
+    const opt = Array.from(select.querySelectorAll('option')).find(
+      (o) => o.value === storageStashId,
+    );
     expect(opt).toBeDefined();
     // The bootstrap fixture uses name "Thorin" by default → "Thorin — Chest at home".
     expect(opt!.textContent).toMatch(/Thorin/);
@@ -190,9 +197,10 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
       const setup = setupWithStacks(1);
       // Source row is in Inventory; equip it before opening the modal.
       const charId = useStore.getState().appState!.characters[0]!.id;
-      useStore
-        .getState()
-        .dispatch({ type: 'equip', payload: { characterId: charId, itemInstanceId: setup.itemInstanceId } });
+      useStore.getState().dispatch({
+        type: 'equip',
+        payload: { characterId: charId, itemInstanceId: setup.itemInstanceId },
+      });
       return { characterId: charId, itemInstanceId: setup.itemInstanceId };
     })();
     expect(characterId).toBeTruthy();
@@ -211,7 +219,12 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: setup.inventoryStashId, definitionId: magic.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: setup.inventoryStashId,
+        definitionId: magic.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     const magicItemId = useStore
       .getState()

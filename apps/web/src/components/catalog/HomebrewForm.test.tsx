@@ -144,12 +144,7 @@ describe('HomebrewForm — duplicate mode (M6)', () => {
 
     render(
       <>
-        <HomebrewForm
-          open={true}
-          onOpenChange={() => {}}
-          mode="duplicate"
-          definition={torch}
-        />
+        <HomebrewForm open={true} onOpenChange={() => {}} mode="duplicate" definition={torch} />
         <Toaster />
       </>,
     );
@@ -162,9 +157,7 @@ describe('HomebrewForm — duplicate mode (M6)', () => {
 
     const homebrew = useStore
       .getState()
-      .appState!.catalog.find(
-        (d) => d.source === 'homebrew' && d.duplicatedFromId === torch.id,
-      );
+      .appState!.catalog.find((d) => d.source === 'homebrew' && d.duplicatedFromId === torch.id);
     expect(homebrew).toBeDefined();
     expect(homebrew?.name).toBe(torch.name);
     // The original PHB row stays put.
@@ -175,9 +168,7 @@ describe('HomebrewForm — duplicate mode (M6)', () => {
 describe('HomebrewForm — edit mode (M6)', () => {
   it('pre-fills from the existing homebrew definition', () => {
     const { homebrewDefId } = bootstrapWithHomebrew({ name: 'Glowing Mushroom' });
-    const def = useStore
-      .getState()
-      .appState!.catalog.find((d) => d.id === homebrewDefId)!;
+    const def = useStore.getState().appState!.catalog.find((d) => d.id === homebrewDefId)!;
 
     render(
       <>
@@ -206,9 +197,7 @@ describe('HomebrewForm — edit mode (M6)', () => {
     await user.type(nameInput, 'New Name');
     await user.click(screen.getByRole('button', { name: /^save$/i }));
 
-    const updated = useStore
-      .getState()
-      .appState!.catalog.find((d) => d.id === homebrewDefId);
+    const updated = useStore.getState().appState!.catalog.find((d) => d.id === homebrewDefId);
     expect(updated?.name).toBe('New Name');
 
     const lastEntry = useStore.getState().log.at(-1)!;

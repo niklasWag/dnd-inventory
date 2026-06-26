@@ -163,13 +163,7 @@ export function subtract(a: CurrencyDelta, b: CurrencyDelta): Currency {
     gp: (a.gp ?? 0) - (b.gp ?? 0),
     pp: (a.pp ?? 0) - (b.pp ?? 0),
   };
-  if (
-    result.cp < 0 ||
-    result.sp < 0 ||
-    result.ep < 0 ||
-    result.gp < 0 ||
-    result.pp < 0
-  ) {
+  if (result.cp < 0 || result.sp < 0 || result.ep < 0 || result.gp < 0 || result.pp < 0) {
     throw new Error(
       `currency.subtract: result would be negative ` +
         `(cp:${String(result.cp)} sp:${String(result.sp)} ep:${String(result.ep)} ` +

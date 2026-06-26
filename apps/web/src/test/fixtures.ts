@@ -59,7 +59,9 @@ export interface BootstrapResult {
  * plus a seeded catalog. Every M2+ test starts here so each suite focuses
  * on its own action rather than the create-character setup.
  */
-export function bootstrap(payload: CreateCharacterPayload = VALID_CREATE_CHARACTER_PAYLOAD): BootstrapResult {
+export function bootstrap(
+  payload: CreateCharacterPayload = VALID_CREATE_CHARACTER_PAYLOAD,
+): BootstrapResult {
   const { dispatch } = useStore.getState();
   dispatch({ type: 'create-character', payload });
   dispatch({

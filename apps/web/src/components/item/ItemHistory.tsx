@@ -110,8 +110,7 @@ function isItemEntry(e: TransactionLogEntry): e is ItemEntry {
 function entryReferencesItem(e: ItemEntry, itemInstanceId: string): boolean {
   if (e.type === 'split') {
     return (
-      e.payload.sourceInstanceId === itemInstanceId ||
-      e.payload.newInstanceId === itemInstanceId
+      e.payload.sourceInstanceId === itemInstanceId || e.payload.newInstanceId === itemInstanceId
     );
   }
   return e.payload.itemInstanceId === itemInstanceId;
@@ -125,9 +124,7 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
 
   const entries = useStore(
     useShallow((s) =>
-      s.log.filter(
-        (e): e is ItemEntry => isItemEntry(e) && entryReferencesItem(e, itemInstanceId),
-      ),
+      s.log.filter((e): e is ItemEntry => isItemEntry(e) && entryReferencesItem(e, itemInstanceId)),
     ),
   );
 
@@ -197,13 +194,16 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
               }}
               className="h-3.5 w-3.5"
             />
-            <span>Show all events{!showAll && hiddenCount > 0 ? ` (+${String(hiddenCount)})` : ''}</span>
+            <span>
+              Show all events{!showAll && hiddenCount > 0 ? ` (+${String(hiddenCount)})` : ''}
+            </span>
           </label>
         ) : null}
       </div>
       {visibleEntries.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No ownership-transition events for this item yet — toggle "Show all events" to see {hiddenCount} hidden entr{hiddenCount === 1 ? 'y' : 'ies'}.
+          No ownership-transition events for this item yet — toggle "Show all events" to see{' '}
+          {hiddenCount} hidden entr{hiddenCount === 1 ? 'y' : 'ies'}.
         </p>
       ) : (
         <ul className="space-y-1 text-sm" role="list">
@@ -255,14 +255,12 @@ function summarize(
       //   - cross-stash + parent: null   → existing "from X to Y" + "(removed from container)"
       //   - cross-stash + parent: undef  → existing "from X to Y" (pre-R1.5 phrasing)
       const sameStash = e.payload.fromStashId === e.payload.toStashId;
-      const stashLabel =
-        stashLabels.get(e.payload.toStashId) ?? shortStashId(e.payload.toStashId);
+      const stashLabel = stashLabels.get(e.payload.toStashId) ?? shortStashId(e.payload.toStashId);
       if (sameStash && typeof e.payload.toContainerInstanceId === 'string') {
         // The container row may have been deleted between the pack event
         // and the current view; fall back to a generic "container" word
         // so the line stays readable.
-        const containerLabel =
-          containerLabels.get(e.payload.toContainerInstanceId) ?? 'container';
+        const containerLabel = containerLabels.get(e.payload.toContainerInstanceId) ?? 'container';
         return `Packed \u00d7${String(e.payload.quantity)} into ${containerLabel} (in ${stashLabel})`;
       }
       if (sameStash && e.payload.toContainerInstanceId === null) {
@@ -276,8 +274,7 @@ function summarize(
       // "(removed from container)" suffix makes the line too long to
       // fit one row in the log timeline. The reducer-side orphan-drop
       // still keeps state honest; the log just doesn't shout about it.
-      const from =
-        stashLabels.get(e.payload.fromStashId) ?? shortStashId(e.payload.fromStashId);
+      const from = stashLabels.get(e.payload.fromStashId) ?? shortStashId(e.payload.fromStashId);
       const to = stashLabel;
       return `Transferred \u00d7${String(e.payload.quantity)} from ${from} to ${to}`;
     }
@@ -302,9 +299,7 @@ function summarize(
     case 'recharge': {
       const delta = e.payload.to - e.payload.from;
       const triggerLabel =
-        e.payload.trigger === 'manual'
-          ? 'manual'
-          : e.payload.trigger.replace('-', ' ');
+        e.payload.trigger === 'manual' ? 'manual' : e.payload.trigger.replace('-', ' ');
       return `Recharged +${String(delta)} (${String(e.payload.from)} \u2192 ${String(e.payload.to)}, ${triggerLabel})`;
     }
     case 'identify': {

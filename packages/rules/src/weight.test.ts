@@ -101,8 +101,20 @@ describe('rules.weight.containerAwareWeight (R1.3)', () => {
 
   it('sums contents of a normal (non-flatWeight) container', () => {
     const rows: Row[] = [
-      { id: 'pack', definitionId: 'backpack', ownerId: 'inv', quantity: 1, containerInstanceId: null },
-      { id: 'food', definitionId: 'ration', ownerId: 'inv', quantity: 3, containerInstanceId: 'pack' },
+      {
+        id: 'pack',
+        definitionId: 'backpack',
+        ownerId: 'inv',
+        quantity: 1,
+        containerInstanceId: null,
+      },
+      {
+        id: 'food',
+        definitionId: 'ration',
+        ownerId: 'inv',
+        quantity: 3,
+        containerInstanceId: 'pack',
+      },
     ];
     // backpack (5) + 3 rations × 2 = 11.
     expect(weight.containerAwareWeight(rows, defs)).toBe(11);
@@ -110,9 +122,27 @@ describe('rules.weight.containerAwareWeight (R1.3)', () => {
 
   it('ignores contents of a flatWeight: true container (Bag of Holding)', () => {
     const rows: Row[] = [
-      { id: 'boh', definitionId: 'bag-of-holding', ownerId: 'inv', quantity: 1, containerInstanceId: null },
-      { id: 'food', definitionId: 'ration', ownerId: 'inv', quantity: 50, containerInstanceId: 'boh' },
-      { id: 'rope', definitionId: 'rope', ownerId: 'inv', quantity: 10, containerInstanceId: 'boh' },
+      {
+        id: 'boh',
+        definitionId: 'bag-of-holding',
+        ownerId: 'inv',
+        quantity: 1,
+        containerInstanceId: null,
+      },
+      {
+        id: 'food',
+        definitionId: 'ration',
+        ownerId: 'inv',
+        quantity: 50,
+        containerInstanceId: 'boh',
+      },
+      {
+        id: 'rope',
+        definitionId: 'rope',
+        ownerId: 'inv',
+        quantity: 10,
+        containerInstanceId: 'boh',
+      },
     ];
     // Only the BoH's own weight (15) counts — 50 rations + 10 ropes inside vanish.
     expect(weight.containerAwareWeight(rows, defs)).toBe(15);
@@ -121,10 +151,28 @@ describe('rules.weight.containerAwareWeight (R1.3)', () => {
   it('mixes flat and non-flat containers correctly', () => {
     const rows: Row[] = [
       // Backpack (5) + 3 rations (6) inside = 11
-      { id: 'pack', definitionId: 'backpack', ownerId: 'inv', quantity: 1, containerInstanceId: null },
-      { id: 'food', definitionId: 'ration', ownerId: 'inv', quantity: 3, containerInstanceId: 'pack' },
+      {
+        id: 'pack',
+        definitionId: 'backpack',
+        ownerId: 'inv',
+        quantity: 1,
+        containerInstanceId: null,
+      },
+      {
+        id: 'food',
+        definitionId: 'ration',
+        ownerId: 'inv',
+        quantity: 3,
+        containerInstanceId: 'pack',
+      },
       // BoH (15) + 50 ropes inside (free) = 15
-      { id: 'boh', definitionId: 'bag-of-holding', ownerId: 'inv', quantity: 1, containerInstanceId: null },
+      {
+        id: 'boh',
+        definitionId: 'bag-of-holding',
+        ownerId: 'inv',
+        quantity: 1,
+        containerInstanceId: null,
+      },
       { id: 'r', definitionId: 'rope', ownerId: 'inv', quantity: 50, containerInstanceId: 'boh' },
       // Plus 1 loose rope outside containers (10)
       { id: 'loose', definitionId: 'rope', ownerId: 'inv', quantity: 1, containerInstanceId: null },
@@ -134,7 +182,13 @@ describe('rules.weight.containerAwareWeight (R1.3)', () => {
 
   it('ignores rows whose definitionId is missing from the map (defensive)', () => {
     const rows: Row[] = [
-      { id: 'unknown', definitionId: 'mystery', ownerId: 'inv', quantity: 5, containerInstanceId: null },
+      {
+        id: 'unknown',
+        definitionId: 'mystery',
+        ownerId: 'inv',
+        quantity: 5,
+        containerInstanceId: null,
+      },
     ];
     expect(weight.containerAwareWeight(rows, defs)).toBe(0);
   });
@@ -147,8 +201,20 @@ describe('rules.weight.containerAwareWeight (R1.3)', () => {
       [ration.id, ration],
     ]);
     const rows: Row[] = [
-      { id: 'bag', definitionId: 'homebrew-bag', ownerId: 'inv', quantity: 1, containerInstanceId: null },
-      { id: 'food', definitionId: 'ration', ownerId: 'inv', quantity: 2, containerInstanceId: 'bag' },
+      {
+        id: 'bag',
+        definitionId: 'homebrew-bag',
+        ownerId: 'inv',
+        quantity: 1,
+        containerInstanceId: null,
+      },
+      {
+        id: 'food',
+        definitionId: 'ration',
+        ownerId: 'inv',
+        quantity: 2,
+        containerInstanceId: 'bag',
+      },
     ];
     expect(weight.containerAwareWeight(rows, localDefs)).toBe(8); // 4 + 2*2
   });

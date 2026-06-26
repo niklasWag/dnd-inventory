@@ -21,9 +21,7 @@ interface EquippedSlotsPanelProps {
  * T[] }` straight from the selector would infinite-loop the Zustand
  * subscription (shallow-compares against fresh array references).
  */
-export function EquippedSlotsPanel({
-  characterId,
-}: EquippedSlotsPanelProps): ReactElement | null {
+export function EquippedSlotsPanel({ characterId }: EquippedSlotsPanelProps): ReactElement | null {
   const appState = useStore((s) => s.appState);
 
   const data = useMemo(() => {

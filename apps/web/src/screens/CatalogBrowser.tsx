@@ -73,8 +73,8 @@ export function CatalogBrowser(): ReactElement {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Catalog</h1>
           <p className="text-sm text-muted-foreground">
-            PHB 2024 mundane items, DMG 2024 magic items, and homebrew. PHB / DMG rows
-            are read-only — use Duplicate to create an editable homebrew copy.
+            PHB 2024 mundane items, DMG 2024 magic items, and homebrew. PHB / DMG rows are read-only
+            — use Duplicate to create an editable homebrew copy.
           </p>
         </div>
         <Button
@@ -100,10 +100,7 @@ export function CatalogBrowser(): ReactElement {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="catalog-browser-category">Category</Label>
-          <Select
-            value={category}
-            onValueChange={(v) => setCategory(v as 'all' | ItemCategory)}
-          >
+          <Select value={category} onValueChange={(v) => setCategory(v as 'all' | ItemCategory)}>
             <SelectTrigger id="catalog-browser-category">
               <SelectValue />
             </SelectTrigger>
@@ -170,9 +167,7 @@ export function CatalogBrowser(): ReactElement {
                     {d.weight !== undefined ? `${String(d.weight)} lb` : '—'}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {d.cost !== undefined
-                      ? `${String(d.cost.amount)} ${d.cost.currency}`
-                      : '—'}
+                    {d.cost !== undefined ? `${String(d.cost.amount)} ${d.cost.currency}` : '—'}
                   </td>
                   <td className="px-3 py-2 text-right">
                     {d.source === 'PHB' || d.source === 'DMG' ? (

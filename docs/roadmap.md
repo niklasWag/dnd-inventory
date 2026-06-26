@@ -1441,80 +1441,282 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 #### R3.1 — Server scaffold + Postgres + Prisma + seed runner
 
-- [ ] `apps/server` Fastify + TypeScript scaffolded
-- [ ] Postgres + Prisma set up
-- [ ] Prisma schema mirrors `packages/shared/schemas` Zod definitions
-- [ ] Initial migration generated and applied
-- [ ] `Metadata` table tracking canonical `seedVersion` (§4)
-- [ ] PHB + DMG seed runner on server boot (upsert)
-- [ ] `infra/docker/` compose: web + server + postgres for local dev
+- [x] `apps/server` Fastify + TypeScript scaffolded — **R3.1** (Fastify 5 + `@fastify/cors` + `@fastify/sensible`; ESM-only; `tsx watch` dev loop; same workspace tooling as `apps/web` — TS 5.7 strict, ESLint 9 flat config, Vitest 4)
+- [x] Postgres + Prisma set up — **R3.1** (Postgres 18-alpine; Prisma 7.8 with the driver-adapter model — `@prisma/adapter-pg` + `pg`; mandatory `prisma.config.ts` at `apps/server/`; client generated to gitignored `prisma/generated/prisma/`)
+- [x] Prisma schema mirrors `packages/shared/schemas` Zod definitions — **R3.1** (10 models / 9 enums; hyphenated Zod enum values stored underscore-form in DB and translated by `src/db/mappers.ts`; `cost` / `charges` nested blocks flattened to sibling columns; `tags` as native Postgres `text[]`; `conditionOverrides` + `TransactionLog.payload` as `Json`; `Character.inventoryStashId` ↔ `Stash.ownerCharacterId` cycle resolved via `DEFERRABLE INITIALLY DEFERRED` FK appended to the init migration)
+- [x] Initial migration generated and applied — **R3.1** (`prisma migrate dev --name init`; hand-tail appended with `DEFERRABLE` FK + 10 CHECK constraints encoding Zod invariants — Character level 1-20 / strScore 1-30 / maxAttunement ≥0; ItemInstance quantity >0 / currentCharges ≥0-or-null; CurrencyHolding all 5 denoms ≥0; ItemDefinition weight ≥0; cost-pair + charges-pair "both null or both set"; Stash 3-arm scope/owner/party/isCarried discriminator)
+- [x] `Metadata` table tracking canonical `seedVersion` (§4) — **R3.1** (`{ key: String @id, value: Json }` shape; single canonical key `'seedVersion'` with integer value; OUTLINE §4 amended in lockstep)
+- [x] PHB + DMG seed runner on server boot (upsert) — **R3.1** (`src/db/seed-runner.ts` reads `@app/seeds` `loadPhbSeed()` + `loadDmgSeed()`, maps each row through `toPrismaItemDefinition`, upserts by id inside a single `$transaction`, stamps `Metadata.seedVersion`; idempotent — boots after the first one short-circuit at the version check; tampered rows revert when the version is bumped backwards)
+- [x] `infra/docker/` compose: web + server + postgres for local dev — **R3.1** (`postgres:18-alpine` healthcheck-gated; `Dockerfile.server` multi-stage Node 22 alpine running `prisma migrate deploy` then `node dist/index.js`; `Dockerfile.web` serves the SAPUI5 production build via `vite preview` per the slice 6 user decision — nginx deferred to R7; `postgres-init/00-databases.sh` provisions `dnd_inv_test` on first-init for the integration suite)
 
 #### R3.1 — Notes
 
-> -
+> **2026-06-26 — R3.1 (Server scaffold) complete.** Opens R3 (Backend skeleton). First non-`apps/web` workspace app — `apps/server` now sits alongside `apps/web` with shared `packages/{shared,rules,seeds}` deps. Smoke-tested loop: `cd apps/server && pnpm dev` → seed runner logs `upserted 486 rows; vnone → v3` → `curl localhost:3000/healthz` returns `{"status":"ok","db":"ok","seedVersion":3}` → second boot logs `skipped (already at v3)`. Compose stack builds and runs the same path inside containers.
+>
+> **Stack delta vs the plan.** Prisma 7.8 went GA recently; planned for v6 but used `npm view` mid-slice and confirmed Postgres 18 + Node 22 + ESM compat in the migration guide. Switched mid-slice. Prisma 7's breaking-changes set reshapes 4 files vs the v6 blueprint: (1) `prisma.config.ts` is mandatory (no more `url = env(...)` in `schema.prisma`); (2) generator `provider = "prisma-client"` + mandatory `output` field, client emits TypeScript source instead of pre-compiled `.js`; (3) driver-adapter mandatory — every PrismaClient instantiates as `new PrismaClient({ adapter: new PrismaPg({ connectionString }) })`; (4) `dotenv/config` is no longer auto-loaded — every entrypoint (`src/index.ts`, `prisma/seed.ts`, `prisma.config.ts`, `src/test/setup.ts`) imports it explicitly. Net: 1 extra config file, ~3 extra import lines, no behavioral surprises after the migration guide pass.
+>
+> **Schema port — translation boundary at `src/db/mappers.ts`.** Hyphenated Zod enum values (`'very-rare'` / `'long-rest'` / `'short-rest'` / `'recovered-loot'`) translate to underscore form in Postgres because Prisma enum values can't contain hyphens. The mapper provides bidirectional pure functions per enum (`toDbRarity` / `fromDbRarity`, etc.) and round-trip parity is asserted in `mappers.test.ts` — every Zod enum value passes through `fromDb(toDb(v)) === v`. `ItemDefinition.cost` (nested `{ amount, currency }`) and `.charges` (nested `{ max, rechargeRule, rechargeAmount? }`) flatten to sibling columns (`costAmount` / `costCurrency`; `chargesMax` / `chargesRechargeRule` / `chargesRechargeAmount`) so future server-side queries can filter without `Json` casts; paired CHECK constraints enforce "both null or both set." Tags ship as native Postgres `text[]` (GIN-indexable later without a schema change); `conditionOverrides` + `TransactionLog.payload` stay `Json` (open shape; Zod validates at the boundary).
+>
+> **Cycle resolution.** `Character.inventoryStashId` references a `Stash`, but `Stash.ownerCharacterId` references the `Character` — chicken-and-egg in the `create-character` flow (R3.4). Prisma's DSL can't express deferrable FKs, so the init migration's hand-tail drops + recreates the FK with `DEFERRABLE INITIALLY DEFERRED`. Inside R3.4's `create-character` transaction the FK check waits until COMMIT, letting the two rows insert in either order. Verified via `pg_constraint`: `condeferrable=t, condeferred=t`.
+>
+> **Reducer side stays on `apps/web` for now.** R3.1's seed runner doesn't replicate the client's `seed-catalog` reducer action — it just upserts. R3.4 lands the authoritative server-side reducer; R3.5 wires `apps/web` to push actions through HTTP rather than mutating Dexie directly. Until then the server is "DB + catalog" only.
+>
+> **Tests: +17 in `apps/server`** (workspace total 706 → 723). Breakdown:
+>   - **mappers (11)** — Rarity / ChargesRechargeRule / StashScope enum round-trip; cost+charges flatten/unflatten; hyphen→underscore mapping; minimal PHB row round-trip; maximal DMG row round-trip; `exactOptionalPropertyTypes` discipline (no `undefined` keys emitted).
+>   - **seed-runner (4)** — first-run inserts all rows + stamps version; second run is `{ skipped: true }`; version mismatch reverts tampered rows; sampled rows round-trip through `itemDefinitionSchema`.
+>   - **health route (2)** — `GET /healthz` returns 200 / `{status:'ok',db:'ok',seedVersion:3}`; returns 503 / `degraded` when Metadata is empty.
+>
+> **Row counts.** Seed runner upserts **486 ItemDefinition rows** on first boot — 181 PHB (mundane gear) + 305 DMG (magic items). Matches `pnpm --filter @app/seeds test` row-count assertions; sanity-checked via direct Prisma query against the test DB.
+>
+> **`@app/server` deps added (not yet in `apps/web`):** `fastify@5.8` + `@fastify/cors@11.2` + `@fastify/sensible@6.0` (server); `@prisma/client@7.8` + `@prisma/adapter-pg@7.8` + `pg@8.22` (DB); `prisma@7.8` (CLI, devDep); `tsx@4.22` (devDep, runtime); `dotenv@17.x` (env loading). All on latest stable; no peer-warning fallout.
+>
+> **`pnpm-workspace.yaml` change.** `allowBuilds` / `onlyBuiltDependencies` extended with `@prisma/client` / `@prisma/engines` / `prisma` — Prisma's postinstalls download the query-engine binary used by the adapter (esbuild is already allow-listed). The deny-by-default stance from the M0 commit is preserved.
+>
+> **Docker compose layout.** `postgres:18-alpine` healthcheck-gated; `Dockerfile.server` multi-stage (Node 22 alpine; `pnpm install --frozen-lockfile` in build stage, `prisma generate` + `pnpm build`, runtime stage copies `dist/` + `prisma/` + `node_modules/`); compose `server.command` runs `prisma migrate deploy` then `node dist/index.js`; `Dockerfile.web` serves the production build via `vite preview --host 0.0.0.0 --port 5173`. Postgres on host port `5433` to avoid clashing with any host Postgres on 5432. `postgres-init/00-databases.sh` provisions the secondary `dnd_inv_test` database on first-init of the named volume (Docker entrypoint contract — runs only when the volume is empty).
+>
+> **Prisma 7 AI safety gate.** `prisma migrate reset` refuses to run from an AI agent's session without an explicit user-consent env var (`PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="<verbatim user message>"`). Documented for future slices that need a destructive reset: pause, explain the action, get explicit consent, then run with the consent env var attached. Hit during the slice when applying the hand-tail to the dev DB; resolved by asking + getting explicit "Yes, reset dev DB" from the user.
+>
+> **Test DB strategy.** `src/test/setup.ts` redirects `DATABASE_URL` to `DATABASE_URL_TEST` (`…/dnd_inv_test`) so DB-touching tests never hit the dev DB. Vitest's `fileParallelism: false` keeps the shared test DB safe; for R3.4's expanded test surface we may switch to per-test-file schema isolation.
+>
+> **Decisions captured in code:**
+> 1. **Hand-write Prisma schema, mirror Zod shapes.** No codegen tool; we control indexes / CHECKs / FKs directly. Zod stays the source of truth; the mapper layer + `fromPrismaItemDefinition` Zod-parse-on-read makes drift fail loudly.
+> 2. **Normalized tables per AppState entity.** Each entity is its own table (User / Party / PartyMembership / Character / Stash / ItemDefinition / ItemInstance / CurrencyHolding / TransactionLog / Metadata). Enables R3.4 server-side reducer + R5 broadcast model. No JSONB-blob shortcut.
+> 3. **`TransactionLog` is a single table** with `type: String` discriminator + `payload: Json`. The 25 variant types stay in the Zod discriminated union; Zod validates the payload at the boundary. Avoids 25 sibling tables for what's already a 1:1 reducer-action-to-log-type contract.
+> 4. **Flatten `cost` / `charges` to sibling columns.** Both are small fixed-shape nested objects with non-trivial query value (filter by rarity AND attunement requirements, for example). Paired CHECK constraints encode "both null or both set."
+> 5. **Hyphenated enum mapping via `mappers.ts`.** Prisma enum values can't contain hyphens — `'very-rare'` becomes `'very_rare'` in the DB; the mapper is the single point of translation. Round-trip parity unit-tested per value.
+> 6. **`Character.inventoryStashId` FK is `DEFERRABLE INITIALLY DEFERRED`.** Resolves the Character↔Stash cycle inside R3.4's `create-character` transaction. Plain Prisma DSL can't express it; appended to the init migration's SQL by hand.
+> 7. **No auth + no HTTP-routed mutations in R3.1.** Only `GET /healthz`. R3.2 layers Auth.js; R3.4 lands the authoritative reducer. Keeps the slice small enough to verify end-to-end in one PR.
+> 8. **Postgres 18 + Prisma 7.** Latest stable on both. Both adopted mid-slice after the version audit found 17 / 6.x in the original plan were unnecessarily conservative. Prisma 7's breaking-changes set is small and well-documented; no downstream surprises.
+> 9. **Web container uses `vite preview`** (per the slice 6 user decision). Nginx deferred to R7. Keeps the slice from growing an nginx.conf maintenance surface for a use case (production deployment) that R3.1 doesn't have yet.
+>
+> **OUTLINE.md amendments (additive).** One:
+> - §4 `Metadata` row shape now explicitly documented as `{ key: String @id, value: Json }` with canonical key `'seedVersion'` (integer value).
+>
+> **`docs/MVP.md` unchanged.** MVP closed at M7; R3+ work is OUTLINE-scoped only.
+>
+> **Followups carried forward to R3.2:**
+> - `User` columns `discordId` / `email` / `emailVerified` / `avatarUrl` are NOT in the R3.1 schema. R3.2 will add them via `prisma migrate dev --name r32_user_auth_columns` along with the unique constraint on `email` and the DB-level check constraint `discordId IS NOT NULL OR emailVerified IS NOT NULL` per OUTLINE §4 / SECURITY §1.
+> - Auth.js requires the standard `Account` / `Session` / `VerificationToken` tables (Prisma adapter shape) — R3.2 will add them.
+> - `@fastify/cookie` + Auth.js handler routes are not yet wired. The Fastify scaffold + CORS in R3.1 are sufficient prep.
+>
+> **Followups carried forward to R3.4:**
+> - The authoritative reducer (server re-runs `apps/web/src/store/reducer.ts` semantics against incoming actions). The pure parts of the reducer should hoist to a shared package (`packages/rules`?) so client + server share the same code; identify which actions are pure-state-update vs which need server-side side-effects (e.g., `acquire` source `'hoard'` is purely state; `dm-transfer` may need server-side party-ownership validation).
+> - Per-user AppState sync endpoint (push + pull) — Fastify routes mounted under `/sync` consuming the dispatched action shape from the client.
+> - Nightly snapshot job — likely a small Fastify-Cron plugin or a separate worker process; persists snapshots to disk per `OUTLINE §11`.
 
 #### R3.2 — Discord OAuth + sessions + User model
 
-- [ ] Auth.js + Discord provider wired (authorization code + PKCE, scope `identify`)
-- [ ] Session cookie issuance after token exchange
-- [ ] `User.id` linked via `discordId`; `avatarUrl` populated
-- [ ] `User.email` and `User.emailVerified` columns added to Prisma schema (nullable; unique constraint on `email`)
-- [ ] DB-level `CHECK` constraint: `discordId IS NOT NULL OR "emailVerified" IS NOT NULL`
+- [x] Auth.js + Discord provider wired (authorization code + PKCE, scope `identify`) — **R3.2** (`@auth/core@^0.34` directly + hand-written Fastify route wrappers in `src/auth/routes.ts`; PKCE+state per SECURITY §1.1; scope hardcoded to `identify` via authorization URL override since `@auth/core/providers/discord`'s default is `identify+email`)
+- [x] Session cookie issuance after token exchange — **R3.2** (database-backed session strategy via `@auth/prisma-adapter`; cookie name `__Host-auth-session-token` in production, `auth-session-token` in dev; `HttpOnly` + `SameSite=lax` + `Secure` in production; sliding 30-day idle expiry with daily-resolution updates per SECURITY §1.1)
+- [x] `User.id` linked via `discordId`; `avatarUrl` populated — **R3.2** (`User.id` stays opaque cuid; `discordId` is a separate `String? @unique` column carrying the Discord snowflake; OUTLINE §4 amended in lockstep; `events.signIn` callback resyncs `displayName` + `avatarUrl` from the Discord profile on every login)
+- [x] `User.email` and `User.emailVerified` columns added to Prisma schema (nullable; unique constraint on `email`) — **R3.2** (`emailVerified` typed as `DateTime?` per Auth.js adapter convention + OUTLINE §4 line 231; `email` has UNIQUE per SECURITY §1.2; both will be populated by R3.3's OTP flow)
+- [x] DB-level `CHECK` constraint: `discordId IS NOT NULL OR "emailVerified" IS NOT NULL` — **R3.2** (`User_auth_present_check` in `prisma/migrations/<ts>_r32_auth/migration.sql` tail; mirrored in Zod via `userSchema.refine()`; defended by `src/db/schema-invariants.test.ts`)
 
 #### R3.2 — Notes
 
-> -
+> **2026-06-26 — R3.2 (Discord OAuth + DB sessions) complete.** Layers auth on top of R3.1's scaffold. The server now identifies users via a session cookie issued at the end of a Discord OAuth2 + PKCE flow; `User` carries the canonical OAuth identity columns; the DB enforces the SECURITY §1.2 "at least one of `discordId` or `emailVerified`" invariant. Smoke-tested loop: `pnpm dev` with empty `DISCORD_CLIENT_ID` → `curl /auth/discord/login` returns 503 `{"error":"discord_auth_disabled"}`; with creds set → 302 to `https://discord.com/api/oauth2/authorize?scope=identify&...&code_challenge=...&state=...`; full OAuth flow in a browser drops `User` + `Account` + `Session` rows + sets the session cookie; `curl --cookie cookies.txt /auth/session` returns the user. **No web client wiring** — that's R3.5.
+>
+> **Auth library: `@auth/core` directly, no community adapter.** TECH_STACK §6.6 + §9 Decision Log lock in "Auth.js over Lucia / hand-rolled". The community `@auth/fastify` adapter was rejected as less battle-tested; instead we ship ~50 lines of glue in `src/auth/routes.ts` that wrap Fastify req/reply into Web `Request`/`Response` and call `Auth(request, config)`. The two `GET` routes (`/auth/discord/login`, `/auth/discord/callback`) collapse the Auth.js v5 CSRF dance: `/login` internally fetches a CSRF token, POSTs `/auth/signin/discord` with it, and forwards the resulting 302 to Discord. End user sees a single `GET` → 302 hop.
+>
+> **DB-backed sessions over JWT.** SECURITY-modern: instant revocation (`DELETE FROM Session`), surgical key rotation, opaque tokens, no JWT-class CVEs. Aligns with OWASP ASVS guidance for first-party monoliths and Auth.js's default-when-adapter-present strategy. The "1 DB read per authenticated request" cost is bounded by `src/auth/session.ts`'s `getSession()` — a single `findUnique` with `include: {user: true}`. Sliding expiry: when remaining lifetime drops below `maxAge - updateAge` (= 29 days), `expires` is bumped to `now + 30d`. The integration test asserts this.
+>
+> **`@auth/prisma-adapter` ↔ Prisma 7 peer-dep override.** `@auth/prisma-adapter@2.11.2`'s peerDependencies range is `@prisma/client>=2.26.0 || >=3 || >=4 || >=5` — explicitly excludes Prisma 7. The adapter is thin CRUD over stable `PrismaClient` methods (`findUnique`/`create`/`update`/`delete`/`$transaction`) so it works in practice; we suppress the peer-dep warning via pnpm `peerDependencyRules` in `pnpm-workspace.yaml`. **TODO**: remove the override when `@auth/prisma-adapter` formally supports Prisma 7. If it ever breaks at runtime, R3.3 ejects to a custom adapter (~150 lines) — we already need to customize the `VerificationToken` path for email OTP there.
+>
+> **Discord token persistence stripping.** SECURITY §1.1: "Discord tokens are not persisted in the DB — only `discordId`, `displayName`, `avatarUrl`." `src/auth/adapter-overrides.ts` wraps `PrismaAdapter(prisma)` and intercepts `linkAccount` to write `null` for `access_token` / `refresh_token` / `id_token` / `expires_at` / `session_state`. The `Account` row still exists (Auth.js needs the provider linkage to resolve "the user signed in via Discord" semantics in `events.signIn`) but holds no Discord-issued credentials. Unit test asserts the five fields are nulled on the underlying `prisma.account.create` call.
+>
+> **`User.id` vs `discordId` split — OUTLINE §4 deviation.** OUTLINE §4 originally said "post-R3 the id becomes the Discord snowflake (`discordId`)." In practice the Auth.js Prisma adapter mints its own cuid for new users during the OAuth flow, and existing R3.1 / MVP users already have UUID ids. Co-locating both on `User.id` would force a destructive backfill on every existing row. R3.2 instead adds `discordId String? @unique` as a separate column; `User.id` stays an opaque internal cuid that survives provider changes. OUTLINE §4 amended in lockstep. The MVP web reducer now sets `discordId === id` for local-only users (placeholder; R3.5 overwrites with the real snowflake on first login).
+>
+> **`emailVerified DateTime?` (not Boolean).** Roadmap checklist line 1513 just said "emailVerified"; OUTLINE §4 line 231 specifies "ISO timestamp, nullable — set on first successful OTP verification". `DateTime?` matches OUTLINE wording AND the @auth/prisma-adapter convention — clean two-fold consistency.
+>
+> **`MembershipRole.banker` added in this slice.** OUTLINE §4 line 309 lists `dm | player | banker` for `TransactionLog.actorRole`. SECURITY §2.2 says banker is denormalized on `Party.bankerUserId` per OUTLINE §3.14 — never a row in `PartyMembership`. Adding `banker` to the Prisma `MembershipRole` enum now (rather than waiting for R3.4) keeps R3.4's migration surface from touching two enum types. R3.2 ships ONLY the enum value; the §2.2 guard layer that rejects writes of `PartyMembership.role = 'banker'` lands in R3.4. `src/db/mappers.ts` exposes a narrower `fromDbMembershipRole` that throws if it ever reads a banker row — defensive trip-wire against R3.4 regressions.
+>
+> **PKCE + state, not just PKCE.** Auth.js's default for OAuth providers is `checks: ['pkce']` only. PKCE alone defends against code-injection (RFC 7636) but SECURITY §1.1 explicitly requires "state parameter bound to the user's pre-auth session; reject mismatched callbacks." We opt in via `checks: ['pkce', 'state']` on the Discord provider config. Defense-in-depth against session-fixation attacks via crafted callback URLs.
+>
+> **503-when-unconfigured pattern (SECURITY §1.2 parallel).** When `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` are absent, the `/auth/discord/*` routes return `503 {"error": "discord_auth_disabled"}` (graceful — local dev / CI / smoke tests work without a real Discord app). `NODE_ENV=production` overrides this and the env loader throws at boot, matching SECURITY §1.2's hard-fail-on-SMTP-misconfig stance. `GET /auth/session` keeps working even when Discord is disabled — useful for the R3.5 web client probing whether anyone is logged in.
+>
+> **Cookie naming: `__Host-` prefix in production.** Browser-enforced contract: no `Domain` attribute, `Path=/`, `Secure` required. Stricter than any flag we could set — if a misconfigured response strips `Secure`, the cookie is rejected on receipt. In dev (HTTP localhost) the `__Host-` prefix would break the cookie, so we fall back to a plain `auth-session-token` name. The switch is `env.NODE_ENV === 'production'`.
+>
+> **`trustHost: true` in AuthConfig.** Auth.js v5 refuses to run unless either `AUTH_URL` env / `AUTH_TRUST_HOST` env is set, or `trustHost: true` is on the config. We're behind a reverse proxy in production (nginx/caddy/traefik per TECH_STACK §7.1) and serve on localhost in dev — both modes derive the URL from the incoming `Host` header. Setting `trustHost: true` is the explicit "yes, we trust the proxy's Host" knob.
+>
+> **`app.getSession(req)` decorator on Fastify.** R3.4+ guards will call `await app.getSession(req)` to resolve the actor. Wrapping it as a decorator keeps future route code from re-implementing token lookup ad-hoc. The decorator delegates to `src/auth/session.ts`'s `getSession()`, which slides expiry forward when due.
+>
+> **Test fixture: `msw@2` Discord mock in `src/test/discord-mock.ts`.** Intercepts the two outbound calls (`POST /oauth2/token`, `GET /users/@me`) via undici's request interceptor in Node. Auth.js uses native fetch (undici under the hood) so interception is transparent. Reusable in R3.3 (SMTP send) and R5+ (websocket). Profile-per-test via the `withUser()` setter.
+>
+> **`userSchema.refine()` widened.** SECURITY §1.2 invariant ("at least one of `discordId` or `emailVerified`") now lives at the Zod boundary too — not just the DB CHECK. The MVP web reducer's `create-character` action was updated to set `discordId === id` so existing in-browser flows still parse. (User-confirmed acceptable: "Data of current mvp users is no concern because its just me.") R3.5 overwrites `discordId` with the real Discord snowflake on first server-side login.
+>
+> **DEFERRABLE FK drift (Prisma #8807) defended.** R3.2's migration touched `Character` indirectly (via the migrate engine's re-emit pass), reverting R3.1's `DEFERRABLE INITIALLY DEFERRED` on `Character_inventoryStashId_fkey`. The hand-tail of `r32_auth/migration.sql` drops + re-adds the FK with DEFERRABLE. A new test in `src/db/schema-invariants.test.ts` queries `pg_constraint` and CI-fails with a pointed error message if any future migration loses the deferral. Documented in `apps/server/prisma/schema.prisma` as a DRIFT WARNING comment on the `inventoryStashId` field.
+>
+> **Followups carried forward to R3.3:**
+> - `VerificationToken` table is already provisioned by R3.2's migration — R3.3 just writes to it.
+> - `@auth/core`'s Email provider can be drop-in registered alongside Discord; the SMTP misconfig guard (SECURITY §1.2) lives in `src/config/env.ts`.
+> - The "503 when unconfigured" pattern from R3.2 is the template for the `/auth/email/*` routes in R3.3.
+>
+> **Followups carried forward to R3.4:**
+> - `app.getSession(req)` decorator (R3.2) is the single source-of-truth identity resolver for the §8.1 guard layer.
+> - `MembershipRole.banker` is in the enum; R3.4 adds the guard that rejects `PartyMembership.role = 'banker'` writes.
+> - `actorRole: 'banker'` on `TransactionLog` is in the Zod union; R3.4's reducer emits it when `Party.bankerUserId === actorUserId`.
 
 #### R3.3 — Email OTP auth + backup-email settings
 
-- [ ] Auth.js Email provider wired; `generateVerificationToken` overridden to produce an 8-digit numeric OTP; `sendVerificationRequest` overridden to send OTP-in-email (not a magic link)
-- [ ] OTP token store backed by Prisma (`VerificationToken` table — standard Auth.js shape)
-- [ ] OTP codes: 15-minute expiry, single-use (consumed on first successful verification)
-- [ ] Rate limiting: 5 failed attempts per code → code invalidated + 15-minute per-IP + per-email lockout; implemented as a thin Fastify middleware on the OTP verification endpoint
-- [ ] `/auth/email/request-otp` returns constant-time identical response whether email is registered or not (no user enumeration)
-- [ ] SMTP startup guard: if any of `SMTP_HOST | SMTP_PORT | SMTP_USER | SMTP_PASS | SMTP_FROM` are absent, email auth is disabled at startup — email login UI hidden, OTP endpoint returns `503`
-- [ ] Email-only first-login flow: user prompted for `displayName` before hub; server blocks hub access until `displayName` is set
+- [x] Auth.js Email provider wired; `generateVerificationToken` overridden to produce an 8-digit numeric OTP; `sendVerificationRequest` overridden to send OTP-in-email (not a magic link) — **R3.3** (deviation: implemented as custom hand-written `POST /auth/email/request-otp` + `POST /auth/email/verify-otp` routes rather than Auth.js's Email provider; magic-link defaults made the SECURITY §1.2 "OTP via POST body only, never in a URL" mandate awkward to enforce. Verify route reuses `createSessionForUser` from R3.2 to issue the same session cookie shape Discord uses)
+- [x] OTP token store backed by Prisma (`VerificationToken` table — standard Auth.js shape) — **R3.3** (table provisioned by R3.2's migration; R3.3 writes rows with `identifier = 'otp:<email>'` for primary flow, `identifier = 'link:<userId>:<email>'` for backup-email link flow to prevent cross-flow code consumption)
+- [x] OTP codes: 15-minute expiry, single-use (consumed on first successful verification) — **R3.3** (`OTP_LIFETIME_MS = 15 * 60 * 1000` in `src/auth/email/otp.ts`; verify route `prisma.verificationToken.delete`s the row on success — replay attempts get P2025 / 401)
+- [x] Rate limiting: 5 failed attempts per code → code invalidated + 15-minute per-IP + per-email lockout; implemented as a thin Fastify middleware on the OTP verification endpoint — **R3.3** (new `EmailAuthAttempt` table keyed by `(email, ip)`; the OR-axis query in `checkLockout` blocks both "one IP attacking many emails" and "one email attacked from many IPs"; `recordFailedAttempt` deletes the code row when failedCount reaches MAX. Implemented as a module in `src/auth/email/rate-limit.ts` called from the route rather than a Fastify hook — keeps the lockout-then-fail-2xx response-shape explicit at the call site)
+- [x] `/auth/email/request-otp` returns constant-time identical response whether email is registered or not (no user enumeration) — **R3.3** (route always returns `200 { status: 'sent' }`; a synthetic 150-350ms `constantTimePad()` runs in parallel with the SMTP send so registered/unregistered timing distributions overlap within an order of magnitude; sophisticated timing attacks would also be blunted by adding a request-side rate limit on the same `EmailAuthAttempt` keyspace — captured as followup)
+- [x] SMTP startup guard: if any of `SMTP_HOST | SMTP_PORT | SMTP_USER | SMTP_PASS | SMTP_FROM` are absent, email auth is disabled at startup — email login UI hidden, OTP endpoint returns `503` — **R3.3** (sentinel `isEmailAuthEnabled(env)` mirrors `isDiscordAuthEnabled`; all four mail-sending routes return `503 {"error": "email_auth_disabled"}` when false; `set-display-name` does NOT gate on SMTP — a user who already has a session can finish onboarding even if SMTP is later disabled. Production fail-fast in `env.ts` if NODE_ENV=production and any are missing)
+- [x] Email-only first-login flow: user prompted for `displayName` before hub; server blocks hub access until `displayName` is set — **R3.3** (server side: new `User.needsDisplayName Boolean @default(false)` column set true on first verify-otp for an unknown email; `POST /auth/email/set-display-name` is the only route accepting that user's session until the flag flips false. R3.4's §8.1 guard layer will read this flag and return `409 display_name_required` on every other protected route. Web-side prompt UI lands in R3.5)
 - [ ] Settings → "Linked accounts" section (replaces "Backup login") — symmetric for both user types:
-  - Discord users: enter email → receive OTP → verify → `User.email` + `User.emailVerified` set
-  - Email-only users: "Connect Discord" button → OAuth flow → on success `User.discordId` + `User.avatarUrl` stored on the existing row; `displayName` not overwritten
-- [ ] `shadcn/ui input-otp` component added (`pnpm dlx shadcn@latest add input-otp`); OTP entry screen uses `maxLength={8}`
-- [ ] Login screen shows both "Sign in with Discord" and "Sign in with email" paths
+  - Discord users: enter email → receive OTP → verify → `User.email` + `User.emailVerified` set — **R3.3 server endpoints shipped** (`POST /auth/email/link/request-otp` + `POST /auth/email/link/verify-otp` require auth via `app.getSession`; conflict on email already attached elsewhere returns `409 email_already_linked`); UI lands in R3.5
+  - Email-only users: "Connect Discord" button → OAuth flow → on success `User.discordId` + `User.avatarUrl` stored on the existing row; `displayName` not overwritten — **deferred to R3.5** (intricate Auth.js callback hook; folds cleanly into R3.5's web-side OAuth redirect handling — see Notes)
+- [ ] `shadcn/ui input-otp` component added (`pnpm dlx shadcn@latest add input-otp`); OTP entry screen uses `maxLength={8}` — **deferred to R3.5 (web UI slice)**
+- [ ] Login screen shows both "Sign in with Discord" and "Sign in with email" paths — **deferred to R3.5 (web UI slice)**
 
 #### R3.3 — Notes
 
-> -
+> **2026-06-26 — R3.3 (Email OTP + backup-email server) complete.** Layers email-OTP login on top of R3.2's Auth.js+sessions surface. The server now mints 8-digit codes via `crypto.randomInt`, mails them through any SMTP relay (Postmark / SES / Mailgun / Postfix / Mailpit), and creates a `Session` row on a successful verify that's bit-identical to what the Discord callback writes. Smoke-tested loop: `pnpm dev` with empty SMTP_* → `curl /auth/email/request-otp` returns 503; with Mailpit at `localhost:1025` → POST request-otp returns 200, Mailpit UI shows the 8-digit code, POST verify-otp with that code drops `User` + `Session` rows + sets the session cookie; `curl --cookie cookies.txt /auth/session` works. **No web UI** — that's R3.5.
+>
+> **Custom routes rather than Auth.js Email provider.** Auth.js's `EmailProvider` is magic-link-default — its `signIn` action sends an email whose body contains an HTTPS link, and `callback/email` verifies a token from the URL's query string. Overriding `generateVerificationToken` + `sendVerificationRequest` to produce a numeric OTP works, but the magic-link callback URL would STILL be active and accept the same token, defeating SECURITY §1.2 "OTP submitted via POST body only, never in a query string." Hand-writing `POST /auth/email/request-otp` and `POST /auth/email/verify-otp` lets us mechanically enforce body-only submission, the constant-time response, and the 5-attempt lockout in one place — ~120 lines per route plus rate-limit / OTP / SMTP modules. The verify route doesn't go through `Auth(req, config)`; instead it calls `createSessionForUser(prisma, userId)` (a new helper in `src/auth/session.ts`) which writes the same `Session` row shape Auth.js's adapter would.
+>
+> **`@auth/core` peer-dep override survived R3.3.** No adapter calls touched the Prisma 7 incompatibility (we never invoke the `VerificationToken` adapter methods — the custom routes write directly through the typed PrismaClient). The pnpm `peerDependencyRules` block stays as-is.
+>
+> **OTP keyspace + plaintext storage.** 8 digits = 10⁸ ≈ 100M codes. The protection is the 15-minute expiry + 5-attempt lockout, NOT the entropy. Hashing the 8-digit code with bcrypt/argon2 would be theatrical — an attacker with DB read access can already mint sessions outright; the keyspace is too small for offline brute-force to be slower than online (which is what the lockout already blocks). Stored as plain digits in `VerificationToken.token`; documented in code comments + here.
+>
+> **`EmailAuthAttempt` two-axis lockout.** Single row per `(email, ip)` so concurrent attackers from different IPs against the same email each create their own row — and a single IP attacking many emails creates a row per target. `checkLockout` queries `lockedUntil > now()` with an `OR(email, ip)` clause so EITHER axis being locked blocks the next attempt. The 5-failure threshold burns ONE `(email, ip)` row's code; an attacker with a botnet pivoting IPs still has to burn 5 attempts per IP, which scales linearly with IP count rather than failing instantly. SECURITY §1.2 mitigations satisfied.
+>
+> **Constant-time `request-otp`.** Always returns 200 + the same JSON body; a `constantTimePad()` of 150-350ms runs in parallel with the SMTP send so registered/unregistered timing distributions overlap. Not a defense against a sophisticated attacker with millions of requests — but the per-IP rate limit on `verify-otp` is the load-bearing protection; the constant-time pad just defangs the trivial timing-leak case. Followup (not in this slice): add a per-IP rate limit on `request-otp` itself reusing the same `EmailAuthAttempt` keyspace. Mailpit smoke verified both branches pad to roughly the same timing envelope.
+>
+> **`needsDisplayName` Boolean column.** R3.2's User model had no way to express "this row is mid-onboarding." R3.3 adds `User.needsDisplayName Boolean @default(false)` so new email-only verify-otp rows land with `displayName: '', needsDisplayName: true`. The new `POST /auth/email/set-display-name` route is the only endpoint accepting that user's session until the flag flips. R3.4's §8.1 guard layer returns 409 `display_name_required` on every other protected route. Discord signups stay false because the `events.signIn` callback fills displayName from the Discord profile; the MVP web reducer's local users stay false because the local create flow takes the name from the user upfront.
+>
+> **Token redaction in logs.** SECURITY §1.2: "Server logs must not record OTP values — redact the body field in the logging middleware." Fastify's `logger.redact: { paths: ['req.body.otp', '*.body.otp'], remove: true }` strips the field before pino serializes the request log. Tested by inspection — pino-redact's docs cover the path-syntax.
+>
+> **`trustProxy: true` on the Fastify constructor.** The per-IP lockout would be meaningless behind a reverse proxy without this — `req.ip` would always be the loopback address. README §3.5 already mandates that the proxy validate `X-Forwarded-For` (don't blindly forward it from clients); the same security model applies here.
+>
+> **Discord-link `?link=1` flow deferred to R3.5.** The roadmap originally asked for both directions of account linking in R3.3. Server-side, the email-link side is straightforward (verify-otp + write to existing user). The Discord-link side requires routing the OAuth callback through a different code path when a session cookie is present — the `events.signIn` callback in `src/auth/config.ts` would need to detect the link case and attach `discordId`+`avatarUrl` to the existing user instead of letting the adapter create a new row. That logic folds cleanly into R3.5's web-side OAuth redirect handling (R3.5 is already going to revisit the callback for the redirect-to-hub flow), so we punt to avoid two passes over the same surface. Captured as a R3.5 carryforward below.
+>
+> **Mail mock for tests is NOT msw.** R3.2's `discord-mock.ts` uses msw to intercept outbound `fetch()`. SMTP isn't HTTP, so msw can't help. Instead, route tests pass `setupMailerMock().service` (an in-memory `MailService` that captures every `sendOtp` call into an array) directly into `buildServer` via the new `mailService?` BuildOption. The wider `vi.mock('nodemailer', ...)` approach is reserved for the `smtp.ts` unit test that exercises the wrapper itself. Two seams, two responsibilities — keeps each test layer's surface small.
+>
+> **Mailpit for local dev.** Docker `axllent/mailpit` exposes SMTP on `:1025` and a web inbox on `:8025`. Documented in `apps/server/README.md` and root README. No SMTP relay sign-up needed to smoke-test the loop. CI doesn't touch Mailpit — the mocked `MailService` covers everything.
+>
+> **`schema-invariants.test.ts` defensive checks extended.** Two new assertions: `User.needsDisplayName` is `BOOLEAN NOT NULL DEFAULT false`, and the `EmailAuthAttempt` table exists with the `(email, ip)` UNIQUE index. Catches future migration drift the same way the existing DEFERRABLE FK assertion does.
+>
+> **Followups carried forward to R3.4:**
+> - `app.getSession(req)` decorator → §8.1 guard layer that also rejects routes when `user.needsDisplayName === true` with `409 display_name_required`.
+> - `MembershipRole.banker` enum value (R3.2) → guard that rejects writes of `PartyMembership.role = 'banker'`.
+> - The `actorRole: 'banker'` Zod union entry (R3.2) → reducer emits it when `Party.bankerUserId === actorUserId`.
+>
+> **Followups carried forward to R3.5 (web slice):**
+> - `shadcn/ui input-otp` component install (`pnpm dlx shadcn@latest add input-otp` in `apps/web`).
+> - Login screen: "Sign in with Discord" + "Sign in with email" buttons.
+> - OTP entry screen (8-character input + verify request).
+> - Display-name prompt screen when `needsDisplayName: true`.
+> - Settings → "Linked accounts" UI: backup-email flow for Discord users (server endpoints shipped); Connect-Discord flow for email-only users (server-side `?link=1` callback handling lands here too).
+>
+> **Followups for ops/maintenance:** see the **Operational followups (unscheduled)** section at the bottom of this file (R3.3 contributes the `EmailAuthAttempt` cron sweep + per-IP `request-otp` rate limit).
 
 #### R3.4 — Authoritative sync
 
-- [ ] Per-user AppState sync endpoint (push reducer actions)
-- [ ] Per-user AppState pull/snapshot endpoint
-- [ ] Authoritative validation: server re-runs reducer against incoming actions
-- [ ] Nightly snapshot job to disk (default 30-day retention; configurable per §11)
-- [ ] User-triggered JSON export still works client-side (parity with §3.13)
+- [x] Per-user AppState sync endpoint (push reducer actions) — **R3.4.a** (`POST /sync/actions { partyId, actions: Action[] }` — batched. Session-derived actor; §8.1 guard map dispatched per action; reducer re-run authoritatively; one `prisma.$transaction` with 30s timeout + 100-action batch cap. Whole-batch rollback on any guard rejection → `422 { rejected: { index, code, message } }`)
+- [x] Per-user AppState pull/snapshot endpoint — **R3.4.a** (`GET /sync/state?partyId=...`. Eight Prisma queries fan-out via `Promise.all`; mapped through `db/mappers.ts` extensions; final result `appStateSchema.parse`d per CLAUDE.md "trust at the boundary")
+- [x] Authoritative validation: server re-runs reducer against incoming actions — **R3.4.a** (reducer moved to `packages/rules/src/reducer/` with `ReducerContext { newId; now; newInviteCode }` injected; web and server both call `reduce(state, action, ctx)` with their own ctx — tests inject deterministic ctx)
+- [ ] Nightly snapshot job to disk (default 30-day retention; configurable per §11) — **deferred to R3.4.b** (R3.5's web-side OAuth callback work doesn't depend on snapshots existing, so we shipped sync first; snapshot scheduler lands as a follow-on)
+- [ ] User-triggered JSON export still works client-side (parity with §3.13) — **deferred to R3.4.b** (web export-import is intact in MVP; serverside parity is a R3.4.b concern)
+- [x] **§8.1 guard layer reads `user.needsDisplayName` and returns `409 display_name_required` on every protected route except `POST /auth/email/set-display-name`** — **R3.4.a** (top-level check in both `/sync/state` and `/sync/actions` handlers; the column shipped in R3.3 and the unblock-route exists; R3.4.a closes the carryforward)
+- [x] **Guard rejects writes of `PartyMembership.role = 'banker'`** — **R3.4.a** (structural defense-in-depth: the `partyMembershipSchema.role` enum in `@app/shared` is narrowed to `['dm', 'player']` — banker is denormalized on `Party.bankerUserId` per OUTLINE §3.14. The guard map's `banker_membership_forbidden` rejection code is reserved for future regressions; no R3.4.a action writes this directly)
+- [x] **Reducer emits `actorRole: 'banker'` on `TransactionLog` entries when `Party.bankerUserId === actorUserId`** — **R3.4.a** (the `deriveActorRole(party, membership)` helper in `packages/shared/src/guards/actor.ts` returns `'banker'` iff `bankerUserId === membership.userId`; server's `resolveActor` calls it once per request to build the `Actor`, and `buildLogEntryServer` uses `actor.role` as the log entry's `actorRole`. MVP-validated state has `bankerUserId: null` so the banker branch is structurally unreachable until R4.2 widens the schema — but the code path is in place)
 
-#### R3.3 — Notes
+#### R3.4.a — Authoritative sync notes
 
-> -
+> **2026-06-26 — R3.4.a (Authoritative sync — guard + push/pull) complete.** Server gains its first domain-mutation surface: `POST /sync/actions` accepts batches of typed reducer actions, validates each via the shared §8.1 guard map, runs the moved-to-`@app/rules` reducer authoritatively, and persists the resulting deltas + `TransactionLog` entries in one `prisma.$transaction`. `GET /sync/state?partyId=...` assembles the full `AppState` from 8 Prisma queries and validates through `appStateSchema`. R3.4.b ships nightly snapshots + retention as a follow-on so R3.5's web-client work isn't blocked.
+>
+> **Reducer moved to `@app/rules` with `ReducerContext` injection.** The 2484-line web reducer relocated to `packages/rules/src/reducer/`. The 13 non-pure references (`crypto.randomUUID` / `new Date()` / `crypto.getRandomValues`) became `ctx.newId()` / `ctx.now()` / `ctx.newInviteCode()`. Web injects real impls in `apps/web/src/store/index.ts`; server injects identical ones in `sync/routes.ts`. Tests can inject deterministic sequences for reproducibility. The web's `apps/web/src/store/{reducer,types}.ts` are now thin re-exports — every web-side import path is preserved.
+>
+> **Action schema in `@app/shared/schemas/action.ts`.** The reducer's TS `Action` union (25 variants) had no Zod counterpart before R3.4.a. The new `actionSchema` mirrors it 1:1 for wire-validation in `/sync/actions`. A compile-time `types.drift.test.ts` in `@app/rules` cross-checks the discriminator sets — adding a variant to one without the other becomes a TS error. Field-level optionals differ between Zod (`field?: T | undefined`) and reducer (`field?: T`) under `exactOptionalPropertyTypes: true`; the routes handler casts at the boundary with a documented `toReducerAction(schemaAction)` shim. Discriminator set equality is the load-bearing invariant; the optional-field flavor difference is cosmetic.
+>
+> **Guard layer in `@app/shared/src/guards/`.** Codifies OUTLINE §8.1 as a map `{ actionType → Guard }`. `checkGuard()` short-circuits to `{ ok: true }` for solo parties (OUTLINE §8.2 — the sole member gets the UNION of DM + Player rights). Multi-member tests cover the matrix: DM-only actions (`create-homebrew`, `edit-homebrew`, `delete-homebrew`, `identify`, `set-encumbrance`, `rename-party`, `seed-catalog`), ownership checks (`acquire`, `equip`, `attune`, `rename-character`, `create-stash`, `edit-character`), and the `maxAttunement`-only DM-gate inside `edit-character`'s patch. The actor's `role` is derived server-side via `deriveActorRole(party, membership)` — `'banker'` iff `Party.bankerUserId === actorUserId`; never from a `PartyMembership.role = 'banker'` row.
+>
+> **`POST /sync/actions` lifecycle.** Per request: (1) session cookie → `userId`; (2) `needsDisplayName === true` → 409; (3) Zod-parse body; (4) if every action is `create-character`, the actor is a "bootstrap actor" — otherwise `resolveActor` reads the user's `PartyMembership` + `Party` rows. (5) Open one `$transaction` with 30s timeout. (6) Per action: load state, run `checkGuard`, run `reduce(state, action, ctx)`, run `applyBootstrapDelta` (for create-character) or `applyDelta` (for everything else), then `appendTransactionLog` for each emitted `LogEntrySlice`. The persistor runs BEFORE the log writes so the `TransactionLog.partyId` / `actorUserId` FKs resolve. (7) Any guard rejection throws `BatchRejected` which rolls back the whole batch and surfaces as `422 { rejected: { index, code, message } }`.
+>
+> **Bootstrap special case (`create-character`).** The reducer's bootstrap path mints a synthetic `user` row (because the web has no pre-existing auth). The server already has the authenticated user via the session; `applyBootstrapDelta` writes the Party / Character / Stashes / Memberships / Currencies using the reducer's IDs but substitutes the authenticated `userId` everywhere the reducer wrote its synthetic one. The actor's `partyId` (initially the request's placeholder) is promoted to the reducer's freshly-minted party.id before building the log entry, so the `TransactionLog.partyId` FK resolves.
+>
+> **DEFERRABLE FK creation order.** `Character.inventoryStashId → Stash` is DEFERRABLE INITIALLY DEFERRED (migration tail workaround for prisma#8807); `Stash.ownerCharacterId → Character` is NOT. So the bootstrap creates `Character` FIRST (pointing at the not-yet-existing inventory stash; the deferred FK resolves at commit) and `Stash` SECOND (`ownerCharacterId` now points at the existing Character). This is documented inline in `applyBootstrapDelta`.
+>
+> **Mapper extensions.** `apps/server/src/db/mappers.ts` gained 7 new `fromPrismaX` mappers for the entities `loadAppStateForUser` reads: Party, PartyMembership, Character, Stash, ItemInstance, CurrencyHolding, TransactionLog. Each validates through its Zod schema per CLAUDE.md "trust at the boundary". The PartyMembership mapper goes through the R3.2 `fromDbMembershipRole` translator which throws on `'banker'` (per OUTLINE §3.14 banker is never a membership row).
+>
+> **State assembler.** `loadAppStateForUser` makes 3 lead queries (User, Party, active memberships) sequentially to short-circuit unauthorized requests early, then fans out 4 more in parallel (Character, Stash, ItemDefinition, ItemInstance/CurrencyHolding/TransactionLog). Catalog reads include PHB+DMG (system-wide) plus homebrew scoped to this party. The final result is parsed through `appStateSchema` — the entry-level boundary check that surfaces any DB↔Zod drift.
+>
+> **`schema-invariants.test.ts` defensive checks unchanged.** No new tables in R3.4.a; no Prisma migrations.
+>
+> **Followups carried forward to R3.4.b:**
+> - Nightly snapshot job (`node-cron` at 03:00 local) writing a SHA-256-checksummed AppState dump per party to disk, with default 30-day retention.
+> - Server-side JSON export endpoint (parity with web export).
+>
+> **Followups carried forward to R3.5 (web slice):**
+> - Wire `apps/web/src/store/` to call `/sync/state` on hydrate and `/sync/actions` after each dispatch (replacing the Dexie-only persistence).
+> - Optimistic UI: web reducer runs first against local state; server response either confirms or rolls back via `applied[]` / `rejected`.
+> - Display-name prompt UX (`needsDisplayName: true` → block hub render).
+>
+> **Followups for R4.2 (Banker):**
+> - Widen `partyMembershipSchema.role` to include `'banker'`? No — keep narrow per OUTLINE §3.14 (banker is denormalized only). Widen `party.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`.
+> - Add `appoint-banker` / `revoke-banker` action variants + matching guards + reducer cases + persistor handlers.
+> - The R3.4.a guard's `banker_membership_forbidden` code becomes load-bearing — first triggered by a misbehaving `appoint-banker` payload that wrote to `PartyMembership.role` instead of `Party.bankerUserId`.
 
-#### R3.4 — Authoritative sync notes
+#### R3.4.b — Snapshots + JSON export parity
 
-> -
+- [x] **Nightly snapshot job (`node-cron` at 03:07 local)** — **R3.4.b** (in-process `node-cron@4.5.0`, registered by `buildServer` and stopped via Fastify's `onClose` hook so SIGTERM doesn't leak the timer. Per tick: enumerates every Party, calls `writeSnapshot` per party (state via `loadAppStateForParty` admin loader), then `sweepSnapshots` for retention. Per-party write failures are collected and logged but don't abort the tick. Disabled when `SNAPSHOTS_ENABLED=false`).
+- [x] **Server-side JSON export endpoint** — **R3.4.b** (`GET /sync/export?partyId=...`. Same auth + `needsDisplayName` + party-membership gates as `/sync/state`; reuses `loadAppStateForUser`; wraps the result in `exportEnvelope` with `schemaVersion: 1`, `exportedAt`, `appVersion`, `seedVersion`, and boundary-parses the envelope before sending. Per-status: 401 / 403 / 404 / 409 / 200).
+- [x] **Snapshot restore admin command** — **R3.4.b** (`pnpm --filter @app/server snapshot:restore <path>`. Reads the snapshot JSON, verifies SHA-256 against the `.sha256` sidecar (sha256sum-compatible `<digest>  <filename>` format), Zod-parses the envelope, then wipes + reapplies the party's rows inside one `$transaction` with a 60s timeout. NOT exposed over HTTP — operator-only per SECURITY §8 "opt-in restore." A digest mismatch exits non-zero before touching the DB).
+
+#### R3.4.b — Snapshots notes
+
+> **2026-06-26 — R3.4.b (Snapshots + JSON export parity) complete.** Server now writes per-party snapshot JSON files + SHA-256 sidecars nightly at 03:07 local, sweeps files older than `SNAPSHOT_RETENTION_DAYS` (default 30), and surfaces an HTTP export endpoint that hands the web client the same `exportEnvelope` shape it's been writing locally. A `snapshot:restore` CLI lets the operator roll any snapshot file back into the DB after verifying its checksum.
+>
+> **node-cron@4.5.0.** v4 ships its own TypeScript types (no `@types/node-cron` needed) and exposes the same `schedule(expr, fn, opts)` surface as v3 plus richer events (`task:started`, `execution:overlap`, etc.). The R3.4.b `startSnapshotCron` uses only the v3-shape (`schedule()` + `task.stop()`); the v4 extras are available without a refactor when R3.4.c or a later slice wants them. v3's `@types/node-cron@3.0.11` is intentionally NOT installed — it would conflict with v4's bundled types.
+>
+> **Per-party file layout.** `${SNAPSHOT_DIR}/${partyId}/${ISO_TIMESTAMP}.json` + `.sha256` sidecar per file. Per-party folders make it trivial for an operator to copy / restore one party at a time without grepping a monolithic file. Filenames sanitize `:` to `-` (Windows portability); the full ISO timestamp is preserved inside the envelope's `exportedAt` regardless. The retention sweeper walks one level deep and leaves empty party folders in place (cheap; the next writer pass fills them back in).
+>
+> **SHA-256 sidecar format.** Standard `sha256sum` output — `<64-hex-digits>  <filename>` (two spaces). Verifiable with the canonical CLI: `cd <dir> && sha256sum -c <file>.sha256`. The restore CLI extracts the digest with `split(/\s+/, 1)[0]` so a hand-edited file using tabs / single-spaces still parses.
+>
+> **Admin-scoped state loader.** `loadAppStateForParty` is a sibling of `loadAppStateForUser` that skips the per-user membership check and anchors the AppState's `user` field to the party's owner row. Used by the snapshot writer (the cron job has no session). Internal `assembleAppState` is shared by both — only the entry-condition checks differ.
+>
+> **Export envelope appVersion.** Hard-coded to `'0.0.0'` (the server package's declared private-version). Wiring a build-time injection of the real package.json version would require a build step the MVP doesn't have; the constant is a placeholder that R5+ can wire up to a real version when the deployment story matures. Bumping `exportEnvelopeSchema.schemaVersion` from 1 → 2 would force a reader-side incompatibility check before the parse fans out.
+>
+> **`SNAPSHOTS_ENABLED=false` in tests.** Test fixtures across 7 files (`auth/{config,routes,routes.email,session,email/smtp}.test.ts`, `routes/health.test.ts`, `sync/routes.test.ts`) set the flag to false so `buildServer` doesn't register a cron timer per test app instance. The snapshot tests explicitly drive `runSnapshotTick` instead of waiting for a cron fire. CI never lands snapshot files.
+>
+> **Restore transaction order matches bootstrap.** The DEFERRABLE FK on `Character.inventoryStashId → Stash` lets `applyRestore` create Character before Stash (same as `applyBootstrapDelta` in R3.4.a). Wipe order is simpler — `prisma.party.deleteMany` cascades to PartyMembership, Character, Stash, ItemInstance, CurrencyHolding, and TransactionLog via the existing `onDelete: Cascade` declarations. Homebrew ItemDefinitions are wiped separately via `partyId` filter because their FK is `onDelete: Restrict`.
+>
+> **Schema-invariants test untouched.** No new tables; no Prisma migrations. The snapshot files live entirely on the filesystem.
+>
+> **Followups (no slice carries them forward):** see the **Operational followups (unscheduled)** section at the bottom of this file (R3.4.b contributes the snapshot-age metric, multi-replica cron coordination, and snapshot encryption-at-rest items).
 
 #### R3.5 — Web integration
 
-- [ ] Login screen: "Sign in with Discord" + "Sign in with email" buttons (§5.1 / OUTLINE §3.1)
-- [ ] Hub screen (§5.2): Create party / Join party / Create solo cards + existing parties list
-- [ ] Web sync client pushes reducer actions to server
-- [ ] Web reconciles server events back into the store
-- [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9)
+- [x] Login screen: "Sign in with Discord" + "Sign in with email" buttons (§5.1 / OUTLINE §3.1)
+- [x] Hub screen (§5.2): Create party / Join party / Create solo cards + existing parties list
+- [x] Web sync client pushes reducer actions to server
+- [x] **Web reducer runs optimistically against local Dexie state; server response (`200 applied[]` or `422 rejected`) either confirms or rolls back** — carryforward from R3.4.a (the server endpoints + the `applied[]`/`rejected` response shapes locked in R3.4.a; this slice is the client integration that consumes them). Rollback uses **snapshot-before-flush** (single pre-batch snapshot is restored wholesale on 422) rather than per-applied index — simpler and correct by construction for the multi-slice cascades (`delete-stash`, currency-transfer).
+- [x] Web reconciles server events back into the store (bootstrap pull-after-push canonicalises ids; subsequent mutations rely on the server's `applied[]` log entries)
+- [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9) — **deferred to R5 along with the WebSocket reconnect work**. R3.5 assumes online in server mode; Dexie remains a survival cache for the active party only.
 - [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
-- [ ] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
-- [ ] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
-- [ ] Settings: Logout button clears session cookie and returns to Login screen
+- [x] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
+- [x] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
+- [x] **Discord-link `?link=1` callback handling** — carryforward from R3.3. R3.5 ships a route-layer OAuth code-exchange path (NOT via Auth.js) so the link flow keeps the existing session cookie + attaches `discordId`/`avatarUrl` to the live User row. Conflict on snowflake already linked elsewhere → `302 ${WEB_ORIGIN}/settings?linkError=discord_already_linked`. The handshake uses a new `PendingDiscordLink(token, userId, expires)` table for the state nonce + an HMAC-signed OAuth `state` parameter.
+- [x] **OTP entry uses `shadcn/ui input-otp` with `maxLength={8}`** — carryforward from R3.3. Added via `pnpm dlx shadcn@latest add input-otp` in `apps/web`; one tiny edit to the generated `input-otp.tsx` (slot fallback for `noUncheckedIndexedAccess`).
+- [x] **Display-name prompt screen when `needsDisplayName: true`** — carryforward from R3.3.
+- [x] Settings: Logout button clears session cookie and returns to Login screen (also surfaced in the Layout header)
 
 #### R3.5 — Notes
 
-> -
+> - **Mode flag**: `VITE_SERVER_URL` build-time env. Unset/empty → local mode (no login UI, no logout, no account section; Hub stays as the front door); set → server mode. Captured once at module load by `apps/web/src/lib/serverMode.ts`. No runtime probe — rebuild to switch modes.
+> - **Local-mode invariant**: in local mode the web app behaves exactly like the pre-R3.5 MVP. `<ProtectedRoute />` is a no-op; `<PublicOnlyRoute />` redirects to `/hub`. Hub renders Create-solo / Create-party cards; Join card is hidden with a "Coming in R4" caption. Settings shows Backup / Character&Party / Encumbrance / Wipe only (no Account, Linked accounts, or Logout).
+> - **Storage model**: server-first. Boot sequence in server mode: `session.hydrate()` → if authenticated and `currentPartyId` is in Dexie meta, `pullState(partyId)` → write canonical AppState into the store + Dexie. Subsequent dispatches go optimistically through the reducer + Dexie save + sync queue.
+> - **Snapshot-before-flush rollback**: the sync queue caches the pre-batch `{appState, log}` before the first network call. On `422` it calls the store's new `restoreSnapshot` action (no Dexie save, no re-enqueue) and surfaces a toast carrying the server's `code` + `message`. Multi-slice actions roll back atomically by construction.
+> - **Bootstrap pull-after-push**: the first `create-character` action goes through the queue like any other. After the server returns `200`, the queue re-pulls `/sync/state` for the freshly-minted party so reducer-minted IDs are canonicalised before the Hub's submit handler navigates to `/character/:id`. This is the only mandatory pull-after-push in R3.5.
+> - **Discord-link uses a route-layer code-exchange**: `apps/server/src/auth/discord-link.ts` owns three new routes (`/auth/discord/link/initiate`, `/.../start`, `/.../callback`) that handle PKCE + state + token exchange directly. Auth.js's adapter is untouched. The flow consumes a `PendingDiscordLink` row that the `?link=1` short-circuit minted on `/auth/discord/login`. Operators must register `${SERVER_URL}/auth/discord/link/callback` as a second redirect URI in the Discord developer portal.
+> - **New shared API schemas**: `packages/shared/src/schemas/api.ts` co-locates the response Zods consumed by both the web `apiFetch` and the server route handlers (`sessionResponseSchema`, `partiesListResponseSchema`, `pullStateResponseSchema`, `pushActionsResponseSchema`, `verifyOtpResponseSchema`, etc.). Keeps the two sides from drifting.
+> - **New `GET /sync/parties`** endpoint. Same auth + display-name gate as the rest of `/sync/*`. Collapses `(dm, player)` rows for a party-of-one into a single response entry with both roles in `roles[]`. `lastActivityAt` is `max(TransactionLog.timestamp)`. Future-proofs R4.1.
+> - **MSW** for web test HTTP mocking. `apps/web/src/test/msw.ts` exports `setupServer(...defaultHandlers)`; `apps/web/src/test/setup.ts` wires `beforeAll/afterEach/afterAll` with `onUnhandledRequest: 'error'`. Mode-aware tests stub `VITE_SERVER_URL` per-test via `vi.stubEnv` + `vi.resetModules()`.
+> - **Cookie same-origin assumption**: the server-side session cookie is `SameSite=Lax`. In production this requires same-origin web↔server (reverse proxy per TECH_STACK §7.1). In dev, run web on the same origin as the server (Vite proxy or matching localhost ports). R3.5 does not touch cookie config.
+> - **`Welcome.tsx` and `CreateCharacter.tsx` are kept as legacy fixtures** for the existing screen tests (which mount them directly). They are no longer routed; the index redirects to `/hub` and the character-creation form moved into `apps/web/src/components/CharacterForm.tsx` used by the Hub dialogs.
 
 #### R3 — Notes
 
@@ -1553,7 +1755,9 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
 
 **UI**
-- [ ] Hub: Join party (paste code) flow wired
+- [ ] Hub: Join party (paste code) flow wired — **carryforward from R3.5** (the Hub card is currently hidden with a "Coming in R4" caption; unhide + wire the input + call `POST /parties/join`).
+- [ ] Hub: "do you also play a character?" toggle on the Create-party dialog (OUTLINE §3.1 default yes) — **carryforward from R3.5** (the Hub today always invokes `create-character` which mints both DM + player memberships; the toggle requires a reducer branch for DM-only).
+- [ ] Hub: per-party row navigation — clicking a party in the Hub list pulls THAT party's `AppState` via `pullState(partyId)` and routes into it. R3.5 ships the row but the click navigates to whichever character happens to be in the local store, which is wrong for users with multiple parties. **Carryforward from R3.5.**
 - [ ] Party Settings screen (§5.15): invite code regenerate / revoke, kick player
 - [ ] Member list with role badges (DM / Player)
 
@@ -1564,7 +1768,7 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 #### R4.2 — Banker role
 
 **Schema activations (§4)**
-- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP)
+- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP) — **carryforward from R3.4.a**: widen `partySchema.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`. Keep `partyMembershipSchema.role` narrow (`['dm', 'player']`) per OUTLINE §3.14 — banker is denormalized on Party, never a membership row.
 
 **Reducer actions (§4 TransactionLog union)**
 - [ ] `appoint-banker` action + payload schema
@@ -1580,10 +1784,10 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 - [ ] Action: Banker gives currency / items to a specific player from Party Stash
 - [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
 - [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
-- [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4)
+- [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4) — **shipped in R3.4.a** for the derivation path (`deriveActorRole` in `@app/shared/guards/actor.ts`); R4.2 makes it load-bearing by allowing `bankerUserId` to be non-null.
 
 **Server-side**
-- [ ] Server authoritative checks for every Banker action above
+- [ ] Server authoritative checks for every Banker action above — extends R3.4.a's `@app/shared/guards/map.ts`. The `banker_membership_forbidden` rejection code (already declared in R3.4.a's `GuardRejectionCode`) becomes load-bearing here — first triggered by a regression where a banker payload writes to `PartyMembership.role` instead of `Party.bankerUserId`.
 
 **UI**
 - [ ] Party Settings screen (§5.15): appoint / revoke Banker
@@ -1682,6 +1886,8 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [ ] Conflict resolution policy documented and implemented (server is authoritative)
 - [ ] Reconnect flow replays missed events
 - [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
+- [ ] **Offline-first Dexie cache for solo parties** — **carryforward from R3.5**. Today the web sync queue keeps optimistic state on a network error but drops the batch; solo parties should survive a full offline session by replaying the queue when connectivity returns. (Source: R3.5 Notes.)
+- [ ] **Sync queue retry semantics** — R3.5 surfaces a transient toast on network errors and drops the batch. R5 should add bounded retry with exponential backoff and an "outbox" persisted to Dexie so a tab close doesn't lose work. Inline pointer: `apps/web/src/sync/queue.ts:22, 192`. **Carryforward from R3.5.**
 
 #### R5.1 — Notes
 
@@ -1972,3 +2178,44 @@ Not milestone-specific; revisit each release.
 > | `Party.isSoloShortcut` removed | R4 — schema migration + 1 migration test; MVP keeps writing the literal |
 >
 > All future spec changes should follow the same pattern: amend OUTLINE.md first, then add roadmap checkboxes in the affected milestone(s), then code. The roadmap is a tracker, not a source of truth — if it disagrees with OUTLINE, OUTLINE wins (per CLAUDE.md).
+
+---
+
+## Operational followups (unscheduled)
+
+Followups that don't belong to any single feature slice. Listed here so they're discoverable; promote any item to a milestone (with a checkbox) when scheduled. Inline `// Followup:` comments in the source code point back to this section where relevant.
+
+### Hardening / observability
+
+- [ ] **`EmailAuthAttempt` cron sweep** — periodically delete rows with `lockedUntil < now() - 24h`. The `@@index([lockedUntil])` makes this cheap. Not blocking — the table is bounded by the `(email, ip)` UNIQUE and rows hold no PII beyond email + IP. Inline pointer: `apps/server/src/auth/email/rate-limit.ts:18`. (Source: R3.3 Notes.)
+- [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** — verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
+- [ ] **`PendingDiscordLink` cron sweep** — R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
+- [ ] **Snapshot-age operator metric** — "snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). (Source: R3.4.b Notes.)
+
+### Test infrastructure
+
+- [ ] **Sync queue bootstrap pull-after-push test** — R3.5 dropped the bootstrap integration test from `apps/web/src/sync/queue.test.ts` because `instanceof BatchRejectedError` checks across `vi.resetModules()` boundaries proved flaky in the existing test rig. A proper fix wires module-singleton caching (or replaces `instanceof` with structural checks) so the bootstrap pull-after-push + 422 rollback paths get explicit coverage. The happy path + 401 path are tested; the rollback + bootstrap paths are exercised only through the type-checker today. (Source: R3.5 Notes.)
+- [ ] **Delete `apps/web/src/screens/Welcome.tsx` + `CreateCharacter.tsx`** — R3.5 kept them as legacy fixtures so the existing screen tests (`Settings.test.tsx`, `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `StorageDetail.test.tsx`) keep working without churn. The tests should be migrated to mount `Hub` (or their target screen) directly; once they do, the legacy files can be deleted. (Source: R3.5 Notes.)
+
+### Feature gaps (small, web-only)
+
+- [ ] **Multiple local-mode parties** — today's Dexie schema stores a single `AppState` blob under `meta.appState` (`apps/web/src/db/save.ts:3`, `load.ts:3`), so the local-only build is hard-capped at one party. The Hub's universal "Create solo / Create party" cards therefore replace the existing party on second use, which is a sharp edge for users running the app standalone. To lift the cap:
+  - Switch the Dexie storage key from `appState` to `appState:<partyId>` (or split into a per-entity store layout, mirroring R5+ multi-party). One blob per party.
+  - Generalize the `currentPartyId` meta entry (already in `apps/web/src/db/meta.ts`) so local mode can also point at the active party.
+  - Have `hydrate.ts` enumerate the per-party blobs to build the Hub's list in local mode (today it pulls from `AppState.party` alone, which only sees the active one).
+  - The JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) needs a per-party export OR a multi-party "vault" export — pick one. Server-side already does per-party so per-party is the obvious match.
+  - **Risk:** none of the existing reducer / rules code has to change — the multi-party split is purely at the storage + hub layers. Scope is bounded; tests touch Hub + Dexie + io modules.
+  - Server-mode users get this for free via `GET /sync/parties` + the existing per-party pull (already shipped in R3.5). This item only closes the gap for local-mode users.
+
+### Multi-replica / scale
+
+- [ ] **Snapshot cron coordination for multi-replica deploys** — `node-cron@4`'s `runCoordinator` / `distributed` options let a multi-instance deployment elect one writer per tick. Non-issue for the single-binary MVP / R3-tier; relevant when R5+ ships horizontal scaling. (Source: R3.4.b Notes.)
+
+### At-rest data security
+
+- [ ] **Snapshot encryption** — snapshot files are plaintext JSON; if encryption is required the operator handles it at the volume layer (LUKS / EBS-encryption / etc.), same pattern as the Postgres data directory. Document the recommendation in the root README's hosting section; revisit if the project ever ships its own snapshot daemon. (Source: R3.4.b Notes.)
+
+### Process
+
+- Promote an item to a real milestone by adding a checkbox + brief checklist there, then leave a back-pointer here that reads `**Promoted to <slice> on <date>.**`. The intent is that this section shrinks over time as items either ship or are explicitly deprioritized.
+

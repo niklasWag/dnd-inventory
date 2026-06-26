@@ -1,0 +1,112 @@
+# R3.1 local dev stack — Postgres + server + web.
+#
+# Bring up: `cd infra/docker && cp .env.example .env && docker compose up --build`
+# Stops:    `docker compose down`            (preserves the postgres-data volume)
+# Wipes:    `docker compose down -v`         (drops the volume — clean reseed)
+#
+# Postgres binds the host on `${POSTGRES_PORT:-5433}` to avoid clashing
+# with a host-installed Postgres on the default 5432. Inside the compose
+# network it stays on 5432.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dnd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dnd}
+      POSTGRES_DB: ${POSTGRES_DB:-dnd_inv}
+    ports:
+      - '${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-dnd} -d ${POSTGRES_DB:-dnd_inv}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Bind to all interfaces INSIDE the container so the compose
+      # network (and the published host port) can reach the server. Local
+      # `pnpm dev` outside the container defaults to 127.0.0.1 — see
+      # src/config/env.ts.
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dnd}:${POSTGRES_PASSWORD:-dnd}@postgres:5432/${POSTGRES_DB:-dnd_inv}
+      WEB_ORIGIN: http://localhost:${WEB_PORT:-5173}
+      LOG_LEVEL: info
+      # R3.2 — Auth.js. AUTH_SECRET is required at all times; DISCORD_*
+      # vars are required at boot when NODE_ENV=production (see
+      # src/config/env.ts). The compose .env file forwards them.
+      AUTH_SECRET: ${AUTH_SECRET}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
+      # R3.3 — email OTP via SMTP. All five required at boot when
+      # NODE_ENV=production. Empty values disable the /auth/email/*
+      # routes (they return 503). See README §3 for SMTP relay options.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      # R3.4.b — nightly snapshots. The volume mount below maps
+      # SNAPSHOT_DIR to a named docker volume so files survive
+      # container restarts.
+      SNAPSHOTS_ENABLED: ${SNAPSHOTS_ENABLED:-true}
+      SNAPSHOT_DIR: ${SNAPSHOT_DIR:-/data/snapshots}
+      SNAPSHOT_RETENTION_DAYS: ${SNAPSHOT_RETENTION_DAYS:-30}
+    ports:
+      - '${SERVER_PORT:-3000}:3000'
+    volumes:
+      - snapshots-data:${SNAPSHOT_DIR:-/data/snapshots}
+    # Boot sequence inside the container:
+    #   1. `prisma migrate deploy` — applies migrations (no-op when up-to-date).
+    #   2. `node apps/server/dist/index.js` — runs the seed runner then listens.
+    command: ['sh', '-c', 'cd apps/server && pnpm exec prisma migrate deploy && node dist/index.js']
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://localhost:3000/healthz'').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        # R3.5 — `VITE_SERVER_URL` is read by Vite at BUILD time and
+        # inlined into the bundle. Empty / unset → local-only build
+        # (no Login / Logout / Account chrome). Set to the full
+        # origin under which the server is reachable from a browser
+        # (e.g. `https://dnd.example.com`) → server-mode bundle.
+        # IMPORTANT: changing this value requires a rebuild
+        # (`docker compose up -d --build web`); a bare restart will
+        # serve the same bundle.
+        VITE_SERVER_URL: ${VITE_SERVER_URL:-}
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - '${WEB_PORT:-5173}:5173'
+
+volumes:
+  postgres-data:
+  snapshots-data:

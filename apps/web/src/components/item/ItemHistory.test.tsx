@@ -248,8 +248,9 @@ describe('ItemHistory', () => {
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(1);
     // Both ids fall back to their first-8 prefix.
-    expect(within(items[0]!).getByText(/Transferred ×2 from abcdef12 to fedcba98/i))
-      .toBeInTheDocument();
+    expect(
+      within(items[0]!).getByText(/Transferred ×2 from abcdef12 to fedcba98/i),
+    ).toBeInTheDocument();
   });
 
   it('resolves a deleted source stash via the delete-stash log entry with character prefix (M3 polish)', () => {
@@ -438,9 +439,16 @@ describe('ItemHistory', () => {
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const backpackId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
     useStore.setState({
       log: [
         makeEntry('transfer', {
@@ -466,7 +474,12 @@ describe('ItemHistory', () => {
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     useStore.setState({
       log: [
@@ -603,7 +616,9 @@ describe('ItemHistory', () => {
       ],
     });
     render(<ItemHistory itemInstanceId="item-1" />);
-    expect(screen.getByText(/Marked unidentified \(hint: "shimmers faintly"\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Marked unidentified \(hint: "shimmers faintly"\)/),
+    ).toBeInTheDocument();
   });
 
   it('R2.3 — identify summary: false → true reads "Identified"', () => {

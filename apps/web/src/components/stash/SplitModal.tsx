@@ -117,8 +117,8 @@ export function SplitModal({ open, onOpenChange, itemInstanceId }: SplitModalPro
         <DialogHeader>
           <DialogTitle>Split stack</DialogTitle>
           <DialogDescription>
-            Move some of this stack into a new row in the same stash. The new row inherits notes
-            and custom name — edit them via Item Detail afterwards.
+            Move some of this stack into a new row in the same stash. The new row inherits notes and
+            custom name — edit them via Item Detail afterwards.
           </DialogDescription>
         </DialogHeader>
 

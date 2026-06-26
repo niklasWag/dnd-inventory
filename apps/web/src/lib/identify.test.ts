@@ -40,23 +40,18 @@ describe('lib/identify (R2.3)', () => {
   });
 
   it('displayName returns "Unknown Magic Item" when identified=false', () => {
-    expect(displayName(makeRow({ identified: false }), makeDef())).toBe(
-      UNKNOWN_MAGIC_ITEM_LABEL,
-    );
+    expect(displayName(makeRow({ identified: false }), makeDef())).toBe(UNKNOWN_MAGIC_ITEM_LABEL);
   });
 
   it('displayName uses customName when identified=true', () => {
-    expect(
-      displayName(makeRow({ customName: 'Stabby McStabface' }), makeDef()),
-    ).toBe('Stabby McStabface');
+    expect(displayName(makeRow({ customName: 'Stabby McStabface' }), makeDef())).toBe(
+      'Stabby McStabface',
+    );
   });
 
   it('displayName hides customName when identified=false (spoiler protection)', () => {
     expect(
-      displayName(
-        makeRow({ identified: false, customName: 'Stabby McStabface' }),
-        makeDef(),
-      ),
+      displayName(makeRow({ identified: false, customName: 'Stabby McStabface' }), makeDef()),
     ).toBe(UNKNOWN_MAGIC_ITEM_LABEL);
   });
 
@@ -65,8 +60,6 @@ describe('lib/identify (R2.3)', () => {
   });
 
   it('displayName still returns "Unknown Magic Item" when identified=false and def is missing', () => {
-    expect(displayName(makeRow({ identified: false }), undefined)).toBe(
-      UNKNOWN_MAGIC_ITEM_LABEL,
-    );
+    expect(displayName(makeRow({ identified: false }), undefined)).toBe(UNKNOWN_MAGIC_ITEM_LABEL);
   });
 });

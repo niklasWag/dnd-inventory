@@ -96,11 +96,7 @@ export function encumbranceState(
  * - off     → `Infinity` (no ceiling; caller usually short-circuits on
  *   `rule === 'off'` before reaching this)
  */
-export function heavyThreshold(
-  str: number,
-  size: CreatureSize,
-  rule: EncumbranceRule,
-): number {
+export function heavyThreshold(str: number, size: CreatureSize, rule: EncumbranceRule): number {
   if (rule === 'off') return Infinity;
   const m = sizeMultiplier(size);
   if (rule === 'phb') return str * 15 * m;

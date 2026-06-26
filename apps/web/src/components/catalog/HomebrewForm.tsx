@@ -76,11 +76,7 @@ const CATEGORY_OPTIONS: { value: ItemCategory; label: string }[] = [
  * `defaultValues` works most naturally with stable string types.
  */
 const formSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Name is required')
-    .max(120, 'Name is too long (max 120 chars)'),
+  name: z.string().trim().min(1, 'Name is required').max(120, 'Name is too long (max 120 chars)'),
   category: z.enum([
     'weapon',
     'armor',
@@ -96,10 +92,7 @@ const formSchema = z.object({
   weight: z
     .string()
     .trim()
-    .refine(
-      (v) => v === '' || (!isNaN(Number(v)) && Number(v) >= 0),
-      'Weight must be 0 or higher',
-    ),
+    .refine((v) => v === '' || (!isNaN(Number(v)) && Number(v) >= 0), 'Weight must be 0 or higher'),
   costAmount: z
     .string()
     .trim()
@@ -396,11 +389,7 @@ export function HomebrewForm({
 
       <div className="space-y-1.5">
         <Label htmlFor="homebrew-tags">Tags (comma-separated)</Label>
-        <Input
-          id="homebrew-tags"
-          placeholder="e.g. light, underdark"
-          {...register('tags')}
-        />
+        <Input id="homebrew-tags" placeholder="e.g. light, underdark" {...register('tags')} />
         {errors.tags?.message !== undefined ? (
           <p className="text-sm text-destructive" role="alert">
             {errors.tags.message}

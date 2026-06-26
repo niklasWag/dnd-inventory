@@ -121,7 +121,12 @@ describe('StorageDetail (M3)', () => {
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: storageStashId, definitionId: torch.id, quantity: 3, source: 'catalog-add' },
+      payload: {
+        stashId: storageStashId,
+        definitionId: torch.id,
+        quantity: 3,
+        source: 'catalog-add',
+      },
     });
     renderAt(`/storage/${storageStashId}`);
 
@@ -191,9 +196,7 @@ describe('StorageDetail (M4)', () => {
     // Header breakdown: 25g visible.
     expect(screen.getByText(/25g/)).toBeInTheDocument();
     // Inline editor: Currency heading + Convert button + Total line.
-    expect(
-      screen.getByRole('heading', { name: /^currency$/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^currency$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /convert/i })).toBeInTheDocument();
     expect(screen.getByText(/total: 25 gp/i)).toBeInTheDocument();
   });

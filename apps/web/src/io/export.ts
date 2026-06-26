@@ -81,14 +81,10 @@ function slugify(input: string): string {
   return slug.length > 0 ? slug : 'character';
 }
 
-export function buildExportFilename(
-  snapshot: ExportSnapshot,
-  opts: BuildOpts = {},
-): string {
+export function buildExportFilename(snapshot: ExportSnapshot, opts: BuildOpts = {}): string {
   const date = (opts.now ?? new Date()).toISOString().slice(0, 10);
   const firstCharacter = snapshot.appState?.characters[0];
-  const stem =
-    firstCharacter !== undefined ? slugify(firstCharacter.name) : 'empty';
+  const stem = firstCharacter !== undefined ? slugify(firstCharacter.name) : 'empty';
   return `dnd-inv-${stem}-${date}.json`;
 }
 
@@ -125,10 +121,7 @@ interface ExportToFileOpts extends BuildOpts {
  * filename so the caller can show it in a toast. Throws on Zod failure
  * (in-memory snapshot was malformed — caller should surface the error).
  */
-export function exportToFile(
-  snapshot: ExportSnapshot,
-  opts: ExportToFileOpts = {},
-): string {
+export function exportToFile(snapshot: ExportSnapshot, opts: ExportToFileOpts = {}): string {
   const envelope = buildExportEnvelope(snapshot, opts);
   const text = serializeExport(envelope);
   const filename = buildExportFilename(snapshot, opts);

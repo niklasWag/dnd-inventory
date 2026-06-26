@@ -27,11 +27,7 @@ import { useStore } from '@/store';
  * trim, so an over-eager submit can't trigger the no-op reject.
  */
 const formSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Name is required')
-    .max(60, 'Name is too long (max 60 chars)'),
+  name: z.string().trim().min(1, 'Name is required').max(60, 'Name is too long (max 60 chars)'),
 });
 
 type FormValues = z.input<typeof formSchema>;

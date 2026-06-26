@@ -174,5 +174,3 @@ describe('DMG 2024 charges seed coverage (R2.2)', () => {
     }
   });
 });
-
-

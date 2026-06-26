@@ -112,12 +112,7 @@ export function ConvertCurrencyModal({
   let previewLine: string | null = null;
   let disableReason: string | null = null;
 
-  if (
-    Number.isInteger(qty) &&
-    qty > 0 &&
-    source !== undefined &&
-    target !== undefined
-  ) {
+  if (Number.isInteger(qty) && qty > 0 && source !== undefined && target !== undefined) {
     if (source === target) {
       disableReason = 'Source and target must differ';
     } else if (qty > holding[source]) {
@@ -175,13 +170,7 @@ export function ConvertCurrencyModal({
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="convert-qty">Quantity</Label>
-              <Input
-                id="convert-qty"
-                type="number"
-                min={1}
-                step={1}
-                {...register('qty')}
-              />
+              <Input id="convert-qty" type="number" min={1} step={1} {...register('qty')} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="convert-source">Source</Label>

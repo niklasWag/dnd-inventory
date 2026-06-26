@@ -87,8 +87,8 @@ export function ReplaceAllConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Replace all current data?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will erase everything you have stored locally and restore the
-            imported backup. This cannot be undone.
+            This will erase everything you have stored locally and restore the imported backup. This
+            cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
 

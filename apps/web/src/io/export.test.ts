@@ -42,10 +42,13 @@ describe('buildExportEnvelope (M7)', () => {
   });
 
   it('handles a pre-character (null appState) snapshot', () => {
-    const env = buildExportEnvelope({ appState: null, log: [] }, {
-      now: FIXED_NOW,
-      appVersion: '0.0.0',
-    });
+    const env = buildExportEnvelope(
+      { appState: null, log: [] },
+      {
+        now: FIXED_NOW,
+        appVersion: '0.0.0',
+      },
+    );
     expect(env.payload.appState).toBeNull();
     expect(env.seedVersion).toBe(0);
   });
@@ -62,13 +65,27 @@ describe('buildExportEnvelope (M7)', () => {
 
 describe('buildExportFilename (M7)', () => {
   it('slugifies the first character name + appends ISO date', () => {
-    bootstrap({ name: 'Bara of Waterdeep', species: 'Half-Elf', size: 'medium', class: 'Rogue', level: 1, str: 12 });
+    bootstrap({
+      name: 'Bara of Waterdeep',
+      species: 'Half-Elf',
+      size: 'medium',
+      class: 'Rogue',
+      level: 1,
+      str: 12,
+    });
     const filename = buildExportFilename(snapshotFromStore(), { now: FIXED_NOW });
     expect(filename).toBe('dnd-inv-bara-of-waterdeep-2026-06-24.json');
   });
 
   it('collapses non-alphanumerics and lowercases', () => {
-    bootstrap({ name: "Thorin & 'Iron-Fist'!", species: 'Dwarf', size: 'medium', class: 'Fighter', level: 1, str: 16 });
+    bootstrap({
+      name: "Thorin & 'Iron-Fist'!",
+      species: 'Dwarf',
+      size: 'medium',
+      class: 'Fighter',
+      level: 1,
+      str: 16,
+    });
     const filename = buildExportFilename(snapshotFromStore(), { now: FIXED_NOW });
     expect(filename).toBe('dnd-inv-thorin-iron-fist-2026-06-24.json');
   });

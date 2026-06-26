@@ -159,7 +159,9 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     expect(attuneButtons).toHaveLength(1); // only the un-attuned row shows "Attune"
     expect(attuneButtons[0]).toBeDisabled();
     // The three attuned rows show "Unattune" and remain enabled.
-    expect(screen.getAllByRole('button', { name: /^unattune cloak of protection/i })).toHaveLength(3);
+    expect(screen.getAllByRole('button', { name: /^unattune cloak of protection/i })).toHaveLength(
+      3,
+    );
   });
 
   it('shows a toast (not an uncaught error) when the reducer rejects', async () => {
@@ -208,9 +210,16 @@ describe('StashItemsTable — R1.3 container view', () => {
     const rations = catalog.find((d) => d.id === 'phb-2024:rations-1day')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const backpackId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
     useStore.getState().dispatch({
       type: 'acquire',
       payload: {
@@ -262,9 +271,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
   it('hides the Pack button when no containers are in the stash', () => {
     const { stashId } = setupWith(1); // just a torch, no containers
     renderTable(stashId);
-    expect(
-      screen.queryByRole('button', { name: /^pack torch/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^pack torch/i })).not.toBeInTheDocument();
   });
 
   it('shows the Pack button on free top-level items when a container exists', () => {
@@ -273,11 +280,21 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     renderTable(inventoryStashId);
     expect(screen.getByRole('button', { name: /^pack torch/i })).toBeInTheDocument();
@@ -292,16 +309,24 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     // reducer would reject it).
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     renderTable(inventoryStashId);
-    expect(
-      screen.queryByRole('button', { name: /^pack backpack/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^pack backpack/i })).not.toBeInTheDocument();
   });
 
   it('opens PackItemModal when Pack is clicked, dispatches transfer with toContainerInstanceId', async () => {
@@ -311,14 +336,28 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
-    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const backpackId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     renderTable(inventoryStashId);
 
     await user.click(screen.getByRole('button', { name: /^pack torch/i }));
@@ -339,18 +378,37 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
-    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const backpackId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     // Pack via reducer so the UI test starts in "torch inside backpack" state.
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: torchId, toStashId: inventoryStashId, quantity: 1, toContainerInstanceId: backpackId },
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 1,
+        toContainerInstanceId: backpackId,
+      },
     });
 
     render(
@@ -362,9 +420,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
 
     // The torch row now has Take out; the backpack row doesn't.
     expect(screen.getByRole('button', { name: /take torch/i })).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /take backpack/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /take backpack/i })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /take torch/i }));
     const torchAfter = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
@@ -377,17 +433,36 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 3, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 3,
+        source: 'catalog-add',
+      },
     });
-    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
-    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const backpackId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: torchId, toStashId: inventoryStashId, quantity: 3, toContainerInstanceId: backpackId },
+      payload: {
+        itemInstanceId: torchId,
+        toStashId: inventoryStashId,
+        quantity: 3,
+        toContainerInstanceId: backpackId,
+      },
     });
 
     render(
@@ -413,14 +488,28 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: backpack.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: backpack.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: partyStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: partyStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
-    const backpackId = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!.id;
-    const torchId = useStore.getState().appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const backpackId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     // Force a dangling reference: torch in Party Stash points at a
     // backpack in Inventory. (The reducer would normally clear this on
     // a real cross-stash Move; we patch state directly here to simulate
@@ -447,9 +536,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
 
     // Torch renders top-level (no Take out, because the backpack isn't here).
     expect(screen.getByText('Torch')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /take torch/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /take torch/i })).not.toBeInTheDocument();
   });
 });
 
@@ -474,7 +561,12 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
 
     renderInventory(inventoryStashId, characterId);
@@ -489,14 +581,17 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: magic.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: magic.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
 
     renderInventory(inventoryStashId, characterId);
 
-    expect(
-      screen.getByRole('button', { name: /^equip cloak of protection/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^equip cloak of protection/i })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /^attune cloak of protection/i }),
     ).toBeInTheDocument();
@@ -507,7 +602,12 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: magic.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: magic.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
 
     renderInventory(inventoryStashId, characterId);
@@ -538,7 +638,12 @@ describe('StashItemsTable — R2.2 charges indicator', () => {
     const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     renderInventory(inventoryStashId, characterId);
     expect(screen.getByLabelText(/Charges: 7\/7/)).toBeInTheDocument();
@@ -549,7 +654,12 @@ describe('StashItemsTable — R2.2 charges indicator', () => {
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: torch.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     renderInventory(inventoryStashId, characterId);
     expect(screen.queryByLabelText(/^Charges:/)).not.toBeInTheDocument();
@@ -577,7 +687,12 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     renderInventory(inventoryStashId, characterId);
     expect(
@@ -592,7 +707,12 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: cloak.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     const itemId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
     useStore.getState().dispatch({
@@ -614,7 +734,12 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
     const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: wand.id, quantity: 1, source: 'catalog-add' },
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     useStore.getState().dispatch({
@@ -626,4 +751,3 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
     expect(screen.queryByLabelText(/^Charges:/)).not.toBeInTheDocument();
   });
 });
-

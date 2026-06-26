@@ -1,6 +1,6 @@
-import { useRef, useState, type ChangeEvent, type ReactElement } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Download, Trash2, Upload } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent, type ReactElement } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Download, LogOut, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -12,14 +12,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { LinkedAccounts } from '@/components/auth/LinkedAccounts';
 import { RenameField } from '@/components/settings/RenameField';
 import { EncumbranceRuleField } from '@/components/settings/EncumbranceRuleField';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
 import { wipeAll } from '@/db/wipe';
 import { exportToFile, type ExportSnapshot } from '@/io/export';
 import { importFromText, type ImportResult } from '@/io/import';
+import { isServerMode } from '@/lib/serverMode';
 import { APP_VERSION } from '@/lib/version';
 import { useStore } from '@/store';
+import { useSession } from '@/store/session';
 
 /**
  * Settings (MVP §7 screen 9 — final M7 cut). Sections:
@@ -39,6 +42,34 @@ export function Settings(): ReactElement {
   const navigate = useNavigate();
   const appState = useStore((s) => s.appState);
   const log = useStore((s) => s.log);
+  const session = useSession((s) => s);
+
+  // R3.5 — surface link-flow outcomes coming back from the server as
+  // toasts, then scrub the query parameters so a refresh doesn't
+  // re-fire the toast.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const linked = searchParams.get('linked');
+    const linkError = searchParams.get('linkError');
+    if (linked === null && linkError === null) return;
+    if (linked === 'discord') toast.success('Discord linked');
+    if (linkError !== null) {
+      const msg =
+        linkError === 'discord_already_linked'
+          ? 'That Discord account is already linked elsewhere.'
+          : `Linking failed: ${linkError}`;
+      toast.error(msg);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('linked');
+    next.delete('linkError');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  async function handleLogout(): Promise<void> {
+    await session.signOut();
+    void navigate('/login', { replace: true });
+  }
 
   // Wipe confirm
   const [wipeOpen, setWipeOpen] = useState(false);
@@ -112,13 +143,69 @@ export function Settings(): ReactElement {
         </p>
       </header>
 
+      {/* R3.5: Account + Linked accounts + Logout — server mode only. */}
+      {isServerMode && session.user !== null ? (
+        <>
+          <section className="space-y-3 rounded-lg border border-border p-4">
+            <div>
+              <h2 className="font-semibold">Account</h2>
+              <p className="text-sm text-muted-foreground">
+                Your sign-in identity for this server.
+              </p>
+            </div>
+            <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-muted-foreground">Display name</dt>
+              <dd className="font-medium">{session.user.displayName}</dd>
+              {session.user.email !== undefined && session.user.email !== null ? (
+                <>
+                  <dt className="text-muted-foreground">Email</dt>
+                  <dd className="font-medium">{session.user.email}</dd>
+                </>
+              ) : null}
+              {session.user.discordId !== undefined && session.user.discordId !== null ? (
+                <>
+                  <dt className="text-muted-foreground">Discord</dt>
+                  <dd className="font-medium">id {session.user.discordId}</dd>
+                </>
+              ) : null}
+            </dl>
+          </section>
+
+          <section className="space-y-3 rounded-lg border border-border p-4">
+            <div>
+              <h2 className="font-semibold">Linked accounts</h2>
+              <p className="text-sm text-muted-foreground">
+                Connect Discord and email so you can sign in either way.
+              </p>
+            </div>
+            <LinkedAccounts />
+          </section>
+
+          <section className="space-y-3 rounded-lg border border-border p-4">
+            <div>
+              <h2 className="font-semibold">Session</h2>
+              <p className="text-sm text-muted-foreground">Sign out on this device.</p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                void handleLogout();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </Button>
+          </section>
+        </>
+      ) : null}
+
       {/* M7: Backup section */}
       <section className="space-y-3 rounded-lg border border-border p-4">
         <div>
           <h2 className="font-semibold">Backup</h2>
           <p className="text-sm text-muted-foreground">
-            Export your local data to a JSON file, or restore from a previous export.
-            Import will replace all current data — you'll get a confirm dialog first.
+            Export your local data to a JSON file, or restore from a previous export. Import will
+            replace all current data — you'll get a confirm dialog first.
           </p>
         </div>
         <div className="flex gap-2">

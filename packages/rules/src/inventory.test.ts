@@ -21,7 +21,10 @@ import type { ItemInstance } from '@app/shared';
  */
 
 /** Build a minimal `ItemInstance` with sensible MVP placeholder values. */
-function makeItem(overrides: Partial<ItemInstance> & Pick<ItemInstance, 'id' | 'ownerId' | 'definitionId' | 'quantity'>): ItemInstance {
+function makeItem(
+  overrides: Partial<ItemInstance> &
+    Pick<ItemInstance, 'id' | 'ownerId' | 'definitionId' | 'quantity'>,
+): ItemInstance {
   return {
     ownerType: 'stash',
     containerInstanceId: null,
@@ -35,21 +38,39 @@ function makeItem(overrides: Partial<ItemInstance> & Pick<ItemInstance, 'id' | '
 
 describe('rules.inventory.findAutoStackTarget (M5)', () => {
   it('returns undefined when no row matches the stash + definition', () => {
-    const items = [makeItem({ id: 'a', ownerId: 'stash-1', definitionId: 'def-torch', quantity: 1 })];
+    const items = [
+      makeItem({ id: 'a', ownerId: 'stash-1', definitionId: 'def-torch', quantity: 1 }),
+    ];
     expect(inventory.findAutoStackTarget(items, 'stash-2', 'def-torch', undefined)).toBeUndefined();
     expect(inventory.findAutoStackTarget(items, 'stash-1', 'def-rope', undefined)).toBeUndefined();
   });
 
   it('finds a row with the same (stash, definition) when notes are both absent', () => {
-    const target = makeItem({ id: 'a', ownerId: 'stash-1', definitionId: 'def-torch', quantity: 3 });
+    const target = makeItem({
+      id: 'a',
+      ownerId: 'stash-1',
+      definitionId: 'def-torch',
+      quantity: 3,
+    });
     expect(inventory.findAutoStackTarget([target], 'stash-1', 'def-torch', undefined)).toBe(target);
   });
 
   it('treats absent notes as equivalent to empty string (auto-stack key collapses)', () => {
-    const target = makeItem({ id: 'a', ownerId: 'stash-1', definitionId: 'def-torch', quantity: 3, notes: '' });
+    const target = makeItem({
+      id: 'a',
+      ownerId: 'stash-1',
+      definitionId: 'def-torch',
+      quantity: 3,
+      notes: '',
+    });
     expect(inventory.findAutoStackTarget([target], 'stash-1', 'def-torch', undefined)).toBe(target);
 
-    const target2 = makeItem({ id: 'b', ownerId: 'stash-1', definitionId: 'def-torch', quantity: 3 });
+    const target2 = makeItem({
+      id: 'b',
+      ownerId: 'stash-1',
+      definitionId: 'def-torch',
+      quantity: 3,
+    });
     expect(inventory.findAutoStackTarget([target2], 'stash-1', 'def-torch', '')).toBe(target2);
   });
 
@@ -61,12 +82,20 @@ describe('rules.inventory.findAutoStackTarget (M5)', () => {
       quantity: 3,
       notes: 'given by Volo',
     });
-    expect(inventory.findAutoStackTarget([target], 'stash-1', 'def-torch', 'given by Volo')).toBe(target);
+    expect(inventory.findAutoStackTarget([target], 'stash-1', 'def-torch', 'given by Volo')).toBe(
+      target,
+    );
   });
 
   it('does NOT match when notes differ', () => {
     const items = [
-      makeItem({ id: 'a', ownerId: 'stash-1', definitionId: 'def-torch', quantity: 3, notes: 'lit' }),
+      makeItem({
+        id: 'a',
+        ownerId: 'stash-1',
+        definitionId: 'def-torch',
+        quantity: 3,
+        notes: 'lit',
+      }),
     ];
     expect(inventory.findAutoStackTarget(items, 'stash-1', 'def-torch', 'unlit')).toBeUndefined();
     expect(inventory.findAutoStackTarget(items, 'stash-1', 'def-torch', undefined)).toBeUndefined();

@@ -19,9 +19,7 @@
  */
 
 /** Sum `weight × quantity` over a flat row list. Returns 0 for empty input. */
-export function totalWeight(
-  items: ReadonlyArray<{ weight: number; quantity: number }>,
-): number {
+export function totalWeight(items: ReadonlyArray<{ weight: number; quantity: number }>): number {
   return items.reduce((sum, item) => sum + item.weight * item.quantity, 0);
 }
 

@@ -226,7 +226,7 @@ No HP, spells, AC, proficiencies in v1.
 > Stack-agnostic; tables/collections. Deployment mode (local vs synced) is **not** a data attribute — it's an environment/install choice. **Every user is always in at least one Party**; "solo" is just a party-of-one.
 
 ### `User`
-- id, discordId (nullable — absent for email-only accounts), displayName, avatarUrl (nullable), createdAt
+- id (opaque internal string — **R3.2 amendment**: stays a server-generated cuid and does NOT become the Discord snowflake; an earlier draft suggested `id === discordId` but the @auth/prisma-adapter mints its own ids during the OAuth flow, and a stable internal id decouples our identity from any one OAuth provider), discordId (nullable — absent for email-only accounts; UNIQUE), displayName, avatarUrl (nullable), createdAt
 - email (nullable — set for email-only users or Discord users who added a backup login; **unique** constraint)
 - emailVerified (ISO timestamp, nullable — email login is only accepted once this is set; set on first successful OTP verification)
 - Single global identity; party-specific role lives on `PartyMembership`.
@@ -342,6 +342,7 @@ No HP, spells, AC, proficiencies in v1.
 
 ### `Metadata` (server-side) / `AppState.seedVersion` (client-side)
 - Server: a small key/value `Metadata` table tracks `seedVersion` for the canonical PHB/DMG content.
+  - **R3.1 row shape**: `{ key: String @id, value: Json }`. The single canonical key is `'seedVersion'` with an integer value (matches `@app/seeds`'s `SEED_VERSION`). The key/value design lets future metadata kinds (e.g., last-snapshot-at, last-migration-at) land without table churn.
 - Client: `AppState.seedVersion` mirrors the value used at last seed; bumping triggers a re-seed (upserts PHB/DMG entries, preserves homebrew).
 
 ---

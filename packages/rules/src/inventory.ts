@@ -33,10 +33,7 @@ export function findAutoStackTarget(
 ): ItemInstance | undefined {
   const notesKey = notes ?? '';
   return items.find(
-    (i) =>
-      i.ownerId === stashId &&
-      i.definitionId === definitionId &&
-      (i.notes ?? '') === notesKey,
+    (i) => i.ownerId === stashId && i.definitionId === definitionId && (i.notes ?? '') === notesKey,
   );
 }
 

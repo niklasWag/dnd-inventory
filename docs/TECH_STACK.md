@@ -22,6 +22,7 @@ This document is the **source of truth for technology choices** across both the 
 | Database (M3+) | **PostgreSQL + Prisma** | Generated types; first-class migrations. |
 | Realtime (M5+) | **Socket.IO** | Room-per-party broadcast. |
 | Auth (M3+) | **Auth.js + Discord provider + Email OTP provider** | OAuth2 + passwordless email; session cookies. |
+| Snapshots (M3+) | **node-cron + per-party JSON files** | In-process scheduler in the server container; writes `exportEnvelope`-shaped state + SHA-256 sidecar. |
 | Deployment | **Docker Compose + nginx + Let's Encrypt** | Single Linux box, self-hosted. |
 
 ---
@@ -159,7 +160,7 @@ Monorepo via **pnpm workspaces** (anticipating shared rules engine between clien
 ### 6.3 Database — PostgreSQL
 - Single Postgres instance per deployment.
 - One database; schema mirrors outline §4 entities directly.
-- **Snapshots** via nightly `pg_dump` cron in the container (outline §9).
+- **Snapshots are application-level, not `pg_dump`.** R3.4.b ships an in-process `node-cron@4` task inside the `server` container that, nightly at 03:07 local, materializes every party's `AppState` via `loadAppStateForParty`, wraps it in an `exportEnvelope` (identical to the web's JSON export — `packages/shared/src/schemas/exportEnvelope.ts`), and writes one file per party to `${SNAPSHOT_DIR}/${partyId}/${ISO_TIMESTAMP}.json` with a SHA-256 sidecar (outline §9, SECURITY §8). Retention sweeper deletes files older than `SNAPSHOT_RETENTION_DAYS` (default 30). The operator-only `pnpm --filter @app/server snapshot:restore <file>` CLI verifies the checksum and reapplies a snapshot into the DB. **`pg_dump` is intentionally NOT used** — the application-level format gives per-party granularity (easier to restore a single party without touching others) and round-trips with the web's existing export-import pipeline. Auth tables (`User`, `Session`, `Account`, etc.) are NOT in the snapshot; operators who want full-DB recovery should set up host-level `pg_dump` or volume snapshots separately.
 
 ### 6.4 ORM — Prisma
 - Schema-first; generates fully typed client.
@@ -204,14 +205,14 @@ Internet
    │
    └─► [ apps/server (Fastify) ] ◄─► [ PostgreSQL ]
                                       │
-                                      └─► nightly pg_dump → /var/backups/dnd-inv/
+                                      └─► nightly node-cron in server container
+                                           → ${SNAPSHOT_DIR}/<partyId>/<iso>.json (+ .sha256 sidecar)
 ```
 
 ### 7.2 Containers — Docker Compose
 - `web` — nginx serving the built React SPA + reverse-proxying API/socket traffic.
-- `server` — Node + Fastify app.
+- `server` — Node + Fastify app. Also runs the in-process nightly snapshot cron (R3.4.b — no separate sidecar; the snapshot directory is mounted as a named volume so files survive container restarts).
 - `db` — official Postgres image, pinned major version.
-- `backup` — sidecar running `pg_dump` on cron, writing to a mounted host volume.
 
 ### 7.3 TLS — Let's Encrypt via certbot
 - Either run certbot in a sidecar container or via host-level cron — TBD at deployment time.

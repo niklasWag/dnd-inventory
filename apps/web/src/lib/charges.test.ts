@@ -48,9 +48,9 @@ describe('lib/charges helpers', () => {
 
   describe('formatChargesLong', () => {
     it('includes formula when rechargeAmount is set', () => {
-      expect(
-        formatChargesLong(3, { max: 7, rechargeRule: 'dawn', rechargeAmount: '1d6+1' }),
-      ).toBe('3 / 7 charges — Recharges at dawn (1d6+1)');
+      expect(formatChargesLong(3, { max: 7, rechargeRule: 'dawn', rechargeAmount: '1d6+1' })).toBe(
+        '3 / 7 charges — Recharges at dawn (1d6+1)',
+      );
     });
 
     it('omits formula when rechargeAmount is undefined', () => {

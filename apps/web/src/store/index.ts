@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { createDebouncedSaver } from '@/db/save';
-import { reduce, type LogEntrySlice } from './reducer';
+import { isServerMode } from '@/lib/serverMode';
+import { generateInviteCode, reduce, type LogEntrySlice, type ReducerContext } from './reducer';
 import type { Action, AppState, TransactionLogEntry } from './types';
 
 /**
@@ -14,18 +15,32 @@ import type { Action, AppState, TransactionLogEntry } from './types';
  *   2. append the resulting log entry (with derived id/timestamp/actor),
  *   3. trigger a debounced persist.
  *
- * The reducer is pure; the middleware here injects the non-deterministic
- * pieces of the log entry (id, timestamp, actorUserId, actorRole, partyId,
- * sessionId).
+ * The reducer is pure modulo its injected `ReducerContext` (R3.4.a); the
+ * middleware here owns the per-entry actor identity injection that the
+ * reducer's `LogEntrySlice` deliberately omits.
  */
 export interface StoreState {
   appState: AppState;
   log: TransactionLogEntry[];
   dispatch: (action: Action) => void;
   hydrate: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
+  restoreSnapshot: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
 }
 
 const saver = createDebouncedSaver();
+
+/**
+ * The web's `ReducerContext` — passes real `crypto.randomUUID()`,
+ * `new Date().toISOString()`, and the shared `generateInviteCode` (R4
+ * 128-bit base32 with `INV-` prefix) into the reducer. Tests inject a
+ * deterministic context at the `@app/rules` boundary instead of using
+ * this constant.
+ */
+const webReducerCtx: ReducerContext = {
+  newId: () => crypto.randomUUID(),
+  now: () => new Date().toISOString(),
+  newInviteCode: generateInviteCode,
+};
 
 /**
  * Derives the actor identity (user, role, party) for a log entry from the
@@ -176,7 +191,7 @@ export const useStore = create<StoreState>()(
       // re-trigger our pure reducer with a proxy, which we deliberately
       // avoid — the reducer is meant to be plain-value pure).
       const prev = get();
-      const result = reduce(prev.appState, action);
+      const result = reduce(prev.appState, action, webReducerCtx);
       // Most reducer cases emit one slice; M3's `delete-stash` cascade
       // emits N+1 (transfers + delete-stash) or N+2 (when currency rolls
       // into Recovered Loot). Resolve each slice against the SAME
@@ -193,8 +208,29 @@ export const useStore = create<StoreState>()(
 
       const snapshot = get();
       saver.save({ appState: snapshot.appState, log: snapshot.log });
+
+      // R3.5 — in server mode, optimistically push the action to the
+      // sync queue. The queue debounces + handles 422 rollback +
+      // bootstrap pull-after-push. The dynamic import avoids a static
+      // cycle (queue → store → queue) at module load.
+      if (isServerMode) {
+        void import('@/sync/queue').then(({ enqueue }) => {
+          enqueue(action);
+        });
+      }
     },
     hydrate: (snapshot) => {
+      set((draft) => {
+        draft.appState = snapshot.appState;
+        draft.log = snapshot.log;
+      });
+    },
+    /**
+     * R3.5 — restore state wholesale WITHOUT triggering a Dexie save
+     * or a queue enqueue. Used by `sync/queue.ts` for rollback on 422
+     * and for the bootstrap pull-after-push canonicalisation.
+     */
+    restoreSnapshot: (snapshot) => {
       set((draft) => {
         draft.appState = snapshot.appState;
         draft.log = snapshot.log;

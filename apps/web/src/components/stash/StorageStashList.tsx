@@ -53,10 +53,7 @@ export function StorageStashList({ characterId }: StorageStashListProps): ReactE
     if (stashes === null || items === null) return [];
     const storageStashes = stashes
       .filter(
-        (st) =>
-          st.scope === 'character' &&
-          st.ownerCharacterId === characterId &&
-          !st.isCarried,
+        (st) => st.scope === 'character' && st.ownerCharacterId === characterId && !st.isCarried,
       )
       .slice()
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -64,9 +61,7 @@ export function StorageStashList({ characterId }: StorageStashListProps): ReactE
       id: st.id,
       name: st.name,
       createdAt: st.createdAt,
-      itemCount: items
-        .filter((i) => i.ownerId === st.id)
-        .reduce((sum, i) => sum + i.quantity, 0),
+      itemCount: items.filter((i) => i.ownerId === st.id).reduce((sum, i) => sum + i.quantity, 0),
     }));
   }, [stashes, items, characterId]);
 
@@ -88,8 +83,8 @@ export function StorageStashList({ characterId }: StorageStashListProps): ReactE
 
       {cards.length === 0 ? (
         <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          No Storage stashes yet. Create one to carve out a chest, a vault, or
-          a wagon for your hoard.
+          No Storage stashes yet. Create one to carve out a chest, a vault, or a wagon for your
+          hoard.
         </div>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
@@ -114,11 +109,7 @@ export function StorageStashList({ characterId }: StorageStashListProps): ReactE
         </ul>
       )}
 
-      <CreateStashModal
-        open={creating}
-        onOpenChange={setCreating}
-        ownerCharacterId={characterId}
-      />
+      <CreateStashModal open={creating} onOpenChange={setCreating} ownerCharacterId={characterId} />
     </div>
   );
 }

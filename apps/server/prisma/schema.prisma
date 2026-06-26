@@ -1,0 +1,456 @@
+// Prisma 7 — schema mirrors packages/shared/src/schemas (Zod is source of truth).
+// Every model has a round-trip test asserting Prisma row → Zod schema parity.
+//
+// DB URL is sourced from prisma.config.ts at the project root (apps/server/).
+// Driver adapter (@prisma/adapter-pg + pg) wires the connection at runtime —
+// the datasource block here just declares the provider for migration codegen.
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -------- Enums (mirror Zod enums; hyphens → underscore in DB) --------
+
+enum CreatureSize {
+  tiny
+  small
+  medium
+  large
+  huge
+  gargantuan
+}
+
+enum EncumbranceRule {
+  off
+  phb
+  variant
+}
+
+enum ItemCategory {
+  weapon
+  armor
+  gear
+  tool
+  ammunition
+  consumable
+  magic
+  currency
+  container
+  other
+}
+
+enum ItemSource {
+  PHB
+  DMG
+  homebrew
+}
+
+// 'very-rare' in Zod → 'very_rare' in DB (Prisma enum values can't contain hyphens).
+// src/db/mappers.ts translates at the read/write boundary.
+enum Rarity {
+  common
+  uncommon
+  rare
+  very_rare
+  legendary
+  artifact
+}
+
+enum CurrencyDenomination {
+  cp
+  sp
+  ep
+  gp
+  pp
+}
+
+// 'long-rest' / 'short-rest' in Zod → 'long_rest' / 'short_rest' in DB.
+enum ChargesRechargeRule {
+  dawn
+  dusk
+  long_rest
+  short_rest
+  custom
+  none
+}
+
+// 'recovered-loot' in Zod → 'recovered_loot' in DB.
+enum StashScope {
+  character
+  party
+  recovered_loot
+}
+
+enum MembershipRole {
+  dm
+  player
+  // R3.2 — banker is denormalized on Party.bankerUserId per OUTLINE §3.14 /
+  // §4 but is also a valid actorRole on TransactionLog. PartyMembership.role
+  // accepts the value at the column level; the §2.2 server guard layer (R3.4)
+  // rejects writes of PartyMembership.role = 'banker'.
+  banker
+}
+
+// -------- Models --------
+
+model User {
+  // R3.2 — switched from caller-provided UUID to cuid() default so the
+  // @auth/prisma-adapter can generate ids during the OAuth flow. Existing
+  // R3.1-era rows keep their UUIDs (the column is just String).
+  id            String    @id @default(cuid())
+  // Existing column. The @auth/prisma-adapter expects a `name` field on User;
+  // src/db/mappers.ts translates displayName ↔ name at the boundary.
+  displayName   String
+  // R3.2 — OAuth identity. Discord snowflake, optional because R3.3 allows
+  // email-only accounts. UNIQUE so two rows can't claim the same Discord id.
+  discordId     String?   @unique
+  // R3.2 — populated by the email OTP flow (R3.3). UNIQUE per SECURITY §1.2.
+  email         String?   @unique
+  // R3.2 — DateTime? matches @auth/prisma-adapter convention AND OUTLINE §4
+  // "ISO timestamp, nullable — set on first successful OTP verification".
+  emailVerified DateTime?
+  // R3.2 — Discord CDN URL (or null). Mapped to adapter's `image` field via
+  // mappers.ts. Resynced on every Discord login per events.signIn callback.
+  avatarUrl     String?
+  // R3.3 — gates hub access for email-only signups. On first OTP verify for
+  // a new email we create the User with `needsDisplayName: true` and an empty
+  // displayName; the §8.1 guard layer (R3.4) returns 409 `display_name_required`
+  // on every protected route except POST /auth/email/set-display-name until
+  // this flag flips false. Discord signups stay false because the
+  // events.signIn callback fills displayName from the Discord profile.
+  needsDisplayName Boolean @default(false)
+  createdAt     DateTime  @default(now())
+
+  // R3.2 — Auth.js adapter relations.
+  accounts Account[]
+  sessions Session[]
+
+  ownedParties    Party[]           @relation("PartyOwner")
+  characters      Character[]
+  memberships     PartyMembership[]
+  transactionLogs TransactionLog[]
+  pendingLinks    PendingDiscordLink[]
+
+  // CHECK: discordId IS NOT NULL OR emailVerified IS NOT NULL — added in
+  // migration tail per SECURITY §1.2 / OUTLINE §4 invariant. Prisma DSL
+  // cannot express it.
+}
+
+model Party {
+  id                   String   @id
+  name                 String
+  ownerUserId          String
+  inviteCode           String   @unique
+  recoveredLootStashId String
+  // MVP writes null (no Banker until 2+ members per OUTLINE §3.14).
+  bankerUserId         String?
+  // MVP writes true (party-of-one). Deprecated post-R4 per OUTLINE §4 amendment 2026-06-24.
+  isSoloShortcut       Boolean
+  createdAt            DateTime @default(now())
+
+  owner       User              @relation("PartyOwner", fields: [ownerUserId], references: [id])
+  memberships PartyMembership[]
+  characters  Character[]
+  stashes     Stash[]
+  txLog       TransactionLog[]
+
+  @@index([ownerUserId])
+}
+
+model PartyMembership {
+  userId      String
+  partyId     String
+  role        MembershipRole
+  characterId String?
+  joinedAt    DateTime  @default(now())
+  // MVP writes null (no member departures until R5).
+  leftAt      DateTime?
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  party     Party      @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  character Character? @relation(fields: [characterId], references: [id])
+
+  // Composite primary key per OUTLINE §4: a user with both dm + player roles
+  // in the same party has two rows.
+  @@id([userId, partyId, role])
+  @@index([partyId])
+}
+
+model Character {
+  id                 String          @id
+  partyId            String
+  ownerUserId        String
+  name               String
+  species            String
+  size               CreatureSize
+  // 'class' is reserved in some Prisma contexts; keeping the column name
+  // identical to the Zod field for round-trip parity. Prisma quotes it.
+  class              String
+  // CHECK: level BETWEEN 1 AND 20 (added in migration tail).
+  level              Int
+  // Flatten of Zod abilityScores.STR — CHECK: 1-30 in migration tail.
+  strScore           Int
+  // CHECK: >= 0 in migration tail.
+  maxAttunement      Int
+  encumbranceRule    EncumbranceRule
+  enforceEncumbrance Boolean
+  // FK to Stash; made DEFERRABLE INITIALLY DEFERRED in migration tail to
+  // break the Character ↔ Stash cycle inside a single transaction.
+  //
+  // ⚠️  DRIFT WARNING: Prisma's DSL cannot express DEFERRABLE (prisma#8807,
+  // open). Every `prisma migrate dev` run that touches Character OR Stash
+  // diffs the DB's DEFERRABLE FK against the schema's "plain" FK and emits a
+  // drop+add pair that reverts the deferral. ANY new migration touching
+  // either table MUST append the R3.1/R3.2-style re-DEFERRABLE block to its
+  // migration.sql tail. See apps/server/prisma/migrations/*/migration.sql
+  // for the canonical pattern.
+  inventoryStashId   String          @unique
+
+  party        Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  owner        User              @relation(fields: [ownerUserId], references: [id])
+  inventory    Stash             @relation("CharacterInventory", fields: [inventoryStashId], references: [id])
+  ownedStashes Stash[]           @relation("StashOwner")
+  memberships  PartyMembership[]
+
+  @@index([partyId])
+  @@index([ownerUserId])
+}
+
+model Stash {
+  id               String     @id
+  name             String
+  isCarried        Boolean
+  createdAt        DateTime   @default(now())
+  scope            StashScope
+  // Set iff scope=character.
+  ownerCharacterId String?
+  // Set iff scope=party or scope=recovered_loot.
+  partyId          String?
+
+  ownerCharacter Character?       @relation("StashOwner", fields: [ownerCharacterId], references: [id], onDelete: Cascade)
+  party          Party?           @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  inventoryFor   Character?       @relation("CharacterInventory")
+  items          ItemInstance[]
+  currency       CurrencyHolding?
+
+  // Stash 3-arm scope/owner/party/isCarried invariant enforced by CHECK
+  // constraint in migration tail (see prisma/migrations/<ts>_init/migration.sql).
+
+  @@index([ownerCharacterId])
+  @@index([partyId])
+}
+
+model ItemDefinition {
+  id                    String                @id
+  name                  String
+  source                ItemSource
+  category              ItemCategory
+  // CHECK: >= 0 in migration tail.
+  weight                Float?
+  flatWeight            Boolean?
+  // Flatten of Zod cost: { amount, currency }. Paired CHECK in migration tail:
+  // both set or both null.
+  costAmount            Float?
+  costCurrency          CurrencyDenomination?
+  description           String?
+  // Native Postgres text[]; GIN-indexable later without schema change.
+  tags                  String[]              @default([])
+  rarity                Rarity?
+  requiresAttunement    Boolean?
+  attunementPrereq      String?
+  // Flatten of Zod charges block. Paired CHECK in migration tail: chargesMax +
+  // chargesRechargeRule both set or both null.
+  chargesMax            Int?
+  chargesRechargeRule   ChargesRechargeRule?
+  chargesRechargeAmount String?
+  duplicatedFromId      String?
+  createdBy             String?
+  partyId               String?
+
+  instances ItemInstance[]
+
+  @@index([source])
+  @@index([category])
+}
+
+model ItemInstance {
+  id                  String  @id
+  definitionId        String
+  // Literal 'stash' in MVP per OUTLINE §4; kept as String for forward-compat
+  // (a future 'shop' value lands in R5+ shop work).
+  ownerType           String
+  // stashId (the only currently-legal owner type).
+  ownerId             String
+  containerInstanceId String?
+  // CHECK: > 0 in migration tail.
+  quantity            Int
+  equipped            Boolean
+  attuned             Boolean
+  identified          Boolean
+  hint                String?
+  // CHECK: >= 0 OR NULL in migration tail.
+  currentCharges      Int?
+  customName          String?
+  notes               String?
+  // Record<string, unknown> per Zod — open-shape per-instance metadata.
+  conditionOverrides  Json?
+
+  definition ItemDefinition @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  stash      Stash          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([definitionId])
+  @@index([ownerId])
+  @@index([ownerId, definitionId])
+}
+
+model CurrencyHolding {
+  id      String @id
+  stashId String @unique
+  // CHECK: cp >= 0 AND sp >= 0 AND ep >= 0 AND gp >= 0 AND pp >= 0 in migration tail.
+  cp      Int
+  sp      Int
+  ep      Int
+  gp      Int
+  pp      Int
+
+  stash Stash @relation(fields: [stashId], references: [id], onDelete: Cascade)
+}
+
+model TransactionLog {
+  id          String         @id
+  partyId     String
+  // Null in MVP per OUTLINE §4; R5+ Session entity will populate.
+  sessionId   String?
+  timestamp   DateTime
+  actorUserId String
+  actorRole   MembershipRole
+  // 25-variant discriminator; payload shape validated by Zod
+  // transactionLogEntrySchema at the read/write boundary.
+  type        String
+  payload     Json
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  actor User  @relation(fields: [actorUserId], references: [id])
+
+  @@index([partyId, timestamp])
+  @@index([type])
+}
+
+// Server-only — key/value table for canonical metadata (currently just
+// `seedVersion`; future keys per OUTLINE §4). Single-row pattern keyed by
+// `key` so new metadata kinds don't require migrations.
+model Metadata {
+  key   String @id
+  value Json
+}
+
+// -------- R3.2 — Auth.js adapter tables --------
+//
+// Standard @auth/prisma-adapter shapes. Snake_case columns (refresh_token,
+// access_token, etc.) are the adapter's convention; we keep them verbatim
+// so the adapter works without column-name remapping.
+//
+// SECURITY §1.1: Discord-issued tokens are NEVER persisted. The adapter
+// is wrapped by src/auth/adapter-overrides.ts which writes NULL for
+// access_token / refresh_token / id_token / expires_at in linkAccount.
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  // The next four fields exist for adapter compatibility but are written as
+  // NULL by makeAdapter() in src/auth/adapter-overrides.ts (SECURITY §1.1).
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Adapter looks accounts up by (provider, providerAccountId) on signIn.
+  @@unique([provider, providerAccountId])
+  // Adapter queries findFirst({where: {userId}}) for "list a user's accounts".
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  // The opaque cookie value the client presents. UNIQUE so the adapter can
+  // findUnique({where: {sessionToken}}) on every authenticated request.
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// R3.3 will use this for email OTP — adding it here keeps R3.3 from needing
+// a second migration. Empty in R3.2.
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// R3.5 — ephemeral handoff row for the Discord-account-link OAuth flow.
+// When an authenticated user clicks "Connect Discord" in Settings →
+// Linked accounts, the web hits `GET /auth/discord/login?link=1`, which
+// writes a PendingDiscordLink row keyed by a random token and redirects
+// to a NEW link-flow OAuth entry point (`/auth/discord/link/start?token=
+// ...`). The flow then runs the OAuth code-exchange at the route layer
+// (NOT via Auth.js) and consumes the row in the callback, attaching
+// `discordId` + `avatarUrl` to the session user's row instead of creating
+// a new User. Rows are short-lived (10-min `expires`) and swept inline on
+// every link initiation; an unscheduled cron sweeper is tracked in
+// roadmap.md "Operational followups (unscheduled)".
+//
+// Owning the link flow at the route layer (instead of inside Auth.js's
+// `events.signIn`) keeps the Auth.js adapter untouched and lets us
+// surface snowflake-conflict cleanly via a 302 redirect to
+// `${WEB_ORIGIN}/settings?linkError=discord_already_linked`.
+model PendingDiscordLink {
+  // The token doubles as primary key and as the lookup the callback uses.
+  token     String   @id
+  userId    String
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expires])
+}
+
+// R3.3 — durable rate-limit / lockout state for the email OTP verify flow.
+// Keyed by (email, ip) so a single attacker IP hitting many emails is rate
+// limited per-email AND a single email attacked from many IPs is rate limited
+// per-IP — both axes checked at request time.
+//
+// On 5 failed verify attempts within a code's lifetime we set
+// `lockedUntil = now + 15min` (SECURITY §1.2). Cleanup of dead rows is a
+// followup — the @@index([lockedUntil]) keeps a future cron sweep cheap.
+model EmailAuthAttempt {
+  id          String    @id @default(cuid())
+  email       String
+  ip          String
+  failedCount Int       @default(0)
+  lockedUntil DateTime?
+  lastAttempt DateTime  @default(now())
+
+  @@unique([email, ip])
+  @@index([lockedUntil])
+}

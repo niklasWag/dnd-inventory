@@ -14,7 +14,10 @@ beforeEach(async () => {
   await wipeAll();
 });
 
-function renderModal(stashId: string, stashLabel = 'Inventory'): { onOpenChange: { current: boolean } } {
+function renderModal(
+  stashId: string,
+  stashLabel = 'Inventory',
+): { onOpenChange: { current: boolean } } {
   const onOpenChange = { current: true };
   render(
     <>
@@ -98,10 +101,7 @@ describe('AddItemModal Custom tab (M6)', () => {
     // Parent modal still open — onOpenChange was NOT called with false.
     expect(onOpenChange.current).toBe(true);
     // Catalog tab is now active.
-    expect(screen.getByRole('tab', { name: /catalog/i })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: /catalog/i })).toHaveAttribute('aria-selected', 'true');
     // Catalog content renders (search input is a CatalogPicker signal).
     expect(screen.getByPlaceholderText(/torch|rope|search/i)).toBeInTheDocument();
   });
@@ -141,10 +141,7 @@ describe('AddItemModal Custom tab (M6)', () => {
       </>,
     );
 
-    expect(screen.getByRole('tab', { name: /catalog/i })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: /catalog/i })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('renders the HomebrewForm inline inside the parent modal (not as a nested Dialog)', async () => {

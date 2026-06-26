@@ -59,12 +59,10 @@ export function ItemDetail(): ReactElement {
         return { row: null, def: null, stash: null, characterId: null } as const;
       }
       const row = s.appState.items.find((i) => i.id === itemInstanceId) ?? null;
-      const def = row !== null
-        ? s.appState.catalog.find((d) => d.id === row.definitionId) ?? null
-        : null;
-      const stash = row !== null
-        ? s.appState.stashes.find((st) => st.id === row.ownerId) ?? null
-        : null;
+      const def =
+        row !== null ? (s.appState.catalog.find((d) => d.id === row.definitionId) ?? null) : null;
+      const stash =
+        row !== null ? (s.appState.stashes.find((st) => st.id === row.ownerId) ?? null) : null;
       const characterId =
         stash?.scope === 'character' && stash.ownerCharacterId !== null
           ? stash.ownerCharacterId
@@ -159,7 +157,7 @@ export function ItemDetail(): ReactElement {
   // leaking the real name into the form's placeholder text. The form
   // itself stays editable (the DM may still want to set a nickname for
   // an unidentified item).
-  const customNamePlaceholder = isIdentified ? def?.name ?? '' : '';
+  const customNamePlaceholder = isIdentified ? (def?.name ?? '') : '';
 
   // R2.2 — charges UI is meaningful only when:
   //   1. the definition carries a `charges` block, AND
@@ -171,18 +169,13 @@ export function ItemDetail(): ReactElement {
   // OUTLINE §8 only specifies the name swap but the charge count is
   // similarly a magic-item tell).
   // `inInventory` is a single check the buttons + line both read.
-  const inInventory =
-    stash !== null && stash.scope === 'character' && stash.isCarried === true;
+  const inInventory = stash !== null && stash.scope === 'character' && stash.isCarried === true;
   const defCharges = def?.charges;
   const showCharges = defCharges !== undefined && inInventory && isIdentified;
-  const chargesLine = showCharges
-    ? formatChargesLong(row.currentCharges, defCharges)
-    : null;
+  const chargesLine = showCharges ? formatChargesLong(row.currentCharges, defCharges) : null;
   const canUseCharge = showCharges && (row.currentCharges ?? 0) > 0;
   const canRecharge =
-    showCharges &&
-    row.currentCharges !== null &&
-    row.currentCharges < defCharges.max;
+    showCharges && row.currentCharges !== null && row.currentCharges < defCharges.max;
 
   function onUseCharge(): void {
     if (row === null || characterId === null) return;
@@ -352,9 +345,7 @@ export function ItemDetail(): ReactElement {
             ) : null}
           </div>
         ) : null}
-        {isIdentified &&
-        def?.attunementPrereq !== undefined &&
-        def.attunementPrereq.length > 0 ? (
+        {isIdentified && def?.attunementPrereq !== undefined && def.attunementPrereq.length > 0 ? (
           <p className="text-xs italic text-muted-foreground">{def.attunementPrereq}</p>
         ) : null}
       </header>
@@ -467,9 +458,7 @@ export function ItemDetail(): ReactElement {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold">Identification</h2>
-            <p className="text-xs text-muted-foreground">
-              DM-only in multi-member parties (R4).
-            </p>
+            <p className="text-xs text-muted-foreground">DM-only in multi-member parties (R4).</p>
           </div>
           <Button
             type="button"

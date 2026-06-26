@@ -178,10 +178,7 @@ export function CurrencyTransferModal({
   }
 
   const totalGpEquivalent = currency.toGpEquivalent(parsed);
-  const canSubmit =
-    targets.length > 0 &&
-    insufficient === undefined &&
-    totalCoinsRequested > 0;
+  const canSubmit = targets.length > 0 && insufficient === undefined && totalCoinsRequested > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -238,9 +235,7 @@ export function CurrencyTransferModal({
                   step={1}
                   {...register(d)}
                 />
-                <p className="text-xs text-muted-foreground tabular-nums">
-                  have {holding[d]}
-                </p>
+                <p className="text-xs text-muted-foreground tabular-nums">have {holding[d]}</p>
               </div>
             ))}
           </div>
@@ -255,8 +250,8 @@ export function CurrencyTransferModal({
             {totalCoinsRequested === 0
               ? 'Enter at least one coin to send.'
               : insufficient !== undefined
-              ? `Insufficient ${DENOM_LABEL[insufficient]}: have ${String(holding[insufficient])}, requested ${String(parsed[insufficient])}`
-              : `Sending ${String(totalGpEquivalent)} gp equivalent.`}
+                ? `Insufficient ${DENOM_LABEL[insufficient]}: have ${String(holding[insufficient])}, requested ${String(parsed[insufficient])}`
+                : `Sending ${String(totalGpEquivalent)} gp equivalent.`}
           </p>
 
           {submitError !== null ? (

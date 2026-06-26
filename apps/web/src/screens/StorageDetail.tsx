@@ -67,9 +67,7 @@ export function StorageDetail(): ReactElement {
   const items = useStore(useShallow((s) => s.appState?.items ?? null));
   const itemCount = useMemo(() => {
     if (items === null || view === null) return 0;
-    return items
-      .filter((i) => i.ownerId === view.stashId)
-      .reduce((sum, i) => sum + i.quantity, 0);
+    return items.filter((i) => i.ownerId === view.stashId).reduce((sum, i) => sum + i.quantity, 0);
   }, [items, view]);
 
   const [renaming, setRenaming] = useState(false);

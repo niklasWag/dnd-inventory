@@ -82,10 +82,7 @@ export function formatChargesShort(current: number | null, max: number): string 
  * Falls back to `"—/{max} charges — {rule}"` when currentCharges is
  * null (item not in Inventory).
  */
-export function formatChargesLong(
-  current: number | null,
-  charges: ChargesBlock,
-): string {
+export function formatChargesLong(current: number | null, charges: ChargesBlock): string {
   const counter = `${current ?? '—'} / ${charges.max} charges`;
   const ruleText = rechargeRuleLabel(charges.rechargeRule);
   const formula =

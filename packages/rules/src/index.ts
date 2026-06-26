@@ -20,3 +20,19 @@ export * as pricing from './pricing';
 export * as search from './search';
 export * as currency from './currency';
 export * as inventory from './inventory';
+
+// R3.4.a — reducer + action types moved out of apps/web/src/store/ so the
+// server-side sync routes (apps/server/src/sync/) can import the same
+// authoritative implementation. Web's existing import paths
+// (apps/web/src/store/reducer, apps/web/src/store/types) are preserved
+// via thin re-exports.
+export { reduce, generateInviteCode } from './reducer';
+export type { ReducerContext, ReducerResult, LogEntrySlice } from './reducer';
+export type {
+  Action,
+  AppState,
+  HomebrewDefinitionInput,
+  HomebrewDefinitionPatch,
+  TransactionLogEntry,
+  TxType,
+} from './reducer/types';

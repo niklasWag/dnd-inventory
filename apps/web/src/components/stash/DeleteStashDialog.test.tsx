@@ -14,7 +14,10 @@ beforeEach(async () => {
   await wipeAll();
 });
 
-function setup(stashName: string, itemCount: number): {
+function setup(
+  stashName: string,
+  itemCount: number,
+): {
   stashId: string;
   onDeleted: ReturnType<typeof vi.fn>;
 } {
@@ -67,9 +70,7 @@ describe('DeleteStashDialog (M3)', () => {
     const confirm = dialog.querySelector('button:last-child') as HTMLButtonElement;
     await user.click(confirm);
 
-    expect(
-      useStore.getState().appState!.stashes.find((st) => st.id === stashId),
-    ).toBeUndefined();
+    expect(useStore.getState().appState!.stashes.find((st) => st.id === stashId)).toBeUndefined();
     expect(await screen.findByText(/stash deleted/i)).toBeInTheDocument();
     expect(onDeleted).toHaveBeenCalled();
   });

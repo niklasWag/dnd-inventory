@@ -49,7 +49,14 @@ function renderSettings(initialPath = '/settings'): void {
 describe('Settings — Backup (M7)', () => {
   it('Export triggers a download with a slugified filename', async () => {
     const user = userEvent.setup();
-    bootstrap({ name: 'Bara of Waterdeep', species: 'Half-Elf', size: 'medium', class: 'Bard', level: 2, str: 10 });
+    bootstrap({
+      name: 'Bara of Waterdeep',
+      species: 'Half-Elf',
+      size: 'medium',
+      class: 'Bard',
+      level: 2,
+      str: 10,
+    });
 
     // We can't easily intercept the real triggerDownload (it touches
     // the DOM + URL.createObjectURL). Instead, spy on createObjectURL
@@ -94,9 +101,9 @@ describe('Settings — Character & Party rename (M7)', () => {
     await user.click(saveBtn);
 
     // Store updated.
-    expect(
-      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.name,
-    ).toBe('Thorin Stonefist');
+    expect(useStore.getState().appState!.characters.find((c) => c.id === characterId)!.name).toBe(
+      'Thorin Stonefist',
+    );
     // Log entry appended.
     const last = useStore.getState().log.at(-1);
     expect(last?.type).toBe('rename-character');
@@ -173,8 +180,9 @@ describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
   it('importing a file shows confirm + Replace applies the snapshot', async () => {
     const user = userEvent.setup();
     // Build a source state, capture its export text, then wipe + re-render.
-    const { homebrewDefId, inventoryStashId } = (await import('@/test/fixtures'))
-      .bootstrapWithHomebrew({ name: 'Glow Mushroom', category: 'consumable' });
+    const { homebrewDefId, inventoryStashId } = (
+      await import('@/test/fixtures')
+    ).bootstrapWithHomebrew({ name: 'Glow Mushroom', category: 'consumable' });
     useStore.getState().dispatch({
       type: 'acquire',
       payload: {
@@ -189,7 +197,9 @@ describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
       log: useStore.getState().log,
     };
     const { buildExportEnvelope, serializeExport } = await import('@/io/export');
-    const text = serializeExport(buildExportEnvelope(snapshot, { now: new Date('2026-06-24T00:00:00.000Z') }));
+    const text = serializeExport(
+      buildExportEnvelope(snapshot, { now: new Date('2026-06-24T00:00:00.000Z') }),
+    );
 
     // Reset to empty so the import is observable.
     useStore.setState({ appState: null, log: [] });
@@ -221,7 +231,10 @@ describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
     const user = userEvent.setup();
     const { buildExportEnvelope, serializeExport } = await import('@/io/export');
     const text = serializeExport(
-      buildExportEnvelope({ appState: null, log: [] }, { now: new Date('2026-06-24T00:00:00.000Z') }),
+      buildExportEnvelope(
+        { appState: null, log: [] },
+        { now: new Date('2026-06-24T00:00:00.000Z') },
+      ),
     );
 
     bootstrap();

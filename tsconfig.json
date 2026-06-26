@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/rules" },
-    { "path": "./packages/seeds" }
+    { "path": "./packages/seeds" },
+    { "path": "./apps/server" }
   ]
 }

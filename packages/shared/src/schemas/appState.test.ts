@@ -18,6 +18,10 @@ describe('appStateSchema round-trip', () => {
     seedVersion: 0,
     user: {
       id: 'user-1',
+      // R3.2 — userSchema .refine() requires at least one of discordId or
+      // emailVerified. Populate discordId so the fixture parses; emailVerified
+      // becomes load-bearing in R3.3.
+      discordId: 'user-1',
       displayName: 'You',
       createdAt: '2026-06-23T10:00:00.000Z',
     },

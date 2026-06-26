@@ -1,16 +1,30 @@
 import { Outlet, useNavigate } from 'react-router-dom';
 import type { ReactElement } from 'react';
-import { BookOpen, Settings as SettingsIcon } from 'lucide-react';
+import { BookOpen, LogOut, Settings as SettingsIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { isServerMode } from '@/lib/serverMode';
+import { useSession } from '@/store/session';
 
 /**
  * Root layout shared by every route. The header is route-aware enough to
  * highlight the Settings link but otherwise stays dumb — child routes
  * render through `<Outlet />`.
+ *
+ * R3.5 — header gains a session-aware right side in server mode only:
+ *   - displayName + avatar (left of the nav)
+ *   - Logout button (right)
+ *
+ * Local mode renders the original chrome unchanged.
  */
 export function RootLayout(): ReactElement {
   const navigate = useNavigate();
+  const session = useSession((s) => s);
+
+  async function handleLogout(): Promise<void> {
+    await session.signOut();
+    void navigate('/login', { replace: true });
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -48,6 +62,24 @@ export function RootLayout(): ReactElement {
               <SettingsIcon className="h-4 w-4" />
               <span className="sr-only sm:not-sr-only">Settings</span>
             </Button>
+            {isServerMode && session.status === 'authenticated' && session.user !== null ? (
+              <>
+                <span className="ml-2 hidden text-sm text-muted-foreground sm:inline">
+                  {session.user.displayName}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    void handleLogout();
+                  }}
+                  aria-label="Logout"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span className="sr-only sm:not-sr-only">Logout</span>
+                </Button>
+              </>
+            ) : null}
           </nav>
         </div>
       </header>

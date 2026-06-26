@@ -31,25 +31,13 @@ function seedGp(stashId: string, amount: number): void {
 describe('ConvertCurrencyModal (M4)', () => {
   it('does not render when closed', () => {
     const { inventoryStashId } = bootstrap();
-    render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={false}
-        onOpenChange={vi.fn()}
-      />,
-    );
+    render(<ConvertCurrencyModal stashId={inventoryStashId} open={false} onOpenChange={vi.fn()} />);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('renders the convert form when open', () => {
     const { inventoryStashId } = bootstrap();
-    render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={true}
-        onOpenChange={vi.fn()}
-      />,
-    );
+    render(<ConvertCurrencyModal stashId={inventoryStashId} open={true} onOpenChange={vi.fn()} />);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByLabelText(/quantity/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/source/i)).toBeInTheDocument();
@@ -60,13 +48,7 @@ describe('ConvertCurrencyModal (M4)', () => {
     const user = userEvent.setup();
     const { inventoryStashId } = bootstrap();
     seedGp(inventoryStashId, 1);
-    render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={true}
-        onOpenChange={vi.fn()}
-      />,
-    );
+    render(<ConvertCurrencyModal stashId={inventoryStashId} open={true} onOpenChange={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText(/source/i), 'gp');
     await user.selectOptions(screen.getByLabelText(/target/i), 'sp');
@@ -85,13 +67,7 @@ describe('ConvertCurrencyModal (M4)', () => {
     const { inventoryStashId } = bootstrap();
     // Only 1 gp in the stash — try to convert 2 gp.
     seedGp(inventoryStashId, 1);
-    render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={true}
-        onOpenChange={vi.fn()}
-      />,
-    );
+    render(<ConvertCurrencyModal stashId={inventoryStashId} open={true} onOpenChange={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText(/source/i), 'gp');
     await user.selectOptions(screen.getByLabelText(/target/i), 'sp');
@@ -116,13 +92,7 @@ describe('ConvertCurrencyModal (M4)', () => {
         reason: 'deposit',
       },
     });
-    render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={true}
-        onOpenChange={vi.fn()}
-      />,
-    );
+    render(<ConvertCurrencyModal stashId={inventoryStashId} open={true} onOpenChange={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText(/source/i), 'sp');
     await user.selectOptions(screen.getByLabelText(/target/i), 'gp');
@@ -140,13 +110,7 @@ describe('ConvertCurrencyModal (M4)', () => {
     const user = userEvent.setup();
     const { inventoryStashId } = bootstrap();
     seedGp(inventoryStashId, 1);
-    render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={true}
-        onOpenChange={vi.fn()}
-      />,
-    );
+    render(<ConvertCurrencyModal stashId={inventoryStashId} open={true} onOpenChange={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText(/source/i), 'gp');
     await user.selectOptions(screen.getByLabelText(/target/i), 'gp');
@@ -166,11 +130,7 @@ describe('ConvertCurrencyModal (M4)', () => {
     seedGp(inventoryStashId, 1);
     const onOpenChange = vi.fn();
     render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={true}
-        onOpenChange={onOpenChange}
-      />,
+      <ConvertCurrencyModal stashId={inventoryStashId} open={true} onOpenChange={onOpenChange} />,
     );
     const beforeLen = useStore.getState().log.length;
 
@@ -197,13 +157,7 @@ describe('ConvertCurrencyModal (M4)', () => {
     const user = userEvent.setup();
     const { inventoryStashId } = bootstrap();
     seedGp(inventoryStashId, 5);
-    render(
-      <ConvertCurrencyModal
-        stashId={inventoryStashId}
-        open={true}
-        onOpenChange={vi.fn()}
-      />,
-    );
+    render(<ConvertCurrencyModal stashId={inventoryStashId} open={true} onOpenChange={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText(/source/i), 'gp');
     await user.selectOptions(screen.getByLabelText(/target/i), 'sp');
