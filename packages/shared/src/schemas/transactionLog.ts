@@ -30,17 +30,31 @@ const baseLogFields = {
   actorRole: z.enum(['dm', 'player', 'banker']),
 };
 
+/**
+ * `create-character` — bootstrap action that mints the initial AppState.
+ *
+ * R4.1-followup — when the Hub's Create-party flow runs the "I don't
+ * want to play a character" branch, the action mints only `User` +
+ * `Party` + ONE `role='dm'` `PartyMembership` + party-scope stashes
+ * (Party Stash + Recovered Loot). The log payload reflects this by
+ * making `characterId`, `name`, and `inventoryStashId` optional; the
+ * explicit `dmOnly: true` flag tells log readers to expect the
+ * narrower shape. Legacy log entries (pre-R4.1-followup) carry none
+ * of `dmOnly` — they parse the same way under the optional schema.
+ */
 const createCharacterEntry = z.object({
   ...baseLogFields,
   type: z.literal('create-character'),
   payload: z.object({
-    characterId: z.string().min(1),
     userId: z.string().min(1),
     partyId: z.string().min(1),
-    name: z.string().min(1),
-    inventoryStashId: z.string().min(1),
     partyStashId: z.string().min(1),
     recoveredLootStashId: z.string().min(1),
+    // The Character + Inventory fields are absent on DM-only bootstraps.
+    characterId: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    inventoryStashId: z.string().min(1).optional(),
+    dmOnly: z.boolean().optional(),
   }),
 });
 
@@ -301,10 +315,13 @@ export type CurrencyDelta = z.infer<typeof currencyDeltaSchema>;
  * `currency-change` — additive denomination delta on a single stash's
  * `CurrencyHolding`. The reason tag is for log readability; the OUTLINE §4
  * enum lists `deposit | withdraw | split-evenly | gameplay-drain |
- * convert | stash-deleted`. M3 introduced `'stash-deleted'` (the
- * delete-cascade synthetic entry); M4 dispatches `'deposit' | 'withdraw'
- * | 'convert'` from the inline currency editor + Convert modal. R4 will
- * extend with `'split-evenly' | 'gameplay-drain'` for multi-member parties.
+ * convert | stash-deleted | character-deleted`. M3 introduced
+ * `'stash-deleted'` (the delete-cascade synthetic entry); M4 dispatches
+ * `'deposit' | 'withdraw' | 'convert'` from the inline currency editor +
+ * Convert modal. R4.1.b adds `'character-deleted'` for the `delete-
+ * character` cascade synthetic entry against Recovered Loot. R4.2 will
+ * extend with `'split-evenly' | 'gameplay-drain'` for multi-member
+ * parties.
  */
 const currencyChangeEntry = z.object({
   ...baseLogFields,
@@ -313,7 +330,15 @@ const currencyChangeEntry = z.object({
     stashId: z.string().min(1),
     delta: currencyDeltaSchema,
     reason: z
-      .enum(['deposit', 'withdraw', 'split-evenly', 'gameplay-drain', 'convert', 'stash-deleted'])
+      .enum([
+        'deposit',
+        'withdraw',
+        'split-evenly',
+        'gameplay-drain',
+        'convert',
+        'stash-deleted',
+        'character-deleted',
+      ])
       .optional(),
   }),
 });
@@ -654,6 +679,130 @@ const editCharacterEntry = z.object({
   }),
 });
 
+/**
+ * `delete-character` — R4.1.b. Detaches a character from their party,
+ * cascading their owned items + currency into the party's Recovered Loot
+ * stash per OUTLINE §8.3 (same shape as the `leave-party` / `kick-player`
+ * cascades).
+ *
+ * Cascade emits (in this order):
+ *   - one `transfer` entry per row in any character-scope stash the
+ *     character owned (Inventory + every Storage stash) → Recovered Loot
+ *   - one `currency-change` entry against Recovered Loot with
+ *     `reason: 'character-deleted'` IFF the aggregated character currency
+ *     was non-zero (sum of CurrencyHolding across all owned stashes)
+ *   - one terminal `delete-character` entry with the snapshot
+ *     `{ characterId, name, itemCount, currencyTotalCp }`
+ *
+ * `itemCount` is the SUM of quantities (matches `delete-stash`'s
+ * convention: "4 items" means 4 things, not 1 stack of 4).
+ * `currencyTotalCp` is the CP-equivalent of the character's aggregate
+ * holdings across all their stashes at delete time.
+ *
+ * `lastSessionId` is reserved for R5 session tagging per OUTLINE §4 line
+ * 329; absent in R4.1 (`sessionId` is always `null` until R5).
+ *
+ * After the cascade: the character's stash rows + their `CurrencyHolding`
+ * rows are dropped from state, and the owning user's `PartyMembership`
+ * row with `role='player'` retains its slot but with `characterId: null`
+ * — the user keeps their seat in the party and can recreate a character
+ * later (roadmap R4.1 line 1750).
+ */
+const deleteCharacterEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('delete-character'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    name: z.string().min(1),
+    itemCount: z.number().int().nonnegative(),
+    currencyTotalCp: z.number().int().nonnegative(),
+    lastSessionId: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * `leave-party` — R4.1.c. The actor self-removes from a party per
+ * OUTLINE §8.3. If they had a character, it's deleted first (same
+ * cascade as `delete-character` — items + currency → Recovered Loot,
+ * then character + stashes + holdings dropped). After the optional
+ * character cascade the actor's `PartyMembership` rows for this party
+ * are soft-deleted (`leftAt` flipped from `null` to ISO datetime; row
+ * stays for audit history). A user with both `dm` + `player` rows in
+ * a party-of-one creator pattern soft-deletes BOTH rows in one
+ * dispatch.
+ *
+ * Reducer guards (OUTLINE §8.3):
+ *   - actor must be an active member (`leftAt === null`).
+ *   - sole DM of a 2+-member party cannot leave (must transfer DM
+ *     first via R4.3 `dm-transfer`). Surfaces as `not_a_member`-style
+ *     reducer error.
+ *   - sole member of any party (party-of-one) rejects with a guard-
+ *     coded error pointing the server route at the archive flow
+ *     (Party.archivedAt; ships in R4.1.e).
+ *
+ * Payload mirrors OUTLINE §4 line 323: `{ partyId, characterId? }`.
+ * `characterId` is set IFF the leaver had a player membership with a
+ * non-null character at leave time.
+ *
+ * Banker auto-clear (carryforward from R4.2): when the leaver was the
+ * party's Banker the cascade also clears `Party.bankerUserId` and
+ * emits a synthetic `revoke-banker` entry with `reason: 'left-party'`
+ * per OUTLINE §8.3. R4.1 ships the conditional but the branch never
+ * fires because `Party.bankerUserId` is always `null` in MVP-validated
+ * state (`partySchema.bankerUserId: z.null()`); R4.2 widens both.
+ */
+const leavePartyEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('leave-party'),
+  payload: z.object({
+    partyId: z.string().min(1),
+    characterId: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * `kick-player` — R4.1.d. DM removes another member from the party per
+ * OUTLINE §8.3 (same Recovered Loot cascade as `leave-party`). Payload
+ * mirrors OUTLINE §4 line 325: `{ kickedUserId }`. The cascade emits
+ * the same shape as `leave-party`:
+ *   - if the kicked user had a character → character-delete cascade
+ *     (items + currency → Recovered Loot)
+ *   - soft-delete every active membership row for the kicked user
+ *   - banker auto-clear stub (R4.2 emits `revoke-banker` with
+ *     `reason: 'kicked'`)
+ *   - terminal `kick-player` slice
+ *
+ * `actorRole` is `'dm'` on the log entry (the only role allowed to
+ * dispatch this action per OUTLINE §8.1).
+ */
+const kickPlayerEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('kick-player'),
+  payload: z.object({
+    kickedUserId: z.string().min(1),
+  }),
+});
+
+/**
+ * `join-party` — R4.1.e. A user redeems an invite code and gains a
+ * `role='player'` membership in the target party (OUTLINE §4 line 323).
+ *
+ * Membership-only join: no character is minted as part of this slice.
+ * The user lands on a "create your character" prompt after joining
+ * (existing `create-character` reducer flow). The terminal slice
+ * `characterId` field is therefore always absent in R4.1.
+ *
+ * Payload mirrors OUTLINE §4 line 323: `{ partyId, characterId? }`.
+ */
+const joinPartyEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('join-party'),
+  payload: z.object({
+    partyId: z.string().min(1),
+    characterId: z.string().min(1).optional(),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -683,6 +832,10 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   rechargeEntry,
   identifyEntry,
   editCharacterEntry,
+  deleteCharacterEntry,
+  leavePartyEntry,
+  kickPlayerEntry,
+  joinPartyEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

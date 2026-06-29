@@ -13,7 +13,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { LinkedAccounts } from '@/components/auth/LinkedAccounts';
-import { RenameField } from '@/components/settings/RenameField';
 import { EncumbranceRuleField } from '@/components/settings/EncumbranceRuleField';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
 import { wipeAll } from '@/db/wipe';
@@ -29,14 +28,14 @@ import { useSession } from '@/store/session';
  *
  *   1. **Backup** — Export the persisted blob to a JSON file (M7);
  *      Import a file with replace-all confirm.
- *   2. **Character & Party** — rename the sole character + party
- *      (M7 reducer actions: `rename-character`, `rename-party`).
+ *   2. **Encumbrance** — per-character rule + enforce flag (R1.1).
  *   3. **Wipe data** — kept from M0; nukes Dexie.
  *   4. **App info** — app version + seed version (M7 surfaces both
  *      for diagnostics).
  *
- * Rename sections are hidden pre-bootstrap (Welcome handles that flow);
- * Export still works pre-bootstrap (you get an "empty" envelope).
+ * R4.1-followup — character + party rename moved to `/party/settings`
+ * (party-scoped, lives next to members + invite code). This screen is
+ * now purely global / account-scoped.
  */
 export function Settings(): ReactElement {
   const navigate = useNavigate();
@@ -131,7 +130,6 @@ export function Settings(): ReactElement {
   }
 
   const character = appState?.characters[0] ?? null;
-  const party = appState?.party ?? null;
   const seedVersion = appState?.seedVersion ?? 0;
 
   return (
@@ -230,30 +228,9 @@ export function Settings(): ReactElement {
         </div>
       </section>
 
-      {/* M7: Character & Party rename. Hidden pre-bootstrap (Welcome
-          owns the create flow; nothing to rename yet). */}
-      {character !== null && party !== null ? (
-        <section className="space-y-4 rounded-lg border border-border p-4">
-          <div>
-            <h2 className="font-semibold">Character & Party</h2>
-            <p className="text-sm text-muted-foreground">
-              Rename your character or party. Changes are logged.
-            </p>
-          </div>
-          <RenameField
-            target="character"
-            entityId={character.id}
-            currentName={character.name}
-            label="Character name"
-          />
-          <RenameField
-            target="party"
-            entityId={party.id}
-            currentName={party.name}
-            label="Party name"
-          />
-        </section>
-      ) : null}
+      {/* M7: Character & Party rename — moved to /party/settings in
+          R4.1-followup. The screen lives next to members + invite code
+          so all per-party settings are co-located. */}
 
       {/* R1.1: per-character encumbrance rule selector. Same pre-
           bootstrap gate as the rename section — nothing to configure

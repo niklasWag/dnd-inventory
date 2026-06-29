@@ -8,16 +8,22 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { CharacterForm, type CharacterFormOutput } from '@/components/CharacterForm';
+import { listKnownPartyIds, loadAppState } from '@/db/load';
 import { setCurrentPartyId } from '@/db/meta';
-import { ApiError, listParties } from '@/lib/api';
+import { ApiError, joinParty, listParties } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
-import { useStore } from '@/store';
+import { useStore, flushPendingPersist } from '@/store';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { pullState } from '@/sync/client';
+import { flush as flushSyncQueue } from '@/sync/queue';
 import type { PartyListItem } from '@app/shared';
 
 /**
@@ -28,10 +34,11 @@ import type { PartyListItem } from '@app/shared';
  *
  *   - **Create solo (party-of-one)** — character form, single
  *     `create-character` dispatch.
- *   - **Create party** — same form but creates a regular party (the
- *     reducer marks `isSoloShortcut: false` based on the action). The
+ *   - **Create party** — same form but creates a regular party. The
  *     "do you also play a character?" toggle is post-R3.5 (the reducer
- *     today always mints a character).
+ *     today always mints a character). The "solo" vs "party" UI label is
+ *     a hint only; both paths use the same reducer action. Hub badges
+ *     derive solo-ness from `memberCount === 1` (OUTLINE §4 amendment).
  *   - **Join party** — hidden in R3.5 with "Coming in R4" caption.
  *
  * Login chrome is server-mode-only. In local mode the Hub looks like a
@@ -39,7 +46,10 @@ import type { PartyListItem } from '@app/shared';
  */
 export function Hub(): ReactElement {
   const navigate = useNavigate();
-  const localParty = useStore(
+  // The currently-loaded party (if any). In local mode this is the
+  // pointer the previous session left behind. In server mode it's
+  // whatever the user last navigated into.
+  const loadedParty = useStore(
     useShallow((s) => {
       if (s.appState === null) return null;
       return { id: s.appState.party.id, name: s.appState.party.name };
@@ -47,10 +57,77 @@ export function Hub(): ReactElement {
   );
   const dispatch = useStore((s) => s.dispatch);
 
+  /**
+   * Local-mode parties list. Built by enumerating every keyed Dexie
+   * blob (`appState:<partyId>`) and reading its `party` metadata. Lazy
+   * because we don't need it server-side (server mode has its own
+   * source of truth via `GET /sync/parties`).
+   */
+  const [localParties, setLocalParties] = useState<{ id: string; name: string }[] | null>(null);
+
   const [serverParties, setServerParties] = useState<PartyListItem[] | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [openingPartyId, setOpeningPartyId] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'create-solo' | 'create-party' | null>(null);
+  const [dialog, setDialog] = useState<'create-solo' | 'create-party' | 'join' | null>(null);
+
+  /**
+   * R4.1-followup — Create-party is a 3-step flow:
+   *   1. Party name input.
+   *   2. "Will you also play a character?" Yes / No.
+   *   3a (yes). Character form. Submit dispatches `create-character` with
+   *       `partyName` set.
+   *   3b (no). Submit dispatches `create-character` with `dmOnly: true`.
+   *
+   * Create-solo stays a single-step flow (party name auto-derived).
+   * `createPartyStep` tracks where we are inside the multi-step dialog;
+   * `pendingPartyName` carries the value from step 1 into steps 2 & 3.
+   */
+  const [createPartyStep, setCreatePartyStep] = useState<'name' | 'play' | 'character'>('name');
+  const [pendingPartyName, setPendingPartyName] = useState('');
+
+  function resetCreatePartyDialog(): void {
+    setDialog(null);
+    setCreatePartyStep('name');
+    setPendingPartyName('');
+  }
+
+  // Enumerate local-mode parties on mount (and whenever loadedParty
+  // changes — covers create-party + open-party transitions).
+  useEffect(() => {
+    if (isServerMode) {
+      setLocalParties(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ids = await listKnownPartyIds();
+      // Best-effort read; we tolerate a malformed blob by skipping its
+      // row in the list (the per-party render is purely informational).
+      const rows: { id: string; name: string }[] = [];
+      for (const id of ids) {
+        try {
+          const raw = (await loadAppState(id)) as
+            | { appState?: { party?: { id: string; name: string } } }
+            | null;
+          const party = raw?.appState?.party;
+          if (party !== undefined && typeof party.name === 'string') {
+            rows.push({ id, name: party.name });
+          }
+        } catch {
+          // Skip — the per-party listing is non-critical.
+        }
+      }
+      // Also include the currently-loaded party if it hasn't been saved
+      // yet (fresh-create window before the debounce fires).
+      if (loadedParty !== null && !rows.some((r) => r.id === loadedParty.id)) {
+        rows.push(loadedParty);
+      }
+      if (!cancelled) setLocalParties(rows);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadedParty]);
 
   useEffect(() => {
     if (!isServerMode) {
@@ -90,20 +167,31 @@ export function Hub(): ReactElement {
    * the server returns the party's full character list and the first
    * one is still a sensible default landing for now (a future
    * "switch character" picker is on the post-R5 roadmap).
+   *
+   * R4.1-followup — DM-only parties have `characters: []` by design.
+   * Route those to `/party/settings` instead of erroring with "no
+   * characters yet" (that message was an R3.5 invariant before the
+   * DM-only bootstrap existed).
    */
   async function openServerParty(partyId: string): Promise<void> {
     if (openingPartyId !== null) return;
     setOpeningPartyId(partyId);
     try {
+      // Flush any pending save for the currently-loaded party before
+      // swapping it out — keeps the keyed-by-partyId Dexie blob in sync
+      // with what the user just had on screen.
+      if (useStore.getState().appState !== null) {
+        await flushPendingPersist();
+      }
       await setCurrentPartyId(partyId);
       const pulled = await pullState(partyId);
       useStore.getState().hydrate({ appState: pulled.state, log: pulled.state.log });
       const firstCharacterId = pulled.state.characters[0]?.id;
       if (firstCharacterId === undefined) {
-        // A server party with zero characters is an invariant violation
-        // for R3.5 (the Hub flow always creates one on party creation).
-        // Surface it instead of stranding the user on a blank screen.
-        toast.error('This party has no characters yet.');
+        // DM-only party (R4.1-followup) — no character to land on.
+        // Route to the party-management screen so the DM has somewhere
+        // to go (manage members, rotate invite, etc.).
+        void navigate('/party/settings');
         return;
       }
       void navigate(`/character/${firstCharacterId}`);
@@ -122,21 +210,190 @@ export function Hub(): ReactElement {
     }
   }
 
-  function handleCreateSubmit(values: CharacterFormOutput): void {
+  /**
+   * Local-mode: switch the in-memory store to the supplied party's
+   * blob and navigate to its first character. Mirrors the server-mode
+   * `openServerParty` but reads from Dexie instead of `/sync/state`.
+   */
+  async function openLocalParty(partyId: string): Promise<void> {
+    if (openingPartyId !== null) return;
+    setOpeningPartyId(partyId);
     try {
-      dispatch({ type: 'create-character', payload: values });
+      // Flush + clear the currently-loaded party so its mutations
+      // persist under the right key before we swap.
+      if (useStore.getState().appState !== null) {
+        await flushPendingPersist();
+        if (useStore.getState().appState?.party.id !== partyId) {
+          useStore.setState({ appState: null, log: [] });
+        }
+      }
+      await setCurrentPartyId(partyId);
+      // hydrateFromDexie() reads `currentPartyId` then loads the blob.
+      // We bypass it here and call the loader directly to avoid a
+      // module-level dependency cycle (hydrate.ts imports the store).
+      const raw = await loadAppState(partyId);
+      if (raw === null) {
+        toast.error('Could not find that party in local storage.');
+        return;
+      }
+      const persisted = raw as { appState: unknown; log: unknown[] };
+      useStore
+        .getState()
+        .hydrate({
+          appState: persisted.appState as ReturnType<typeof useStore.getState>['appState'],
+          log: persisted.log as ReturnType<typeof useStore.getState>['log'],
+        });
+      const id = useStore.getState().appState?.characters[0]?.id;
+      if (id !== undefined) {
+        void navigate(`/character/${id}`);
+        return;
+      }
+      // R4.1-followup — DM-only local party (no characters). Route to
+      // the party-management screen instead of leaving the user on Hub.
+      void navigate('/party/settings');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not open this party.');
+    } finally {
+      setOpeningPartyId(null);
+    }
+  }
+
+  /**
+   * Create a fresh party/solo. The reducer's `create-character` insists
+   * on a null in-memory AppState (it's the bootstrap action that mints
+   * user + party + character + stashes from scratch). So before
+   * dispatching, we flush any pending save for the currently-loaded
+   * party and clear the store — its per-party blob is already keyed by
+   * partyId in Dexie, so it remains accessible from the Hub list.
+   *
+   * Once the dispatch lands, the new party's id is the active pointer;
+   * we stamp it into Dexie meta so a reload boots back into this party.
+   */
+  async function handleCreateSubmit(
+    values: CharacterFormOutput,
+    partyName?: string,
+  ): Promise<void> {
+    // Persist the currently-loaded party (if any) under its keyed slot
+    // before we wipe the in-memory state. This is the load-bearing step
+    // that lets the user later open the previous party from the Hub
+    // list without losing its mutations.
+    if (useStore.getState().appState !== null) {
+      await flushPendingPersist();
+      useStore.setState({ appState: null, log: [] });
+    }
+
+    try {
+      dispatch({
+        type: 'create-character',
+        payload: partyName !== undefined ? { ...values, partyName } : values,
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not create character');
       return;
     }
-    // Local mode dispatch is synchronous against the reducer; server
-    // mode goes through the queue (R3.5 Phase 4 wires this — see
-    // `apps/web/src/sync/queue.ts`). Either way we now have a local
-    // character id in the store.
     seedCatalogIfNeeded();
-    const id = useStore.getState().appState?.characters[0]?.id;
+    const newState = useStore.getState().appState;
+    if (newState === null) return;
+
+    // Set the active-party pointer so a reload comes back here.
+    await setCurrentPartyId(newState.party.id);
+    // Persist the new party blob immediately rather than waiting for
+    // the debounce — minimises window where a reload would lose it.
+    await flushPendingPersist();
+    // R4.1-followup — in server mode, also force the sync queue to
+    // push the bootstrap action and re-pull canonical state BEFORE we
+    // navigate. Without this, the next screen's API calls (notably
+    // PartySettings → listPartyMembers) race the queue's 200ms debounce
+    // and hit the server before the party row exists, surfacing as a
+    // 404. In local mode `flush()` is a no-op (`enqueue` short-circuits
+    // when `isServerMode` is false).
+    if (isServerMode) {
+      await flushSyncQueue();
+    }
+
+    // Re-read post-flush: the queue's bootstrap pull replaced the
+    // optimistic state with the server-canonical state (whose
+    // characterId differs from the local one — server runs its own
+    // reducer with its own UUIDs). Navigating with the stale local
+    // id would land on /character/<unknown-id>.
+    const canonical = useStore.getState().appState;
+    const id = canonical?.characters[0]?.id;
     if (id !== undefined) {
       void navigate(`/character/${id}`, { replace: true });
+    }
+  }
+
+  /**
+   * R4.1-followup — DM-only Create-party submit. Same bootstrap shape
+   * as `handleCreateSubmit` but the reducer mints no character +
+   * Inventory stash, just User + Party + dm membership + party-scope
+   * stashes. After dispatch we route to `/party/settings` so the DM
+   * lands on the party-management surface (they have no character
+   * sheet to go to).
+   */
+  async function handleCreatePartyDmOnly(partyName: string): Promise<void> {
+    if (useStore.getState().appState !== null) {
+      await flushPendingPersist();
+      useStore.setState({ appState: null, log: [] });
+    }
+
+    try {
+      dispatch({
+        type: 'create-character',
+        payload: { dmOnly: true, partyName },
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create party');
+      return;
+    }
+    seedCatalogIfNeeded();
+    const newState = useStore.getState().appState;
+    if (newState === null) return;
+
+    await setCurrentPartyId(newState.party.id);
+    await flushPendingPersist();
+    // R4.1-followup — same pre-navigation sync flush as the with-
+    // character branch. Without this, PartySettings would race the
+    // queue and hit `/parties/:id/members` before the party row is
+    // persisted on the server.
+    if (isServerMode) {
+      await flushSyncQueue();
+    }
+
+    // No character → route to party settings. The DM can manage members
+    // + invite code there, or use a future "add my character" affordance
+    // once the create-character-in-existing-party path lands.
+    void navigate('/party/settings', { replace: true });
+  }
+
+  /**
+   * R4.1.e — redeem an invite code and join. On success, refresh the
+   * Hub's party list and route into the new party (same pull-then-
+   * navigate path as `openServerParty`). On `already_member` we still
+   * navigate — the user pasted a code for a party they're already in.
+   */
+  async function handleJoinSubmit(inviteCode: string): Promise<void> {
+    try {
+      const { partyId } = await joinParty({ inviteCode });
+      // Re-fetch the parties list so the Hub stays in sync, then open
+      // the new party using the existing helper.
+      const res = await listParties();
+      setServerParties(res.parties);
+      setDialog(null);
+      await openServerParty(partyId);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.code === 'invalid_invite') {
+          toast.error('That invite code is invalid or expired.');
+          return;
+        }
+        if (err.code === 'already_member') {
+          toast.message('You are already a member of that party.');
+          setDialog(null);
+          return;
+        }
+      }
+      toast.error(err instanceof Error ? err.message : 'Could not join party');
     }
   }
 
@@ -150,7 +407,7 @@ export function Hub(): ReactElement {
       </header>
 
       <ExistingParties
-        localParty={localParty}
+        localParties={localParties}
         serverParties={serverParties}
         serverError={serverError}
         openingPartyId={openingPartyId}
@@ -158,7 +415,7 @@ export function Hub(): ReactElement {
           void openServerParty(id);
         }}
         onOpenLocal={(id) => {
-          void navigate(`/character/${id}`);
+          void openLocalParty(id);
         }}
       />
 
@@ -182,62 +439,243 @@ export function Hub(): ReactElement {
           <ActionCard
             icon={<LinkIcon className="h-5 w-5" />}
             title="Join party"
-            description="Coming in a future release."
-            disabled
+            description={
+              isServerMode
+                ? 'Paste an invite code from another DM.'
+                : 'Available when this app runs against a hosted server.'
+            }
+            {...(isServerMode ? { onClick: () => setDialog('join') } : { disabled: true })}
           />
         </div>
       </section>
 
-      <Dialog open={dialog !== null} onOpenChange={(o) => !o && setDialog(null)}>
+      <Dialog
+        open={dialog !== null}
+        onOpenChange={(o) => {
+          if (!o) resetCreatePartyDialog();
+        }}
+      >
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {dialog === 'create-solo' ? 'Create a solo party' : 'Create a party'}
-            </DialogTitle>
-            <DialogDescription>
-              Enter your character&apos;s basics. You can change everything except size and species
-              later.
-            </DialogDescription>
-          </DialogHeader>
-          <CharacterForm
-            onSubmit={(values) => {
-              handleCreateSubmit(values);
-              setDialog(null);
-            }}
-            onCancel={() => setDialog(null)}
-          />
+          {dialog === 'join' ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Join a party</DialogTitle>
+                <DialogDescription>
+                  Paste the invite code your DM shared with you. You can create your character on
+                  the next screen.
+                </DialogDescription>
+              </DialogHeader>
+              <JoinPartyForm
+                onSubmit={(code) => {
+                  void handleJoinSubmit(code);
+                }}
+                onCancel={() => setDialog(null)}
+              />
+            </>
+          ) : dialog === 'create-solo' ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Create a solo party</DialogTitle>
+                <DialogDescription>
+                  Enter your character&apos;s basics. You can change everything except size and
+                  species later.
+                </DialogDescription>
+              </DialogHeader>
+              <CharacterForm
+                onSubmit={(values) => {
+                  void handleCreateSubmit(values);
+                  setDialog(null);
+                }}
+                onCancel={() => setDialog(null)}
+              />
+            </>
+          ) : dialog === 'create-party' && createPartyStep === 'name' ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Create a party</DialogTitle>
+                <DialogDescription>
+                  Give your party a name. You can rename it later from Settings.
+                </DialogDescription>
+              </DialogHeader>
+              <PartyNameForm
+                initial={pendingPartyName}
+                onSubmit={(name) => {
+                  setPendingPartyName(name);
+                  setCreatePartyStep('play');
+                }}
+                onCancel={() => resetCreatePartyDialog()}
+              />
+            </>
+          ) : dialog === 'create-party' && createPartyStep === 'play' ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Will you also play a character?</DialogTitle>
+                <DialogDescription>
+                  Choose &quot;Yes&quot; to create your own character in this party. Choose
+                  &quot;No&quot; if you&apos;ll only run the campaign as the DM — you can still add
+                  a character later.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button variant="outline" onClick={() => setCreatePartyStep('name')}>
+                  Back
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void handleCreatePartyDmOnly(pendingPartyName);
+                    resetCreatePartyDialog();
+                  }}
+                >
+                  No, just DM
+                </Button>
+                <Button onClick={() => setCreatePartyStep('character')}>
+                  Yes, create my character
+                </Button>
+              </DialogFooter>
+            </>
+          ) : dialog === 'create-party' && createPartyStep === 'character' ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Create your character</DialogTitle>
+                <DialogDescription>
+                  Enter your character&apos;s basics. You can change everything except size and
+                  species later.
+                </DialogDescription>
+              </DialogHeader>
+              <CharacterForm
+                onSubmit={(values) => {
+                  void handleCreateSubmit(values, pendingPartyName);
+                  resetCreatePartyDialog();
+                }}
+                onCancel={() => setCreatePartyStep('play')}
+              />
+            </>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
   );
 }
 
+/**
+ * R4.1-followup — Step-1 Party name input for the Create-party wizard.
+ * Cancel returns to the Hub; Next pushes the trimmed value into the
+ * wizard state and advances to the "play character?" step.
+ */
+function PartyNameForm({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string;
+  onSubmit: (partyName: string) => void;
+  onCancel: () => void;
+}): ReactElement {
+  const [name, setName] = useState(initial);
+  const trimmed = name.trim();
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (trimmed.length > 0) onSubmit(trimmed);
+      }}
+      className="space-y-4"
+    >
+      <div className="space-y-1.5">
+        <Label htmlFor="party-name">Party name</Label>
+        <Input
+          id="party-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="The Misfits"
+          autoComplete="off"
+          autoFocus
+        />
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={trimmed.length === 0}>
+          Next
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+/**
+ * R4.1.e — Join-party form. Single text input + Cancel/Join. Disables
+ * the submit button while empty so an empty redemption attempt never
+ * fires.
+ */
+function JoinPartyForm({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: (inviteCode: string) => void;
+  onCancel: () => void;
+}): ReactElement {
+  const [code, setCode] = useState('');
+  const trimmed = code.trim();
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (trimmed.length > 0) onSubmit(trimmed);
+      }}
+      className="space-y-4"
+    >
+      <div className="space-y-1.5">
+        <Label htmlFor="invite-code">Invite code</Label>
+        <Input
+          id="invite-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="INV-XXXXXXXXXX"
+          autoComplete="off"
+          autoFocus
+        />
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={trimmed.length === 0}>
+          Join
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
 interface ExistingPartiesProps {
-  localParty: { id: string; name: string } | null;
+  localParties: { id: string; name: string }[] | null;
   serverParties: PartyListItem[] | null;
   serverError: string | null;
-  /** Non-null while a server-mode party is being opened. */
+  /** Non-null while a party is being opened (server or local). */
   openingPartyId: string | null;
   /** Server-mode click — receives the party id and owns the pull+navigate. */
   onOpenServer: (partyId: string) => void;
-  /** Local-mode click — receives the (only) local character id. */
-  onOpenLocal: (characterId: string) => void;
+  /**
+   * Local-mode click — receives the party id. Hub orchestrates the
+   * Dexie load + store hydrate + navigate.
+   */
+  onOpenLocal: (partyId: string) => void;
 }
 
 function ExistingParties({
-  localParty,
+  localParties,
   serverParties,
   serverError,
   openingPartyId,
   onOpenServer,
   onOpenLocal,
 }: ExistingPartiesProps): ReactElement | null {
-  const characterId = useStore(
-    useShallow((s) => (s.appState ? (s.appState.characters[0]?.id ?? null) : null)),
-  );
-
-  // Server mode: render the server's parties list. Local fallback:
-  // render whatever's in the local AppState.
+  // Server mode: render the server's parties list. Local mode: render
+  // every known party from Dexie (including ones not currently loaded
+  // in memory).
   if (isServerMode) {
     if (serverError !== null) {
       return (
@@ -287,22 +725,36 @@ function ExistingParties({
     );
   }
 
-  // Local mode: a single local party may exist.
-  if (localParty === null) return null;
+  // Local mode: enumerate every known party blob from Dexie.
+  if (localParties === null) {
+    return (
+      <section aria-label="Existing parties" className="text-sm text-muted-foreground">
+        Loading…
+      </section>
+    );
+  }
+  if (localParties.length === 0) return null;
   return (
     <section aria-label="Existing parties" className="space-y-2">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left hover:bg-accent"
-        onClick={() => {
-          if (characterId !== null) onOpenLocal(characterId);
-        }}
-      >
-        <div>
-          <p className="font-medium">{localParty.name}</p>
-          <p className="text-xs text-muted-foreground">Local party</p>
-        </div>
-      </button>
+      {localParties.map((p) => {
+        const isOpening = openingPartyId === p.id;
+        const anyOpening = openingPartyId !== null;
+        return (
+          <button
+            type="button"
+            key={p.id}
+            disabled={anyOpening}
+            className="flex w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => onOpenLocal(p.id)}
+          >
+            <div>
+              <p className="font-medium">{p.name}</p>
+              <p className="text-xs text-muted-foreground">Local party</p>
+            </div>
+            {isOpening ? <span className="text-xs text-muted-foreground">Opening…</span> : null}
+          </button>
+        );
+      })}
     </section>
   );
 }

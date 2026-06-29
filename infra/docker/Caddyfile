@@ -28,8 +28,14 @@
 	# strips the prefix for the upstream (we don't want stripping
 	# since the server expects the full path), so we use `handle`
 	# with explicit matchers.
+	#
+	# R4.1.e — added `/parties/*` for the party management routes
+	# (join, leave, kick, rotate invite, list members). These were
+	# previously absent from the matcher, so requests fell through
+	# to the SPA handler and returned `index.html` (which the
+	# client then failed to JSON-parse as a `malformed_response`).
 	@server {
-		path /auth/* /sync/* /healthz /healthz/*
+		path /auth/* /sync/* /parties /parties/* /healthz /healthz/*
 	}
 	handle @server {
 		reverse_proxy server:3000

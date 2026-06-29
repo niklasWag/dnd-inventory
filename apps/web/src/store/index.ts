@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer';
 
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
+import { enqueue } from '@/sync/queue';
 import { generateInviteCode, reduce, type LogEntrySlice, type ReducerContext } from './reducer';
 import type { Action, AppState, TransactionLogEntry } from './types';
 
@@ -111,6 +112,9 @@ function resolveActor(
     case 'use-charge':
     case 'recharge':
     case 'edit-character':
+    case 'delete-character':
+    case 'leave-party':
+    case 'join-party':
       // M3 player-initiated stash CRUD + the synthetic transfer +
       // currency-change emitted from the delete-stash cascade. M5
       // adds user-initiated `transfer` + `split` (always player-driven
@@ -137,6 +141,11 @@ function resolveActor(
       // route DM force-use-charge / force-recharge through the DM role
       // per OUTLINE §8.1 (force-actions on Inventory items + force-
       // recharge on any-location items).
+      // R4.1.b adds `delete-character` — player-role for owner-initiated
+      // self-deletion; R4.3 will widen to DM role when the DM deletes
+      // another player's character via explicit action per OUTLINE §8.1.
+      // The cascade also emits synthetic `transfer` + (optional)
+      // `currency-change` entries which share the same actor identity.
       // R4 (multi-member) will also let DM / Banker drive these.
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
@@ -154,6 +163,19 @@ function resolveActor(
       // will enforce DM-only for multi-member parties.
       if (state === null) {
         throw new Error('resolveActor: identify requires populated AppState');
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'dm',
+        partyId: state.party.id,
+      };
+    case 'kick-player':
+      // R4.1.d — DM-only per OUTLINE §8.1 row "Kick player". Same
+      // routing as `identify` above: in MVP party-of-one the sole
+      // user wears both hats (and the reducer rejects self-kick); in
+      // 2+-member parties the server guard layer enforces DM-only.
+      if (state === null) {
+        throw new Error('resolveActor: kick-player requires populated AppState');
       }
       return {
         actorUserId: state.user.id,
@@ -209,14 +231,22 @@ export const useStore = create<StoreState>()(
       const snapshot = get();
       saver.save({ appState: snapshot.appState, log: snapshot.log });
 
-      // R3.5 — in server mode, optimistically push the action to the
-      // sync queue. The queue debounces + handles 422 rollback +
-      // bootstrap pull-after-push. The dynamic import avoids a static
-      // cycle (queue → store → queue) at module load.
+      // R3.5 / R4.1-followup — in server mode, optimistically push the
+      // action to the sync queue. The queue debounces + handles 422
+      // rollback + bootstrap pull-after-push.
+      //
+      // The enqueue is synchronous: callers that subsequently `await
+      // flushSyncQueue()` (e.g. the Hub's Create-party handler) need
+      // the action to be on the queue BEFORE their `flush()` call
+      // checks `queue.length === 0` and bails. The pre-R4.1-followup
+      // code used `void import('@/sync/queue').then(({enqueue}) =>
+      // enqueue(action))` which deferred the enqueue across a
+      // microtask, causing flushes that fired immediately after
+      // dispatch to find an empty queue and the bootstrap pull to
+      // never run — surfacing as `/sync/state` 404s on the next
+      // screen.
       if (isServerMode) {
-        void import('@/sync/queue').then(({ enqueue }) => {
-          enqueue(action);
-        });
+        enqueue(action);
       }
     },
     hydrate: (snapshot) => {

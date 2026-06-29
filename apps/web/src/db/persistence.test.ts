@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import { db } from './schema';
-import { loadAppState } from './load';
-import { saveAppState, createDebouncedSaver } from './save';
+import { loadAppState, listKnownPartyIds } from './load';
+import { saveAppState, createDebouncedSaver, deleteAppStateForParty } from './save';
 import { wipeAll } from './wipe';
 
 beforeEach(async () => {
@@ -41,5 +41,67 @@ describe('persistence plumbing', () => {
     const saver = createDebouncedSaver(10);
     await saver.flush();
     expect(await loadAppState()).toBeNull();
+  });
+});
+
+describe('persistence plumbing — multi-party (R4 followup)', () => {
+  it('saveAppState with partyId writes under a keyed slot', async () => {
+    await saveAppState({ marker: 'a' }, 'party-a');
+    await saveAppState({ marker: 'b' }, 'party-b');
+    expect(await loadAppState('party-a')).toEqual({ marker: 'a' });
+    expect(await loadAppState('party-b')).toEqual({ marker: 'b' });
+  });
+
+  it('listKnownPartyIds enumerates every keyed slot', async () => {
+    await saveAppState({ marker: 'a' }, 'party-a');
+    await saveAppState({ marker: 'b' }, 'party-b');
+    const ids = await listKnownPartyIds();
+    expect(new Set(ids)).toEqual(new Set(['party-a', 'party-b']));
+  });
+
+  it('listKnownPartyIds returns empty when only the legacy unkeyed slot is set', async () => {
+    await saveAppState({ legacy: true });
+    expect(await listKnownPartyIds()).toEqual([]);
+  });
+
+  it('deleteAppStateForParty removes only the targeted keyed slot', async () => {
+    await saveAppState({ marker: 'a' }, 'party-a');
+    await saveAppState({ marker: 'b' }, 'party-b');
+    await deleteAppStateForParty('party-a');
+    expect(await loadAppState('party-a')).toBeNull();
+    expect(await loadAppState('party-b')).toEqual({ marker: 'b' });
+  });
+
+  it('createDebouncedSaver routes through `state.appState.party.id` when present', async () => {
+    const saver = createDebouncedSaver(5);
+    saver.save({ appState: { party: { id: 'party-x', name: 'X' } }, log: [] });
+    await saver.flush();
+    expect(await loadAppState('party-x')).toEqual({
+      appState: { party: { id: 'party-x', name: 'X' } },
+      log: [],
+    });
+  });
+
+  it('createDebouncedSaver falls back to the unkeyed slot when state is null', async () => {
+    const saver = createDebouncedSaver(5);
+    saver.save({ appState: null, log: [] });
+    await saver.flush();
+    expect(await loadAppState()).toEqual({ appState: null, log: [] });
+  });
+
+  it('switching the saved state between partyIds keeps both blobs', async () => {
+    const saver = createDebouncedSaver(5);
+    saver.save({ appState: { party: { id: 'party-a', name: 'A' } }, log: [] });
+    await saver.flush();
+    saver.save({ appState: { party: { id: 'party-b', name: 'B' } }, log: [] });
+    await saver.flush();
+    expect(await loadAppState('party-a')).toEqual({
+      appState: { party: { id: 'party-a', name: 'A' } },
+      log: [],
+    });
+    expect(await loadAppState('party-b')).toEqual({
+      appState: { party: { id: 'party-b', name: 'B' } },
+      log: [],
+    });
   });
 });

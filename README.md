@@ -19,13 +19,28 @@ See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut,
 - M6 — Custom items + duplicate (homebrew CRUD)
 - M7 — Backup (JSON export/import + character/party rename)
 
-**R1 in progress** (post-MVP) — Characters & encumbrance per `docs/OUTLINE.md` §10 M1.
+**R1 — Characters & encumbrance** ✅ (post-MVP, per `docs/OUTLINE.md` §10 M1)
 
 - R1.1 — Encumbrance display (rules `off | phb | variant`, `STR × 15 × sizeMultiplier`, CapacityBar UI) ✅
 - R1.2 — Equip / Attune toggles + `edit-character` catch-all + cap pre-disable ✅
 - R1.3 — One-level containers (`containerInstanceId`, `flatWeight`), §3.4 leave-Inventory cascade, container-aware weight ✅
 - R1.4 — Hard-mode enforcement (reducer rejects acquire / transfer that exceed the carrying-capacity ceiling when `enforceEncumbrance: true`) ✅
-- R1.5 — Packing UI (pack/take-out actions on container rows) — next
+- R1.5 — Packing UI (pack/take-out actions on container rows) ✅
+
+**R2 — Magic items** ✅ (DMG seed, charges/recharge, identification per `docs/OUTLINE.md` §10 M2)
+
+**R3 — Backend skeleton** ✅ (self-hosted server, Discord OAuth + email OTP, authoritative sync, snapshots, web integration per `docs/OUTLINE.md` §10 M3)
+
+**R4.1 — Multi-member parties (foundation)** in progress (post-R3, per `docs/OUTLINE.md` §10 M4) — sub-slices a–e shipped; R4.1.f remaining.
+
+- R4.1.a — Schema deprecation: `Party.isSoloShortcut` dropped, `PartyMembership.leftAt` widened to nullable datetime ✅
+- R4.1.b — `delete-character` action + cascade to Recovered Loot ✅
+- R4.1.c — `leave-party` action ✅
+- R4.1.d — `kick-player` action ✅
+- R4.1.e — `join-party` + server routes (`POST /parties/join`, `/invite/rotate`, `/leave`, `/kick`, `GET /:partyId/members`) + Hub Join card + `/party/settings` screen + sole-member archive via `Party.archivedAt` ✅
+- R4.1.f — Joiners create their own character (`create-character-in-existing-party`) — **next** ; without it, `POST /parties/join` lands the user in the party with `characterId: null` and they can't actually play.
+
+**R4 (cont.)** in progress — R4.1.f (joiners create their own character), Banker (R4.2), DM cross-character (R4.3), cross-character currency + homebrew gating (R4.4), DM Dashboard (R4.5).
 
 See `docs/roadmap.md` for the full slice history.
 
@@ -209,10 +224,12 @@ Fix: the SPA and the API must share an origin. Either:
 ```caddyfile
 dnd.example.com {
     encode gzip
-    # Server endpoints (auth + health + future /sync).
-    handle_path /healthz* { reverse_proxy 127.0.0.1:3000 }
-    handle_path /auth/*   { reverse_proxy 127.0.0.1:3000 }
-    handle_path /sync/*   { reverse_proxy 127.0.0.1:3000 }  # R3.4
+    # Server endpoints (auth + health + sync + party management).
+    handle_path /healthz*  { reverse_proxy 127.0.0.1:3000 }
+    handle_path /auth/*    { reverse_proxy 127.0.0.1:3000 }
+    handle_path /sync/*    { reverse_proxy 127.0.0.1:3000 }  # R3.4
+    handle_path /parties/* { reverse_proxy 127.0.0.1:3000 }  # R4.1.e
+    handle_path /parties   { reverse_proxy 127.0.0.1:3000 }  # R4.1.e (POST /parties/join)
     # Everything else → SPA.
     reverse_proxy 127.0.0.1:5173
 }
@@ -230,10 +247,12 @@ server {
     ssl_certificate     /etc/letsencrypt/live/dnd.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/dnd.example.com/privkey.pem;
 
-    location /healthz { proxy_pass http://127.0.0.1:3000; }
-    location /auth/   { proxy_pass http://127.0.0.1:3000; }
-    location /sync/   { proxy_pass http://127.0.0.1:3000; }   # R3.4
-    location /        { proxy_pass http://127.0.0.1:5173; }   # SPA
+    location /healthz  { proxy_pass http://127.0.0.1:3000; }
+    location /auth/    { proxy_pass http://127.0.0.1:3000; }
+    location /sync/    { proxy_pass http://127.0.0.1:3000; }   # R3.4
+    location /parties/ { proxy_pass http://127.0.0.1:3000; }   # R4.1.e
+    location = /parties { proxy_pass http://127.0.0.1:3000; }  # R4.1.e (no trailing slash for /parties/join etc.)
+    location /         { proxy_pass http://127.0.0.1:5173; }   # SPA
 
     proxy_set_header Host              $host;          # canonical host
     proxy_set_header X-Real-IP         $remote_addr;

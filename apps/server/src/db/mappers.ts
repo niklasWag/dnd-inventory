@@ -419,7 +419,11 @@ export function fromPrismaItemDefinition(row: ItemDefinitionRow): ItemDefinition
 
 /** Row shape mirror — same trick as `ItemDefinitionRow`: an inline
  * interface lets tests stub a row without depending on the generated
- * Prisma client. The `Party` model in the Prisma schema. */
+ * Prisma client. The `Party` model in the Prisma schema.
+ *
+ * R4.1 — `isSoloShortcut` removed from the Zod schema and Prisma model
+ * (column dropped in migration `r41_drop_party_isSoloShortcut`).
+ */
 export interface PartyRow {
   id: string;
   name: string;
@@ -427,7 +431,6 @@ export interface PartyRow {
   inviteCode: string;
   recoveredLootStashId: string;
   bankerUserId: string | null;
-  isSoloShortcut: boolean;
   createdAt: Date;
 }
 
@@ -442,7 +445,6 @@ export function fromPrismaParty(row: PartyRow): Party {
     // state. Cast handles the schema constraint; if a non-null value sneaks
     // in (R4.2+), the parse below surfaces the schema-drift error.
     bankerUserId: row.bankerUserId,
-    isSoloShortcut: row.isSoloShortcut,
     createdAt: row.createdAt.toISOString(),
   });
 }

@@ -32,7 +32,6 @@ describe('appStateSchema round-trip', () => {
       inviteCode: 'INV-ABCDEF',
       recoveredLootStashId: 'stash-loot',
       bankerUserId: null,
-      isSoloShortcut: true,
       createdAt: '2026-06-23T10:00:00.000Z',
     },
     memberships: [
@@ -759,5 +758,46 @@ describe('appStateSchema round-trip', () => {
       },
     ];
     expect(() => appStateSchema.parse(editEntry)).not.toThrow();
+  });
+
+  it('R4.1 migration — imports a legacy AppState carrying `isSoloShortcut: true`', () => {
+    // Pre-R4.1-vintage party rows always carry `isSoloShortcut: true`.
+    // The R4.1 schema drops the field; Zod's default object-strip behaviour
+    // silently discards the unknown key so legacy JSON exports still
+    // rehydrate cleanly (no migration step required).
+    const legacy = structuredClone(fixture) as unknown as Record<string, unknown>;
+    (legacy['party'] as Record<string, unknown>)['isSoloShortcut'] = true;
+    const parsed = appStateSchema.parse(legacy);
+    expect(parsed.party.name).toBe('My Campaign');
+    // The field is stripped; recovering it from `parsed.party` should yield undefined.
+    expect((parsed.party as unknown as Record<string, unknown>)['isSoloShortcut']).toBeUndefined();
+  });
+
+  it('R4.1 migration — accepts a membership with a non-null leftAt timestamp', () => {
+    // Soft-delete shape for `leave-party` / `kick-player` cascade
+    // (OUTLINE §8.3). The schema widened from `z.null()` to
+    // `z.string().datetime().nullable()`.
+    const withLeftMember = structuredClone(fixture);
+    withLeftMember.memberships = [
+      ...withLeftMember.memberships,
+      {
+        userId: 'user-2',
+        partyId: withLeftMember.party.id,
+        role: 'player',
+        characterId: null,
+        joinedAt: '2026-06-23T10:00:00.000Z',
+        leftAt: '2026-06-29T18:00:00.000Z',
+      },
+    ];
+    const parsed = appStateSchema.parse(withLeftMember);
+    expect(parsed.memberships[2]!.leftAt).toBe('2026-06-29T18:00:00.000Z');
+  });
+
+  it('R4.1 migration — pre-R4.1 memberships with leftAt: null still parse', () => {
+    // Belt-and-braces: every M0..R3 vintage membership row carries
+    // `leftAt: null`. The widening is additive — older blobs unchanged.
+    const aged = structuredClone(fixture);
+    expect(() => appStateSchema.parse(aged)).not.toThrow();
+    expect(aged.memberships.every((m) => m.leftAt === null)).toBe(true);
   });
 });

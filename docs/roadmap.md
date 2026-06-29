@@ -1730,42 +1730,106 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointment + distribution toolkit, DM/Player role split when 2+ members. Covers OUTLINE §3.1 (permissive-until-others-join), §3.2, §3.5 ("split evenly"), §3.10 (loot distribution), §3.14 (Banker), §8.1 (full permission matrix), §8.3 (leaving/kicking).
 
-**Slicing.** R4 is the largest milestone (~50 checkboxes). Splits along the feature axes that compose: R4.1 lights up multi-membership (invites, join, leave, kick) — once shipped, a party can have 2+ members; R4.2 adds the Banker role on top; R4.3 adds DM cross-character authority; R4.4 widens currency-transfer + homebrew visibility for the 2+-member world; R4.5 ships the DM Dashboard. Each slice is independently testable; R4.1 is the hard dependency for all later slices.
+**Slicing.** R4 is the largest milestone (~50 checkboxes). Splits along the feature axes that compose: R4.1 lights up multi-membership (invites, join, leave, kick) — once shipped, a party can have 2+ members; R4.2 adds the Banker role on top; R4.3 adds DM cross-character authority; R4.4 widens currency-transfer + homebrew visibility for the 2+-member world; R4.5 ships the DM Dashboard. Each slice is independently testable; R4.1 is the hard dependency for all later slices. R4.1 itself splits into six sub-slices: R4.1.a/b/c/d shipped 2026-06-29 (schema deprecation, delete-character, leave-party, kick-player); R4.1.e shipped same day (invites + join + Hub + PartySettings); **R4.1.f (joiners create their own character) was deferred during the e-split and promoted back on 2026-06-29 — without it joiners can't actually play, so the user-facing flow is incomplete until f lands.**
 
 #### R4.1 — Invites + join/leave/kick + multi-membership schema
 
 **Schema activations (§4)**
 - [ ] `Party.inviteCode` becomes user-visible / rotatable
 - [ ] `PartyMembership` supports count > 2
-- [ ] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24). The "solo" hub badge is derived from `memberCount === 1`. R4 migration: stop writing the field on newly-created parties (drop it from `create-character` reducer); MVP-vintage parties keep the `true` value but readers ignore it. Schema either drops the field entirely or marks it `.optional()` to accept legacy blobs.
-- [ ] Migration test: an M0 / M1 / M2 / M3 / M4 / M5 / M5.5 AppState (with `isSoloShortcut: true`) imports cleanly under R4 schema; the hub renders the "solo" badge based purely on `memberCount`.
-- [ ] Composite-key invariant test: `(userId, partyId, role)` allows DM+player for creator
+- [x] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24) — **R4.1.a**. Field dropped from Zod `partySchema`, the `partyListItemSchema` API row shape, the reducer's `create-character` writer, the server persistor / mapper / restore CLI / sync route, and the Prisma `Party` model (migration `r41_drop_party_isSoloShortcut`). Hub "solo" badge derived from `memberCount === 1`. Zod's default object-strip behaviour silently drops the legacy field so MVP-vintage exports rehydrate cleanly.
+- [x] Migration test: an M0 / M1 / M2 / M3 / M4 / M5 / M5.5 AppState (with `isSoloShortcut: true`) imports cleanly under R4 schema; the hub renders the "solo" badge based purely on `memberCount` — **R4.1.a** (`packages/shared/src/schemas/appState.test.ts` "R4.1 migration — imports a legacy AppState carrying `isSoloShortcut: true`").
+- [x] Composite-key invariant test: `(userId, partyId, role)` allows DM+player for creator — already shipped (M1 reducer test asserts `memberships.length === 2` with `dm + player` roles for the creator).
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `join-party` action + payload schema
-- [ ] `leave-party` action: moves owned items + currency to Recovered Loot (§8.3)
-- [ ] `kick-player` action: same Recovered Loot transfer (§8.3)
-- [ ] `delete-character` action + payload schema (`{ characterId, name, lastSessionId? }` per §4)
-- [ ] `delete-character` reducer case: moves owned items + currency to Recovered Loot, clears `PartyMembership.characterId`
-- [ ] `delete-character` invariant test: owning user keeps their membership (can recreate a character)
-- [ ] `delete-character` log payload snapshots itemCount + currencyTotalCp (mirrors `delete-stash` pattern in §4)
+- [x] `join-party` action + payload schema — **R4.1.e**. Empty wire payload (`{}`); reducer reads actor from `state.user.id` and party from `state.party.id`. Reducer appends a `role='player'` membership row (characterId: null) and emits one `join-party` log slice with `{ partyId }`. Rejects when the actor is already an active player member of the party.
+- [x] `leave-party` action: moves owned items + currency to Recovered Loot (§8.3) — **R4.1.c**. Reducer payload empty (`{}`); actor + party derived from session/state. Cascade: (1) if leaver had a character, runs the shared `cascadeCharacterToRecoveredLoot` helper (items + currency → Recovered Loot, drop character + stashes + holdings); (2) soft-deletes every active `PartyMembership` row for actor.userId in this party (`leftAt: ctx.now()`); (3) banker auto-clear stub (R4.2 carryforward — unreachable today because `partySchema.bankerUserId: z.null()`); (4) appends terminal `leave-party` slice with `{ partyId, characterId? }`. Reducer guards: rejects sole-member (server archive flow per R4.1.e), rejects sole-DM of a 2+-member party (must `dm-transfer` first in R4.3).
+- [x] `kick-player` action: same Recovered Loot transfer (§8.3) — **R4.1.d**. Symmetrical to `leave-party` but parameterised on `{ kickedUserId }`. Reuses `cascadeCharacterToRecoveredLoot` verbatim. Logged with `actorRole: 'dm'`. Reducer guards: rejects self-kick (use `leave-party` instead), rejects kicking a DM (use `dm-transfer` first in R4.3), rejects unknown / already-left target. Banker auto-clear stub (R4.2 emits `revoke-banker` with `reason: 'kicked'`).
+- [x] `delete-character` action + payload schema (`{ characterId, name, lastSessionId? }` per §4) — **R4.1.b**. Reducer payload narrows to `{ characterId }` (subset of log payload); log entry snapshots `{ characterId, name, itemCount, currencyTotalCp }` (mirrors `delete-stash` snapshot pattern). `lastSessionId` reserved for R5 session tagging.
+- [x] `delete-character` reducer case: moves owned items + currency to Recovered Loot, clears `PartyMembership.characterId` — **R4.1.b** (`packages/rules/src/reducer/index.ts` `deleteCharacter`). Cascade emits one `transfer` slice per item in any character-scope stash (Inventory + every Storage) + one `currency-change` slice with `reason: 'character-deleted'` against Recovered Loot when aggregate currency was non-zero + one terminal `delete-character` slice. Items have `equipped`/`attuned`/`containerInstanceId` cleared on transfer. Character row + their stash rows + CurrencyHolding rows dropped. OUTLINE §4 `currency-change.reason` enum extended with `'character-deleted'` in lockstep.
+- [x] `delete-character` invariant test: owning user keeps their membership (can recreate a character) — **R4.1.b** (`apps/web/src/store/reducer.test.ts` "drops the character row and clears PartyMembership.characterId on the player row").
+- [x] `delete-character` log payload snapshots itemCount + currencyTotalCp (mirrors `delete-stash` pattern in §4) — **R4.1.b**.
 
 **Server-side**
-- [ ] Invite-code generation endpoint (DM-only, rotatable)
-- [ ] Invite-code redemption endpoint
+- [x] Invite-code generation endpoint (DM-only, rotatable) — **R4.1.e** (`POST /parties/:partyId/invite/rotate` in `apps/server/src/parties/routes.ts`). DM-only via `resolveActor` + role check; calls `generateInviteCode()` from `@app/rules`; updates `Party.inviteCode`. Old code becomes invalid immediately.
+- [x] Invite-code redemption endpoint — **R4.1.e** (`POST /parties/join { inviteCode }`). Looks up the party by code (rejects archived parties as `invalid_invite`); rejects double-join as `already_member`; mints a `role='player'` membership + writes a `join-party` log slice in one `$transaction`.
 - [ ] Websocket join/leave channel per party (foundation for R5)
-- [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
+- [x] Departure flow: archive empty parties (no destructive delete) per §8.3 — **R4.1.e**. New `Party.archivedAt` nullable column (migration `r41e_party_archivedAt`). `POST /parties/:partyId/leave` detects sole-member case and stamps `archivedAt` instead of running the §8.3 cascade. `GET /sync/parties` filters `archivedAt IS NULL`. Multi-member leave still goes through the reducer cascade.
 
 **UI**
-- [ ] Hub: Join party (paste code) flow wired — **carryforward from R3.5** (the Hub card is currently hidden with a "Coming in R4" caption; unhide + wire the input + call `POST /parties/join`).
-- [ ] Hub: "do you also play a character?" toggle on the Create-party dialog (OUTLINE §3.1 default yes) — **carryforward from R3.5** (the Hub today always invokes `create-character` which mints both DM + player memberships; the toggle requires a reducer branch for DM-only).
+- [x] Hub: Join party (paste code) flow wired — **R4.1.e**. Hub Join card now active in server mode; opens a `JoinPartyForm` dialog with a single invite-code input. Submit calls `POST /parties/join`, refreshes the parties list, and routes into the new party. Surfaces `invalid_invite` / `already_member` toasts.
+- [x] Hub: "do you also play a character?" toggle on the Create-party dialog (OUTLINE §3.1 default yes) — **R4.1.e + R4.1-followup 2026-06-29**. Three-step wizard: party-name input → Yes/No play prompt → character form (only if Yes). The "No" path dispatches `create-character` with `dmOnly: true` and routes the new DM to `/party/settings`. The "Yes" path dispatches the legacy `create-character` payload with the user-supplied `partyName` override. Solo Hub card stays single-step (party auto-named "My Campaign").
 - [x] Hub: per-party row navigation — clicking a party in the Hub list pulls THAT party's `AppState` via `pullState(partyId)` and routes into it. R3.5 originally shipped a stub click handler (the comment said "Phase 4 wires the pull-then-navigate path") that navigated only to a character already in the local store, which was wrong for users with multiple parties. **Resolved post-R3.5** in `apps/web/src/screens/Hub.tsx`: click handler calls `setCurrentPartyId` (so reload boots back to the same party) → `pullState(partyId)` → `useStore.hydrate(...)` → navigates to `characters[0].id`. Disables all buttons during the pull and shows "Opening…" on the active card.
-- [ ] Party Settings screen (§5.15): invite code regenerate / revoke, kick player
-- [ ] Member list with role badges (DM / Player)
+- [x] Party Settings screen (§5.15): invite code regenerate / revoke, kick player — **R4.1.e** (`apps/web/src/screens/PartySettings.tsx`, routed at `/party/settings`). Sections: Members list with role badges, Invite code (Copy + DM-only Rotate), Leave party. DM-only Kick buttons appear next to non-DM members. Confirm dialogs for both leave and kick.
+- [x] Member list with role badges (DM / Player) — **R4.1.e** (inside `PartySettings`). One row per `(userId, role)` tuple; solo creator shows two rows (dm + player) by design. Role badges via the `RoleBadge` component.
+
+#### R4.1.f — Joiners create their own character (`create-character-in-existing-party`)
+
+**Why this is a milestone slice, not a backlog item.** The canonical multi-member flow per OUTLINE §3.1 / §3.3 is: DM creates a party (with or without their own character) → DM shares the invite code → each joining player creates their own character with their own Inventory + Storage stashes. They share the Party Stash + Recovered Loot + party-scope settings, but every player owns a separate character + carried Inventory + currency. **Without this slice R4.1 is functionally incomplete** — joiners land in the party with a `characterId: null` player row and cannot actually play; the "everyone has their own character" data model that the rest of the schema/reducer/server were built around has no entry point. This was deferred during the R4.1.e split (R4.1.e shipped `POST /parties/join` minting membership-only) and parked as an unscheduled followup before being promoted here on 2026-06-29.
+
+**Same action covers three use cases** — joiner-creates-after-invite, DM-only-DM-later-adds-character, post-`delete-character` recreation. All three land at the same end state: an active `role='player'` `PartyMembership` row in an existing party with a non-null `characterId`.
+
+**Reducer (`packages/rules/src/reducer/index.ts`)**
+- [ ] Extend `create-character` to accept a post-bootstrap variant. The current guard `if (state !== null) throw` is replaced with branching:
+  - `state === null` → existing bootstrap path (mints `User` + `Party` + memberships + party-scope stashes + character/inventory if not `dmOnly`).
+  - `state !== null` → new post-bootstrap path: validate the actor is an active member of `state.party`; mint Character + Inventory `Stash` + CurrencyHolding; if the actor already has a `role='player'` row update its `characterId`, else add a new `role='player'` row; emit a `create-character` log entry with the existing payload shape.
+- [ ] Reject `dmOnly: true` on the post-bootstrap branch (it's a bootstrap-only flag — adding a non-character DM-only "thing" to an existing party makes no sense).
+- [ ] Reject when the actor already has an active player membership in this party WITH a non-null `characterId` (one-character-per-user-per-party invariant per OUTLINE §4 composite-key model).
+
+**Action schema (`packages/shared/src/schemas/action.ts`)**
+- [ ] No payload changes needed — the existing `create-character` action's legacy (with-character) payload already carries `{ name, species, size, class, level, str, partyName? }`. `partyName` is ignored on the post-bootstrap branch (the party already exists; renaming uses `rename-party`).
+
+**Log entry (`packages/shared/src/schemas/transactionLog.ts`)**
+- [ ] No schema changes needed — `create-character` log entry's optional fields (`characterId`, `name`, `inventoryStashId`) are already set on the with-character branch; the post-bootstrap variant uses the same shape.
+
+**Server-side**
+- [ ] Update `applyDelta` switch: the `create-character` arm currently throws `'create-character must be applied via applyBootstrapDelta'`. Make that branch reachable for the post-bootstrap variant — call a new `applyAddCharacterDelta` (or extend `applyBootstrapDelta` with a `state` parameter that signals which path).
+- [ ] New persistor function `persistAddCharacterToExistingParty`: creates `Character` + `Stash(scope='character', isCarried=true)` + `CurrencyHolding`; either updates `PartyMembership.characterId` (player row exists with null id) or inserts a fresh `(userId, partyId, 'player')` membership row (DM-only DM adding their first character).
+- [ ] Bootstrap-vs-post-bootstrap dispatch in `apps/server/src/sync/routes.ts` `POST /sync/actions` must branch correctly — the current `isBootstrap = actions.every((a) => a.type === 'create-character')` short-circuit picks the bootstrap branch even when state already exists. Add a `state == null` check before treating it as bootstrap.
+
+**Guards (`packages/shared/src/guards/map.ts`)**
+- [ ] Widen `createCharacterGuard` to accept `state !== null` when the actor is an active member of `state.party`. Today it requires `state === null` (bootstrap-only).
+
+**Web UI**
+- [ ] Two entry points (both visible):
+  - **Hub post-join (primary):** after `POST /parties/join` succeeds, navigate the joiner directly to a character-creation form rather than `/party/settings`. Form submit dispatches `create-character` with the existing payload + the now-current `state.party`.
+  - **PartySettings (secondary, for DM-only DMs + post-delete recreation):** show a "Create your character" CTA when the actor has no `Character` they own in the loaded party. Click → same form → same dispatch.
+- [ ] After the post-bootstrap `create-character` dispatch, the Hub-style sync flush + post-flush re-read + navigate-to-`/character/:id` flow applies (R4.1.e + R4.1-followup pattern).
+
+**Tests**
+- [ ] Reducer: dispatching `create-character` on a populated AppState as an active player with `characterId: null` adds a Character + Inventory stash + currency and updates the player row's characterId.
+- [ ] Reducer: dispatching as a DM-only DM (no player row) adds a new `role='player'` membership row + Character + stashes.
+- [ ] Reducer: rejects when the actor already has an active player membership with a non-null `characterId`.
+- [ ] Reducer: rejects `dmOnly: true` on the post-bootstrap branch.
+- [ ] Reducer: rejects when the actor is not an active member of `state.party`.
+- [ ] Server integration: full flow — user A creates a party, user B joins, user B dispatches `create-character`, GET `/sync/state?partyId=...` for user B returns the canonical AppState with B's character and A still has their own separate inventory.
+- [ ] Web: `Hub` test that simulates `POST /parties/join` → navigates to the character-creation form (not `/party/settings`).
+- [ ] Web: `PartySettings` test that the "Create your character" CTA appears for a DM-only loaded party and dispatches `create-character` on submit.
+
+**Out of scope (carryforward to a later slice if needed)**
+- Multiple characters per user per party. The composite-key model `(userId, partyId, role)` only allows one player row per user per party, so one user → one character per party stays the invariant. A user playing multiple characters in the same campaign is a future ask (would need either `(userId, partyId, role, slot)` composite key OR moving `characterId` off the membership row entirely).
+- Joiner-character-creation tied to invite-code redemption as a SINGLE atomic action. Two actions (`join-party` then `create-character`) is the simpler design — survives partial failures and reuses the existing reducer cases.
+
+#### R4.1.f — Notes
+
+> -
 
 #### R4.1 — Notes
 
-> -
+> **2026-06-29 — R4.1 (Multi-member parties — foundation) sub-slices a–e shipped + R4.1.f scoped.** Sub-slices a/b/c/d/e shipped 2026-06-29. Headline shape: multi-membership schema is now real (`Party.isSoloShortcut` dropped; `PartyMembership.leftAt` nullable), the four-action departure surface (`delete-character`, `leave-party`, `kick-player`, `join-party`) shares one `cascadeCharacterToRecoveredLoot` helper, server routes (`POST /parties/join`, `/invite/rotate`, `/leave`, `/kick`, `GET /:partyId/members`) sit alongside the existing `/sync/*` surface, Hub Join card lit up, PartySettings screen ships at `/party/settings`, and sole-member archive runs server-only via `Party.archivedAt`. **R4.1.f (joiners create their own character) was scoped but not yet shipped** — the canonical "DM invites players who join with their own character" flow needs it; without f, `POST /parties/join` mints a membership row with `characterId: null` and the joining user can't play. Tracked above; not a backlog item.
+>
+> **Post-shipping followups (also 2026-06-29).** Six bug-fix / refactor passes after the initial sub-slices landed; each kept R4.1 actually usable rather than just "schema-correct."
+>
+> 1. **DM-only Create-party flow** — extended `create-character` action with `dmOnly: boolean` + optional `partyName`. Reducer branches: full bootstrap (with-character) vs DM-only (mints `User` + `Party` + ONE `dm` membership + party-scope stashes only). Log entry's `characterId`/`name`/`inventoryStashId` became optional + a `dmOnly?: boolean` flag for log readers. Three-step Hub wizard: party name → "Will you also play a character?" Yes/No → character form if Yes. Server `applyBootstrapDelta` was already shape-agnostic; no server-side change needed. **5 new reducer tests** in `apps/web/src/store/reducer.test.ts`.
+> 2. **Multi-party local-mode storage** — Dexie keys each party's blob under `appState:<partyId>`; the Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through the pointer with legacy + first-keyed-blob fallbacks. Reducer's `state === null` invariant stays intact — the Hub flushes + clears in-memory state before each `create-character` dispatch. **7 new persistence tests** in `apps/web/src/db/persistence.test.ts`.
+> 3. **Reverse-proxy `/parties/*` routing** — `infra/docker/Caddyfile` only routed `/auth/*` + `/sync/*` + `/healthz` to the server; new `/parties/*` requests fell through to the SPA handler and returned `index.html`, surfacing client-side as a Zod `malformed_response` parse error. Added `/parties /parties/*` to the `@server` matcher; mirrored in the production Caddy + nginx examples in `README.md` so fresh self-host installs don't trip the same wire.
+> 4. **Sync queue race fix** — `store/index.ts` used `void import('@/sync/queue').then(({enqueue}) => enqueue(action))` which deferred enqueue across a microtask. Hub's `await flushSyncQueue()` then found an empty queue and bailed; bootstrap pull-after-push never ran. Replaced with a static `import { enqueue } from '@/sync/queue'` (no runtime cycle — `queue.ts` only depends on `@/store/session` + `@/store/types`, not `@/store/index.ts`).
+> 5. **Bootstrap pull canonicalisation** — the server's `/sync/actions` runs its own reducer with its own `randomUUID()` ctx, so the freshly-minted `partyId` server-side DIFFERS from the client's optimistic local id. The queue's pull-after-push was using the local id and getting 404. Now reads `response.applied[0].payload.partyId` (the `create-character` log entry the server wrote with its own ids) and pulls THAT. The Hub then re-reads `useStore.getState().appState` AFTER `flushSyncQueue()` so navigation uses the now-canonical (server-minted) character/party ids. The pull-after-push had been silently broken since R3.4.a; pre-R4.1.e it didn't matter because navigation read local state — R4.1.e's PartySettings → `/parties/:id/members` was the first screen to call a server API with the local id and immediately 404.
+> 6. **Settings → PartySettings refactor** — Character rename + Party rename moved from the global `/settings` screen to `/party/settings` (party-scoped, lives next to members + invite code). PartySettings dropped its `!isServerMode` redirect: local mode now sees the rename surfaces with server-only sections (members / invite code / kick / leave) hidden. New "Party" nav button in the header (Users icon), visible whenever `state.party !== null`. PartySettings also handles stale parties — `party_not_found` from `/parties/:id/members` redirects to Hub with a clear toast instead of stranding the user. Hub's `openServerParty` / `openLocalParty` route DM-only parties (no characters) to `/party/settings` instead of erroring "no characters yet." **4 new PartySettings tests**; 3 stale Settings rename tests removed.
+>
+> **Test totals.** 952 (after R4.1.e) → **964** (after R4.1.b's DM-only) → **972** at session-end (with multi-party + PartySettings tests added). All five workspaces typecheck; web lint clean. Server-side route tests at 154 (the 7 new R4.1.e route tests verified end-to-end against real Postgres).
+>
+> **Carryforwards (tracked under "Operational followups → Feature gaps"):** multi-party "vault" export (currently per-party), explicit `archivedAt` check on `/sync/actions` (defensive), and `create-character-in-existing-party` so DM-only DMs can add their own character later without recreating the party.
 
 #### R4.2 — Banker role
 
@@ -2193,6 +2257,7 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 - [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** — verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
 - [ ] **`PendingDiscordLink` cron sweep** — R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
 - [ ] **Snapshot-age operator metric** — "snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). (Source: R3.4.b Notes.)
+- [ ] **Explicit `archivedAt` check in `POST /sync/actions`** — R4.1.e ships the `Party.archivedAt` column + filters it out of `GET /sync/parties`, but the `/sync/actions` route relies on the existing `not_a_member` guard (every member's row is `leftAt: NOT null` after archive, so guards reject). Adding an upfront `archivedAt IS NOT NULL` check would surface a cleaner `party_archived` error code. Inline pointer: `apps/server/src/sync/routes.ts:226`. (Source: R4.1.e Notes.)
 
 ### Test infrastructure
 
@@ -2201,13 +2266,18 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 
 ### Feature gaps (small, web-only)
 
-- [ ] **Multiple local-mode parties** — today's Dexie schema stores a single `AppState` blob under `meta.appState` (`apps/web/src/db/save.ts:3`, `load.ts:3`), so the local-only build is hard-capped at one party. The Hub's universal "Create solo / Create party" cards therefore replace the existing party on second use, which is a sharp edge for users running the app standalone. To lift the cap:
-  - Switch the Dexie storage key from `appState` to `appState:<partyId>` (or split into a per-entity store layout, mirroring R5+ multi-party). One blob per party.
-  - Generalize the `currentPartyId` meta entry (already in `apps/web/src/db/meta.ts`) so local mode can also point at the active party.
-  - Have `hydrate.ts` enumerate the per-party blobs to build the Hub's list in local mode (today it pulls from `AppState.party` alone, which only sees the active one).
-  - The JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) needs a per-party export OR a multi-party "vault" export — pick one. Server-side already does per-party so per-party is the obvious match.
-  - **Risk:** none of the existing reducer / rules code has to change — the multi-party split is purely at the storage + hub layers. Scope is bounded; tests touch Hub + Dexie + io modules.
-  - Server-mode users get this for free via `GET /sync/parties` + the existing per-party pull (already shipped in R3.5). This item only closes the gap for local-mode users.
+- [x] **Multiple local-mode parties** — **shipped 2026-06-29 (R4.1 followup)**. The Dexie persistence layer now keys each party's blob under `appState:<partyId>` (`apps/web/src/db/save.ts`, `load.ts`). The Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through that pointer with a fallback to the legacy unkeyed slot and a "first keyed blob" tertiary fallback. Hub flows now flush + clear the in-memory store before each `create-character` dispatch and before swapping to another party's blob — the reducer's `state === null` invariant stays intact. Local-mode users can hold N parties; server-mode users continue to use `GET /sync/parties` + per-party pull. **Carryforward (not blocking):** the JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) still operates on the active party only — a future "vault" export that bundles every keyed blob is a separate scope.
+
+- [ ] **Multi-party "vault" export / import** — the current §3.13 JSON export envelope (`apps/web/src/io/export.ts`, `import.ts`) handles ONE party at a time (the active party in memory). With local mode now supporting N parties (R4.1 followup above), a user wanting to back up their full local-mode footprint has to export each party individually. Two options:
+  - **Per-party export, multi-party Hub action**: keep the envelope shape unchanged; add a Hub-level "Export all parties" button that iterates `listKnownPartyIds()` and produces a ZIP / JSON-array of envelopes. Simplest; preserves backward compatibility with existing per-party exports.
+  - **New "vault" envelope shape**: introduce a `vaultEnvelopeSchema` that wraps `parties: ExportEnvelope[]` plus vault-level metadata. Cleaner long-term but requires Zod schema work + a vault-aware import path.
+  - **Recommendation:** start with per-party-iteration (no new schema; reuses the existing import path for restore). Promote to a "vault" shape only if users actually ask for it.
+  - **Server-mode interaction:** server-mode users get per-party export via `GET /sync/export?partyId=...` already (R3.4.b). The vault concern is purely local-mode.
+  - Inline pointer: `apps/web/src/io/export.ts`, `apps/web/src/io/import.ts`, `packages/shared/src/schemas/exportEnvelope.ts`. (Source: R4.1 followup 2026-06-29.)
+
+- [x] **"Do you also play a character?" toggle on Create-party** — **shipped 2026-06-29 (R4.1 followup)**. The `create-character` reducer + action payload now accepts a `dmOnly: boolean` flag and an optional `partyName` override. When `dmOnly: true`, the reducer mints `User` + `Party` + ONE `role='dm'` `PartyMembership` + party-scope stashes (Party Stash + Recovered Loot) + their currency holdings, skipping the Character + Inventory stash + player membership. The log entry's `characterId`/`name`/`inventoryStashId` fields are now optional + a `dmOnly?: boolean` flag carries the intent for log readers. The Hub Create-party dialog became a three-step wizard: (1) party name input, (2) "Will you also play a character?" Yes / No, (3a) character form if Yes / dispatch dmOnly directly if No. Create-solo stays a single-step flow (party name auto-derived to "My Campaign"). DM-only bootstrap routes the user to `/party/settings` since they have no character sheet. Server-side `applyBootstrapDelta` is shape-agnostic — it iterates the reducer's `characters` / `stashes` / `memberships` arrays, so the empty-character branch just writes fewer rows.
+
+- **NOTE:** `create-character-in-existing-party` was previously listed here as a feature-gap followup. **Promoted to R4.1.f on 2026-06-29** — it's load-bearing for the canonical "DM invites players who join with their own character" flow, so it doesn't belong in the unscheduled backlog. See R4.1.f above.
 
 ### Multi-replica / scale
 

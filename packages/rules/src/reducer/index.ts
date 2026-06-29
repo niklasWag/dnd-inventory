@@ -143,6 +143,14 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return identifyAction(state, action.payload);
     case 'edit-character':
       return editCharacter(state, action.payload);
+    case 'delete-character':
+      return deleteCharacter(state, action.payload);
+    case 'leave-party':
+      return leaveParty(state, ctx);
+    case 'kick-player':
+      return kickPlayer(state, action.payload, ctx);
+    case 'join-party':
+      return joinParty(state, ctx);
   }
 }
 
@@ -226,7 +234,9 @@ function checkHardMode(
 /**
  * Provisions a fresh AppState in one atomic step:
  *   - the single local User (if missing)
- *   - the Party-of-one with `isSoloShortcut: true`
+ *   - the Party (solo or multi-member share the same shape; the "solo"
+ *     hub badge is derived from `memberCount === 1` per OUTLINE §4
+ *     amendment 2026-06-24)
  *   - two PartyMemberships for the user (dm + player)
  *   - the Character
  *   - three Stashes: Inventory (carried), Party Stash, Recovered Loot
@@ -251,44 +261,123 @@ function createCharacter(
   const now = ctx.now();
   const userId = ctx.newId();
   const partyId = ctx.newId();
-  const characterId = ctx.newId();
-  const inventoryStashId = ctx.newId();
   const partyStashId = ctx.newId();
   const recoveredLootStashId = ctx.newId();
+  const partyName = payload.partyName ?? 'My Campaign';
+
+  // Shared shell (User, Party, party-scope stashes + currency).
+  const user = {
+    id: userId,
+    // R3.2 — userSchema requires at least one of discordId or
+    // emailVerified per SECURITY §1.2 / OUTLINE §4. The browser-only MVP
+    // has no OAuth or OTP flow yet, so we synthesize discordId === id as
+    // a placeholder. R3.5 (web ↔ server integration) will overwrite this
+    // with the real Discord snowflake once the user authenticates.
+    discordId: userId,
+    displayName: 'You',
+    createdAt: now,
+  };
+  const party = {
+    id: partyId,
+    name: partyName,
+    ownerUserId: userId,
+    inviteCode: ctx.newInviteCode(),
+    recoveredLootStashId,
+    bankerUserId: null,
+    createdAt: now,
+  } as const;
+  const dmMembership = {
+    userId,
+    partyId,
+    role: 'dm' as const,
+    characterId: null,
+    joinedAt: now,
+    leftAt: null,
+  };
+  const partyStash = {
+    id: partyStashId,
+    scope: 'party' as const,
+    name: 'Party Stash',
+    ownerCharacterId: null,
+    partyId,
+    isCarried: false as const,
+    createdAt: now,
+  };
+  const recoveredLootStash = {
+    id: recoveredLootStashId,
+    scope: 'recovered-loot' as const,
+    name: 'Recovered Loot',
+    ownerCharacterId: null,
+    partyId,
+    isCarried: false as const,
+    createdAt: now,
+  };
+  const partyStashCurrency = {
+    id: ctx.newId(),
+    stashId: partyStashId,
+    cp: 0,
+    sp: 0,
+    ep: 0,
+    gp: 0,
+    pp: 0,
+  };
+  const recoveredLootCurrency = {
+    id: ctx.newId(),
+    stashId: recoveredLootStashId,
+    cp: 0,
+    sp: 0,
+    ep: 0,
+    gp: 0,
+    pp: 0,
+  };
+
+  if (payload.dmOnly === true) {
+    // DM-only bootstrap: skip Character + Inventory stash + player
+    // membership. The DM may later add a character via a future
+    // "create-character-in-existing-party" path (R4 carryforward).
+    const nextState: NonNullable<AppState> = {
+      version: 1,
+      seedVersion: 0,
+      user,
+      party,
+      memberships: [dmMembership],
+      characters: [],
+      stashes: [partyStash, recoveredLootStash],
+      catalog: [],
+      items: [],
+      currencies: [partyStashCurrency, recoveredLootCurrency],
+      log: [],
+    };
+
+    return {
+      state: nextState,
+      logEntries: [
+        {
+          type: 'create-character',
+          payload: {
+            userId,
+            partyId,
+            partyStashId,
+            recoveredLootStashId,
+            dmOnly: true,
+          },
+        },
+      ],
+    };
+  }
+
+  // Legacy bootstrap (`dmOnly: false` or absent): mint Character +
+  // Inventory stash + player membership alongside the shell.
+  const characterId = ctx.newId();
+  const inventoryStashId = ctx.newId();
 
   const nextState: NonNullable<AppState> = {
     version: 1,
     seedVersion: 0,
-    user: {
-      id: userId,
-      // R3.2 — userSchema requires at least one of discordId or
-      // emailVerified per SECURITY §1.2 / OUTLINE §4. The browser-only MVP
-      // has no OAuth or OTP flow yet, so we synthesize discordId === id as
-      // a placeholder. R3.5 (web ↔ server integration) will overwrite this
-      // with the real Discord snowflake once the user authenticates.
-      discordId: userId,
-      displayName: 'You',
-      createdAt: now,
-    },
-    party: {
-      id: partyId,
-      name: 'My Campaign',
-      ownerUserId: userId,
-      inviteCode: ctx.newInviteCode(),
-      recoveredLootStashId,
-      bankerUserId: null,
-      isSoloShortcut: true,
-      createdAt: now,
-    },
+    user,
+    party,
     memberships: [
-      {
-        userId,
-        partyId,
-        role: 'dm',
-        characterId: null,
-        joinedAt: now,
-        leftAt: null,
-      },
+      dmMembership,
       {
         userId,
         partyId,
@@ -325,31 +414,15 @@ function createCharacter(
         isCarried: true,
         createdAt: now,
       },
-      {
-        id: partyStashId,
-        scope: 'party',
-        name: 'Party Stash',
-        ownerCharacterId: null,
-        partyId,
-        isCarried: false,
-        createdAt: now,
-      },
-      {
-        id: recoveredLootStashId,
-        scope: 'recovered-loot',
-        name: 'Recovered Loot',
-        ownerCharacterId: null,
-        partyId,
-        isCarried: false,
-        createdAt: now,
-      },
+      partyStash,
+      recoveredLootStash,
     ],
     catalog: [],
     items: [],
     currencies: [
       { id: ctx.newId(), stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
-      { id: ctx.newId(), stashId: partyStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
-      { id: ctx.newId(), stashId: recoveredLootStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+      partyStashCurrency,
+      recoveredLootCurrency,
     ],
     log: [],
   };
@@ -2517,6 +2590,544 @@ function editCharacter(
       {
         type: 'edit-character',
         payload: { characterId: character.id, changedFields },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// delete-character (R4.1.b)
+// -------------------------------------------------------------------- //
+
+/**
+ * Detach a Character from their party with full cascade per OUTLINE §8.3.
+ *
+ * Cascade (in this order, all in a single dispatch):
+ *   1. Every `ItemInstance` owned by any of the character's stashes
+ *      (Inventory + any Storage stashes — every `scope='character',
+ *      ownerCharacterId === characterId` row) is re-pointed to the
+ *      party's Recovered Loot stash. Equip / attune flags clear in the
+ *      same write (the items are no longer in *any* Inventory). Each
+ *      moved row emits one `transfer` log slice.
+ *   2. The character's aggregated currency (sum across every owned
+ *      stash's `CurrencyHolding`) rolls into Recovered Loot's holding
+ *      via a synthetic `currency-change` slice with
+ *      `reason: 'character-deleted'` IFF the aggregate was non-zero.
+ *   3. The character's stash rows + their `CurrencyHolding` rows are
+ *      removed from state.
+ *   4. The owning user's `PartyMembership` row with `role='player'` is
+ *      kept (slot reserved for a fresh character) but its
+ *      `characterId` is set to `null`. The user retains their seat in
+ *      the party (roadmap R4.1 line 1750 — "owning user keeps their
+ *      membership; can recreate a character").
+ *   5. One terminal `delete-character` slice carries the snapshot
+ *      `{ characterId, name, itemCount, currencyTotalCp }`.
+ *
+ * Mirrors the `delete-stash` cascade pattern (M3) but generalised over
+ * every stash the character owned. `itemCount` is the SUM of
+ * quantities; `currencyTotalCp` is the CP-equivalent of the aggregate
+ * holdings.
+ *
+ * Reducer guards: unknown characterId rejects; missing
+ * `CurrencyHolding` for the character's Inventory or for Recovered Loot
+ * surfaces as an invariant violation. Permission (`actor.userId ===
+ * character.ownerUserId` OR `actor.role === 'dm'`) lives in the
+ * server-side guard map, not here — in MVP party-of-one the sole user
+ * wears both hats so the gate is moot.
+ */
+/**
+ * R4.1.b/c — Shared cascade helper used by both `delete-character` and
+ * `leave-party` (and R4.1.d `kick-player`). Pure: takes a populated
+ * `AppState` + a character row, returns the next state and the log slices
+ * `[transfer..., currency-change?]` (no terminal slice — the caller
+ * appends `delete-character` / `leave-party` / `kick-player` themselves).
+ *
+ * Mirrors the OUTLINE §8.3 cascade exactly:
+ *   - every `ItemInstance` in any of the character's owned stashes
+ *     (Inventory + Storage) → Recovered Loot, with equip/attune flags
+ *     and `containerInstanceId` cleared (R1.3 / §3.4 invariant).
+ *   - aggregated currency across owned stashes → Recovered Loot via
+ *     one synthetic `currency-change` slice with `reason:
+ *     'character-deleted'` IFF the aggregate was non-zero.
+ *   - drop the character's stash rows + CurrencyHolding rows.
+ *   - clear `PartyMembership.characterId` on the owning user's player
+ *     row(s).
+ *   - drop the Character row.
+ *
+ * `itemCount` is the SUM of quantities; `currencyTotalCp` is the CP-
+ * equivalent of the aggregate holdings — both surfaced for the caller
+ * to embed in its terminal slice snapshot.
+ */
+function cascadeCharacterToRecoveredLoot(
+  s: NonNullable<AppState>,
+  character: NonNullable<AppState>['characters'][number],
+): {
+  state: NonNullable<AppState>;
+  logEntries: LogEntrySlice[];
+  itemCount: number;
+  currencyTotalCp: number;
+} {
+  const recoveredLootId = s.party.recoveredLootStashId;
+  const recoveredHolding = s.currencies.find((c) => c.stashId === recoveredLootId);
+  if (recoveredHolding === undefined) {
+    throw new Error(
+      'cascadeCharacterToRecoveredLoot: invariant violation — no CurrencyHolding for Recovered Loot',
+    );
+  }
+
+  // Identify every stash this character owns (Inventory + any Storage).
+  const ownedStashes = s.stashes.filter(
+    (st) => st.scope === 'character' && st.ownerCharacterId === character.id,
+  );
+  const ownedStashIds = new Set(ownedStashes.map((st) => st.id));
+
+  // 1. Items → Recovered Loot (clear equip/attune/container).
+  const itemsToTransfer = s.items.filter((i) => ownedStashIds.has(i.ownerId));
+  const nextItems = s.items.map((i) =>
+    ownedStashIds.has(i.ownerId)
+      ? {
+          ...i,
+          ownerId: recoveredLootId,
+          equipped: false,
+          attuned: false,
+          containerInstanceId: null,
+        }
+      : i,
+  );
+
+  // 2. Aggregate currency across owned stashes.
+  const ownedCurrencies = s.currencies.filter((c) => ownedStashIds.has(c.stashId));
+  const aggregated: CurrencyHolding = ownedCurrencies.reduce<CurrencyHolding>(
+    (acc, h) => ({
+      ...acc,
+      cp: acc.cp + h.cp,
+      sp: acc.sp + h.sp,
+      ep: acc.ep + h.ep,
+      gp: acc.gp + h.gp,
+      pp: acc.pp + h.pp,
+    }),
+    { id: 'aggregate', stashId: recoveredLootId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+  );
+  const isNonZero =
+    aggregated.cp !== 0 ||
+    aggregated.sp !== 0 ||
+    aggregated.ep !== 0 ||
+    aggregated.gp !== 0 ||
+    aggregated.pp !== 0;
+  const nextRecovered: CurrencyHolding = isNonZero
+    ? {
+        ...recoveredHolding,
+        cp: recoveredHolding.cp + aggregated.cp,
+        sp: recoveredHolding.sp + aggregated.sp,
+        ep: recoveredHolding.ep + aggregated.ep,
+        gp: recoveredHolding.gp + aggregated.gp,
+        pp: recoveredHolding.pp + aggregated.pp,
+      }
+    : recoveredHolding;
+
+  // 3. Drop stash rows + CurrencyHolding rows; rewrite Recovered Loot.
+  const nextStashes = s.stashes.filter((st) => !ownedStashIds.has(st.id));
+  const nextCurrencies = s.currencies
+    .filter((c) => !ownedStashIds.has(c.stashId))
+    .map((c) => (c.stashId === recoveredLootId ? nextRecovered : c));
+
+  // 4. Clear PartyMembership.characterId on owning user's player row.
+  const nextMemberships = s.memberships.map((m) =>
+    m.role === 'player' && m.characterId === character.id ? { ...m, characterId: null } : m,
+  );
+
+  // 5. Drop the Character row.
+  const nextCharacters = s.characters.filter((c) => c.id !== character.id);
+
+  // Build the cascade log slices (no terminal slice — caller appends).
+  const transferEntries: LogEntrySlice[] = itemsToTransfer.map((item) => ({
+    type: 'transfer',
+    payload: {
+      itemInstanceId: item.id,
+      quantity: item.quantity,
+      fromStashId: item.ownerId,
+      toStashId: recoveredLootId,
+    },
+  }));
+
+  const currencyEntries: LogEntrySlice[] = isNonZero
+    ? [
+        {
+          type: 'currency-change',
+          payload: {
+            stashId: recoveredLootId,
+            delta: {
+              cp: aggregated.cp,
+              sp: aggregated.sp,
+              ep: aggregated.ep,
+              gp: aggregated.gp,
+              pp: aggregated.pp,
+            },
+            reason: 'character-deleted',
+          },
+        },
+      ]
+    : [];
+
+  const itemCount = itemsToTransfer.reduce((sum, i) => sum + i.quantity, 0);
+  const currencyTotalCp = currency.toCopper(aggregated);
+
+  return {
+    state: {
+      ...s,
+      characters: nextCharacters,
+      stashes: nextStashes,
+      currencies: nextCurrencies,
+      items: nextItems,
+      memberships: nextMemberships,
+    },
+    logEntries: [...transferEntries, ...currencyEntries],
+    itemCount,
+    currencyTotalCp,
+  };
+}
+
+function deleteCharacter(
+  state: AppState,
+  payload: Extract<Action, { type: 'delete-character' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'delete-character');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`delete-character: unknown characterId ${payload.characterId}`);
+  }
+
+  const cascade = cascadeCharacterToRecoveredLoot(s, character);
+
+  return {
+    state: cascade.state,
+    logEntries: [
+      ...cascade.logEntries,
+      {
+        type: 'delete-character',
+        payload: {
+          characterId: character.id,
+          name: character.name,
+          itemCount: cascade.itemCount,
+          currencyTotalCp: cascade.currencyTotalCp,
+        },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// leave-party (R4.1.c)
+// -------------------------------------------------------------------- //
+
+/**
+ * Actor self-removes from `state.party` per OUTLINE §8.3.
+ *
+ * Cascade (in this order, all in one dispatch):
+ *   1. If the actor has a `role='player'` membership with `characterId
+ *      !== null`, run the same character-delete cascade as R4.1.b
+ *      (items + currency → Recovered Loot; drop character + stashes +
+ *      holdings).
+ *   2. Soft-delete every active `PartyMembership` row for actor.userId
+ *      in this party (a party-of-one creator has `dm` + `player` rows;
+ *      both flip). `leftAt` goes from `null` → `ctx.now()`.
+ *   3. Banker auto-clear stub (R4.2 carryforward): if the actor was the
+ *      Banker (`state.party.bankerUserId === actor.userId`), the cascade
+ *      WOULD clear `Party.bankerUserId` and emit a synthetic
+ *      `revoke-banker` slice with `reason: 'left-party'`. R4.1 guards
+ *      this in code but the conditional never fires because
+ *      `partySchema.bankerUserId: z.null()` makes the field always null;
+ *      R4.2 widens both the schema and this branch.
+ *   4. Append one terminal `leave-party` slice with `{ partyId,
+ *      characterId? }` (characterId set IFF the leaver had a player
+ *      membership with a non-null character at leave time, per OUTLINE
+ *      §4 line 323).
+ *
+ * Reducer guards:
+ *   - actor must be an active member (at least one `leftAt: null` row
+ *     for `state.user.id` in `state.party.id`).
+ *   - sole member (party-of-one): rejects with the explicit message
+ *     "use archive flow". R4.1.e ships the server-side `Party.archivedAt`
+ *     path; local mode just refuses to let the user delete their last
+ *     party via this action (the UI must offer a separate "delete party"
+ *     affordance if needed).
+ *   - sole DM of a 2+-member party: rejects with the explicit message
+ *     "transfer DM first" (R4.3 ships `dm-transfer`).
+ *
+ * Local-mode note: in R4.1 the web client only holds ONE party at a time
+ * in memory, so `state.user.id` and `state.party.id` are the canonical
+ * actor + party identifiers. The server route (R4.1.e) re-derives both
+ * from the session cookie + URL.
+ */
+function leaveParty(state: AppState, ctx: ReducerContext): ReducerResult {
+  const s = requireState(state, 'leave-party');
+  const actorUserId = s.user.id;
+  const partyId = s.party.id;
+
+  // Active memberships for the actor in this party (every role row).
+  const actorMemberships = s.memberships.filter(
+    (m) => m.userId === actorUserId && m.partyId === partyId && m.leftAt === null,
+  );
+  if (actorMemberships.length === 0) {
+    throw new Error('leave-party: actor is not an active member of this party');
+  }
+
+  // Active memberships for OTHER users in this party (used for the
+  // sole-member / sole-DM guards). Banker is denormalised on Party so
+  // it doesn't appear in the membership rows.
+  const otherActiveMemberships = s.memberships.filter(
+    (m) => m.userId !== actorUserId && m.partyId === partyId && m.leftAt === null,
+  );
+  const otherActiveUserIds = new Set(otherActiveMemberships.map((m) => m.userId));
+
+  if (otherActiveUserIds.size === 0) {
+    // Sole-member party-of-one: server-only archive flow per the R4.1
+    // open-question resolution. Reducer rejects so the local-mode
+    // optimistic dispatch can't silently drop a user's last party.
+    throw new Error('leave-party: sole member must use archive flow (server-only)');
+  }
+
+  // Sole-DM check. The actor holds a 'dm' row, and no OTHER active
+  // membership in this party has role='dm'. Multi-DM is out of v1 scope
+  // but the check uses a set rather than a count so future widening
+  // is straightforward.
+  const actorIsDm = actorMemberships.some((m) => m.role === 'dm');
+  if (actorIsDm) {
+    const otherDmExists = otherActiveMemberships.some((m) => m.role === 'dm');
+    if (!otherDmExists) {
+      throw new Error(
+        'leave-party: sole DM must transfer DM role first (use `dm-transfer` in R4.3)',
+      );
+    }
+  }
+
+  // Find the leaver's character (if any) BEFORE running the cascade.
+  // The player row carries the link; the dm row's characterId is null
+  // per the §4 invariant.
+  const playerRow = actorMemberships.find((m) => m.role === 'player');
+  const characterId = playerRow?.characterId ?? null;
+  const character =
+    characterId !== null ? s.characters.find((c) => c.id === characterId) : undefined;
+
+  // 1. Character cascade (if the leaver had one).
+  let afterCharacterCascade: NonNullable<AppState> = s;
+  let cascadeSlices: LogEntrySlice[] = [];
+  if (character !== undefined) {
+    const cascade = cascadeCharacterToRecoveredLoot(s, character);
+    afterCharacterCascade = cascade.state;
+    cascadeSlices = cascade.logEntries;
+  }
+
+  // 2. Soft-delete every active membership row for the leaver in this party.
+  const now = ctx.now();
+  const nextMemberships = afterCharacterCascade.memberships.map((m) =>
+    m.userId === actorUserId && m.partyId === partyId && m.leftAt === null
+      ? { ...m, leftAt: now }
+      : m,
+  );
+
+  // 3. Banker auto-clear stub. In R4.1 partySchema.bankerUserId is
+  //    z.null(), so this conditional is structurally unreachable. R4.2
+  //    will widen + emit `revoke-banker` with reason: 'left-party'.
+  //    Kept as documentation; structured so the R4.2 patch is a 1-line
+  //    addition.
+  const wasBanker = afterCharacterCascade.party.bankerUserId === actorUserId;
+  const nextParty = wasBanker
+    ? { ...afterCharacterCascade.party, bankerUserId: null }
+    : afterCharacterCascade.party;
+
+  // 4. Terminal slice. characterId only present when the leaver had one.
+  const leavePayload: { partyId: string; characterId?: string } =
+    characterId !== null ? { partyId, characterId } : { partyId };
+
+  return {
+    state: {
+      ...afterCharacterCascade,
+      party: nextParty,
+      memberships: nextMemberships,
+    },
+    logEntries: [
+      ...cascadeSlices,
+      // R4.2 stub: when `wasBanker` is reachable, append a `revoke-banker`
+      // slice here with `{ formerBankerUserId: actorUserId, reason:
+      // 'left-party' }`. Today the schema makes `wasBanker` always false.
+      {
+        type: 'leave-party',
+        payload: leavePayload,
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// kick-player (R4.1.d)
+// -------------------------------------------------------------------- //
+
+/**
+ * DM removes another member from the party per OUTLINE §8.3.
+ *
+ * Symmetric to `leave-party` but parameterised on `kickedUserId`
+ * rather than the actor. Cascade mirrors `leave-party`:
+ *   1. If the kicked user has a player membership with `characterId !==
+ *      null`, run the shared `cascadeCharacterToRecoveredLoot` (items +
+ *      currency → Recovered Loot, drop character + stashes + holdings).
+ *   2. Soft-delete every active `PartyMembership` row for the kicked
+ *      user in this party (player + dm rows, though a kick targeting
+ *      a DM is rejected by guard #3 below).
+ *   3. Banker auto-clear stub: if the kicked user was the Banker
+ *      (`state.party.bankerUserId === kickedUserId`), the cascade
+ *      WOULD clear it and emit `revoke-banker` with
+ *      `reason: 'kicked'`. R4.1 ships the conditional; the schema
+ *      keeps `bankerUserId: z.null()` so the branch is structurally
+ *      unreachable until R4.2 widens both.
+ *   4. Terminal `kick-player` slice with `{ kickedUserId }`.
+ *
+ * Reducer guards:
+ *   - kicked user must be an active member (`leftAt: null`) of this
+ *     party.
+ *   - actor must NOT be the kicked user (self-kick → use
+ *     `leave-party`).
+ *   - kicked user must NOT have an active `role='dm'` row (multi-DM is
+ *     out of scope; DMs leave via `dm-transfer` + `leave-party`).
+ *
+ * Permission (actor.role === 'dm') is enforced by the server-side
+ * guard map, not here — in MVP party-of-one the gate is moot
+ * (solo bypass) and in 2+-member parties the §8.1 row "Kick player"
+ * is DM-only.
+ */
+function kickPlayer(
+  state: AppState,
+  payload: Extract<Action, { type: 'kick-player' }>['payload'],
+  ctx: ReducerContext,
+): ReducerResult {
+  const s = requireState(state, 'kick-player');
+  const actorUserId = s.user.id;
+  const partyId = s.party.id;
+  const kickedUserId = payload.kickedUserId;
+
+  if (kickedUserId === actorUserId) {
+    throw new Error('kick-player: actor cannot kick themselves (use `leave-party` instead)');
+  }
+
+  const kickedMemberships = s.memberships.filter(
+    (m) => m.userId === kickedUserId && m.partyId === partyId && m.leftAt === null,
+  );
+  if (kickedMemberships.length === 0) {
+    throw new Error(
+      `kick-player: target user ${kickedUserId} is not an active member of this party`,
+    );
+  }
+
+  const kickedIsDm = kickedMemberships.some((m) => m.role === 'dm');
+  if (kickedIsDm) {
+    throw new Error(
+      'kick-player: cannot kick a DM (use `dm-transfer` then have them leave instead)',
+    );
+  }
+
+  // Find the kicked user's character (if any).
+  const playerRow = kickedMemberships.find((m) => m.role === 'player');
+  const characterId = playerRow?.characterId ?? null;
+  const character =
+    characterId !== null ? s.characters.find((c) => c.id === characterId) : undefined;
+
+  // 1. Character cascade (if the kicked user had one).
+  let afterCharacterCascade: NonNullable<AppState> = s;
+  let cascadeSlices: LogEntrySlice[] = [];
+  if (character !== undefined) {
+    const cascade = cascadeCharacterToRecoveredLoot(s, character);
+    afterCharacterCascade = cascade.state;
+    cascadeSlices = cascade.logEntries;
+  }
+
+  // 2. Soft-delete every active membership row for the kicked user.
+  const now = ctx.now();
+  const nextMemberships = afterCharacterCascade.memberships.map((m) =>
+    m.userId === kickedUserId && m.partyId === partyId && m.leftAt === null
+      ? { ...m, leftAt: now }
+      : m,
+  );
+
+  // 3. Banker auto-clear stub (R4.2 carryforward — unreachable today).
+  const wasBanker = afterCharacterCascade.party.bankerUserId === kickedUserId;
+  const nextParty = wasBanker
+    ? { ...afterCharacterCascade.party, bankerUserId: null }
+    : afterCharacterCascade.party;
+
+  return {
+    state: {
+      ...afterCharacterCascade,
+      party: nextParty,
+      memberships: nextMemberships,
+    },
+    logEntries: [
+      ...cascadeSlices,
+      // R4.2 stub: when `wasBanker` is reachable, append a `revoke-banker`
+      // slice here with `{ formerBankerUserId: kickedUserId, reason:
+      // 'kicked' }`. Today the schema makes `wasBanker` always false.
+      {
+        type: 'kick-player',
+        payload: { kickedUserId },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// join-party (R4.1.e)
+// -------------------------------------------------------------------- //
+
+/**
+ * A user joins an existing party as a `role='player'` member after
+ * redeeming an invite code server-side. The server has already verified
+ * the invite code, party membership uniqueness, and the user's
+ * authentication; this reducer is the client-side mirror that updates
+ * the local AppState in lockstep with the server's persistence.
+ *
+ * Membership-only: no character is minted here. The user's subsequent
+ * `create-character` dispatch creates the character + 3 stashes and
+ * updates the player row's `characterId` pointer.
+ *
+ * Idempotency: the reducer rejects if the actor already has an active
+ * `role='player'` row in this party (server-side route also rejects
+ * with `already_member`).
+ */
+function joinParty(state: AppState, ctx: ReducerContext): ReducerResult {
+  const s = requireState(state, 'join-party');
+  const actorUserId = s.user.id;
+  const partyId = s.party.id;
+
+  const existingPlayer = s.memberships.find(
+    (m) =>
+      m.userId === actorUserId &&
+      m.partyId === partyId &&
+      m.role === 'player' &&
+      m.leftAt === null,
+  );
+  if (existingPlayer !== undefined) {
+    throw new Error('join-party: actor already has an active player membership in this party');
+  }
+
+  const now = ctx.now();
+  const newMembership = {
+    userId: actorUserId,
+    partyId,
+    role: 'player' as const,
+    characterId: null,
+    joinedAt: now,
+    leftAt: null,
+  };
+
+  return {
+    state: {
+      ...s,
+      memberships: [...s.memberships, newMembership],
+    },
+    logEntries: [
+      {
+        type: 'join-party',
+        payload: { partyId },
       },
     ],
   };

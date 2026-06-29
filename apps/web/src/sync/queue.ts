@@ -150,14 +150,24 @@ export async function flush(): Promise<void> {
         return;
       }
 
-      await pushActions(partyId, batch);
+      const response = await pushActions(partyId, batch);
 
       // Bootstrap success: re-pull canonical state so the new party's
       // server-minted ids land in the store before the Hub navigates.
       if (isBootstrap) {
-        // Without a known partyId we have to read it back from the
-        // store's just-applied optimistic state (the reducer minted a
-        // local id; the server kept it).
+        // The server runs its own reducer with its own `randomUUID()`
+        // ctx, so the party's server-side id DIFFERS from the local
+        // optimistic id minted by the client's reducer. We have to
+        // read the server's id back from the `applied[]` response —
+        // specifically the `create-character` log entry, whose payload
+        // carries the server's `partyId` (server-derived from the
+        // applied reducer's `result.state.party.id`).
+        //
+        // Falls back to the optimistic local id only if (a) the
+        // response is empty or (b) the first applied entry isn't a
+        // create-character (defensive — the server route invariant
+        // says it always is for a bootstrap batch).
+        const firstApplied = response.applied[0];
         const post = deps.getSnapshot();
         if (post.appState === null) {
           // Reducer must have produced a party for a bootstrap action;
@@ -165,8 +175,11 @@ export async function flush(): Promise<void> {
           toast.error('Bootstrap failed to apply locally.');
           return;
         }
-        const localId = post.appState.party.id;
-        const pulled = await pullState(localId);
+        const serverPartyId =
+          firstApplied !== undefined && firstApplied.type === 'create-character'
+            ? firstApplied.payload.partyId
+            : post.appState.party.id;
+        const pulled = await pullState(serverPartyId);
         deps.restoreSnapshot({ appState: pulled.state, log: pulled.state.log });
         await setCurrentPartyId(pulled.state.party.id);
       }

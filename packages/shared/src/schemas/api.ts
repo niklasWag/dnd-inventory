@@ -120,13 +120,15 @@ export type LinkEmailResponse = z.infer<typeof linkEmailResponseSchema>;
  * Per-row shape for `GET /sync/parties`. `roles` is an array because the
  * same user may hold both `dm` and `player` rows in a single party
  * (party-of-one is exactly that case).
+ *
+ * R4.1 — `isSoloShortcut` removed. UI derives the "solo" badge from
+ * `memberCount === 1` (OUTLINE §4 amendment 2026-06-24).
  */
 export const partyListItemSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
   roles: z.array(z.enum(['dm', 'player'])).min(1),
   memberCount: z.number().int().min(1),
-  isSoloShortcut: z.boolean(),
   lastActivityAt: z.string().datetime().nullable(),
 });
 
@@ -137,6 +139,94 @@ export const partiesListResponseSchema = z.object({
 });
 
 export type PartiesListResponse = z.infer<typeof partiesListResponseSchema>;
+
+/**
+ * R4.1.e — `POST /parties/join` request + response.
+ *
+ * Request: `{ inviteCode }`. Server resolves the party from the code,
+ * verifies the user isn't already a member, dispatches a `join-party`
+ * action authoritatively, and returns the party id + name so the
+ * client can navigate to it.
+ */
+export const joinPartyRequestSchema = z.object({
+  inviteCode: z.string().min(1),
+});
+
+export type JoinPartyRequest = z.infer<typeof joinPartyRequestSchema>;
+
+export const joinPartyResponseSchema = z.object({
+  partyId: z.string().min(1),
+  partyName: z.string().min(1),
+});
+
+export type JoinPartyResponse = z.infer<typeof joinPartyResponseSchema>;
+
+/**
+ * R4.1.e — `POST /parties/:partyId/invite/rotate` response.
+ *
+ * DM-only. Generates a fresh invite code via `generateInviteCode()` and
+ * stores it on `Party.inviteCode`. The old code becomes invalid
+ * immediately (any in-flight join attempts get `invalid_invite`).
+ */
+export const rotateInviteResponseSchema = z.object({
+  inviteCode: z.string().min(1),
+});
+
+export type RotateInviteResponse = z.infer<typeof rotateInviteResponseSchema>;
+
+/**
+ * R4.1.e — `POST /parties/:partyId/leave` response.
+ *
+ * Empty `{}` on success. `archived: true` is set when the leaver was
+ * the last active member and the party was archived as a side effect
+ * (per OUTLINE §8.3). Clients that see `archived: true` should redirect
+ * to the Hub since the party will no longer appear in `/sync/parties`.
+ */
+export const leavePartyResponseSchema = z.object({
+  archived: z.boolean(),
+});
+
+export type LeavePartyResponse = z.infer<typeof leavePartyResponseSchema>;
+
+/**
+ * R4.1.e — `POST /parties/:partyId/kick` request + response.
+ *
+ * DM-only. Targets must be an active non-DM member of the party.
+ */
+export const kickPlayerRequestSchema = z.object({
+  kickedUserId: z.string().min(1),
+});
+
+export type KickPlayerRequest = z.infer<typeof kickPlayerRequestSchema>;
+
+export const kickPlayerResponseSchema = z.object({});
+
+export type KickPlayerResponse = z.infer<typeof kickPlayerResponseSchema>;
+
+/**
+ * R4.1.e — `GET /parties/:partyId/members` response. Used by the
+ * PartySettings screen to render the member list with role badges.
+ * Active members only (`leftAt: null`). One row per `(userId, role)`
+ * tuple — the same user with `dm + player` rows surfaces as two rows.
+ */
+export const partyMemberItemSchema = z.object({
+  userId: z.string().min(1),
+  displayName: z.string(),
+  role: z.enum(['dm', 'player']),
+  characterId: z.string().min(1).nullable(),
+  characterName: z.string().nullable(),
+  joinedAt: z.string().datetime(),
+});
+
+export type PartyMemberItem = z.infer<typeof partyMemberItemSchema>;
+
+export const partyMembersResponseSchema = z.object({
+  partyId: z.string().min(1),
+  inviteCode: z.string().min(1),
+  members: z.array(partyMemberItemSchema),
+});
+
+export type PartyMembersResponse = z.infer<typeof partyMembersResponseSchema>;
 
 /**
  * `GET /sync/state` happy-path body.

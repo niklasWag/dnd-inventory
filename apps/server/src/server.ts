@@ -30,6 +30,7 @@ import { buildMailService, type MailService } from './auth/email/smtp.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { getSession, type SessionAndUser } from './auth/session.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerPartyRoutes } from './parties/routes.js';
 import { startSnapshotCron } from './snapshots/scheduler.js';
 import { registerSyncRoutes } from './sync/routes.js';
 
@@ -105,6 +106,13 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
   // `app.getSession` decorator; enforces the §8.1 guard map; runs
   // the shared reducer authoritatively before applying Prisma deltas.
   registerSyncRoutes(app, opts.prisma);
+
+  // R4.1.e — party management routes (join / leave / kick / rotate /
+  // members). These don't fit the `/sync/actions` model because they
+  // need their own auth flows (invite-code redemption) and side effects
+  // (sole-member archive). They use the same `applyDelta` + log-builder
+  // pipeline internally so the TransactionLog stays canonical.
+  registerPartyRoutes(app, opts.prisma);
 
   // R3.4.b — nightly snapshot cron (03:07 local; disabled when
   // SNAPSHOTS_ENABLED=false). Stops on Fastify close so SIGTERM

@@ -149,9 +149,15 @@ model Party {
   recoveredLootStashId String
   // MVP writes null (no Banker until 2+ members per OUTLINE §3.14).
   bankerUserId         String?
-  // MVP writes true (party-of-one). Deprecated post-R4 per OUTLINE §4 amendment 2026-06-24.
-  isSoloShortcut       Boolean
+  // R4.1 — `isSoloShortcut` column dropped (migration `r41_drop_party_isSoloShortcut`).
+  // Hub UI derives the "solo" badge from `memberCount === 1` per OUTLINE §4 amendment 2026-06-24.
   createdAt            DateTime @default(now())
+  // R4.1.e — when set, the party is archived: it disappears from
+  // `GET /sync/parties` and `POST /sync/actions` rejects further
+  // mutations. Set by the sole-member-leave server route per OUTLINE §8.3
+  // ("If no other members exist, the party is archived (no destructive
+  // delete; data preserved for the DM's records)").
+  archivedAt           DateTime?
 
   owner       User              @relation("PartyOwner", fields: [ownerUserId], references: [id])
   memberships PartyMembership[]

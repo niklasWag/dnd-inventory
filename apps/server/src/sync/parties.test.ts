@@ -179,7 +179,6 @@ describe('GET /sync/parties — happy paths (R3.5)', () => {
           name: string;
           roles: ('dm' | 'player')[];
           memberCount: number;
-          isSoloShortcut: boolean;
           lastActivityAt: string | null;
         }[];
       }>();
@@ -187,7 +186,6 @@ describe('GET /sync/parties — happy paths (R3.5)', () => {
       expect(body.parties[0]!.id).toBe(partyId);
       expect(new Set(body.parties[0]!.roles)).toEqual(new Set(['dm', 'player']));
       expect(body.parties[0]!.memberCount).toBe(1);
-      expect(body.parties[0]!.isSoloShortcut).toBe(true);
       expect(body.parties[0]!.lastActivityAt).not.toBeNull();
     } finally {
       await app.close();

@@ -10,6 +10,7 @@ import { Login } from '@/screens/Login';
 import { LoginDisplayName } from '@/screens/LoginDisplayName';
 import { LoginEmail } from '@/screens/LoginEmail';
 import { LoginEmailVerify } from '@/screens/LoginEmailVerify';
+import { PartySettings } from '@/screens/PartySettings';
 import { Settings } from '@/screens/Settings';
 import { StorageDetail } from '@/screens/StorageDetail';
 
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
           { path: 'item/:itemInstanceId', Component: ItemDetail },
           { path: 'storage/:stashId', Component: StorageDetail },
           { path: 'settings', Component: Settings },
+          { path: 'party/settings', Component: PartySettings },
         ],
       },
       { path: '*', element: <Navigate to="/hub" replace /> },

@@ -33,7 +33,6 @@ function makeParty(id = 'p1', bankerUserId: string | null = null): Party {
     // exercise the banker path via a manual cast in the deriveActorRole
     // test below.
     bankerUserId: bankerUserId as null,
-    isSoloShortcut: true,
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
@@ -493,6 +492,120 @@ describe('guards — ownership checks', () => {
       ),
     ).toEqual({ ok: true });
   });
+
+  it('delete-character allows the owning player', () => {
+    expect(
+      runGuard(
+        { type: 'delete-character', payload: { characterId: 'char-u1' } },
+        makeActor('u1', 'player'),
+        state,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("delete-character rejects another player attempting to delete someone else's character", () => {
+    expect(
+      runGuard(
+        { type: 'delete-character', payload: { characterId: 'char-u1' } },
+        makeActor('u2', 'player'),
+        state,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toMatchObject({ ok: false, code: 'not_own_character' });
+  });
+
+  it('delete-character allows the DM to delete any character', () => {
+    expect(
+      runGuard(
+        { type: 'delete-character', payload: { characterId: 'char-u1' } },
+        makeActor('dm-user', 'dm'),
+        state,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it('delete-character rejects unknown characterId with character_not_found', () => {
+    expect(
+      runGuard(
+        { type: 'delete-character', payload: { characterId: 'no-such-char' } },
+        makeActor('u1', 'player'),
+        state,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toMatchObject({ ok: false, code: 'character_not_found' });
+  });
+
+  it('leave-party allows an active member', () => {
+    expect(
+      runGuard(
+        { type: 'leave-party', payload: {} },
+        makeActor('u1', 'player'),
+        state,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it('leave-party rejects an actor with no active membership in this party', () => {
+    expect(
+      runGuard(
+        { type: 'leave-party', payload: {} },
+        makeActor('stranger', 'player'),
+        state,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toMatchObject({ ok: false, code: 'not_a_member' });
+  });
+
+  it('kick-player rejects non-DM actor', () => {
+    // The dedicated-DM state still has u1 + u1 memberships baked in
+    // (makeState defaults), which is enough for the role-only check —
+    // the guard short-circuits on actor.role !== 'dm' before looking at
+    // memberships.
+    expect(
+      runGuard(
+        { type: 'kick-player', payload: { kickedUserId: 'u2' } },
+        makeActor('u1', 'player'),
+        state,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('kick-player allows DM to kick an active member', () => {
+    // Need state.memberships to contain the kicked user. Build a state
+    // whose memberships array matches the 3-row TWO_MEMBERS_WITH_DEDICATED_DM
+    // fixture so the guard's `state.memberships.some(...)` finds u2.
+    const richState: AppState = {
+      ...makeState(),
+      memberships: [...TWO_MEMBERS_WITH_DEDICATED_DM],
+    };
+    expect(
+      runGuard(
+        { type: 'kick-player', payload: { kickedUserId: 'u2' } },
+        makeActor('dm-user', 'dm', 'p1'),
+        richState,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it('kick-player rejects when target is not an active member of this party', () => {
+    const richState: AppState = {
+      ...makeState(),
+      memberships: [...TWO_MEMBERS_WITH_DEDICATED_DM],
+    };
+    expect(
+      runGuard(
+        { type: 'kick-player', payload: { kickedUserId: 'no-such-user' } },
+        makeActor('dm-user', 'dm', 'p1'),
+        richState,
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toMatchObject({ ok: false, code: 'not_a_member' });
+  });
 });
 
 describe('guards — every action has an entry', () => {
@@ -524,6 +637,10 @@ describe('guards — every action has an entry', () => {
       'recharge',
       'identify',
       'edit-character',
+      'delete-character',
+      'leave-party',
+      'kick-player',
+      'join-party',
     ];
     for (const t of expected) {
       expect(typeof guards[t]).toBe('function');

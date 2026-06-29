@@ -583,6 +583,134 @@ const editCharacterGuard: Guard<Extract<Action, { type: 'edit-character' }>> = (
   return { ok: true };
 };
 
+/**
+ * R4.1.b — `delete-character`. Per OUTLINE §8.3 the cascade is invoked
+ * by (a) the owning player self-removing their character, or (b) the
+ * DM removing any character via explicit action. Both go through this
+ * same TxType; the guard accepts the owner OR DM (DM is the strict
+ * superset). Solo bypass (`checkGuard`) means the sole member of a
+ * party-of-one always succeeds.
+ */
+const deleteCharacterGuard: Guard<Extract<Action, { type: 'delete-character' }>> = (
+  state,
+  payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'delete-character: no state.' };
+  const ch = state.characters.find((c) => c.id === payload.characterId);
+  if (ch === undefined) {
+    return { ok: false, code: 'character_not_found', message: 'Character not found.' };
+  }
+  if (actor.role === 'dm') return { ok: true };
+  if (ch.ownerUserId !== actor.userId) {
+    return {
+      ok: false,
+      code: 'not_own_character',
+      message: "Cannot delete another player's character.",
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * R4.1.c — `leave-party`. Self-service: any active member may leave
+ * (the reducer enforces sole-member / sole-DM rejection separately).
+ * The guard's role is purely "is the actor a member of this party at
+ * all?" — the §8.3 cascade business rules live in the reducer.
+ *
+ * Solo bypass (`checkGuard`) means the sole member's leave attempt
+ * always reaches the reducer, which rejects with the archive-flow
+ * message — surfacing as a 422 to the client with a clear next step.
+ */
+const leavePartyGuard: Guard<Extract<Action, { type: 'leave-party' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'leave-party: no state.' };
+  // `actor.partyId` is the canonical party for this dispatch (resolved
+  // server-side from session + URL). Confirm the actor has at least one
+  // active membership row.
+  const hasActive = state.memberships.some(
+    (m) => m.userId === actor.userId && m.partyId === actor.partyId && m.leftAt === null,
+  );
+  if (!hasActive) {
+    return { ok: false, code: 'not_a_member', message: 'You are not a member of this party.' };
+  }
+  return { ok: true };
+};
+
+/**
+ * R4.1.d — `kick-player`. Per OUTLINE §8.1 "Kick player" the action is
+ * DM-only. The guard rejects non-DM actors and verifies the target is
+ * an active member of this party.
+ *
+ * The reducer enforces the business invariants (no self-kick; kicked
+ * user must not be a DM); the guard only asserts the
+ * `state.memberships` evidence that the target is actually here. Solo
+ * bypass (`checkGuard`) means the sole member can't structurally
+ * dispatch `kick-player` against anyone — there's no one else to kick.
+ */
+const kickPlayerGuard: Guard<Extract<Action, { type: 'kick-player' }>> = (
+  state,
+  payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'kick-player: no state.' };
+  if (actor.role !== 'dm') {
+    return { ok: false, code: 'dm_only', message: 'Only the DM can kick a player.' };
+  }
+  const targetActive = state.memberships.some(
+    (m) =>
+      m.userId === payload.kickedUserId && m.partyId === actor.partyId && m.leftAt === null,
+  );
+  if (!targetActive) {
+    return {
+      ok: false,
+      code: 'not_a_member',
+      message: 'Target user is not an active member of this party.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * R4.1.e — `join-party`. Server-driven action dispatched on the user's
+ * behalf after a successful invite-code redemption. The guard's job is
+ * narrow: reject if the actor is *already* an active member of this
+ * party (the server route also rejects with `already_member`, but
+ * defense-in-depth never hurts).
+ *
+ * Unlike most other guards, this one does NOT check `isMember` against
+ * the standard membership list — the actor is by definition not yet
+ * a member when this action runs. `checkGuard`'s top-level
+ * `isMember` short-circuit must be bypassed for this action; we
+ * handle that in `checkGuard` via the special-case list (see R3.4.a
+ * for the `create-character` precedent).
+ */
+const joinPartyGuard: Guard<Extract<Action, { type: 'join-party' }>> = (state, _payload, actor) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'join-party: no state.' };
+  const alreadyMember = state.memberships.some(
+    (m) =>
+      m.userId === actor.userId &&
+      m.partyId === actor.partyId &&
+      m.role === 'player' &&
+      m.leftAt === null,
+  );
+  if (alreadyMember) {
+    return {
+      ok: false,
+      code: 'not_a_member',
+      message: 'You are already a member of this party.',
+    };
+  }
+  return { ok: true };
+};
+
 export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>> } = {
   'create-character': createCharacterGuard,
   acquire: acquireGuard,
@@ -610,6 +738,10 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   recharge: rechargeGuard,
   identify: identifyGuard,
   'edit-character': editCharacterGuard,
+  'delete-character': deleteCharacterGuard,
+  'leave-party': leavePartyGuard,
+  'kick-player': kickPlayerGuard,
+  'join-party': joinPartyGuard,
 };
 
 /**
@@ -628,7 +760,9 @@ export function checkGuard(
   // Membership check: actor must be a member of the party they claim.
   // Skipped when state is null (the bootstrap `create-character` action
   // mints the membership rows; there is no party to be a member of yet).
-  if (state !== null && !isMember(actor, memberships)) {
+  // Also skipped for `join-party` (R4.1.e) since the actor is by
+  // definition not yet a member.
+  if (state !== null && action.type !== 'join-party' && !isMember(actor, memberships)) {
     return {
       ok: false,
       code: 'not_a_member',

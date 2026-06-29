@@ -1,7 +1,8 @@
 import { appStateSchema, transactionLogEntrySchema } from '@app/shared';
 import { z } from 'zod';
 
-import { loadAppState } from '@/db/load';
+import { loadAppState, listKnownPartyIds } from '@/db/load';
+import { getCurrentPartyId } from '@/db/meta';
 import { useStore } from '@/store';
 
 /**
@@ -24,19 +25,48 @@ const persistedBlobSchema = z.object({
  *
  * Called once from `main.tsx` BEFORE the first render so route guards
  * (Welcome → CharacterSheet redirect) see the loaded state.
+ *
+ * R4-followup hydration order:
+ *   1. If `currentPartyId` is set in meta, try `appState:<partyId>`.
+ *   2. Otherwise (or if that blob is missing/invalid), try the legacy
+ *      unkeyed `appState` slot (pre-R4 single-party shape).
+ *   3. If neither yields a usable blob, try the FIRST known per-party
+ *      blob — gives the Hub a valid landing if the pointer was lost.
+ *   4. Failing all of the above, leave the store empty.
  */
 export async function hydrateFromDexie(): Promise<void> {
-  const raw = await loadAppState();
-  if (raw === null) return;
+  const currentPartyId = await getCurrentPartyId();
 
-  const parsed = persistedBlobSchema.safeParse(raw);
-  if (!parsed.success) {
-    console.warn('hydrate: persisted blob failed schema validation; starting empty.', parsed.error);
-    return;
+  // 1. Try the active-party pointer.
+  if (currentPartyId !== null) {
+    const raw = await loadAppState(currentPartyId);
+    if (raw !== null && tryHydrate(raw)) return;
   }
 
+  // 2. Legacy unkeyed slot (pre-R4 / fresh-bootstrap-window).
+  const legacy = await loadAppState();
+  if (legacy !== null && tryHydrate(legacy)) return;
+
+  // 3. Any other persisted party — fallback when the pointer is missing
+  //    or stale (e.g. user wiped Dexie partially).
+  const knownIds = await listKnownPartyIds();
+  for (const id of knownIds) {
+    const raw = await loadAppState(id);
+    if (raw !== null && tryHydrate(raw)) return;
+  }
+
+  // 4. Nothing usable — store stays at its initial empty state.
+}
+
+function tryHydrate(raw: unknown): boolean {
+  const parsed = persistedBlobSchema.safeParse(raw);
+  if (!parsed.success) {
+    console.warn('hydrate: persisted blob failed schema validation; skipping.', parsed.error);
+    return false;
+  }
   useStore.getState().hydrate({
     appState: parsed.data.appState,
     log: parsed.data.log,
   });
+  return true;
 }

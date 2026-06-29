@@ -47,7 +47,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 
 ### Data model rules (see `docs/OUTLINE.md` §4)
 
-- **Every user is always in a party.** Solo = party-of-one with `isSoloShortcut: true`. Never invent a parallel solo path.
+- **Every user is always in a party.** Solo = party-of-one (`memberCount === 1`). Never invent a parallel solo path. (R4.1 removed the `isSoloShortcut` field; the "solo" badge is derived from member count.)
 - Stash `scope` is `character | party | recovered-loot`. There is **no `solo` scope**.
 - A character has exactly one `isCarried: true` stash (the Inventory), referenced by `Character.inventoryStashId`. Encumbrance applies only there.
 - `ItemInstance.ownerType` is `stash | shop`. The `character` value does not exist.

@@ -111,6 +111,14 @@ export async function applyDelta(
       return persistIdentify(tx, action.payload);
     case 'edit-character':
       return persistEditCharacter(tx, action.payload);
+    case 'delete-character':
+      return persistDeleteCharacter(tx, action.payload);
+    case 'leave-party':
+      return persistLeaveParty(tx, actor, ctx);
+    case 'kick-player':
+      return persistKickPlayer(tx, action.payload, actor, ctx);
+    case 'join-party':
+      return persistJoinParty(tx, actor, ctx);
   }
 }
 
@@ -150,7 +158,6 @@ export async function applyBootstrapDelta(
       inviteCode: party.inviteCode,
       recoveredLootStashId: party.recoveredLootStashId,
       bankerUserId: party.bankerUserId,
-      isSoloShortcut: party.isSoloShortcut,
       createdAt: new Date(party.createdAt),
     },
   });
@@ -724,6 +731,261 @@ async function persistEditCharacter(
   if (payload.patch.str !== undefined) data.strScore = payload.patch.str;
   if (payload.patch.maxAttunement !== undefined) data.maxAttunement = payload.patch.maxAttunement;
   await tx.character.update({ where: { id: payload.characterId }, data });
+}
+
+/**
+ * R4.1.b — `delete-character` cascade in the DB.
+ *
+ * Mirrors the reducer's cascade ordering (see `deleteCharacter` in
+ * `@app/rules/reducer`):
+ *   1. Re-point every `ItemInstance` whose owner stash belongs to the
+ *      character into the party's Recovered Loot stash; clear equip /
+ *      attune flags and the container parent (the item is no longer in
+ *      any Inventory).
+ *   2. Roll the aggregated currency across the character's stashes into
+ *      Recovered Loot's `CurrencyHolding`.
+ *   3. Drop the character's stash rows (the CurrencyHolding rows
+ *      cascade via FK).
+ *   4. Clear `PartyMembership.characterId` on the owning user's player
+ *      row (slot reserved for a fresh character per roadmap R4.1).
+ *   5. Drop the Character row.
+ *
+ * The matching log slices are appended by the log-builder; this
+ * persistor only writes the entity deltas.
+ */
+async function persistDeleteCharacter(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'delete-character' }>['payload'],
+): Promise<void> {
+  await cascadeCharacterToRecoveredLootDb(tx, payload.characterId);
+}
+
+/**
+ * R4.1.b/c — shared DB cascade used by `persistDeleteCharacter` and
+ * `persistLeaveParty`. Mirrors the reducer's
+ * `cascadeCharacterToRecoveredLoot` in `@app/rules/reducer`:
+ *   1. Re-point every `ItemInstance` whose owner stash belongs to the
+ *      character into the party's Recovered Loot stash; clear equip /
+ *      attune flags and the container parent (the item is no longer in
+ *      any Inventory).
+ *   2. Roll the aggregated currency across the character's stashes into
+ *      Recovered Loot's `CurrencyHolding`.
+ *   3. Drop the character's stash rows (the CurrencyHolding rows
+ *      cascade via FK).
+ *   4. Clear `PartyMembership.characterId` on the owning user's player
+ *      row.
+ *   5. Drop the Character row.
+ *
+ * The matching log slices are appended by the log-builder; this
+ * persistor only writes the entity deltas.
+ */
+async function cascadeCharacterToRecoveredLootDb(
+  tx: Prisma.TransactionClient,
+  characterId: string,
+): Promise<void> {
+  const character = await tx.character.findUniqueOrThrow({
+    where: { id: characterId },
+  });
+  const recoveredLoot = await tx.stash.findFirstOrThrow({
+    where: { partyId: character.partyId, scope: toDbStashScope('recovered-loot') },
+  });
+
+  // Collect every stash this character owns.
+  const ownedStashes = await tx.stash.findMany({
+    where: { ownerCharacterId: character.id, scope: toDbStashScope('character') },
+    select: { id: true },
+  });
+  const ownedStashIds = ownedStashes.map((s) => s.id);
+
+  // 1. Move items.
+  if (ownedStashIds.length > 0) {
+    await tx.itemInstance.updateMany({
+      where: { ownerId: { in: ownedStashIds } },
+      data: {
+        ownerId: recoveredLoot.id,
+        containerInstanceId: null,
+        equipped: false,
+        attuned: false,
+      },
+    });
+
+    // 2. Roll currency: aggregate first, then one update on Recovered Loot.
+    const aggregate = await tx.currencyHolding.aggregate({
+      where: { stashId: { in: ownedStashIds } },
+      _sum: { cp: true, sp: true, ep: true, gp: true, pp: true },
+    });
+    const cp = aggregate._sum.cp ?? 0;
+    const sp = aggregate._sum.sp ?? 0;
+    const ep = aggregate._sum.ep ?? 0;
+    const gp = aggregate._sum.gp ?? 0;
+    const pp = aggregate._sum.pp ?? 0;
+    if (cp !== 0 || sp !== 0 || ep !== 0 || gp !== 0 || pp !== 0) {
+      await tx.currencyHolding.update({
+        where: { stashId: recoveredLoot.id },
+        data: {
+          cp: { increment: cp },
+          sp: { increment: sp },
+          ep: { increment: ep },
+          gp: { increment: gp },
+          pp: { increment: pp },
+        },
+      });
+    }
+
+    // 3. Drop owned stashes (CurrencyHolding cascades via FK).
+    await tx.stash.deleteMany({ where: { id: { in: ownedStashIds } } });
+  }
+
+  // 4. Clear PartyMembership.characterId on the owning user's player row.
+  await tx.partyMembership.updateMany({
+    where: { characterId: character.id, role: 'player' },
+    data: { characterId: null },
+  });
+
+  // 5. Drop the Character row. The `Character.inventoryStashId` FK is
+  //    deferrable (migration tail) so the order Stash-then-Character is
+  //    safe inside this single $transaction.
+  await tx.character.delete({ where: { id: character.id } });
+}
+
+/**
+ * R4.1.c — `leave-party`. Mirrors the reducer's `leaveParty` in
+ * `@app/rules/reducer`. Reduces in two DB phases inside the same
+ * `$transaction`:
+ *
+ *   1. If the leaver has a player membership with `characterId !==
+ *      null`, run `cascadeCharacterToRecoveredLootDb` (items + currency
+ *      → Recovered Loot; drop character + stashes + holdings + clear
+ *      that player row's characterId — though that last write is
+ *      redundant with step 2 since the whole row gets soft-deleted).
+ *   2. Soft-delete every active `PartyMembership` row for the leaver in
+ *      this party. The `(userId, partyId, role)` composite PK means up
+ *      to two rows (dm + player) flip together.
+ *   3. Banker auto-clear stub (carryforward for R4.2). Today
+ *      `Party.bankerUserId` is always NULL so the conditional never
+ *      fires; R4.2 widens both the column and the conditional.
+ *
+ * Reducer guards (sole-member / sole-DM rejection) have already run
+ * client-side; the server's `checkGuard` re-runs the same guards on
+ * every push. Defense-in-depth: we still fetch the post-cascade member
+ * count here and refuse to leave a party with zero remaining active
+ * members, surfacing as a 500 rather than silently archiving (the
+ * archive flow lives on a separate server route per the R4.1.e plan).
+ */
+async function persistLeaveParty(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  const actorUserId = actor.userId;
+  const partyId = actor.partyId;
+
+  // Resolve the leaver's character (if any) via their active player row.
+  const playerRow = await tx.partyMembership.findFirst({
+    where: { userId: actorUserId, partyId, role: 'player', leftAt: null },
+    select: { characterId: true },
+  });
+  if (playerRow !== null && playerRow.characterId !== null) {
+    await cascadeCharacterToRecoveredLootDb(tx, playerRow.characterId);
+  }
+
+  // Soft-delete every active membership row for the leaver in this party.
+  const now = new Date(ctx.now());
+  await tx.partyMembership.updateMany({
+    where: { userId: actorUserId, partyId, leftAt: null },
+    data: { leftAt: now },
+  });
+
+  // Banker auto-clear stub. R4.2 widens `Party.bankerUserId`.
+  // Today this is a no-op except in tests that manually seed a non-null
+  // banker (none ship in R4.1).
+  await tx.party.updateMany({
+    where: { id: partyId, bankerUserId: actorUserId },
+    data: { bankerUserId: null },
+  });
+
+  // Defense-in-depth: if the cascade drained the party of all active
+  // members, surface as a 500 rather than persist a zombie party. The
+  // sole-member archive flow runs on a separate route (R4.1.e) — clients
+  // should never land here.
+  const remainingActive = await tx.partyMembership.count({
+    where: { partyId, leftAt: null },
+  });
+  if (remainingActive === 0) {
+    throw new Error('leave-party: server cascade emptied the party; use archive flow instead');
+  }
+}
+
+/**
+ * R4.1.d — `kick-player`. Mirrors `persistLeaveParty` parameterised on
+ * `kickedUserId`. Self-kick and kicking a DM are rejected by the
+ * reducer + the §8.1 guard layer before this runs, but we re-check
+ * defensively at the DB boundary.
+ *
+ * Steps:
+ *   1. If the kicked user has an active player row with a non-null
+ *      `characterId`, cascade their character to Recovered Loot.
+ *   2. Soft-delete every active membership row for the kicked user.
+ *   3. Banker auto-clear stub (R4.2 widens).
+ */
+async function persistKickPlayer(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'kick-player' }>['payload'],
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  const partyId = actor.partyId;
+  const kickedUserId = payload.kickedUserId;
+
+  if (kickedUserId === actor.userId) {
+    throw new Error('kick-player: actor cannot kick themselves');
+  }
+
+  // Resolve the kicked user's character (if any) via their active player row.
+  const playerRow = await tx.partyMembership.findFirst({
+    where: { userId: kickedUserId, partyId, role: 'player', leftAt: null },
+    select: { characterId: true },
+  });
+  if (playerRow !== null && playerRow.characterId !== null) {
+    await cascadeCharacterToRecoveredLootDb(tx, playerRow.characterId);
+  }
+
+  // Soft-delete every active membership row for the kicked user.
+  const now = new Date(ctx.now());
+  await tx.partyMembership.updateMany({
+    where: { userId: kickedUserId, partyId, leftAt: null },
+    data: { leftAt: now },
+  });
+
+  // Banker auto-clear stub. R4.2 widens `Party.bankerUserId`.
+  await tx.party.updateMany({
+    where: { id: partyId, bankerUserId: kickedUserId },
+    data: { bankerUserId: null },
+  });
+}
+
+/**
+ * R4.1.e — `join-party`. Creates a new `role='player'` PartyMembership
+ * row for the actor in `actor.partyId`. The invite-code redemption +
+ * `already_member` check happen in the `POST /parties/join` route
+ * before this persistor runs.
+ */
+async function persistJoinParty(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  const now = new Date(ctx.now());
+  await tx.partyMembership.create({
+    data: {
+      userId: actor.userId,
+      partyId: actor.partyId,
+      role: 'player',
+      characterId: null,
+      joinedAt: now,
+      leftAt: null,
+    },
+  });
 }
 
 // Silence unused-import lint for translators that future actions will use.

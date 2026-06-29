@@ -1,0 +1,395 @@
+import { useEffect, useState, type ReactElement } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
+import { toast } from 'sonner';
+import { Copy, RefreshCw, UserMinus, LogOut } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { RenameField } from '@/components/settings/RenameField';
+import { ApiError, kickPlayerApi, leavePartyApi, listPartyMembers, rotateInvite } from '@/lib/api';
+import { isServerMode } from '@/lib/serverMode';
+import { useStore } from '@/store';
+import type { PartyMemberItem } from '@app/shared';
+
+/**
+ * R4.1.e — Party Settings screen (§5.15).
+ *
+ * Sections (top to bottom):
+ *   - Party name + Character name rename (R4.1-followup: moved from
+ *     global Settings into the per-party screen because both are
+ *     party-scoped). Character rename hidden when the active party has
+ *     no character (DM-only bootstrap).
+ *   - Members list with role badges (DM / Player). One row per
+ *     `(userId, role)` tuple; the DM-player solo creator surfaces as
+ *     two rows by design (matches OUTLINE §4 composite-key invariant).
+ *   - Invite code: display current + Copy + DM-only Rotate button.
+ *   - DM-only kick action per non-DM member row.
+ *   - Leave-party CTA at the bottom (any active member). Surfaces
+ *     "Archived" confirmation when the leaver is the sole member.
+ *
+ * The server-only sections (members / invite / kick / leave) only
+ * render in server mode — local mode users see just the rename
+ * surfaces, which is everything per-party-scoped they can edit
+ * without a multi-member party + invite-code infrastructure.
+ */
+export function PartySettings(): ReactElement {
+  const navigate = useNavigate();
+  const partyId = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.party.id : null)),
+  );
+  const partyName = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.party.name : null)),
+  );
+  const character = useStore(
+    useShallow((s) =>
+      s.appState !== null
+        ? (s.appState.characters[0] ?? null)
+        : null,
+    ),
+  );
+  const myUserId = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.user.id : null)),
+  );
+
+  const [members, setMembers] = useState<PartyMemberItem[] | null>(null);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmKick, setConfirmKick] = useState<PartyMemberItem | null>(null);
+
+  // Load members + invite code on mount (server mode only).
+  useEffect(() => {
+    if (partyId === null || !isServerMode) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await listPartyMembers(partyId);
+        if (!cancelled) {
+          setMembers(res.members);
+          setInviteCode(res.inviteCode);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.code === 'unauthenticated') {
+          void navigate('/login', { replace: true });
+          return;
+        }
+        // R4.1-followup — if the server says the party doesn't exist
+        // (404 party_not_found) it means we're holding a stale active-
+        // party pointer (e.g. the party was created pre-sync-queue-fix
+        // and never persisted server-side, or the user is signed in as
+        // a different account that doesn't own this id). Send the user
+        // back to the Hub with a clear message instead of stranding
+        // them on a broken settings screen.
+        if (err instanceof ApiError && (err.code === 'party_not_found' || err.status === 404)) {
+          toast.error('That party no longer exists on the server.');
+          void navigate('/hub', { replace: true });
+          return;
+        }
+        setLoadError(err instanceof Error ? err.message : 'Could not load party members.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [partyId, navigate]);
+
+  if (partyId === null || partyName === null || myUserId === null) {
+    return (
+      <div className="mx-auto max-w-3xl py-10">
+        <p className="text-sm text-muted-foreground">No party selected.</p>
+      </div>
+    );
+  }
+
+  const myRoles = new Set(members?.filter((m) => m.userId === myUserId).map((m) => m.role));
+  const iAmDm = myRoles.has('dm');
+
+  async function copyInvite(): Promise<void> {
+    if (inviteCode === null) return;
+    try {
+      await navigator.clipboard.writeText(inviteCode);
+      toast.success('Invite code copied.');
+    } catch {
+      toast.error('Could not copy — copy it manually.');
+    }
+  }
+
+  async function handleRotate(): Promise<void> {
+    if (partyId === null) return;
+    setBusy('rotate');
+    try {
+      const res = await rotateInvite(partyId);
+      setInviteCode(res.inviteCode);
+      toast.success('New invite code generated.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not rotate invite code.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleKick(target: PartyMemberItem): Promise<void> {
+    if (partyId === null) return;
+    setBusy(`kick-${target.userId}`);
+    try {
+      await kickPlayerApi(partyId, { kickedUserId: target.userId });
+      setMembers((prev) => (prev !== null ? prev.filter((m) => m.userId !== target.userId) : prev));
+      toast.success(`${target.displayName} was removed from the party.`);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'cannot_kick_dm') {
+        toast.error('Cannot kick the DM. Transfer DM first.');
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Could not kick player.');
+      }
+    } finally {
+      setBusy(null);
+      setConfirmKick(null);
+    }
+  }
+
+  async function handleLeave(): Promise<void> {
+    if (partyId === null) return;
+    setBusy('leave');
+    try {
+      const res = await leavePartyApi(partyId);
+      if (res.archived) {
+        toast.success('Party archived. Your data is preserved.');
+      } else {
+        toast.success('You left the party.');
+      }
+      void navigate('/hub', { replace: true });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'sole_dm_must_transfer_first') {
+        toast.error('Transfer DM first — you are the only DM.');
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Could not leave party.');
+      }
+      setBusy(null);
+      setConfirmLeave(false);
+    }
+  }
+
+  if (loadError !== null) {
+    return (
+      <div className="mx-auto max-w-3xl py-10">
+        <p className="text-sm text-destructive">{loadError}</p>
+      </div>
+    );
+  }
+
+  // Server-mode loading: members + invite code are async-fetched. We
+  // still render the rename surfaces synchronously below; the
+  // server-only block toggles between "Loading…" and the full UI.
+  const serverDataLoading =
+    isServerMode && (members === null || inviteCode === null);
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-8 py-10">
+      <header>
+        <h1 className="text-3xl font-bold tracking-tight">Party settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {isServerMode
+            ? 'Names, members, invite code, and leave-party controls.'
+            : 'Rename your party and character.'}
+        </p>
+      </header>
+
+      {/* Always-on rename block (R4.1-followup — moved from global
+          Settings). Character rename hidden when there's no character
+          (DM-only bootstrap). */}
+      <section aria-label="Names" className="space-y-4 rounded-lg border border-border p-4">
+        <div>
+          <h2 className="font-semibold">Names</h2>
+          <p className="text-sm text-muted-foreground">
+            Rename your party{character !== null ? ' or character' : ''}. Changes are logged.
+          </p>
+        </div>
+        <RenameField
+          target="party"
+          entityId={partyId}
+          currentName={partyName}
+          label="Party name"
+        />
+        {character !== null ? (
+          <RenameField
+            target="character"
+            entityId={character.id}
+            currentName={character.name}
+            label="Character name"
+          />
+        ) : null}
+      </section>
+
+      {/* Server-only sections below. Local mode has no member list,
+          no invite code, and no leave-party flow. */}
+      {!isServerMode ? null : serverDataLoading ? (
+        <p className="text-sm text-muted-foreground">Loading party members…</p>
+      ) : (
+        <>
+          <section aria-label="Members" className="space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Members ({new Set(members!.map((m) => m.userId)).size})
+            </h2>
+            <ul className="space-y-2">
+              {members!.map((m) => {
+                const isMe = m.userId === myUserId;
+                const isKickable = iAmDm && !isMe && m.role !== 'dm';
+                const kickBusy = busy === `kick-${m.userId}`;
+                return (
+                  <li
+                    key={`${m.userId}-${m.role}`}
+                    className="flex items-center justify-between rounded-md border bg-card px-4 py-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-medium">{m.displayName}</span>
+                      <RoleBadge role={m.role} />
+                      {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
+                      {m.characterName !== null ? (
+                        <span className="text-xs text-muted-foreground">
+                          — {m.characterName}
+                        </span>
+                      ) : null}
+                    </div>
+                    {isKickable ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={kickBusy || busy !== null}
+                        onClick={() => setConfirmKick(m)}
+                      >
+                        <UserMinus className="mr-1 h-4 w-4" />
+                        Kick
+                      </Button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          <section aria-label="Invite code" className="space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Invite code
+            </h2>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 rounded-md border bg-muted px-3 py-2 font-mono text-sm">
+                {inviteCode}
+              </code>
+              <Button variant="outline" size="sm" onClick={() => void copyInvite()}>
+                <Copy className="mr-1 h-4 w-4" />
+                Copy
+              </Button>
+              {iAmDm ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy === 'rotate'}
+                  onClick={() => void handleRotate()}
+                >
+                  <RefreshCw className="mr-1 h-4 w-4" />
+                  Rotate
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Share this code with someone you want to invite. Rotating invalidates the old code
+              immediately.
+            </p>
+          </section>
+
+          <section aria-label="Leave party" className="space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Leave party
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Your character&apos;s items and currency will be moved to Recovered Loot. If
+              you&apos;re the last member, the party will be archived.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy === 'leave'}
+              onClick={() => setConfirmLeave(true)}
+            >
+              <LogOut className="mr-1 h-4 w-4" />
+              Leave party
+            </Button>
+          </section>
+        </>
+      )}
+
+      <Dialog open={confirmLeave} onOpenChange={(o) => !o && setConfirmLeave(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave this party?</DialogTitle>
+            <DialogDescription>
+              Your character&apos;s items and currency will be moved to Recovered Loot. This
+              cannot be undone (but the party log will still record everything).
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmLeave(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy === 'leave'}
+              onClick={() => void handleLeave()}
+            >
+              Yes, leave party
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmKick !== null} onOpenChange={(o) => !o && setConfirmKick(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Kick {confirmKick !== null ? confirmKick.displayName : ''}?
+            </DialogTitle>
+            <DialogDescription>
+              Their character&apos;s items and currency will be moved to Recovered Loot. This
+              cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmKick(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy?.startsWith('kick-')}
+              onClick={() => {
+                if (confirmKick !== null) void handleKick(confirmKick);
+              }}
+            >
+              Yes, kick
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function RoleBadge({ role }: { role: 'dm' | 'player' }): ReactElement {
+  const label = role === 'dm' ? 'DM' : 'Player';
+  const styles =
+    role === 'dm'
+      ? 'bg-primary/10 text-primary'
+      : 'bg-secondary text-secondary-foreground';
+  return (
+    <span className={`rounded px-2 py-0.5 text-xs font-medium ${styles}`}>{label}</span>
+  );
+}

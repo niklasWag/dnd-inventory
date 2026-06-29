@@ -1,0 +1,12 @@
+-- R4.1.a — Drop `Party.isSoloShortcut`.
+--
+-- The "solo party" concept is now derived purely from `memberCount === 1`
+-- per OUTLINE §4 amendment 2026-06-24. Every party (solo or multi-member)
+-- shares the same Prisma model going forward; the field was MVP scaffolding
+-- that R4 obsoletes.
+--
+-- Web client schemas (`@app/shared/schemas/party`) and API list schemas
+-- (`partyListItemSchema`) had the field removed in the same R4.1.a slice.
+-- The Zod parse on imported AppState fixtures silently strips the field
+-- (no `.strict()` on the schema), so legacy JSON exports still rehydrate.
+ALTER TABLE "Party" DROP COLUMN "isSoloShortcut";

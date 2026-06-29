@@ -78,14 +78,23 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     // Active memberships only (`leftAt` null). Includes the related
     // Party in one round-trip so we can build the response shape
     // without an N+1.
+    //
+    // R4.1.e — filter out archived parties (`Party.archivedAt IS NOT NULL`)
+    // so the Hub never lists a party that's been sole-member-archived
+    // (the DM keeps their last access; UI filtering hides it from the
+    // Hub but the data is preserved per OUTLINE §8.3).
     const memberships = await prisma.partyMembership.findMany({
-      where: { userId: su.user.id, leftAt: null },
+      where: { userId: su.user.id, leftAt: null, party: { archivedAt: null } },
       include: { party: true },
     });
 
     // Group by partyId so a user with both dm + player rows in a
     // party-of-one collapses to a single response entry with both
     // roles listed.
+    //
+    // R4.1 — `isSoloShortcut` dropped per OUTLINE §4 amendment
+    // (2026-06-24). The Hub UI derives the "solo" badge from
+    // `memberCount === 1` instead.
     const byPartyId = new Map<
       string,
       {
@@ -93,7 +102,6 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
         name: string;
         roles: ('dm' | 'player')[];
         memberCount: number;
-        isSoloShortcut: boolean;
         lastActivityAt: string | null;
       }
     >();
@@ -134,7 +142,6 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
         name: m.party.name,
         roles: [m.role],
         memberCount: uniqueUserIds.size,
-        isSoloShortcut: m.party.isSoloShortcut,
         lastActivityAt: latest?.timestamp.toISOString() ?? null,
       });
     }

@@ -77,14 +77,36 @@ export type HomebrewDefinitionPatch = z.infer<typeof homebrewDefinitionPatchSche
 
 const createCharacterAction = z.object({
   type: z.literal('create-character'),
-  payload: z.object({
-    name: z.string().min(1),
-    species: z.string().min(1),
-    size: creatureSizeSchema,
-    class: z.string().min(1),
-    level: z.number().int().positive(),
-    str: z.number().int().positive(),
-  }),
+  /**
+   * R4.1-followup — two payload shapes share the `create-character`
+   * action:
+   *   - Legacy: full character payload, `dmOnly` absent (or `false`).
+   *     Mints User + Party + dm + player memberships + Character +
+   *     Inventory stash + party-scope stashes + currencies.
+   *   - DM-only: `dmOnly: true` + `partyName`. No character fields.
+   *     Mints User + Party + ONE dm membership + party-scope stashes
+   *     + currencies.
+   *
+   * Modelled as a `z.union` (not `z.discriminatedUnion`) so the
+   * legacy variant can omit `dmOnly` entirely — keeping every M0–R3
+   * dispatch payload-compatible without a migration shim.
+   */
+  payload: z.union([
+    z.object({
+      dmOnly: z.literal(false).optional(),
+      name: z.string().min(1),
+      species: z.string().min(1),
+      size: creatureSizeSchema,
+      class: z.string().min(1),
+      level: z.number().int().positive(),
+      str: z.number().int().positive(),
+      partyName: z.string().min(1).optional(),
+    }),
+    z.object({
+      dmOnly: z.literal(true),
+      partyName: z.string().min(1),
+    }),
+  ]),
 });
 
 const acquireAction = z.object({
@@ -329,6 +351,60 @@ const editCharacterAction = z.object({
   }),
 });
 
+const deleteCharacterAction = z.object({
+  type: z.literal('delete-character'),
+  payload: z.object({
+    characterId: z.string().min(1),
+  }),
+});
+
+/**
+ * R4.1.c — `leave-party`. The actor self-removes from `partyId`.
+ * Payload deliberately empty (no `partyId` in the wire shape) — the
+ * server resolves the party from session + URL (SECURITY §2 "Server is
+ * authoritative; never trust partyId from a request body"). The
+ * reducer reads `state.party.id` directly because R4.1's web client
+ * only ever holds one party in memory at a time.
+ */
+const leavePartyAction = z.object({
+  type: z.literal('leave-party'),
+  payload: z.object({}),
+});
+
+/**
+ * R4.1.d — `kick-player`. DM removes another member from the party.
+ * Wire payload is `{ kickedUserId }`; the partyId is resolved
+ * server-side from session + URL per SECURITY §2. The reducer reads
+ * `state.party.id` directly because R4.1's web client only holds one
+ * party in memory at a time.
+ */
+const kickPlayerAction = z.object({
+  type: z.literal('kick-player'),
+  payload: z.object({
+    kickedUserId: z.string().min(1),
+  }),
+});
+
+/**
+ * R4.1.e — `join-party`. Dispatched server-side after a successful
+ * invite-code redemption. The reducer mints one `role='player'`
+ * `PartyMembership` row (characterId: null) and appends a `join-party`
+ * log entry; the user creates their character via a subsequent
+ * `create-character` action.
+ *
+ * Wire payload deliberately empty — the server resolves the party
+ * from the invite code (route layer) and the user from the session.
+ * In the local reducer it reads `state.user.id` and `state.party.id`.
+ * NB: the client never directly dispatches `join-party`; the server
+ * does on the client's behalf as part of `POST /parties/join`. The
+ * action exists in the union so the log entry round-trips through
+ * the same `applied[]` channel the rest of `/sync/actions` uses.
+ */
+const joinPartyAction = z.object({
+  type: z.literal('join-party'),
+  payload: z.object({}),
+});
+
 export const actionSchema = z.discriminatedUnion('type', [
   createCharacterAction,
   acquireAction,
@@ -356,6 +432,10 @@ export const actionSchema = z.discriminatedUnion('type', [
   rechargeAction,
   identifyAction,
   editCharacterAction,
+  deleteCharacterAction,
+  leavePartyAction,
+  kickPlayerAction,
+  joinPartyAction,
 ]);
 
 export type Action = z.infer<typeof actionSchema>;

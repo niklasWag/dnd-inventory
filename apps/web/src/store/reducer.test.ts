@@ -42,7 +42,6 @@ describe('reducer: create-character (M1)', () => {
     if (s === null) return; // narrow for TS
 
     expect(s.user.displayName).toBe('You');
-    expect(s.party.isSoloShortcut).toBe(true);
     expect(s.party.bankerUserId).toBeNull();
     expect(s.memberships).toHaveLength(2);
     expect(s.memberships.map((m) => m.role).sort()).toEqual(['dm', 'player']);
@@ -162,6 +161,92 @@ describe('reducer: create-character (M1)', () => {
 function localBootstrap(): ReturnType<typeof bootstrap> {
   return bootstrap(validPayload);
 }
+
+// -------------------------------------------------------------------- //
+// R4.1-followup: create-character DM-only branch + partyName override
+// -------------------------------------------------------------------- //
+
+describe('reducer: create-character (R4.1-followup)', () => {
+  it('honors `partyName` override on the legacy (with-character) branch', () => {
+    useStore
+      .getState()
+      .dispatch({
+        type: 'create-character',
+        payload: { ...validPayload, partyName: 'The Misfits' },
+      });
+    const s = useStore.getState().appState!;
+    expect(s.party.name).toBe('The Misfits');
+    // Character + Inventory + 2 memberships still minted.
+    expect(s.characters).toHaveLength(1);
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(1);
+    expect(s.memberships).toHaveLength(2);
+  });
+
+  it('omits character + Inventory + player membership on dmOnly=true', () => {
+    useStore
+      .getState()
+      .dispatch({
+        type: 'create-character',
+        payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      });
+    const s = useStore.getState().appState!;
+    // Party + DM membership only.
+    expect(s.party.name).toBe('DM Sandbox');
+    expect(s.memberships).toHaveLength(1);
+    expect(s.memberships[0]!.role).toBe('dm');
+    expect(s.memberships[0]!.characterId).toBeNull();
+    // No Character row, no Inventory stash, no Inventory currency.
+    expect(s.characters).toHaveLength(0);
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(0);
+    expect(s.stashes.map((st) => st.scope).sort()).toEqual(['party', 'recovered-loot']);
+    expect(s.currencies).toHaveLength(2);
+  });
+
+  it('emits a `create-character` log entry with dmOnly: true on the DM-only branch', () => {
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+    });
+    const log = useStore.getState().log;
+    expect(log).toHaveLength(1);
+    const entry = log[0]!;
+    if (entry.type !== 'create-character') throw new Error('expected create-character');
+    expect(entry.payload.dmOnly).toBe(true);
+    // No character-related fields on the DM-only payload.
+    expect(entry.payload.characterId).toBeUndefined();
+    expect(entry.payload.inventoryStashId).toBeUndefined();
+    expect(entry.payload.name).toBeUndefined();
+  });
+
+  it('persisted state with dmOnly bootstrap round-trips through the shared schema', async () => {
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+    });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+
+  it('rejects dmOnly bootstrap when state is already populated', () => {
+    localBootstrap();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({
+          type: 'create-character',
+          payload: { dmOnly: true, partyName: 'X' },
+        }),
+    ).toThrow(/already exists/);
+  });
+});
 
 describe('reducer: seed-catalog (M2)', () => {
   it('populates the catalog from an empty state and bumps seedVersion', () => {
@@ -5905,5 +5990,782 @@ describe('reducer: identify (R2.3)', () => {
     });
     const entry = useStore.getState().log.slice(logLenBefore)[0]!;
     expect(entry.actorRole).toBe('dm');
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.b: delete-character
+// -------------------------------------------------------------------- //
+
+describe('reducer: delete-character (R4.1.b)', () => {
+  it('drops the character row and clears PartyMembership.characterId on the player row', () => {
+    const { characterId } = localBootstrap();
+    const ownerUserId = useStore.getState().appState!.user.id;
+    expect(useStore.getState().appState!.characters).toHaveLength(1);
+
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(0);
+    // DM membership row survives untouched; player row's characterId is cleared.
+    const dmRow = s.memberships.find((m) => m.role === 'dm');
+    const playerRow = s.memberships.find((m) => m.role === 'player');
+    expect(dmRow).toBeDefined();
+    expect(dmRow!.characterId).toBeNull();
+    expect(playerRow).toBeDefined();
+    expect(playerRow!.userId).toBe(ownerUserId);
+    expect(playerRow!.characterId).toBeNull();
+    expect(playerRow!.leftAt).toBeNull();
+  });
+
+  it('drops the character\'s Inventory + Storage stashes and their CurrencyHolding rows', () => {
+    const { characterId } = localBootstrap();
+    // Provision a second Storage stash so the cascade has to find both.
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+    });
+    const before = useStore.getState().appState!;
+    expect(before.stashes.filter((st) => st.ownerCharacterId === characterId)).toHaveLength(2);
+
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const s = useStore.getState().appState!;
+    // No character-scope stashes survive. Party Stash + Recovered Loot remain.
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(0);
+    expect(s.stashes.map((st) => st.scope).sort()).toEqual(['party', 'recovered-loot']);
+    expect(s.currencies.filter((c) => !s.stashes.some((st) => st.id === c.stashId))).toHaveLength(
+      0,
+    );
+  });
+
+  it('moves all items across owned stashes to Recovered Loot (no auto-stack)', () => {
+    const { characterId, inventoryStashId, recoveredLootStashId, catalog } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    // Provision a Storage stash with items + items in Inventory.
+    dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 2,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: storageStashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const ropeId = useStore.getState().appState!.items.find((i) => i.definitionId === rope.id)!.id;
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.items.find((i) => i.id === torchId)?.ownerId).toBe(recoveredLootStashId);
+    expect(s.items.find((i) => i.id === torchId)?.quantity).toBe(2);
+    expect(s.items.find((i) => i.id === ropeId)?.ownerId).toBe(recoveredLootStashId);
+    expect(s.items.find((i) => i.id === ropeId)?.quantity).toBe(1);
+  });
+
+  it('clears equipped/attuned/containerInstanceId on transferred items', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    // Equip it before deletion so the cascade has to clear the flag.
+    dispatch({ type: 'equip', payload: { itemInstanceId: torchId, characterId } });
+    expect(useStore.getState().appState!.items.find((i) => i.id === torchId)!.equipped).toBe(true);
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const moved = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(moved.equipped).toBe(false);
+    expect(moved.attuned).toBe(false);
+    expect(moved.containerInstanceId).toBeNull();
+  });
+
+  it('aggregates currency across all owned stashes into Recovered Loot with reason character-deleted', () => {
+    const { characterId, inventoryStashId, recoveredLootStashId } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    // Add a Storage stash and fund both.
+    dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: storageStashId,
+        delta: { cp: 12, sp: 0, ep: 0, gp: 3, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const beforeLootGp = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp;
+    const logLenBefore = useStore.getState().log.length;
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const lootCurrency = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!;
+    expect(lootCurrency.gp).toBe(beforeLootGp + 8);
+    expect(lootCurrency.cp).toBe(12);
+
+    // Find the synthetic currency-change in the cascade.
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    const currencyEntry = cascade.find((e) => e.type === 'currency-change');
+    expect(currencyEntry).toBeDefined();
+    if (currencyEntry?.type !== 'currency-change') throw new Error('expected currency-change');
+    expect(currencyEntry.payload.stashId).toBe(recoveredLootStashId);
+    expect(currencyEntry.payload.reason).toBe('character-deleted');
+    expect(currencyEntry.payload.delta.gp).toBe(8);
+    expect(currencyEntry.payload.delta.cp).toBe(12);
+  });
+
+  it('does NOT emit a currency-change when all owned stashes are at zero', () => {
+    const { characterId } = localBootstrap();
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    expect(cascade.find((e) => e.type === 'currency-change')).toBeUndefined();
+  });
+
+  it('emits per-item transfer entries + optional currency-change + terminal delete-character', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 7, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    // 2 transfers + 1 currency-change + 1 delete-character = 4 entries
+    expect(cascade.length).toBe(4);
+    expect(cascade[0]!.type).toBe('transfer');
+    expect(cascade[1]!.type).toBe('transfer');
+    expect(cascade[2]!.type).toBe('currency-change');
+    expect(cascade[3]!.type).toBe('delete-character');
+
+    const last = cascade.at(-1)!;
+    if (last.type !== 'delete-character') throw new Error('expected delete-character');
+    expect(last.payload.characterId).toBe(characterId);
+    expect(last.payload.name).toBe(validPayload.name);
+    expect(last.payload.itemCount).toBe(2);
+    // 7 gp == 700 cp in the GP-equivalent ladder.
+    expect(last.payload.currencyTotalCp).toBe(700);
+  });
+
+  it('rejects unknown characterId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'delete-character', payload: { characterId: 'no-such-id' } }),
+    ).toThrow(/unknown characterId/);
+  });
+
+  it('persisted state round-trips through the shared schema', async () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    // Every emitted log entry round-trips through the discriminated union too.
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.c: leave-party
+// -------------------------------------------------------------------- //
+
+describe('reducer: leave-party (R4.1.c)', () => {
+  /**
+   * Helper: bootstrap and graft a second active member onto the party
+   * so leave-party's sole-member guard doesn't reject. In real life R4.1.e
+   * `POST /parties/join` mints the second membership; here we inject it
+   * directly so the reducer suite stays independent of the server.
+   * `otherRole` lets the test choose whether the other member is a
+   * second player (default) or a DM.
+   */
+  function bootstrapWithSecondMember(otherRole: 'player' | 'dm' = 'player'): {
+    characterId: string;
+    otherUserId: string;
+  } {
+    const base = localBootstrap();
+    const otherUserId = `other-${otherRole}`;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherUserId,
+              partyId: s.appState.party.id,
+              role: otherRole,
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    return { characterId: base.characterId, otherUserId };
+  }
+
+  it('rejects when the actor is the sole member (party-of-one archive path)', () => {
+    localBootstrap();
+    expect(() => useStore.getState().dispatch({ type: 'leave-party', payload: {} })).toThrow(
+      /sole member must use archive flow/,
+    );
+  });
+
+  it('rejects when the actor is the sole DM of a 2+-member party', () => {
+    // Add a second player so the sole-member guard passes; actor stays the only DM.
+    bootstrapWithSecondMember('player');
+    expect(() => useStore.getState().dispatch({ type: 'leave-party', payload: {} })).toThrow(
+      /sole DM must transfer DM role first/,
+    );
+  });
+
+  it('soft-deletes both dm + player rows for the leaver in one dispatch', () => {
+    // Other member is a DM, so the actor leaving is fine.
+    bootstrapWithSecondMember('dm');
+    const beforeUserId = useStore.getState().appState!.user.id;
+    const beforeRows = useStore
+      .getState()
+      .appState!.memberships.filter((m) => m.userId === beforeUserId);
+    expect(beforeRows).toHaveLength(2);
+    expect(beforeRows.every((m) => m.leftAt === null)).toBe(true);
+
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const after = useStore.getState().appState!;
+    const actorRows = after.memberships.filter((m) => m.userId === beforeUserId);
+    expect(actorRows).toHaveLength(2);
+    expect(actorRows.every((m) => m.leftAt !== null)).toBe(true);
+    // Each leftAt is a parseable ISO datetime.
+    for (const row of actorRows) {
+      expect(typeof row.leftAt).toBe('string');
+      expect(Number.isFinite(Date.parse(row.leftAt!))).toBe(true);
+    }
+    // The other member's DM row is untouched.
+    const others = after.memberships.filter((m) => m.userId !== beforeUserId);
+    expect(others.every((m) => m.leftAt === null)).toBe(true);
+  });
+
+  it('runs the character cascade when the leaver had a player membership with a character', () => {
+    const { characterId } = bootstrapWithSecondMember('dm');
+    const inventoryStashId = useStore.getState().appState!.characters[0]!.inventoryStashId;
+    const recoveredLootStashId = useStore.getState().appState!.party.recoveredLootStashId;
+    const catalog = useStore.getState().appState!.catalog;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const { dispatch } = useStore.getState();
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 2,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 3, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
+
+    dispatch({ type: 'leave-party', payload: {} });
+
+    const s = useStore.getState().appState!;
+    // Character + their stashes are gone.
+    expect(s.characters.find((c) => c.id === characterId)).toBeUndefined();
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(0);
+    // Items moved to Recovered Loot.
+    expect(s.items.find((i) => i.id === torchId)?.ownerId).toBe(recoveredLootStashId);
+    // Currency rolled into Recovered Loot.
+    expect(
+      s.currencies.find((c) => c.stashId === recoveredLootStashId)?.gp,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it('emits cascade + terminal leave-party slice (with characterId when present)', () => {
+    const { characterId } = bootstrapWithSecondMember('dm');
+    const inventoryStashId = useStore.getState().appState!.characters[0]!.inventoryStashId;
+    const catalog = useStore.getState().appState!.catalog;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    const types = cascade.map((e) => e.type);
+    // transfer (×1 for the torch) + leave-party (no currency-change since balance is zero)
+    expect(types).toEqual(['transfer', 'leave-party']);
+
+    const terminal = cascade.at(-1)!;
+    if (terminal.type !== 'leave-party') throw new Error('expected leave-party');
+    expect(terminal.payload.partyId).toBe(useStore.getState().appState!.party.id);
+    expect(terminal.payload.characterId).toBe(characterId);
+  });
+
+  it("emits a leave-party slice without characterId when the leaver has no player row", () => {
+    // Promote actor to dm-only by deleting their character first, then add a
+    // second member so the sole-DM guard doesn't reject. Order matters: drop
+    // the player character, then graft the second DM, then leave.
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    // After delete-character, actor's player row has characterId: null (alive).
+    // Add a second DM so the sole-DM check passes when actor leaves.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'other-dm',
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    // Only the terminal leave-party slice — no character to cascade.
+    expect(cascade.length).toBe(1);
+    const terminal = cascade[0]!;
+    if (terminal.type !== 'leave-party') throw new Error('expected leave-party');
+    expect(terminal.payload.partyId).toBe(useStore.getState().appState!.party.id);
+    // characterId is undefined when the leaver had no player row OR a null
+    // characterId on their player row.
+    expect(terminal.payload.characterId).toBeUndefined();
+  });
+
+  it('persisted state round-trips through the shared schema', async () => {
+    bootstrapWithSecondMember('dm');
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.d: kick-player
+// -------------------------------------------------------------------- //
+
+describe('reducer: kick-player (R4.1.d)', () => {
+  /**
+   * Helper: bootstrap, then graft a second active player member (with
+   * their own character + inventory stash + currency holding) so kick
+   * has a real target with a cascade-ready footprint. The second player
+   * is `kicked-u`. Returns the kicked user id + a couple of useful ids.
+   */
+  function bootstrapWithKickTarget(): {
+    kickedUserId: string;
+    kickedCharacterId: string;
+    kickedInventoryStashId: string;
+    recoveredLootStashId: string;
+  } {
+    localBootstrap();
+    const kickedUserId = 'kicked-u';
+    const kickedCharacterId = 'kicked-char';
+    const kickedInventoryStashId = 'kicked-inv';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: kickedUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: kickedCharacterId,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          characters: [
+            ...s.appState.characters,
+            {
+              id: kickedCharacterId,
+              partyId: s.appState.party.id,
+              ownerUserId: kickedUserId,
+              name: 'Kicked Hero',
+              species: 'Human',
+              size: 'medium',
+              class: 'Rogue',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: kickedInventoryStashId,
+            },
+          ],
+          stashes: [
+            ...s.appState.stashes,
+            {
+              id: kickedInventoryStashId,
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: kickedCharacterId,
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...s.appState.currencies,
+            {
+              id: 'kicked-cur',
+              stashId: kickedInventoryStashId,
+              cp: 0,
+              sp: 0,
+              ep: 0,
+              gp: 0,
+              pp: 0,
+            },
+          ],
+        },
+      };
+    });
+    return {
+      kickedUserId,
+      kickedCharacterId,
+      kickedInventoryStashId,
+      recoveredLootStashId: useStore.getState().appState!.party.recoveredLootStashId,
+    };
+  }
+
+  it('rejects when actor tries to kick themselves', () => {
+    bootstrapWithKickTarget();
+    const actorUserId = useStore.getState().appState!.user.id;
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'kick-player', payload: { kickedUserId: actorUserId } }),
+    ).toThrow(/cannot kick themselves/);
+  });
+
+  it('rejects when target is not an active member of this party', () => {
+    bootstrapWithKickTarget();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'kick-player', payload: { kickedUserId: 'no-such-user' } }),
+    ).toThrow(/not an active member/);
+  });
+
+  it('rejects when target also has a DM membership row', () => {
+    bootstrapWithKickTarget();
+    // Promote `kicked-u` to also be a DM.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'kicked-u',
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'kick-player', payload: { kickedUserId: 'kicked-u' } }),
+    ).toThrow(/cannot kick a DM/);
+  });
+
+  it('soft-deletes the kicked user\'s membership and drops their character', () => {
+    const { kickedUserId, kickedCharacterId } = bootstrapWithKickTarget();
+
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+
+    const s = useStore.getState().appState!;
+    // Membership soft-deleted.
+    const kickedRows = s.memberships.filter((m) => m.userId === kickedUserId);
+    expect(kickedRows).toHaveLength(1);
+    expect(kickedRows[0]!.leftAt).not.toBeNull();
+    // Character row dropped.
+    expect(s.characters.find((c) => c.id === kickedCharacterId)).toBeUndefined();
+    // Actor's rows untouched.
+    const actorRows = s.memberships.filter((m) => m.userId === s.user.id);
+    expect(actorRows.every((m) => m.leftAt === null)).toBe(true);
+  });
+
+  it('cascades the kicked character\'s items + currency to Recovered Loot', () => {
+    const { kickedUserId, kickedInventoryStashId, recoveredLootStashId } =
+      bootstrapWithKickTarget();
+    // Acquire an item directly into the kicked player's inventory + fund their stash.
+    const catalog = useStore.getState().appState!.catalog;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      const itemId = 'kicked-item-torch';
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          items: [
+            ...s.appState.items,
+            {
+              id: itemId,
+              definitionId: torch.id,
+              ownerType: 'stash',
+              ownerId: kickedInventoryStashId,
+              containerInstanceId: null,
+              quantity: 4,
+              equipped: false,
+              attuned: false,
+              identified: true,
+              currentCharges: null,
+            },
+          ],
+          currencies: s.appState.currencies.map((c) =>
+            c.stashId === kickedInventoryStashId ? { ...c, gp: 12 } : c,
+          ),
+        },
+      };
+    });
+    const beforeLootGp = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp;
+
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+
+    const s = useStore.getState().appState!;
+    // Item moved to Recovered Loot with quantity preserved.
+    const moved = s.items.find((i) => i.id === 'kicked-item-torch')!;
+    expect(moved.ownerId).toBe(recoveredLootStashId);
+    expect(moved.quantity).toBe(4);
+    // Currency rolled into Recovered Loot.
+    expect(
+      s.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp - beforeLootGp,
+    ).toBe(12);
+  });
+
+  it('emits cascade + terminal kick-player slice with actorRole=dm', () => {
+    const { kickedUserId } = bootstrapWithKickTarget();
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    const terminal = cascade.at(-1)!;
+    if (terminal.type !== 'kick-player') throw new Error('expected kick-player');
+    expect(terminal.payload.kickedUserId).toBe(kickedUserId);
+    expect(terminal.actorRole).toBe('dm');
+  });
+
+  it('persisted state round-trips through the shared schema', async () => {
+    const { kickedUserId } = bootstrapWithKickTarget();
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.e: join-party
+// -------------------------------------------------------------------- //
+
+describe('reducer: join-party (R4.1.e)', () => {
+  /**
+   * The reducer-side `join-party` action is only ever dispatched in
+   * server-mode-via-the-`/parties/join`-route pipeline; in local mode
+   * it can be exercised directly. The local test helper grafts a
+   * fresh AppState whose user.id matches a synthetic "new joiner" so
+   * the resulting membership row reflects an honest add.
+   */
+  it("appends a new player membership row when the actor isn't yet a member", () => {
+    localBootstrap();
+    // Wipe the local memberships so the actor (state.user.id) is not yet
+    // a member — mimicking the "joining a party I'm not in" scenario.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter((m) => m.userId !== s.appState!.user.id),
+        },
+      };
+    });
+    const before = useStore.getState().appState!.memberships.length;
+
+    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+
+    const after = useStore.getState().appState!;
+    expect(after.memberships.length).toBe(before + 1);
+    const newRow = after.memberships.find(
+      (m) => m.userId === after.user.id && m.role === 'player',
+    );
+    expect(newRow).toBeDefined();
+    expect(newRow!.characterId).toBeNull();
+    expect(newRow!.leftAt).toBeNull();
+  });
+
+  it('emits one terminal join-party log slice with the party id', () => {
+    localBootstrap();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter((m) => m.userId !== s.appState!.user.id),
+        },
+      };
+    });
+    const logLenBefore = useStore.getState().log.length;
+    const partyId = useStore.getState().appState!.party.id;
+
+    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    expect(cascade.length).toBe(1);
+    const terminal = cascade[0]!;
+    if (terminal.type !== 'join-party') throw new Error('expected join-party');
+    expect(terminal.payload.partyId).toBe(partyId);
+  });
+
+  it('rejects when the actor is already an active player member', () => {
+    localBootstrap();
+    expect(() => useStore.getState().dispatch({ type: 'join-party', payload: {} })).toThrow(
+      /already has an active player membership/,
+    );
   });
 });
