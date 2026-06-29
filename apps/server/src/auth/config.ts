@@ -35,9 +35,19 @@ export interface BuildAuthConfigOptions {
  * imports it directly so the dev/prod switch can't drift between the
  * cookie SET (by Auth.js via this config) and the cookie READ (by
  * `getSession`).
+ *
+ * `SESSION_COOKIE_INSECURE=true` opts out of the `__Host-` + `Secure`
+ * pair for self-hosted HTTP-only deployments (e.g. the local docker
+ * compose stack served by Caddy on `http://localhost:8080`, where the
+ * browser refuses to store a `Secure` cookie). Production HTTPS
+ * deployments must leave the default `false`.
  */
+export function useSecureCookies(env: Env): boolean {
+  return env.NODE_ENV === 'production' && !env.SESSION_COOKIE_INSECURE;
+}
+
 export function sessionCookieName(env: Env): string {
-  return env.NODE_ENV === 'production' ? '__Host-auth-session-token' : 'auth-session-token';
+  return useSecureCookies(env) ? '__Host-auth-session-token' : 'auth-session-token';
 }
 
 function sessionCookieConfig(env: Env) {
@@ -50,7 +60,7 @@ function sessionCookieConfig(env: Env) {
       // entire point of the OAuth flow). 'strict' would break the flow.
       sameSite: 'lax' as const,
       path: '/',
-      secure: env.NODE_ENV === 'production',
+      secure: useSecureCookies(env),
     },
   };
 }

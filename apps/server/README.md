@@ -22,10 +22,11 @@ Fastify + Postgres + Prisma 7 server. R3.1 ships the scaffold (no auth, no sync)
 | `LOG_LEVEL`             | Pino level (`fatal` … `trace`, or `silent`).                                                                                                                                                 | `info`                                      |
 | `NODE_ENV`              | `development` / `test` / `production`.                                                                                                                                                       | `development`                               |
 | `AUTH_SECRET`           | **R3.2** Auth.js cookie/session signing key. 32+ chars. Rotating it invalidates all existing sessions. Generate with `openssl rand -base64 32`. **Required.**                                | _none_                                      |
-| `DISCORD_CLIENT_ID`     | **R3.2** Discord application client ID. Leave blank in dev/test to disable the OAuth routes (they return 503). Required at boot when `NODE_ENV=production`.                                  | _none_                                      |
+| `SESSION_COOKIE_INSECURE` | **R3.5** Drop the `__Host-` prefix + `Secure` flag from the session cookie even when `NODE_ENV=production`. Set to `true` ONLY for self-hosted HTTP-only deployments (docker-compose proxy profile on `http://localhost:8080`); real HTTPS deployments must leave it `false`. See `docs/SECURITY.md` §1.1. | `false`                                     |
+| `DISCORD_CLIENT_ID`     | **R3.2** Discord application client ID. Leave blank (or unset) to disable the OAuth routes (they return 503) and hide the Login button. Missing in production logs a startup warning but does NOT crash. Same rule for empty strings (docker-compose `${VAR:-}` substitution). | _none_                                      |
 | `DISCORD_CLIENT_SECRET` | **R3.2** Discord application client secret. Same rules as `DISCORD_CLIENT_ID`.                                                                                                               | _none_                                      |
-| `DISCORD_REDIRECT_URI`  | **R3.2** Full callback URL registered with Discord. Must match the registration EXACTLY (including trailing slash).                                                                          | _none_                                      |
-| `SMTP_HOST`             | **R3.3** SMTP submission host (e.g. `smtp.postmarkapp.com`, `email-smtp.us-east-1.amazonaws.com`, `localhost` for Mailpit). Leave blank to disable `/auth/email/*` routes (they return 503). | _none_                                      |
+| `DISCORD_REDIRECT_URI`  | **R3.2** Full callback URL registered with Discord. Must match the registration EXACTLY (including trailing slash). Same rules as `DISCORD_CLIENT_ID`.                                       | _none_                                      |
+| `SMTP_HOST`             | **R3.3** SMTP submission host (e.g. `smtp.postmarkapp.com`, `email-smtp.us-east-1.amazonaws.com`, `localhost` for Mailpit). Leave blank to disable `/auth/email/*` routes (they return 503) and hide the Login button. Missing in production logs a startup warning but does NOT crash. | _none_                                      |
 | `SMTP_PORT`             | **R3.3** SMTP submission port. `587` STARTTLS, `465` implicit-TLS, `1025` for Mailpit / Mailhog.                                                                                             | _none_                                      |
 | `SMTP_USER`             | **R3.3** SMTP auth username. Postmark / SES / Mailgun all use their API-key forms here.                                                                                                      | _none_                                      |
 | `SMTP_PASS`             | **R3.3** SMTP auth password / API-key secret. Required when `SMTP_USER` is set.                                                                                                              | _none_                                      |
@@ -100,17 +101,17 @@ The Prisma schema (`prisma/schema.prisma`) mirrors the Zod schemas in `packages/
 
 Discord OAuth2 + PKCE flow with database-backed sessions via `@auth/core` + `@auth/prisma-adapter`. See `docs/SECURITY.md` §1.1 for the threat model.
 
-- **Boot-time graceful degradation.** If `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` are unset, the `/auth/discord/*` routes return `503 {"error": "discord_auth_disabled"}` instead of crashing. `NODE_ENV=production` overrides this and fails fast at boot.
+- **Boot-time graceful degradation.** If any of `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` is unset OR set to the empty string, the `/auth/discord/*` routes return `503 {"error": "discord_auth_disabled"}` instead of crashing. In production (`NODE_ENV=production`) the server logs a startup warning listing the missing vars but boots successfully — email-only deployments are first-class.
 - **No Discord token persistence.** The `@auth/prisma-adapter` is wrapped in `src/auth/adapter-overrides.ts` to write `NULL` for `access_token` / `refresh_token` / `id_token` / `expires_at` in the `Account` row (SECURITY §1.1: "Discord tokens are not persisted in the DB").
 - **Scope: `identify` only.** Discord emails (and all other PII beyond username + avatar) are never requested. Email comes from the R3.3 OTP flow.
-- **Cookie shape.** `__Host-auth-session-token` in production (HTTPS-pinned by browser), `auth-session-token` in dev. Always `HttpOnly`, `SameSite=lax`, `Path=/`. `Secure` is auto-set in production.
+- **Cookie shape.** `__Host-auth-session-token` in production (HTTPS-pinned by browser), `auth-session-token` in dev. Always `HttpOnly`, `SameSite=lax`, `Path=/`. `Secure` is auto-set in production. Setting `SESSION_COOKIE_INSECURE=true` drops the `__Host-` prefix AND `Secure` flag even in production — required for HTTP-only self-hosted stacks (docker-compose proxy profile); real HTTPS deployments must leave it off.
 - **Sliding 30-day expiry.** Sessions refresh their `expires` timestamp once per day of activity, matching SECURITY §1.1.
 
 ## Email OTP (R3.3)
 
 8-digit one-time-code email login. Used both as the sole login method for users with no Discord account AND as a backup credential a Discord user can add later. See `docs/SECURITY.md` §1.2 for the threat model.
 
-- **Boot-time graceful degradation.** Same pattern as Discord: when any of `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` is unset, the `/auth/email/*` routes return `503 {"error": "email_auth_disabled"}`. `NODE_ENV=production` overrides and fails at boot.
+- **Boot-time graceful degradation.** Same pattern as Discord: when any of `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` is unset OR set to the empty string, the `/auth/email/*` routes return `503 {"error": "email_auth_disabled"}`. In production the server logs a startup warning listing the missing vars but boots successfully.
 - **Custom flow, not Auth.js Email provider.** R3.3 implements `/auth/email/request-otp` + `/auth/email/verify-otp` directly so the SECURITY §1.2 "OTP submitted via POST body only, never in a query string" mandate is mechanically enforced. The session row is created via the same `createSessionForUser` helper the R3.2 Discord callback uses.
 - **5-attempt lockout.** `EmailAuthAttempt` table tracks `(email, ip)` pairs. After 5 failed verify attempts the code is deleted AND a 15-minute lockout is imposed across both axes. Per SECURITY §1.2.
 - **Constant-time `/auth/email/request-otp`.** Returns `200 { status: 'sent' }` regardless of whether the email is registered. A synthetic 150–350ms pad runs in parallel with the SMTP send to keep registered/unregistered timing distributions roughly overlapping. SECURITY §1.2: no user enumeration.
@@ -199,6 +200,16 @@ cd snapshots/<partyId> && sha256sum -c <timestamp>.json.sha256
 `GET /sync/export?partyId=<id>` returns the same `exportEnvelope` shape the snapshot writer produces, gated by the same auth + display-name + party-membership checks as `/sync/state`. Used by the web client (R3.5) for user-driven JSON exports without round-tripping through Dexie.
 
 ## R3.5 — additional surfaces
+
+### `GET /auth/methods`
+
+Unauthenticated probe so the web Login screen can decide which sign-in buttons to render. Mirrors the `isDiscordAuthEnabled` / `isEmailAuthEnabled` sentinels:
+
+```json
+{ "discord": true, "email": false }
+```
+
+Always 200; the same disabled state already surfaces as `503` from each provider's routes, so this endpoint reveals no additional information — it just lets the client know up front rather than letting users click into a 503.
 
 ### `GET /sync/parties`
 

@@ -33,11 +33,22 @@ const envSchema = z.object({
   // obviously-broken values.
   AUTH_SECRET: z.string().min(32),
 
-  // Discord OAuth credentials. Optional at parse time so dev/test/CI can
-  // boot without a real Discord app — the /auth/discord/* routes return
-  // 503 with `{error: 'discord_auth_disabled'}` when missing (SECURITY
-  // §1.2 SMTP-disabled pattern). Production booting without these is
-  // rejected by the post-parse check at the bottom of this file.
+  // Opt-in escape hatch for self-hosted deployments that serve the app
+  // over plain http://localhost (e.g. the docker-compose `proxy` profile
+  // without a TLS terminator). When true, the session cookie name is
+  // NOT `__Host-` prefixed and the `Secure` flag is dropped, even when
+  // NODE_ENV=production. Without this, browsers silently refuse to
+  // store the cookie on plain HTTP and the user appears to be logged
+  // out on every navigation. Defaults to false so a misconfigured prod
+  // deploy doesn't silently weaken its cookie posture.
+  SESSION_COOKIE_INSECURE: z.coerce.boolean().default(false),
+
+  // Discord OAuth credentials. Optional in every env — the /auth/discord/*
+  // routes return 503 with `{error: 'discord_auth_disabled'}` when any of
+  // the triple is missing, and the web Login screen hides the button via
+  // the `GET /auth/methods` probe (R3.5). Production booting without
+  // these logs a startup warning (see the bottom of this file) but does
+  // not crash, allowing email-only deployments.
   DISCORD_CLIENT_ID: z.string().min(1).optional(),
   DISCORD_CLIENT_SECRET: z.string().min(1).optional(),
   DISCORD_REDIRECT_URI: z.url().optional(),
@@ -48,9 +59,9 @@ const envSchema = z.object({
   // must be set together — the `isEmailAuthEnabled(env)` sentinel in
   // `src/auth/config.ts` checks all of them, and the /auth/email/* routes
   // return 503 `{error: 'email_auth_disabled'}` when any is missing.
-  // SECURITY §1.2 explicitly requires the misconfig-disables-the-feature
-  // pattern so users don't sit waiting for an email that will never arrive.
-  // Production booting without these is rejected by the post-parse check.
+  // SECURITY §1.2 codifies the misconfig-disables-the-feature pattern so
+  // users don't sit waiting for an email that will never arrive. A startup
+  // warning logs the disabled state in production.
   SMTP_HOST: z.string().min(1).optional(),
   SMTP_PORT: z.coerce.number().int().positive().optional(),
   SMTP_USER: z.string().min(1).optional(),
@@ -80,39 +91,82 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-export function loadEnv(): Env {
-  const env = envSchema.parse(process.env);
+/**
+ * Env vars that may legitimately be absent — for which an empty string
+ * should be treated the same as "not set". docker-compose substitutes
+ * `${VAR:-}` to an empty string when the .env file omits the key, which
+ * Zod's `.optional()` does NOT accept (optional means "may be missing",
+ * not "may be empty"). Strip empty strings to `undefined` before parsing
+ * so a stack like `DISCORD_CLIENT_ID=` (set but empty in the container
+ * env) is equivalent to the var not appearing at all.
+ */
+const OPTIONAL_KEYS = [
+  'DISCORD_CLIENT_ID',
+  'DISCORD_CLIENT_SECRET',
+  'DISCORD_REDIRECT_URI',
+  'SMTP_HOST',
+  'SMTP_PORT',
+  'SMTP_USER',
+  'SMTP_PASS',
+  'SMTP_FROM',
+] as const;
 
-  // R3.2 — production-only fail-fast on missing Discord creds. In dev/test
-  // the routes self-disable; in production we want the operator to know
-  // immediately that the deployment cannot accept logins.
+export function loadEnv(): Env {
+  // Snapshot process.env into a mutable object so we can blank out empty
+  // strings on optional keys without touching the real process env.
+  const raw: Record<string, string | undefined> = { ...process.env };
+  for (const key of OPTIONAL_KEYS) {
+    if (raw[key] === '') raw[key] = undefined;
+  }
+  const env = envSchema.parse(raw);
+
+  // R3.2 / R3.3 — log a clear startup warning when production is booting
+  // with an incomplete Discord triple or SMTP quintuple. The routes
+  // self-disable (503 `discord_auth_disabled` / `email_auth_disabled`)
+  // and the web Login screen hides the corresponding buttons via the
+  // `GET /auth/methods` probe (R3.5), so a partial config is a valid
+  // deployment shape — but the operator must see at boot that the
+  // affected login method is OFF.
+  //
+  // SECURITY §1.2 codifies this for SMTP ("if SMTP env vars are absent
+  // or incomplete, email auth is disabled entirely"); the Discord
+  // branch is by analogy.
+  //
+  // We use `console.warn` rather than the Fastify logger because env
+  // loading runs before the server (and its logger) is constructed.
   if (env.NODE_ENV === 'production') {
-    const missing: string[] = [];
-    if (!env.DISCORD_CLIENT_ID) missing.push('DISCORD_CLIENT_ID');
-    if (!env.DISCORD_CLIENT_SECRET) missing.push('DISCORD_CLIENT_SECRET');
-    if (!env.DISCORD_REDIRECT_URI) missing.push('DISCORD_REDIRECT_URI');
-    if (missing.length > 0) {
-      throw new Error(
-        `R3.2 — these env vars are required when NODE_ENV=production: ${missing.join(', ')}. ` +
-          `Set them in the deployment environment or revert NODE_ENV.`,
+    const missingDiscord = [
+      env.DISCORD_CLIENT_ID ? null : 'DISCORD_CLIENT_ID',
+      env.DISCORD_CLIENT_SECRET ? null : 'DISCORD_CLIENT_SECRET',
+      env.DISCORD_REDIRECT_URI ? null : 'DISCORD_REDIRECT_URI',
+    ].filter((s): s is string => s !== null);
+    const missingSmtp = [
+      env.SMTP_HOST ? null : 'SMTP_HOST',
+      env.SMTP_PORT ? null : 'SMTP_PORT',
+      env.SMTP_USER ? null : 'SMTP_USER',
+      env.SMTP_PASS ? null : 'SMTP_PASS',
+      env.SMTP_FROM ? null : 'SMTP_FROM',
+    ].filter((s): s is string => s !== null);
+
+    if (missingDiscord.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[env] Discord OAuth is DISABLED: missing ${missingDiscord.join(', ')}. ` +
+          `The /auth/discord/* routes will return 503 and the web Login button is hidden.`,
       );
     }
-  }
-
-  // R3.3 — production-only fail-fast on missing SMTP creds. Same shape as
-  // the Discord block above; mirrors SECURITY §1.2's hard-fail-on-SMTP-
-  // misconfig stance so silent email-delivery failures cannot ship.
-  if (env.NODE_ENV === 'production') {
-    const missingSmtp: string[] = [];
-    if (!env.SMTP_HOST) missingSmtp.push('SMTP_HOST');
-    if (!env.SMTP_PORT) missingSmtp.push('SMTP_PORT');
-    if (!env.SMTP_USER) missingSmtp.push('SMTP_USER');
-    if (!env.SMTP_PASS) missingSmtp.push('SMTP_PASS');
-    if (!env.SMTP_FROM) missingSmtp.push('SMTP_FROM');
     if (missingSmtp.length > 0) {
-      throw new Error(
-        `R3.3 — these env vars are required when NODE_ENV=production: ${missingSmtp.join(', ')}. ` +
-          `Set them in the deployment environment or revert NODE_ENV.`,
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[env] Email OTP is DISABLED: missing ${missingSmtp.join(', ')}. ` +
+          `The /auth/email/* routes will return 503 and the web Login button is hidden.`,
+      );
+    }
+    if (missingDiscord.length > 0 && missingSmtp.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[env] NO sign-in methods are configured. Users cannot log in until ` +
+          `Discord OAuth or SMTP env vars are provided.`,
       );
     }
   }

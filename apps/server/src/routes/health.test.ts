@@ -23,6 +23,7 @@ const env = {
   // routes return 503 in this suite — R3.2 routes have their own test
   // file with msw fixtures.
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
+  SESSION_COOKIE_INSECURE: false,
   // R3.4.b — snapshots off in tests; the cron job is a singleton on the
   // Fastify instance and tests build many instances.
   SNAPSHOTS_ENABLED: false,

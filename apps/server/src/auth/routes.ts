@@ -37,6 +37,7 @@ import {
   isDiscordAuthEnabled,
   isEmailAuthEnabled,
   sessionCookieName,
+  useSecureCookies,
 } from './config.js';
 import { handleLoginLinkBranch, registerDiscordLinkRoutes } from './discord-link.js';
 import {
@@ -289,10 +290,56 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
 
   // ---------------- Always-on routes ----------------
 
+  /**
+   * R3.5 — unauthenticated probe so the web Login screen can decide which
+   * sign-in buttons to render. Mirrors the `isDiscordAuthEnabled` /
+   * `isEmailAuthEnabled` sentinels — the same disabled state already
+   * surfaces as 503 from each provider's routes, so this endpoint reveals
+   * no additional information (the Discord button would otherwise just
+   * lead the user to a 503).
+   */
+  app.get('/auth/methods', async () => {
+    return {
+      discord: isDiscordAuthEnabled(env),
+      email: isEmailAuthEnabled(env),
+    };
+  });
+
   // Sign out works whether Discord is configured or not — an authenticated
   // user with a valid cookie always deserves a clean exit.
+  //
+  // Implemented as a direct teardown rather than a proxy to Auth.js's
+  // signout action: Auth.js v5's signout is POST-only AND CSRF-protected
+  // (requires a csrfToken in a form-encoded body that matches the
+  // `__Host-authjs.csrf-token` cookie). Our JSON client doesn't carry
+  // that, and proxying produces a 400 / "Unexpected end of JSON input"
+  // when Auth.js fails to parse the missing form body.
+  //
+  // This is symmetric with the email-OTP path, which creates sessions
+  // directly via `createSessionForUser` instead of going through Auth.js.
   app.post('/auth/signout', async (req, reply) => {
-    return delegateToAuthJs(req, reply, '/auth/signout');
+    const cookieName = sessionCookieName(env);
+    const cookies = (req as unknown as { cookies?: Record<string, string | undefined> }).cookies;
+    const token = cookies?.[cookieName];
+    if (token) {
+      try {
+        await prisma.session.delete({ where: { sessionToken: token } });
+      } catch (err) {
+        // P2025 = row already gone (concurrent signout, or cookie points
+        // at a stale token). Either way the user ends up logged out,
+        // which is the desired outcome — swallow it. Any other error
+        // is a real DB failure and must surface.
+        if (
+          typeof err !== 'object' ||
+          err === null ||
+          (err as { code?: unknown }).code !== 'P2025'
+        ) {
+          throw err;
+        }
+      }
+    }
+    reply.clearCookie(cookieName, { path: '/' });
+    return reply.code(200).send({});
   });
 
   app.get('/auth/session', async (req, reply) => {
@@ -488,7 +535,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
       httpOnly: true,
       sameSite: 'lax',
       path: '/',
-      secure: env.NODE_ENV === 'production',
+      secure: useSecureCookies(env),
       expires,
     });
 

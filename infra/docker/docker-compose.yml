@@ -8,6 +8,7 @@
 # with a host-installed Postgres on the default 5432. Inside the compose
 # network it stays on 5432.
 
+name: dnd-inv
 services:
   postgres:
     image: postgres:18-alpine
@@ -60,16 +61,25 @@ services:
       # Defaults to the split-port URL for backwards-compat.
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:${WEB_PORT:-5173}}
       LOG_LEVEL: info
-      # R3.2 — Auth.js. AUTH_SECRET is required at all times; DISCORD_*
-      # vars are required at boot when NODE_ENV=production (see
-      # src/config/env.ts). The compose .env file forwards them.
+      # R3.2 / R3.5 — Auth.js. AUTH_SECRET is required at all times.
+      # DISCORD_* are OPTIONAL: missing values disable the /auth/discord/*
+      # routes (they return 503) and hide the Discord button on the web
+      # Login screen. The server logs a startup warning. The compose .env
+      # file forwards them — leave them blank to run email-only.
       AUTH_SECRET: ${AUTH_SECRET}
+      # R3.5 — Cookie posture. Leave blank/false for HTTPS deployments;
+      # set true ONLY for self-hosted HTTP-only stacks (the proxy profile
+      # on http://localhost:8080 falls into this bucket). Without this,
+      # the browser drops the `Secure __Host-` session cookie on plain
+      # HTTP and users appear logged out on every navigation.
+      SESSION_COOKIE_INSECURE: ${SESSION_COOKIE_INSECURE:-}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
-      # R3.3 — email OTP via SMTP. All five required at boot when
-      # NODE_ENV=production. Empty values disable the /auth/email/*
-      # routes (they return 503). See README §3 for SMTP relay options.
+      # R3.3 / R3.5 — email OTP via SMTP. All five are OPTIONAL: missing
+      # values disable the /auth/email/* routes (they return 503) and
+      # hide the Email button on the web Login screen. The server logs
+      # a startup warning. See README §3 for SMTP relay options.
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}
       SMTP_USER: ${SMTP_USER:-}
@@ -120,6 +130,30 @@ services:
         condition: service_started
     ports:
       - '${WEB_PORT:-5173}:5173'
+
+  # R3.3 — Optional Mailpit SMTP sink for local OTP testing.
+  #
+  # Only runs under `docker compose --profile mail up` (or together with
+  # the proxy profile: `--profile proxy --profile mail`). Captures every
+  # outbound email from the server's OTP flow and exposes them at
+  # http://localhost:${MAILPIT_UI_PORT:-8025}. No real mail leaves the
+  # box — perfect for local dev.
+  #
+  # When this service is up, set in .env:
+  #   SMTP_HOST=mailpit
+  #   SMTP_PORT=1025
+  # (SMTP_USER/PASS stay blank — mailpit has no auth by default.)
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    profiles:
+      - mail
+    ports:
+      # SMTP submission (server → mailpit) — also reachable inside the
+      # compose network as `mailpit:1025`.
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+      # Web UI to browse captured messages.
+      - '${MAILPIT_UI_PORT:-8025}:8025'
 
   # R3.5 — Optional same-origin reverse proxy for local desktop testing.
   #

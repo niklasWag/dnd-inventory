@@ -41,6 +41,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { PrismaClient } from '../../prisma/generated/prisma/client.js';
 import type { Env } from '../config/env.js';
 
+import { useSecureCookies } from './config.js';
+
 /**
  * Lifetime of the link-flow handoff row. 10 minutes is long enough for a
  * user to complete the Discord consent screen on a slow phone but short
@@ -225,7 +227,7 @@ export function registerDiscordLinkRoutes(
       sameSite: 'lax',
       // Scope to the callback path so it never leaks to other routes.
       path: '/auth/callback/discord/link',
-      secure: env.NODE_ENV === 'production',
+      secure: useSecureCookies(env),
       maxAge: Math.floor(LINK_EXPIRY_MS / 1000),
     });
 

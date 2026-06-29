@@ -6,7 +6,7 @@ import type { Account, Profile } from '@auth/core/types';
 import type { Env } from '../config/env.js';
 import type { PrismaClient } from '../../prisma/generated/prisma/client.js';
 
-import { buildAuthConfig, isDiscordAuthEnabled, isEmailAuthEnabled } from './config.js';
+import { buildAuthConfig, isDiscordAuthEnabled, isEmailAuthEnabled, useSecureCookies } from './config.js';
 import { makeAdapter } from './adapter-overrides.js';
 
 /**
@@ -23,6 +23,7 @@ const baseEnv: Env = {
   DATABASE_URL: 'postgresql://stub',
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
+  SESSION_COOKIE_INSECURE: false,
   SNAPSHOTS_ENABLED: false,
   SNAPSHOT_DIR: './snapshots',
   SNAPSHOT_RETENTION_DAYS: 30,
@@ -81,6 +82,29 @@ describe('isEmailAuthEnabled (R3.3)', () => {
 
   it('returns true when all five SMTP_* vars are set', () => {
     expect(isEmailAuthEnabled({ ...baseEnv, ...allFive })).toBe(true);
+  });
+});
+
+describe('useSecureCookies / sessionCookieName', () => {
+  it('falls back to the non-prefixed cookie name + secure=false in non-production', () => {
+    expect(useSecureCookies({ ...baseEnv, NODE_ENV: 'development' })).toBe(false);
+  });
+
+  it('uses Secure + __Host- in production by default', () => {
+    expect(useSecureCookies({ ...baseEnv, NODE_ENV: 'production' })).toBe(true);
+  });
+
+  it('drops Secure + __Host- in production when SESSION_COOKIE_INSECURE=true', () => {
+    // Self-hosted HTTP-only deployments (docker compose proxy profile,
+    // private LAN, etc.) need to opt out of __Host- so the browser
+    // actually stores the cookie over plain http://localhost.
+    expect(
+      useSecureCookies({
+        ...baseEnv,
+        NODE_ENV: 'production',
+        SESSION_COOKIE_INSECURE: true,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -156,6 +180,22 @@ describe('buildAuthConfig', () => {
     const cookie = cfg.cookies?.sessionToken;
     expect(cookie?.name).toBe('auth-session-token');
     expect(cookie?.options?.secure).toBe(false);
+  });
+
+  it('drops __Host- + Secure in production when SESSION_COOKIE_INSECURE=true', () => {
+    // Self-hosted docker stacks served over plain http://localhost can't
+    // store a Secure cookie; the SESSION_COOKIE_INSECURE escape hatch
+    // restores the non-prefixed, non-Secure shape while keeping
+    // HttpOnly + SameSite=Lax.
+    const cfg = buildAuthConfig({
+      prisma: stubPrisma,
+      env: { ...baseEnv, NODE_ENV: 'production', SESSION_COOKIE_INSECURE: true },
+    });
+    const cookie = cfg.cookies?.sessionToken;
+    expect(cookie?.name).toBe('auth-session-token');
+    expect(cookie?.options?.secure).toBe(false);
+    expect(cookie?.options?.httpOnly).toBe(true);
+    expect(cookie?.options?.sameSite).toBe('lax');
   });
 
   describe('events.signIn — Discord profile resync', () => {

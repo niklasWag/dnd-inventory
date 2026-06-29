@@ -42,6 +42,7 @@ const env: Env = {
   DATABASE_URL: TEST_DB_URL,
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
+  SESSION_COOKIE_INSECURE: false,
   // Discord creds are required for the link routes to be enabled.
   DISCORD_CLIENT_ID: 'test-client-id',
   DISCORD_CLIENT_SECRET: 'test-client-secret',
