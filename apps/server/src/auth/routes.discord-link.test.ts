@@ -10,7 +10,7 @@
  *   2. Drive `GET /auth/discord/link/start?token=...` — assert 302 to
  *      `discord.com/api/oauth2/authorize?...`, including PKCE challenge
  *      and HMAC-signed state, and a `r35-discord-link-pkce` cookie.
- *   3. Drive `GET /auth/discord/link/callback?code=...&state=...` with
+ *   3. Drive `GET /auth/callback/discord/link?code=...&state=...` with
  *      the cookies from step 2, a stubbed Discord token endpoint, and
  *      a stubbed userinfo endpoint — assert
  *      `User.discordId = <snowflake>` and a redirect to
@@ -42,10 +42,11 @@ const env: Env = {
   DATABASE_URL: TEST_DB_URL,
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
+  SESSION_COOKIE_INSECURE: false,
   // Discord creds are required for the link routes to be enabled.
   DISCORD_CLIENT_ID: 'test-client-id',
   DISCORD_CLIENT_SECRET: 'test-client-secret',
-  DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
+  DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/callback/discord',
   SNAPSHOTS_ENABLED: false,
   SNAPSHOT_DIR: './snapshots',
   SNAPSHOT_RETENTION_DAYS: 30,
@@ -194,10 +195,10 @@ async function runLinkFlow(opts: {
     expect(pkceCookie).toBeTruthy();
     const pkceValue = pkceCookie!.split(';')[0]!; // "r35-discord-link-pkce=...."
 
-    // 4. /auth/discord/link/callback → 302 to ${WEB_ORIGIN}/settings?...
+    // 4. /auth/callback/discord/link → 302 to ${WEB_ORIGIN}/settings?...
     const r4 = await app.inject({
       method: 'GET',
-      url: `/auth/discord/link/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      url: `/auth/callback/discord/link?code=test-code&state=${encodeURIComponent(state)}`,
       headers: { cookie: `${opts.userCookie}; ${pkceValue}` },
     });
     expect(r4.statusCode).toBeGreaterThanOrEqual(300);
@@ -291,7 +292,7 @@ describe('Discord link — tampered state', () => {
     try {
       const r = await app.inject({
         method: 'GET',
-        url: '/auth/discord/link/callback?code=anything&state=not-a-real-signed-state',
+        url: '/auth/callback/discord/link?code=anything&state=not-a-real-signed-state',
         headers: { cookie: cookieHeader(token) },
       });
       expect(r.headers.location).toContain('linkError=invalid_state');

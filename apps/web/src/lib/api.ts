@@ -21,6 +21,7 @@ import { z, type ZodType } from 'zod';
 
 import {
   apiErrorSchema,
+  authMethodsResponseSchema,
   partiesListResponseSchema,
   pullStateResponseSchema,
   pushActionsResponseSchema,
@@ -30,6 +31,7 @@ import {
   verifyOtpResponseSchema,
   linkEmailResponseSchema,
   batchRejectedResponseSchema,
+  type AuthMethodsResponse,
   type PartiesListResponse,
   type PullStateResponse,
   type PushActionsResponse,
@@ -201,6 +203,15 @@ function readRetryAfter(body: unknown): string | undefined {
 
 export function getSessionMe(): Promise<SessionResponse> {
   return apiFetch('/auth/session', { schema: sessionResponseSchema });
+}
+
+/**
+ * R3.5 — probe which sign-in methods this deployment has configured.
+ * Used by the Login screen to disable buttons whose env triple isn't
+ * complete on the server (rather than letting the user click into a 503).
+ */
+export function getAuthMethods(): Promise<AuthMethodsResponse> {
+  return apiFetch('/auth/methods', { schema: authMethodsResponseSchema });
 }
 
 const emptySchema = z.object({}).passthrough();

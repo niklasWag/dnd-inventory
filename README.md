@@ -116,7 +116,10 @@ This app is designed to run on **a single Linux box behind a reverse proxy** —
 2. Under **OAuth2** → **General**:
    - Copy the **Client ID** → you'll set `DISCORD_CLIENT_ID`.
    - **Reset Secret** → copy the **Client Secret** → `DISCORD_CLIENT_SECRET`. (Treat it like a password; it never reaches the browser.)
-   - Add a **Redirect URI** that matches `https://<your-domain>/auth/discord/callback` **exactly** (trailing slash and protocol matter). This is `DISCORD_REDIRECT_URI`.
+   - Add **two Redirect URIs** (both must match exactly — trailing slash and protocol matter):
+     - `https://<your-domain>/auth/callback/discord` — primary login. This is what you set as `DISCORD_REDIRECT_URI`.
+     - `https://<your-domain>/auth/callback/discord/link` — used by Settings → Linked accounts → Connect Discord (R3.5).
+   - The paths follow Auth.js's `${basePath}/callback/${provider}` convention — the framework hardcodes that shape, so the URIs you register must match.
 3. The app only requests scope `identify` — Discord shows users a minimal consent screen (username + avatar; no email, no guilds).
 
 ### 3. Clone + configure
@@ -134,10 +137,11 @@ Set these in `infra/docker/.env`:
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POSTGRES_PASSWORD`      | Long random string. **Change from the default `dnd`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `AUTH_SECRET`            | Output of `openssl rand -base64 32`. Rotating this signs everyone out.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `DISCORD_CLIENT_ID`      | From step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `DISCORD_CLIENT_SECRET`  | From step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `DISCORD_REDIRECT_URI`   | `https://<your-domain>/auth/discord/callback` — must match the Discord registration exactly.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `SMTP_HOST`              | SMTP submission host from your transactional provider (e.g. `smtp.postmarkapp.com`).                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `SESSION_COOKIE_INSECURE` | `false` (default — HTTPS deployments) or `true` (self-hosted HTTP-only deployments such as the docker-compose `proxy` profile on `http://localhost:8080`). When `false` the session cookie is named `__Host-auth-session-token` and carries `Secure`, which the browser refuses to store on a plain HTTP origin. NEVER set this to `true` in real production behind HTTPS.                                                                                                                                                       |
+| `DISCORD_CLIENT_ID`      | From step 2. **Optional**: leave blank (or unset entirely) to disable Discord login. The `/auth/discord/*` routes will return 503 and the web Login screen hides the Discord button. The server logs a startup warning listing missing vars but boots successfully — email-only deployments are first-class.                                                                                                                                                                                                                    |
+| `DISCORD_CLIENT_SECRET`  | From step 2. Same optional/missing rules as `DISCORD_CLIENT_ID`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `DISCORD_REDIRECT_URI`   | `https://<your-domain>/auth/callback/discord` — must match the primary Redirect URI registered in the Discord developer portal exactly. The link-flow callback (`/auth/callback/discord/link`) is derived from this value at runtime; the operator just has to register both URIs in the portal. Same optional/missing rules as `DISCORD_CLIENT_ID`.                                                                                                                                                                              |
+| `SMTP_HOST`              | SMTP submission host from your transactional provider (e.g. `smtp.postmarkapp.com`). **Optional**: leave blank (or unset entirely) to disable email-OTP login. The `/auth/email/*` routes will return 503 and the web Login screen hides the Email button. Same startup-warning behavior as the Discord vars.                                                                                                                                                                                                                   |
 | `SMTP_PORT`              | `587` for STARTTLS, `465` for implicit TLS. Most providers use `587`.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `SMTP_USER`              | SMTP auth username (often a provider API-key id).                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `SMTP_PASS`              | SMTP auth password (often a provider API-key secret). Treat like a password.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -176,6 +180,27 @@ curl http://127.0.0.1:${SERVER_PORT}/healthz
 ### 5. Reverse proxy + TLS
 
 The Fastify server binds inside the container only; it expects a reverse proxy to terminate TLS and forward HTTPS traffic. **Trust-host requirement** (Auth.js v5): the proxy must pass the canonical `Host` header so Auth.js can build correct callback URLs. Don't blindly forward `X-Forwarded-Host` from clients — that's a Host-header injection vector. Standard Caddy / nginx defaults are safe.
+
+#### Same-origin requirement (why a proxy is mandatory for server mode)
+
+`SameSite=Lax` session cookies (per SECURITY §1.1) are **not** sent on cross-origin `fetch` requests. If the SPA is loaded from `http://localhost:5173` and the API lives at `http://localhost:3000`, the browser will silently drop the session cookie on every API call — the user appears logged out the moment they navigate to a protected screen even though Discord OAuth succeeded.
+
+Fix: the SPA and the API must share an origin. Either:
+
+- **In prod** — host nginx (or Caddy) on the public domain reverse-proxies `/auth/*`, `/sync/*`, `/healthz` to the server container and everything else to the web container. Sections below show the exact configs.
+- **For local Docker Desktop testing** — bring the stack up with `--profile proxy` so compose spins up an internal Caddy on `${PROXY_PORT:-8080}` that routes the same way:
+
+  ```bash
+  cd infra/docker
+  # In .env, point both VITE_SERVER_URL and WEB_ORIGIN at the proxy:
+  #   VITE_SERVER_URL=http://localhost:8080
+  #   WEB_ORIGIN=http://localhost:8080
+  # Then rebuild + bring up with the proxy profile:
+  docker compose --profile proxy up -d --build
+  # Browse to http://localhost:8080 — same origin for SPA + API.
+  ```
+
+  `docker compose up` (without the flag) leaves the Caddy container out — that's what production deployments behind a real host nginx do.
 
 #### Caddy (easiest — auto-TLS)
 
@@ -229,7 +254,7 @@ Issue certs with `sudo certbot --nginx -d dnd.example.com`.
 
 1. Browse to `https://dnd.example.com` — the SPA loads.
 2. `curl https://dnd.example.com/healthz` — returns `{"status":"ok","db":"ok",...}`.
-3. `https://dnd.example.com/auth/discord/login` — redirects to Discord's consent screen. After approving, the redirect lands back on `/auth/discord/callback`; the server creates the `User` + `Account` + `Session` rows, sets the `__Host-auth-session-token` cookie, and 302's back to the SPA origin.
+3. `https://dnd.example.com/auth/discord/login` — redirects to Discord's consent screen. After approving, the redirect lands back on `/auth/callback/discord`; the server creates the `User` + `Account` + `Session` rows, sets the `__Host-auth-session-token` cookie, and 302's back to the SPA origin.
 4. `psql "$DATABASE_URL" -c '\dt'` — confirms `User`, `Account`, `Session`, `ItemDefinition`, etc. are present.
 
 ### 7. Day 2 operations
@@ -252,7 +277,7 @@ Issue certs with `sudo certbot --nginx -d dnd.example.com`.
 - The server cookie is `HttpOnly`, `SameSite=Lax`, `Secure`, with the `__Host-` prefix in production (browser-enforced HTTPS).
 - Discord tokens never reach the database (`access_token` / `refresh_token` / `id_token` are written as `NULL` by `apps/server/src/auth/adapter-overrides.ts`).
 - Sliding 30-day session expiry; deleting a `Session` row instantly revokes that device.
-- `NODE_ENV=production` makes the server **refuse to boot** without `AUTH_SECRET` + all three `DISCORD_*` vars + all five `SMTP_*` vars — no silent misconfig.
+- `NODE_ENV=production` makes the server **refuse to boot** without `AUTH_SECRET`. The `DISCORD_*` triple and `SMTP_*` quintuple are individually optional: missing or empty values disable the corresponding login method (the routes return 503 and the web Login button is hidden) and the server logs a startup warning. The `__Host-` + `Secure` cookie pair is on by default in production; opt out with `SESSION_COOKIE_INSECURE=true` only for HTTP-only self-hosted stacks (docker-compose proxy profile). See `docs/SECURITY.md` §1.1 / §1.2.
 - See `docs/SECURITY.md` for the full threat model.
 
 ### Per-app deeper details

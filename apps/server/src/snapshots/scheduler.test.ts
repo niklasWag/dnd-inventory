@@ -34,6 +34,7 @@ const env: Env = {
   DATABASE_URL: TEST_DB_URL,
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
+  SESSION_COOKIE_INSECURE: false,
   SNAPSHOTS_ENABLED: false, // we drive the tick directly
   SNAPSHOT_DIR: './snapshots',
   SNAPSHOT_RETENTION_DAYS: 30,

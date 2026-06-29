@@ -63,6 +63,18 @@ describe('apiFetch — server mode', () => {
     expect(result.user).toBeUndefined();
   });
 
+  it('treats Auth.js-style JSON `null` body as anonymous (regression)', async () => {
+    // Auth.js v5 returns the JSON literal `null` from /auth/session when
+    // there is no session cookie. Without the union branch in
+    // `sessionResponseSchema`, the parse fails with
+    // `expected: object, code: invalid_type` and surfaces as a
+    // `malformed_response` ApiError in the user's console.
+    const api = await loadApi();
+    server.use(http.get(`${TEST_SERVER_ORIGIN}/auth/session`, () => HttpResponse.json(null)));
+    const result = await api.getSessionMe();
+    expect(result.user).toBeUndefined();
+  });
+
   it('maps a 401 body to an ApiError with code from server', async () => {
     const api = await loadApi();
     server.use(

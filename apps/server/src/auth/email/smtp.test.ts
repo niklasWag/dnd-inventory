@@ -51,6 +51,7 @@ const env: Env = {
   DATABASE_URL: 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test',
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXX',
+  SESSION_COOKIE_INSECURE: false,
   SMTP_HOST: 'smtp.test',
   SMTP_PORT: 587,
   SMTP_USER: 'test-user',

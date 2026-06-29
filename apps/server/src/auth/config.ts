@@ -35,9 +35,19 @@ export interface BuildAuthConfigOptions {
  * imports it directly so the dev/prod switch can't drift between the
  * cookie SET (by Auth.js via this config) and the cookie READ (by
  * `getSession`).
+ *
+ * `SESSION_COOKIE_INSECURE=true` opts out of the `__Host-` + `Secure`
+ * pair for self-hosted HTTP-only deployments (e.g. the local docker
+ * compose stack served by Caddy on `http://localhost:8080`, where the
+ * browser refuses to store a `Secure` cookie). Production HTTPS
+ * deployments must leave the default `false`.
  */
+export function useSecureCookies(env: Env): boolean {
+  return env.NODE_ENV === 'production' && !env.SESSION_COOKIE_INSECURE;
+}
+
 export function sessionCookieName(env: Env): string {
-  return env.NODE_ENV === 'production' ? '__Host-auth-session-token' : 'auth-session-token';
+  return useSecureCookies(env) ? '__Host-auth-session-token' : 'auth-session-token';
 }
 
 function sessionCookieConfig(env: Env) {
@@ -46,11 +56,11 @@ function sessionCookieConfig(env: Env) {
     options: {
       httpOnly: true,
       // 'lax' allows the cookie to ride along on the top-level redirect
-      // from discord.com back to /auth/discord/callback (which is the
+      // from discord.com back to /auth/callback/discord (Auth.js's
       // entire point of the OAuth flow). 'strict' would break the flow.
       sameSite: 'lax' as const,
       path: '/',
-      secure: env.NODE_ENV === 'production',
+      secure: useSecureCookies(env),
     },
   };
 }
@@ -86,6 +96,27 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
     // and serve on localhost in dev — both modes derive the URL from the
     // incoming Host header. Setting `trustHost: true` is the explicit
     // "yes, we trust the proxy's Host" knob.
+    // Surface Auth.js's internal exceptions to the server log. Without
+    // this, an error during the OAuth callback (createUser, linkAccount,
+    // adapter shapes) gets wrapped as a generic `Configuration` error and
+    // the user lands on `/auth/error?error=Configuration` with no clue
+    // what went wrong server-side. The `logger` is invoked for every
+    // internal error / warning / debug message.
+    logger: {
+      error(error) {
+        // Print both the message AND the cause chain — Auth.js often
+        // wraps the root error as `.cause`.
+        // eslint-disable-next-line no-console
+        console.error('[auth] error:', error);
+      },
+      warn(code) {
+        // eslint-disable-next-line no-console
+        console.warn('[auth] warn:', code);
+      },
+      debug() {
+        // No-op in prod; uncomment for deep debugging.
+      },
+    },
     trustHost: true,
     providers: discordEnabled
       ? [
@@ -119,6 +150,64 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
     },
     cookies: {
       sessionToken: sessionCookieConfig(env),
+    },
+    callbacks: {
+      /**
+       * R3 — Auth.js's default `redirect` callback returns `baseUrl` (the
+       * server origin) when a `callbackUrl` parameter points at a
+       * different origin. In split-origin deployments (web on :5173,
+       * server on :3000) that strands the user on the server's root
+       * after a successful OAuth flow. We accept the configured
+       * `WEB_ORIGIN` as a trusted target so the post-callback redirect
+       * lands on the SPA. Same-origin URLs continue to pass through.
+       */
+      redirect: ({ url, baseUrl }) => {
+        if (url.startsWith('/')) return `${baseUrl}${url}`;
+        try {
+          const target = new URL(url);
+          if (target.origin === baseUrl) return url;
+          if (target.origin === env.WEB_ORIGIN) return url;
+        } catch {
+          // Fall through to baseUrl below.
+        }
+        return baseUrl;
+      },
+      /**
+       * R3 — shape `/auth/session` to match the web's `sessionUserSchema`
+       * (packages/shared/src/schemas/api.ts). Auth.js's default session
+       * payload only carries `{ id?, name, email, image }`; the web parser
+       * requires `displayName` + `needsDisplayName` (and tolerates the
+       * other app-specific fields). With the database session strategy,
+       * Auth.js passes the adapter-loaded `User` row in here so we just
+       * project the canonical columns onto `session.user`.
+       *
+       * If a future call path returns a logged-out shape (`{}`), Auth.js
+       * doesn't invoke this callback — so we don't need a null branch.
+       */
+      session: ({ session, user }) => {
+        const u = user as unknown as {
+          id: string;
+          displayName: string;
+          needsDisplayName: boolean;
+          email: string | null;
+          emailVerified: Date | null;
+          avatarUrl: string | null;
+          discordId: string | null;
+        };
+        return {
+          ...session,
+          user: {
+            ...session.user,
+            id: u.id,
+            displayName: u.displayName,
+            needsDisplayName: u.needsDisplayName,
+            email: u.email,
+            emailVerified: u.emailVerified?.toISOString() ?? null,
+            avatarUrl: u.avatarUrl,
+            discordId: u.discordId,
+          },
+        };
+      },
     },
     events: {
       /**

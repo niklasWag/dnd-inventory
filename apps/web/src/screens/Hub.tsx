@@ -12,10 +12,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { CharacterForm, type CharacterFormOutput } from '@/components/CharacterForm';
+import { setCurrentPartyId } from '@/db/meta';
 import { ApiError, listParties } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
 import { useStore } from '@/store';
 import { seedCatalogIfNeeded } from '@/store/seed';
+import { pullState } from '@/sync/client';
 import type { PartyListItem } from '@app/shared';
 
 /**
@@ -47,6 +49,7 @@ export function Hub(): ReactElement {
 
   const [serverParties, setServerParties] = useState<PartyListItem[] | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [openingPartyId, setOpeningPartyId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'create-solo' | 'create-party' | null>(null);
 
   useEffect(() => {
@@ -76,6 +79,48 @@ export function Hub(): ReactElement {
       cancelled = true;
     };
   }, [navigate]);
+
+  /**
+   * Open a server-mode party: persist the choice (so reload boots straight
+   * back into it via `main.tsx`), pull its canonical AppState, hydrate
+   * the store, then navigate to the user's character sheet.
+   *
+   * R3.5 — picks `characters[0]` from the pulled AppState. For a solo
+   * party that's the user's only character; for a multi-member party
+   * the server returns the party's full character list and the first
+   * one is still a sensible default landing for now (a future
+   * "switch character" picker is on the post-R5 roadmap).
+   */
+  async function openServerParty(partyId: string): Promise<void> {
+    if (openingPartyId !== null) return;
+    setOpeningPartyId(partyId);
+    try {
+      await setCurrentPartyId(partyId);
+      const pulled = await pullState(partyId);
+      useStore.getState().hydrate({ appState: pulled.state, log: pulled.state.log });
+      const firstCharacterId = pulled.state.characters[0]?.id;
+      if (firstCharacterId === undefined) {
+        // A server party with zero characters is an invariant violation
+        // for R3.5 (the Hub flow always creates one on party creation).
+        // Surface it instead of stranding the user on a blank screen.
+        toast.error('This party has no characters yet.');
+        return;
+      }
+      void navigate(`/character/${firstCharacterId}`);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'unauthenticated') {
+        void navigate('/login', { replace: true });
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'display_name_required') {
+        void navigate('/login/display-name', { replace: true });
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : 'Could not open this party.');
+    } finally {
+      setOpeningPartyId(null);
+    }
+  }
 
   function handleCreateSubmit(values: CharacterFormOutput): void {
     try {
@@ -108,7 +153,11 @@ export function Hub(): ReactElement {
         localParty={localParty}
         serverParties={serverParties}
         serverError={serverError}
-        onOpen={(id) => {
+        openingPartyId={openingPartyId}
+        onOpenServer={(id) => {
+          void openServerParty(id);
+        }}
+        onOpenLocal={(id) => {
           void navigate(`/character/${id}`);
         }}
       />
@@ -167,14 +216,21 @@ interface ExistingPartiesProps {
   localParty: { id: string; name: string } | null;
   serverParties: PartyListItem[] | null;
   serverError: string | null;
-  onOpen: (characterId: string) => void;
+  /** Non-null while a server-mode party is being opened. */
+  openingPartyId: string | null;
+  /** Server-mode click — receives the party id and owns the pull+navigate. */
+  onOpenServer: (partyId: string) => void;
+  /** Local-mode click — receives the (only) local character id. */
+  onOpenLocal: (characterId: string) => void;
 }
 
 function ExistingParties({
   localParty,
   serverParties,
   serverError,
-  onOpen,
+  openingPartyId,
+  onOpenServer,
+  onOpenLocal,
 }: ExistingPartiesProps): ReactElement | null {
   const characterId = useStore(
     useShallow((s) => (s.appState ? (s.appState.characters[0]?.id ?? null) : null)),
@@ -200,33 +256,33 @@ function ExistingParties({
     if (serverParties.length === 0) return null;
     return (
       <section aria-label="Existing parties" className="space-y-2">
-        {serverParties.map((p) => (
-          <button
-            type="button"
-            key={p.id}
-            className="flex w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left hover:bg-accent"
-            onClick={() => {
-              // R3.5: we don't know the user's character id without pulling
-              // the full AppState; navigate to a per-party hub stub. Phase 4
-              // wires the pull-then-navigate path. For now, attempt the
-              // generic character navigation only if local store has one
-              // matching this party.
-              if (characterId !== null) onOpen(characterId);
-            }}
-          >
-            <div>
-              <p className="font-medium">{p.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {p.roles.join(' + ')} • {p.memberCount} member{p.memberCount === 1 ? '' : 's'}
-              </p>
-            </div>
-            {p.lastActivityAt !== null ? (
-              <span className="text-xs text-muted-foreground">
-                {new Date(p.lastActivityAt).toLocaleDateString()}
-              </span>
-            ) : null}
-          </button>
-        ))}
+        {serverParties.map((p) => {
+          const isOpening = openingPartyId === p.id;
+          const anyOpening = openingPartyId !== null;
+          return (
+            <button
+              type="button"
+              key={p.id}
+              disabled={anyOpening}
+              className="flex w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => onOpenServer(p.id)}
+            >
+              <div>
+                <p className="font-medium">{p.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {p.roles.join(' + ')} • {p.memberCount} member{p.memberCount === 1 ? '' : 's'}
+                </p>
+              </div>
+              {isOpening ? (
+                <span className="text-xs text-muted-foreground">Opening…</span>
+              ) : p.lastActivityAt !== null ? (
+                <span className="text-xs text-muted-foreground">
+                  {new Date(p.lastActivityAt).toLocaleDateString()}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </section>
     );
   }
@@ -239,7 +295,7 @@ function ExistingParties({
         type="button"
         className="flex w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left hover:bg-accent"
         onClick={() => {
-          if (characterId !== null) onOpen(characterId);
+          if (characterId !== null) onOpenLocal(characterId);
         }}
       >
         <div>

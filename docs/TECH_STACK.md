@@ -195,24 +195,54 @@ Monorepo via **pnpm workspaces** (anticipating shared rules engine between clien
 
 ### 7.1 Topology
 
+Two supported shapes — both end at the same single-origin guarantee that
+`SameSite=Lax` session cookies require.
+
+**A. Host reverse proxy (production, recommended)** — nginx (or Caddy) on
+the host fronts the compose stack on its public domain and terminates TLS:
+
 ```
 Internet
    │
    ▼
-[ nginx + Let's Encrypt ]            (reverse proxy, TLS termination)
+[ host nginx + Let's Encrypt ]      (reverse proxy, TLS termination)
    │
-   ├─► [ apps/web static bundle ]    (served as static files)
+   ├─► [ web container — vite preview on :5173 ]   (built React SPA)
    │
-   └─► [ apps/server (Fastify) ] ◄─► [ PostgreSQL ]
-                                      │
-                                      └─► nightly node-cron in server container
-                                           → ${SNAPSHOT_DIR}/<partyId>/<iso>.json (+ .sha256 sidecar)
+   └─► [ server container — Fastify on :3000 ] ◄─► [ PostgreSQL ]
+                                                    │
+                                                    └─► node-cron snapshot writer
+                                                         → ${SNAPSHOT_DIR}/<partyId>/<iso>.json
+                                                            (+ .sha256 sidecar)
 ```
 
+The host proxy routes `/auth/*`, `/sync/*`, `/healthz` to the server
+container and everything else to the web container — see `README.md` §5
+for the exact Caddy + nginx templates.
+
+**B. Compose-internal proxy (local Docker Desktop testing)** — bring the
+stack up with `docker compose --profile proxy up`. An optional `caddy`
+container fronts the web + server on a single host port (default `:8080`)
+so the auth flow can be exercised end-to-end without setting up a host
+nginx. Same routing rules as topology A; no TLS. The `caddy` service
+stays off by default — production deployments leave the profile flag
+unset and rely on topology A.
+
 ### 7.2 Containers — Docker Compose
-- `web` — nginx serving the built React SPA + reverse-proxying API/socket traffic.
-- `server` — Node + Fastify app. Also runs the in-process nightly snapshot cron (R3.4.b — no separate sidecar; the snapshot directory is mounted as a named volume so files survive container restarts).
-- `db` — official Postgres image, pinned major version.
+- `postgres` — official Postgres 18 image, pinned major version.
+- `server` — Node + Fastify app. Runs the boot-time `prisma migrate
+  deploy` + PHB+DMG seed runner, then the in-process nightly snapshot
+  cron (R3.4.b — no separate sidecar; the snapshot directory is mounted
+  as a named volume so files survive container restarts).
+- `web` — Vite-built React SPA, served by `vite preview` on `:5173`.
+  Static-asset only; does NOT reverse-proxy API traffic. The
+  reverse-proxy role lives outside the container (host nginx in prod,
+  or the opt-in compose `caddy` container for local testing).
+- `caddy` *(opt-in, `--profile proxy`)* — same-origin reverse proxy for
+  local Docker Desktop testing. Mounts `infra/docker/Caddyfile`, listens
+  on `${PROXY_PORT:-8080}`, routes the API paths to `server:3000` and
+  everything else to `web:5173`. Production deployments behind a host
+  nginx skip this service.
 
 ### 7.3 TLS — Let's Encrypt via certbot
 - Either run certbot in a sidecar container or via host-level cron — TBD at deployment time.

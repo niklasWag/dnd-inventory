@@ -6,7 +6,7 @@ import type { Account, Profile } from '@auth/core/types';
 import type { Env } from '../config/env.js';
 import type { PrismaClient } from '../../prisma/generated/prisma/client.js';
 
-import { buildAuthConfig, isDiscordAuthEnabled, isEmailAuthEnabled } from './config.js';
+import { buildAuthConfig, isDiscordAuthEnabled, isEmailAuthEnabled, useSecureCookies } from './config.js';
 import { makeAdapter } from './adapter-overrides.js';
 
 /**
@@ -23,6 +23,7 @@ const baseEnv: Env = {
   DATABASE_URL: 'postgresql://stub',
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
+  SESSION_COOKIE_INSECURE: false,
   SNAPSHOTS_ENABLED: false,
   SNAPSHOT_DIR: './snapshots',
   SNAPSHOT_RETENTION_DAYS: 30,
@@ -50,7 +51,7 @@ describe('isDiscordAuthEnabled', () => {
         ...baseEnv,
         DISCORD_CLIENT_ID: 'cid',
         DISCORD_CLIENT_SECRET: 'csec',
-        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
+        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/callback/discord',
       }),
     ).toBe(true);
   });
@@ -84,6 +85,29 @@ describe('isEmailAuthEnabled (R3.3)', () => {
   });
 });
 
+describe('useSecureCookies / sessionCookieName', () => {
+  it('falls back to the non-prefixed cookie name + secure=false in non-production', () => {
+    expect(useSecureCookies({ ...baseEnv, NODE_ENV: 'development' })).toBe(false);
+  });
+
+  it('uses Secure + __Host- in production by default', () => {
+    expect(useSecureCookies({ ...baseEnv, NODE_ENV: 'production' })).toBe(true);
+  });
+
+  it('drops Secure + __Host- in production when SESSION_COOKIE_INSECURE=true', () => {
+    // Self-hosted HTTP-only deployments (docker compose proxy profile,
+    // private LAN, etc.) need to opt out of __Host- so the browser
+    // actually stores the cookie over plain http://localhost.
+    expect(
+      useSecureCookies({
+        ...baseEnv,
+        NODE_ENV: 'production',
+        SESSION_COOKIE_INSECURE: true,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe('buildAuthConfig', () => {
   it('returns empty providers when DISCORD_* env vars are absent', () => {
     const cfg = buildAuthConfig({ prisma: stubPrisma, env: baseEnv });
@@ -99,7 +123,7 @@ describe('buildAuthConfig', () => {
         ...baseEnv,
         DISCORD_CLIENT_ID: 'cid',
         DISCORD_CLIENT_SECRET: 'csec',
-        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
+        DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/callback/discord',
       },
     });
     expect(cfg.providers).toHaveLength(1);
@@ -156,6 +180,22 @@ describe('buildAuthConfig', () => {
     const cookie = cfg.cookies?.sessionToken;
     expect(cookie?.name).toBe('auth-session-token');
     expect(cookie?.options?.secure).toBe(false);
+  });
+
+  it('drops __Host- + Secure in production when SESSION_COOKIE_INSECURE=true', () => {
+    // Self-hosted docker stacks served over plain http://localhost can't
+    // store a Secure cookie; the SESSION_COOKIE_INSECURE escape hatch
+    // restores the non-prefixed, non-Secure shape while keeping
+    // HttpOnly + SameSite=Lax.
+    const cfg = buildAuthConfig({
+      prisma: stubPrisma,
+      env: { ...baseEnv, NODE_ENV: 'production', SESSION_COOKIE_INSECURE: true },
+    });
+    const cookie = cfg.cookies?.sessionToken;
+    expect(cookie?.name).toBe('auth-session-token');
+    expect(cookie?.options?.secure).toBe(false);
+    expect(cookie?.options?.httpOnly).toBe(true);
+    expect(cookie?.options?.sameSite).toBe('lax');
   });
 
   describe('events.signIn — Discord profile resync', () => {
@@ -275,5 +315,86 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     expect(dataArg['providerAccountId']).toBe('123');
     // Non-sensitive metadata may still pass through (token_type, scope).
     expect(dataArg['type']).toBe('oauth');
+  });
+
+  it('getUser preserves email: null for Discord-only users (no email scope per SECURITY §1.1)', async () => {
+    // Discord OAuth uses scope `identify` only — no email is ever returned.
+    // The DB column User.email is therefore NULL for Discord-only accounts
+    // (per OUTLINE §4: "email (nullable — set for email-only users or
+    // Discord users who added a backup login)"). The adapter MUST surface
+    // that null through to the AdapterUser so the Auth.js session callback
+    // can project null onto the public session payload — the client's
+    // sessionUserSchema.email is `z.string().email().nullable().optional()`,
+    // which accepts null but rejects ''.
+    const findUniqueMock = vi.fn(async () => ({
+      id: 'user-1',
+      displayName: 'GandalfTheGrey',
+      email: null,
+      emailVerified: null,
+      avatarUrl: null,
+      needsDisplayName: false,
+      discordId: '123',
+    }));
+    const fakePrisma = {
+      account: { create: vi.fn() },
+      user: { findUnique: findUniqueMock },
+    } as unknown as PrismaClient;
+    const adapter = makeAdapter(fakePrisma);
+
+    const result = await adapter.getUser!('user-1');
+    // Must remain null — coercion to '' would break the client's
+    // session-response Zod schema (z.email() rejects empty strings).
+    expect(result?.email).toBeNull();
+  });
+
+  it('createUser maps AdapterUser name → schema displayName (B7 regression)', async () => {
+    // The @auth/prisma-adapter passes Auth.js's `AdapterUser` shape directly
+    // to prisma.user.create — but our schema column is `displayName`, not
+    // `name`. Without the field mapping in makeAdapter, this throws
+    // "Argument `displayName` missing" on every Discord-first signup.
+    const createMock = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: 'minted-id',
+      displayName: (data['displayName'] as string | undefined) ?? '',
+      email: (data['email'] as string | null | undefined) ?? null,
+      emailVerified: (data['emailVerified'] as Date | null | undefined) ?? null,
+      avatarUrl: (data['avatarUrl'] as string | null | undefined) ?? null,
+    }));
+    const fakePrisma = {
+      account: { create: vi.fn() },
+      user: { create: createMock },
+    } as unknown as PrismaClient;
+    const adapter = makeAdapter(fakePrisma);
+
+    // Auth.js calls createUser with the AdapterUser-shaped payload —
+    // `name`, `email`, `emailVerified`, `image`. No `displayName`. The
+    // `id` field carries the Discord snowflake (Auth.js spreads
+    // `profile` into createUser; Discord's profile function returns
+    // `id: <snowflake>`).
+    const result = await adapter.createUser!({
+      id: '948271362817273856',
+      email: 'gandalf@example.com',
+      emailVerified: null,
+      name: 'GandalfTheGrey',
+      image: 'https://cdn.discordapp.com/avatars/123/abc.png',
+    });
+
+    expect(createMock.mock.calls).toHaveLength(1);
+    const writtenData = createMock.mock.calls[0]![0]!.data;
+    // Schema column names are what hit Prisma.
+    expect(writtenData['displayName']).toBe('GandalfTheGrey');
+    expect(writtenData['avatarUrl']).toBe('https://cdn.discordapp.com/avatars/123/abc.png');
+    expect(writtenData['email']).toBe('gandalf@example.com');
+    // Adapter-side field names must NOT leak through.
+    expect(writtenData['name']).toBeUndefined();
+    expect(writtenData['image']).toBeUndefined();
+    // The provider snowflake MUST land as discordId so the
+    // User_auth_present_check CHECK constraint is satisfied at INSERT —
+    // events.signIn would otherwise be too late.
+    expect(writtenData['discordId']).toBe('948271362817273856');
+    // Discord signups skip the OTP display-name gate.
+    expect(writtenData['needsDisplayName']).toBe(false);
+    // The returned AdapterUser uses Auth.js's field names again.
+    expect(result.name).toBe('GandalfTheGrey');
+    expect(result.image).toBe('https://cdn.discordapp.com/avatars/123/abc.png');
   });
 });

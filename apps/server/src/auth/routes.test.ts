@@ -29,6 +29,7 @@ const baseEnv: Env = {
   DATABASE_URL: TEST_DB_URL,
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXXX',
+  SESSION_COOKIE_INSECURE: false,
   SNAPSHOTS_ENABLED: false,
   SNAPSHOT_DIR: './snapshots',
   SNAPSHOT_RETENTION_DAYS: 30,
@@ -38,7 +39,7 @@ const envWithDiscord: Env = {
   ...baseEnv,
   DISCORD_CLIENT_ID: 'test-client-id',
   DISCORD_CLIENT_SECRET: 'test-client-secret',
-  DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/discord/callback',
+  DISCORD_REDIRECT_URI: 'http://localhost:3000/auth/callback/discord',
 };
 
 let prisma: PrismaClient;
@@ -127,6 +128,30 @@ describe('GET /auth/session (R3.2)', () => {
       // session, not 401 — the 401 contract is reserved for protected
       // routes (R3.4).
       expect(res.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('GET /auth/methods (R3.5)', () => {
+  it('reports both providers disabled when no env triples are set', async () => {
+    const app = await buildServer({ env: baseEnv, prisma });
+    try {
+      const res = await app.inject({ method: 'GET', url: '/auth/methods' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ discord: false, email: false });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('reports discord=true when the DISCORD_* triple is configured', async () => {
+    const app = await buildServer({ env: envWithDiscord, prisma });
+    try {
+      const res = await app.inject({ method: 'GET', url: '/auth/methods' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ discord: true, email: false });
     } finally {
       await app.close();
     }

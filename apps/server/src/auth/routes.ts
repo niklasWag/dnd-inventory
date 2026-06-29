@@ -11,9 +11,15 @@
  *
  * The four routes proxy four well-known Auth.js endpoints:
  *   - `GET /auth/discord/login`     → /auth/signin/discord       (302 to Discord)
- *   - `GET /auth/discord/callback`  → /auth/callback/discord     (token exchange + session cookie)
+ *   - `GET /auth/callback/discord`  → /auth/callback/discord     (token exchange + session cookie)
  *   - `POST /auth/signout`           → /auth/signout             (session row deletion + cookie clear)
  *   - `GET /auth/session`            → /auth/session             (current session JSON, or 401)
+ *
+ * The callback path is `/auth/callback/discord` (NOT `/auth/discord/callback`)
+ * because Auth.js's `parseProviders` hardcodes `callbackUrl =
+ * ${basePath}/callback/${providerId}` (see @auth/core/lib/utils/providers.js).
+ * That is the URI Discord will redirect back to, so the Fastify route
+ * MUST live at that exact path.
  *
  * When `DISCORD_*` env vars are absent, the OAuth routes return 503
  * (SECURITY §1.2 SMTP-disabled parallel). `GET /auth/session` keeps
@@ -31,6 +37,7 @@ import {
   isDiscordAuthEnabled,
   isEmailAuthEnabled,
   sessionCookieName,
+  useSecureCookies,
 } from './config.js';
 import { handleLoginLinkBranch, registerDiscordLinkRoutes } from './discord-link.js';
 import {
@@ -152,15 +159,13 @@ async function webResponseToFastifyReply(
 /**
  * Rewrite the Fastify request URL so Auth.js sees the path it expects.
  * Auth.js's internal action router dispatches on `/<basePath>/<action>/<provider>?`,
- * with default basePath = '/auth'. Our public routes are:
- *   /auth/discord/login    → maps to /auth/signin/discord
- *   /auth/discord/callback → maps to /auth/callback/discord
- *   /auth/signout          → already correct
- *   /auth/session          → already correct
+ * The Fastify routes mirror Auth.js's internal paths so we forward straight
+ * through without a rewrite. The only special case is the GET-ified login
+ * (`/auth/discord/login`) that internally fires Auth.js's POST-only
+ * `/auth/signin/discord` action — see the comment on that route.
  */
 function authJsPathFor(publicPath: string): string {
   if (publicPath === '/auth/discord/login') return '/auth/signin/discord';
-  if (publicPath === '/auth/discord/callback') return '/auth/callback/discord';
   return publicPath;
 }
 
@@ -271,19 +276,70 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
     return reply.send(await signInRes.text());
   });
 
-  app.get('/auth/discord/callback', async (req, reply) => {
+  // Auth.js hardcodes the OAuth `redirect_uri` to `${basePath}/callback/${id}`
+  // (see `@auth/core/lib/utils/providers.js` `callbackUrl` construction).
+  // With basePath `/auth` the URI is `/auth/callback/discord`, so that's
+  // where Discord will redirect back to. We register a Fastify route at
+  // that exact path and forward directly to Auth.js without a path rewrite.
+  app.get('/auth/callback/discord', async (req, reply) => {
     if (!isDiscordAuthEnabled(env)) {
       return reply.code(503).send({ error: 'discord_auth_disabled' });
     }
-    return delegateToAuthJs(req, reply, '/auth/discord/callback');
+    return delegateToAuthJs(req, reply, '/auth/callback/discord');
   });
 
   // ---------------- Always-on routes ----------------
 
+  /**
+   * R3.5 — unauthenticated probe so the web Login screen can decide which
+   * sign-in buttons to render. Mirrors the `isDiscordAuthEnabled` /
+   * `isEmailAuthEnabled` sentinels — the same disabled state already
+   * surfaces as 503 from each provider's routes, so this endpoint reveals
+   * no additional information (the Discord button would otherwise just
+   * lead the user to a 503).
+   */
+  app.get('/auth/methods', async () => {
+    return {
+      discord: isDiscordAuthEnabled(env),
+      email: isEmailAuthEnabled(env),
+    };
+  });
+
   // Sign out works whether Discord is configured or not — an authenticated
   // user with a valid cookie always deserves a clean exit.
+  //
+  // Implemented as a direct teardown rather than a proxy to Auth.js's
+  // signout action: Auth.js v5's signout is POST-only AND CSRF-protected
+  // (requires a csrfToken in a form-encoded body that matches the
+  // `__Host-authjs.csrf-token` cookie). Our JSON client doesn't carry
+  // that, and proxying produces a 400 / "Unexpected end of JSON input"
+  // when Auth.js fails to parse the missing form body.
+  //
+  // This is symmetric with the email-OTP path, which creates sessions
+  // directly via `createSessionForUser` instead of going through Auth.js.
   app.post('/auth/signout', async (req, reply) => {
-    return delegateToAuthJs(req, reply, '/auth/signout');
+    const cookieName = sessionCookieName(env);
+    const cookies = (req as unknown as { cookies?: Record<string, string | undefined> }).cookies;
+    const token = cookies?.[cookieName];
+    if (token) {
+      try {
+        await prisma.session.delete({ where: { sessionToken: token } });
+      } catch (err) {
+        // P2025 = row already gone (concurrent signout, or cookie points
+        // at a stale token). Either way the user ends up logged out,
+        // which is the desired outcome — swallow it. Any other error
+        // is a real DB failure and must surface.
+        if (
+          typeof err !== 'object' ||
+          err === null ||
+          (err as { code?: unknown }).code !== 'P2025'
+        ) {
+          throw err;
+        }
+      }
+    }
+    reply.clearCookie(cookieName, { path: '/' });
+    return reply.code(200).send({});
   });
 
   app.get('/auth/session', async (req, reply) => {
@@ -479,7 +535,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
       httpOnly: true,
       sameSite: 'lax',
       path: '/',
-      secure: env.NODE_ENV === 'production',
+      secure: useSecureCookies(env),
       expires,
     });
 
@@ -488,6 +544,10 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         id: user.id,
         displayName: user.displayName,
         needsDisplayName: user.needsDisplayName,
+        email: user.email,
+        emailVerified: user.emailVerified?.toISOString() ?? null,
+        avatarUrl: user.avatarUrl,
+        discordId: user.discordId,
       },
       expires: expires.toISOString(),
     });
@@ -612,6 +672,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
       user: {
         id: updated.id,
         displayName: updated.displayName,
+        needsDisplayName: updated.needsDisplayName,
         email: updated.email,
         emailVerified: updated.emailVerified?.toISOString() ?? null,
       },
@@ -648,6 +709,10 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         id: updated.id,
         displayName: updated.displayName,
         needsDisplayName: updated.needsDisplayName,
+        email: updated.email,
+        emailVerified: updated.emailVerified?.toISOString() ?? null,
+        avatarUrl: updated.avatarUrl,
+        discordId: updated.discordId,
       },
     });
   });

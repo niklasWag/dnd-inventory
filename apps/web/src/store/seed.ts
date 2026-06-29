@@ -6,6 +6,16 @@ import { useStore } from '@/store';
  * Bootstrap-time catalog seed (MVP §9 + R2.1).
  *
  * Strategy:
+ *   - The `seed-catalog` action is LOCAL-ONLY: it populates the client's
+ *     in-memory `appState.catalog` so the UI has items to show
+ *     immediately after `create-character` (before the bootstrap
+ *     `/sync/state` round-trip completes). In server mode the sync
+ *     queue filters `seed-catalog` out before pushing, so the server's
+ *     bootstrap batch stays pure-`create-character` per
+ *     `apps/server/src/sync/routes.ts:244`. The canonical catalog still
+ *     comes from the server (PHB+DMG rows are written by
+ *     `apps/server/src/db/seed-runner.ts` at boot and returned by every
+ *     `/sync/state` response).
  *   - If there's no AppState yet (fresh user, pre-character) → no-op.
  *     `createCharacter` lands `seedVersion: 0`, and the next call to this
  *     function (right after the create-character dispatch) does the

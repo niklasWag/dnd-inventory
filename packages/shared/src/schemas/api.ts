@@ -53,16 +53,29 @@ export const sessionUserSchema = z
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 
 /**
- * `GET /auth/session` returns either an empty object (anonymous) or the
- * user + expiry. We model that as a single optional-user shape rather
- * than a union: callers branch on `response.user !== undefined`.
+ * `GET /auth/session` returns either:
+ *   - an empty object `{}` (Fastify-route anonymous response),
+ *   - the JSON literal `null` (Auth.js's default anonymous response — Auth.js
+ *     v5 returns `null` when there is no session token; the Fastify route
+ *     for /auth/session delegates to Auth.js so this lands on the wire),
+ *   - or `{ user, expires }` for an authenticated session.
+ *
+ * We accept `null` as equivalent to `{}` via a `union`; callers branch on
+ * `response.user !== undefined`. Without this branch, the legitimate
+ * anonymous payload `null` would fail the parse with `expected: object`
+ * and surface to the user as a console error.
  */
-export const sessionResponseSchema = z
+const sessionResponseObjectSchema = z
   .object({
     user: sessionUserSchema.optional(),
     expires: z.string().datetime().optional(),
   })
   .passthrough();
+
+export const sessionResponseSchema = z.union([
+  sessionResponseObjectSchema,
+  z.null().transform(() => ({}) as z.infer<typeof sessionResponseObjectSchema>),
+]);
 
 export type SessionResponse = z.infer<typeof sessionResponseSchema>;
 
@@ -160,3 +173,17 @@ export const batchRejectedResponseSchema = z.object({
 });
 
 export type BatchRejectedResponse = z.infer<typeof batchRejectedResponseSchema>;
+
+/**
+ * `GET /auth/methods` — unauthenticated probe used by the Login screen to
+ * decide which sign-in buttons to render. Mirrors the server-side
+ * `isDiscordAuthEnabled` / `isEmailAuthEnabled` sentinels. The same
+ * disabled-state surfaces as 503 from the per-flow routes; this endpoint
+ * just lets the client know in advance.
+ */
+export const authMethodsResponseSchema = z.object({
+  discord: z.boolean(),
+  email: z.boolean(),
+});
+
+export type AuthMethodsResponse = z.infer<typeof authMethodsResponseSchema>;
