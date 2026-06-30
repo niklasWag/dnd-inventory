@@ -122,3 +122,24 @@ Both become regression tests once the fix lands.
 - `apps/server/prisma/migrations/20260630181911_bug001_character_inventory_fk_no_action/migration.sql` — new migration.
 - `apps/server/src/db/schema-invariants.test.ts` — extended invariant assertion.
 - `apps/server/src/parties/routes.test.ts` — two new regression integration tests (kick + leave with a character).
+
+---
+
+## Audits
+
+### AUDIT-001 — `ON DELETE RESTRICT` FK sweep (2026-06-30, follow-up to BUG-001)
+
+One of BUG-001's open questions was: "Are there OTHER `ON DELETE RESTRICT` constraints that should be `NO ACTION` or `CASCADE`?" Answer: **no — all remaining RESTRICTs are intentional.**
+
+Query (`pg_constraint` where `confdeltype = 'r'`) returned four FKs at the time of the sweep:
+
+| Constraint                          | Column                                | References                | Verdict     | Why                                                                                                            |
+| ----------------------------------- | ------------------------------------- | ------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------- |
+| `Character_ownerUserId_fkey`        | `Character.ownerUserId`               | `User.id`                 | keep        | Users are never hard-deleted (soft-leave via `PartyMembership.leftAt`). RESTRICT protects against future code paths that would silently orphan a Character. |
+| `Party_ownerUserId_fkey`            | `Party.ownerUserId`                   | `User.id`                 | keep        | Same as above for Party. DM-leave archives the party (R4.1.e); it never deletes the User row.                  |
+| `TransactionLog_actorUserId_fkey`   | `TransactionLog.actorUserId`          | `User.id`                 | keep        | The log is an immutable audit trail (OUTLINE §8). An actor row must remain referentially valid forever.        |
+| `ItemInstance_definitionId_fkey`    | `ItemInstance.definitionId`           | `ItemDefinition.id`       | keep        | Schema explicitly sets `onDelete: Restrict` (prisma/schema.prisma). PHB/DMG seed content must not vanish while items reference it. |
+
+BUG-001 was unique because the cascade deleted both the referencing AND the referenced row in the same transaction, putting RESTRICT in an order-dependent collision. None of these four FKs have that property — the referenced row (User / ItemDefinition) is never deleted in normal flows.
+
+**Result.** No migration needed. The four RESTRICTs above are correct defenses against future "delete a User who still owns data" code paths. If we ever add a real user-deletion flow (GDPR right-to-erasure, for example), revisit each: it'll need an explicit cascade plan in code, NOT a relaxed FK.
