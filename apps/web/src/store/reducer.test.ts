@@ -7400,6 +7400,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
     });
 
     const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBe(otherPlayerUserId);
     const log = useStore.getState().log;
     const last = log[log.length - 1]!;
     expect(last.type).toBe('currency-change');

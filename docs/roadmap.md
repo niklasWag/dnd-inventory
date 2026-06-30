@@ -1917,10 +1917,22 @@ Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable
 **Reducer / store**
 - [x] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4) — **shipped in R3.4.a** for the derivation path (`deriveActorRole` in `@app/shared/guards/actor.ts`); R4.2.a lit it up by allowing `bankerUserId` to be non-null AND widening web `resolveActor` to mirror it.
 
-**UI (deferred to R4.2.e — banker badge on log entries)**
-- [ ] Party log UI: render `actorRole: 'banker'` distinct from `'player'` (badge color or label).
+**UI**
+- [x] Party log UI: render `actorRole: 'banker'` distinct from `'player'` (badge color). Shipped as a shared `RoleBadge` component (`apps/web/src/components/RoleBadge.tsx`) with three theme-tokened variants (`bg-primary/10 text-primary` for DM, `bg-secondary text-secondary-foreground` for Player, `bg-accent text-accent-foreground` for Banker). Wired into `ItemHistory` (per-item audit log) AND `PartySettings` (member list — extracted from local inline definition).
+- [ ] Banker badge IN the PartySettings member list — deferred to R4.2.e. Today the `PartyMemberItem.role` API type is narrow `'dm' | 'player'` (Banker is denormalised on `Party.bankerUserId`, not a membership row). Rendering "Banker" alongside a player's row requires joining `Party.bankerUserId` to the members list at render time — that lands with the R4.2.e appoint/revoke CTA so the UI flows together.
 
-> Most of R4.2.b's substance shipped as part of R4.2.a (the `resolveActor` widening). What's left is the log-rendering polish, which naturally rides along with the R4.2.e UI slice. Keeping R4.2.b as a roadmap anchor so the audit-trail concern doesn't get lost.
+#### R4.2.b — Notes
+
+> **Shipped 2026-06-30** (`feature/r4-parties`).
+>
+> **Test totals:** 1034 across the workspace (web 665 ← 661 with 4 new RoleBadge component tests; server unchanged at 165).
+>
+> **Decisions captured:**
+> - **Component lives at `apps/web/src/components/RoleBadge.tsx`, NOT in `components/ui/`.** Per CLAUDE.md, `components/ui/` is shadcn-managed (hand-edits forbidden). The shared role badge is app-owned, so it sits next to other app components like `CharacterForm`, `Layout`.
+> - **Three theme-token variants, not a custom palette.** DM uses `primary`, Player uses `secondary`, Banker uses `accent` — all already in the shadcn theme. No new design tokens introduced. The "Banker uses accent" choice signals "privileged but not DM" without inventing a custom color.
+> - **Member-list Banker badge deferred to R4.2.e.** The API type `PartyMemberItem.role` is intentionally narrow per OUTLINE §3.14 (banker is denormalised on Party, never a membership row). Joining `Party.bankerUserId` to the members list in the UI is straightforward but belongs with the appoint/revoke CTA work in R4.2.e, where both ship together. R4.2.b focuses on the AUDIT-TRAIL surface (where `actorRole: 'banker'` already flows through from R4.2.a's reducer/middleware changes).
+>
+> **Carryforward to R4.2.e:** PartySettings member-list rendering needs to (a) call `RoleBadge role="banker"` for the player whose `userId === party.bankerUserId`, OR (b) widen the API response with a derived `effectiveRole` field. (a) is preferred — keeps the API narrow and the derivation client-side, matching the existing `deriveActorRole` pattern.
 
 #### R4.2.c — Permission gating: shared-pool claim/distribute is Banker-mediated
 
@@ -1958,12 +1970,12 @@ Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable
 
 #### R4.2.e — UI
 
-- [ ] Party Settings screen (§5.15): appoint / revoke Banker
-- [ ] Member list with role badges (DM / Player / Banker)
+- [ ] Party Settings screen (§5.15): appoint / revoke Banker CTAs (DM-only, hidden in solo, hidden on the DM's own row)
+- [ ] Member list with role badges (DM / Player / Banker) — `RoleBadge` already exists from R4.2.b; the new work is joining `Party.bankerUserId` to the members list at render time to surface the Banker badge alongside the player row whose `userId === party.bankerUserId`. Keep the API type `PartyMemberItem.role` narrow `'dm' | 'player'` per OUTLINE §3.14; derive Banker client-side.
+- [x] ~~Log-entry badge for `actorRole: 'banker'`~~ — **shipped in R4.2.b** (via `RoleBadge` in `ItemHistory`).
 - [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
 - [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
 - [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
-- [ ] Log-entry badge for `actorRole: 'banker'` (carryforward from R4.2.b)
 - [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
 
 #### R4.2.e — Notes

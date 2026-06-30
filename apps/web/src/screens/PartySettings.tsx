@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { RenameField } from '@/components/settings/RenameField';
 import { CharacterForm, type CharacterFormOutput } from '@/components/CharacterForm';
+import { RoleBadge } from '@/components/RoleBadge';
 import { ApiError, kickPlayerApi, leavePartyApi, listPartyMembers, rotateInvite } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
 import { getOwnCharacter } from '@/lib/ownCharacter';
@@ -456,16 +457,5 @@ export function PartySettings(): ReactElement {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function RoleBadge({ role }: { role: 'dm' | 'player' }): ReactElement {
-  const label = role === 'dm' ? 'DM' : 'Player';
-  const styles =
-    role === 'dm'
-      ? 'bg-primary/10 text-primary'
-      : 'bg-secondary text-secondary-foreground';
-  return (
-    <span className={`rounded px-2 py-0.5 text-xs font-medium ${styles}`}>{label}</span>
   );
 }
