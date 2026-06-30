@@ -1770,41 +1770,41 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 **Same action covers three use cases** — joiner-creates-after-invite, DM-only-DM-later-adds-character, post-`delete-character` recreation. All three land at the same end state: an active `role='player'` `PartyMembership` row in an existing party with a non-null `characterId`.
 
 **Reducer (`packages/rules/src/reducer/index.ts`)**
-- [ ] Extend `create-character` to accept a post-bootstrap variant. The current guard `if (state !== null) throw` is replaced with branching:
+- [x] Extend `create-character` to accept a post-bootstrap variant. **Shipped 2026-06-30** in `createCharacterInExistingParty` (new function in `packages/rules/src/reducer/index.ts`); the legacy `createCharacter` arm now routes there when `state !== null` rather than throwing.
   - `state === null` → existing bootstrap path (mints `User` + `Party` + memberships + party-scope stashes + character/inventory if not `dmOnly`).
   - `state !== null` → new post-bootstrap path: validate the actor is an active member of `state.party`; mint Character + Inventory `Stash` + CurrencyHolding; if the actor already has a `role='player'` row update its `characterId`, else add a new `role='player'` row; emit a `create-character` log entry with the existing payload shape.
-- [ ] Reject `dmOnly: true` on the post-bootstrap branch (it's a bootstrap-only flag — adding a non-character DM-only "thing" to an existing party makes no sense).
-- [ ] Reject when the actor already has an active player membership in this party WITH a non-null `characterId` (one-character-per-user-per-party invariant per OUTLINE §4 composite-key model).
+- [x] Reject `dmOnly: true` on the post-bootstrap branch (it's a bootstrap-only flag — adding a non-character DM-only "thing" to an existing party makes no sense).
+- [x] Reject when the actor already has an active player membership in this party WITH a non-null `characterId` (one-character-per-user-per-party invariant per OUTLINE §4 composite-key model).
 
 **Action schema (`packages/shared/src/schemas/action.ts`)**
-- [ ] No payload changes needed — the existing `create-character` action's legacy (with-character) payload already carries `{ name, species, size, class, level, str, partyName? }`. `partyName` is ignored on the post-bootstrap branch (the party already exists; renaming uses `rename-party`).
+- [x] No payload changes needed — the existing `create-character` action's legacy (with-character) payload already carries `{ name, species, size, class, level, str, partyName? }`. `partyName` is ignored on the post-bootstrap branch (the party already exists; renaming uses `rename-party`).
 
 **Log entry (`packages/shared/src/schemas/transactionLog.ts`)**
-- [ ] No schema changes needed — `create-character` log entry's optional fields (`characterId`, `name`, `inventoryStashId`) are already set on the with-character branch; the post-bootstrap variant uses the same shape.
+- [x] No schema changes needed — `create-character` log entry's optional fields (`characterId`, `name`, `inventoryStashId`) are already set on the with-character branch; the post-bootstrap variant uses the same shape.
 
 **Server-side**
-- [ ] Update `applyDelta` switch: the `create-character` arm currently throws `'create-character must be applied via applyBootstrapDelta'`. Make that branch reachable for the post-bootstrap variant — call a new `applyAddCharacterDelta` (or extend `applyBootstrapDelta` with a `state` parameter that signals which path).
-- [ ] New persistor function `persistAddCharacterToExistingParty`: creates `Character` + `Stash(scope='character', isCarried=true)` + `CurrencyHolding`; either updates `PartyMembership.characterId` (player row exists with null id) or inserts a fresh `(userId, partyId, 'player')` membership row (DM-only DM adding their first character).
-- [ ] Bootstrap-vs-post-bootstrap dispatch in `apps/server/src/sync/routes.ts` `POST /sync/actions` must branch correctly — the current `isBootstrap = actions.every((a) => a.type === 'create-character')` short-circuit picks the bootstrap branch even when state already exists. Add a `state == null` check before treating it as bootstrap.
+- [x] Update `applyDelta` switch: the `create-character` arm now calls the new `persistAddCharacterToExistingParty` (lines 56–67 of `apps/server/src/sync/persistor.ts`) instead of throwing `'create-character must be applied via applyBootstrapDelta'`.
+- [x] New persistor function `persistAddCharacterToExistingParty` (in `apps/server/src/sync/persistor.ts`): creates `Character` + `Stash(scope='character', isCarried=true)` + `CurrencyHolding`; either updates `PartyMembership.characterId` (player row exists with null id) or inserts a fresh `(userId, partyId, 'player')` membership row (DM-only DM adding their first character).
+- [x] Bootstrap-vs-post-bootstrap dispatch in `apps/server/src/sync/routes.ts` `POST /sync/actions` now branches on `await prisma.party.findUnique({where:{id:partyId}})` BEFORE deciding `isBootstrap` — if the party exists, post-bootstrap path; the `applyBootstrapDelta` seam (lines ~300) is also gated on `isBootstrap`.
 
 **Guards (`packages/shared/src/guards/map.ts`)**
-- [ ] Widen `createCharacterGuard` to accept `state !== null` when the actor is an active member of `state.party`. Today it requires `state === null` (bootstrap-only).
+- [x] Widened `createCharacterGuard` to accept `state !== null` when the actor is an active member of `state.party`. New rejection codes added to `GuardRejectionCode`: `'state_already_initialized'` (for dmOnly on post-bootstrap branch), `'character_already_exists'` (for the one-character-per-user-per-party invariant).
 
 **Web UI**
-- [ ] Two entry points (both visible):
-  - **Hub post-join (primary):** after `POST /parties/join` succeeds, navigate the joiner directly to a character-creation form rather than `/party/settings`. Form submit dispatches `create-character` with the existing payload + the now-current `state.party`.
-  - **PartySettings (secondary, for DM-only DMs + post-delete recreation):** show a "Create your character" CTA when the actor has no `Character` they own in the loaded party. Click → same form → same dispatch.
-- [ ] After the post-bootstrap `create-character` dispatch, the Hub-style sync flush + post-flush re-read + navigate-to-`/character/:id` flow applies (R4.1.e + R4.1-followup pattern).
+- [x] Single CTA on PartySettings covers all three use cases (joiner post-join, DM-only DM, post-delete recreation). After `POST /parties/join`, `openServerParty` already routes the joiner to `/party/settings` when `characters[0]` is undefined; the new "Create your character" section in `apps/web/src/screens/PartySettings.tsx` is visible whenever `character === null && partyId !== null` and reuses the existing `<CharacterForm>` component. (No dedicated post-join route — the choice was for one UI path serving all three uses.)
+- [x] After the post-bootstrap `create-character` dispatch, `handleCreateCharacterSubmit` follows the Hub-style sync flush + post-flush re-read + navigate-to-`/character/:id` pattern.
+- [x] **Sync queue fix** — `apps/web/src/sync/queue.ts` previously misclassified post-bootstrap `create-character` as bootstrap (sending `'will-be-minted'` as partyId). Fixed: `isBootstrap = isCreateCharacter && snapshot?.appState == null`. The post-flush re-pull (which lands server-canonical ids in the store) was extended to fire on ANY `create-character`, not just bootstrap, so the server-minted character + inventory + holding ids replace the client's optimistic ones.
 
 **Tests**
-- [ ] Reducer: dispatching `create-character` on a populated AppState as an active player with `characterId: null` adds a Character + Inventory stash + currency and updates the player row's characterId.
-- [ ] Reducer: dispatching as a DM-only DM (no player row) adds a new `role='player'` membership row + Character + stashes.
-- [ ] Reducer: rejects when the actor already has an active player membership with a non-null `characterId`.
-- [ ] Reducer: rejects `dmOnly: true` on the post-bootstrap branch.
-- [ ] Reducer: rejects when the actor is not an active member of `state.party`.
-- [ ] Server integration: full flow — user A creates a party, user B joins, user B dispatches `create-character`, GET `/sync/state?partyId=...` for user B returns the canonical AppState with B's character and A still has their own separate inventory.
-- [ ] Web: `Hub` test that simulates `POST /parties/join` → navigates to the character-creation form (not `/party/settings`).
-- [ ] Web: `PartySettings` test that the "Create your character" CTA appears for a DM-only loaded party and dispatches `create-character` on submit.
+- [x] Reducer: dispatching `create-character` on a populated AppState as an active player with `characterId: null` adds a Character + Inventory stash + currency and updates the player row's characterId. (`apps/web/src/store/reducer.test.ts` describe block `reducer: create-character post-bootstrap (R4.1.f)`.)
+- [x] Reducer: dispatching as a DM-only DM (no player row) adds a new `role='player'` membership row + Character + stashes.
+- [x] Reducer: rejects when the actor already has an active player membership with a non-null `characterId`.
+- [x] Reducer: rejects `dmOnly: true` on the post-bootstrap branch.
+- [x] Reducer: rejects when the actor is not an active member of `state.party`.
+- [x] Guard tests (`packages/shared/src/guards/map.test.ts`) — 5 cases mirroring the reducer rejection paths plus the two positive cases (joiner, DM-only DM).
+- [x] Server integration (`apps/server/src/parties/routes.test.ts`): full flow — user A creates a party, user B joins, user B dispatches `create-character`, the resulting DB state has B's character + own Inventory + own CurrencyHolding; A still has their own separate character/inventory. Plus a DM-only DM "add character later" case.
+- [ ] Web: `Hub` test that simulates `POST /parties/join` → navigates to the character-creation form (not `/party/settings`). **Not added** — the chosen UX is to land on `/party/settings` (which now hosts the CTA), so the existing Hub test continues to assert the current correct behaviour.
+- [x] Web: `PartySettings` test that the "Create your character" CTA appears for a DM-only loaded party and dispatches `create-character` on submit. (Three new tests in `apps/web/src/screens/PartySettings.test.tsx`: CTA renders, submit dispatches + navigates, CTA hidden when character exists.)
 
 **Out of scope (carryforward to a later slice if needed)**
 - Multiple characters per user per party. The composite-key model `(userId, partyId, role)` only allows one player row per user per party, so one user → one character per party stays the invariant. A user playing multiple characters in the same campaign is a future ask (would need either `(userId, partyId, role, slot)` composite key OR moving `characterId` off the membership row entirely).
@@ -1812,7 +1812,42 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 
 #### R4.1.f — Notes
 
-> -
+> **2026-06-30 — R4.1.f (Joiners create their own character) shipped.** The post-bootstrap `create-character` path closes the last R4.1 gap: a user who joined via invite, a DM-only DM who skipped the play prompt at party creation, OR a user whose character was deleted can now dispatch `create-character` against an existing `AppState` and end up with a real Character + Inventory + zero-balance CurrencyHolding + a `role='player'` membership pointing at it.
+>
+> **Headline shape.** `createCharacterInExistingParty` (new function alongside the bootstrap `createCharacter` in `packages/rules/src/reducer/index.ts`) handles the post-bootstrap branch; the existing `createCharacter` now delegates instead of throwing. Server-side, `applyDelta`'s `create-character` arm calls a new `persistAddCharacterToExistingParty` that mints Character + Stash + CurrencyHolding rows and either patches the existing `(userId, partyId, 'player')` row's `characterId` or inserts a fresh one. The `/sync/actions` route's `isBootstrap` heuristic was tightened to gate on `prisma.party.findUnique({where:{id:partyId}}) === null` rather than just `actions.every(a => a.type === 'create-character')`, so the same action type now routes correctly to both paths.
+>
+> **Guard widening.** `createCharacterGuard` (in `packages/shared/src/guards/map.ts`) was widened to permit `state !== null` when the actor is an active member of the party. Two new `GuardRejectionCode` values landed: `'state_already_initialized'` (rejects `dmOnly: true` on the post-bootstrap branch) and `'character_already_exists'` (rejects re-creating a character when an active player row with non-null `characterId` exists).
+>
+> **Sync queue fix.** `apps/web/src/sync/queue.ts:142` previously detected bootstrap purely from the action type (`batch[0]?.type === 'create-character'`). That misclassified the post-bootstrap variant — the queue would push `'will-be-minted'` as the partyId. Fix: `isBootstrap = isCreateCharacter && snapshot?.appState == null`. The post-flush re-pull (originally only for bootstrap) was also extended to fire on the post-bootstrap variant, so the server's canonical character + stash + holding ids replace the client's optimistic ones before navigation.
+>
+> **UX choice.** The "Create your character" CTA lives on `/party/settings` only. The joiner post-`POST /parties/join` already lands there (via `openServerParty`'s "no characters → /party/settings" route), the DM-only DM is sent there by `handleCreatePartyDmOnly`, and the post-delete recreation case naturally surfaces there. A single CTA serves all three flows — no dedicated post-join route was added. The form reuses the existing `<CharacterForm>` component verbatim (no prop changes); submit goes through the canonical Hub-style flush + re-read + navigate pattern.
+>
+> **Test totals.** web 635 → **638** (+3 PartySettings CTA tests; reducer suite gained 7 R4.1.f tests but two pre-existing tests' error-message regexes had to update for the wider-throw, net +6 reducer cases; one obsolete test was rolled into the new suite, net +3 file-wide). shared 69 → **74** (+5 guard tests covering the new positive + rejection paths). server 154 → **156** (+2 integration tests: joiner adds character; DM-only DM adds character later). rules 114 unchanged.
+>
+> **Operational followup (Postgres on a separate port for tests).** Test DB moved from `:5433` to `:5434` so it can run in parallel with the docker-compose dev stack without conflicting (both want to bind a host port for Postgres). README updated to spin up two containers: `dnd-inv-pg` on `:5433` for dev + `docker-compose` parity, `dnd-inv-pg-test` on `:5434` for vitest. Every test file's `DATABASE_URL_TEST` fallback was updated in lockstep.
+>
+> **Carryforwards.** R4.1.f intentionally left two items out of scope per the spec: multiple characters per user per party (composite-key model `(userId, partyId, role)` only permits one player row per user per party), and atomic invite-code-plus-character-creation in a single action (two-action design `join-party` then `create-character` keeps the reducer simple and survives partial failures).
+>
+> **2026-06-30 post-ship bug + sweep.** R4.1.f introduced a new failure mode in the web that wasn't covered by the original tests: every screen that needed "the actor's character" read `appState.characters[0]`. Pre-R4.1.f the schema invariant was exactly one character per party so the index lookup was always correct. After R4.1.f, `GET /sync/state` returns every character in the party, and `characters[0]` resolves to player 1's character when player 2 logs in — producing two simultaneous symptoms: player 2 was navigated into player 1's character sheet, and the PartySettings "Create your character" CTA stayed hidden because the array-position check incorrectly read "user has a character." Fixed by adding `apps/web/src/lib/ownCharacter.ts` (a `getOwnCharacter(appState)` helper that resolves via `PartyMembership.characterId`, anchored on `state.user.id`), plus a regression test in `apps/web/src/screens/PartySettings.test.tsx` that asserts the CTA renders for player 2 when player 1's character is already in `characters[]`. The full sweep replaced `characters[0]` in five production sites: `Hub.tsx` (×3 — server-party open / local-party open / post-create navigation), `PartySettings.tsx` (×2 — character selector / post-submit navigation), `ItemDetail.tsx` (fallback character routing), `Settings.tsx` (encumbrance section), `io/export.ts` (export filename slug). `io/import.ts:61` keeps `characters[0]` intentionally — it labels external file content, not actor identity — with a clarifying comment. Two legacy files (`Welcome.tsx`, `CreateCharacter.tsx`) still read `characters[0]` but are unrouted; they'll go away with the existing "delete legacy fixtures" followup. Web test totals: 638 → 645 (+6 helper unit tests + 1 PartySettings regression).
+>
+> **2026-06-30 post-ship bug #2 — id canonicalization for non-create-character mutating actions.** Same root cause as the original R4.1.f bootstrap fix, with a wider blast radius: the queue's post-flush re-pull (`apps/web/src/sync/queue.ts`) only fired when `batch[0].type === 'create-character'`. But EVERY action whose persistor calls `ctx.newId()` server-side suffers the same divergence — the server-minted entity id never gets to the client, leaving the local store with stale optimistic ids. Symptom: a user acquires an item from the catalog, then tries to move it to Party Stash → server responds `422 { rejected: { code: 'item_not_found' } }` because the client's `transfer` action references the client's optimistic itemInstanceId while the server's row was minted with a different UUID. Affected action types: `acquire` (only on the non-stacking branch; auto-stacks reuse the existing row id and are unaffected), `create-stash`, `split`, `create-homebrew`, plus the already-handled `create-character`. **Tactical fix:** generalised the re-pull trigger to an explicit `ID_MINTING_ACTION_TYPES` set in `queue.ts` (declared at module top, doc-commented to stay in sync with the server's `ctx.newId()` call sites). The post-flush branch now fires for any batch containing such an action. Regression test: `apps/web/src/sync/queue.test.ts > queue — id canonicalization after id-minting actions` asserts `GET /sync/state` is called after `acquire`. Web test totals: 645 → **646**. **Architectural followup:** the runtime patch is structurally fragile (full-state refetch on every id-minting action; action-type list drifts as features land; won't survive R5's N-writer concurrency). The root cause is dual id-minting authorities (client reducer + server persistor each call `ctx.newId()`). **Promoted to RH1 (Hardening Pass 1: Server-Authoritative IDs)** scheduled between R4 and R5; RH1.3 explicitly deletes `ID_MINTING_ACTION_TYPES` once client-minted UUID v7 ids become canonical.
+
+#### R4.1 — Notes
+
+> **2026-06-29 — R4.1 (Multi-member parties — foundation) sub-slices a–e shipped + R4.1.f scoped.** Sub-slices a/b/c/d/e shipped 2026-06-29. Headline shape: multi-membership schema is now real (`Party.isSoloShortcut` dropped; `PartyMembership.leftAt` nullable), the four-action departure surface (`delete-character`, `leave-party`, `kick-player`, `join-party`) shares one `cascadeCharacterToRecoveredLoot` helper, server routes (`POST /parties/join`, `/invite/rotate`, `/leave`, `/kick`, `GET /:partyId/members`) sit alongside the existing `/sync/*` surface, Hub Join card lit up, PartySettings screen ships at `/party/settings`, and sole-member archive runs server-only via `Party.archivedAt`. **R4.1.f (joiners create their own character) was scoped but not yet shipped** — the canonical "DM invites players who join with their own character" flow needs it; without f, `POST /parties/join` mints a membership row with `characterId: null` and the joining user can't play. Tracked above; not a backlog item.
+>
+> **Post-shipping followups (also 2026-06-29).** Six bug-fix / refactor passes after the initial sub-slices landed; each kept R4.1 actually usable rather than just "schema-correct."
+>
+> 1. **DM-only Create-party flow** — extended `create-character` action with `dmOnly: boolean` + optional `partyName`. Reducer branches: full bootstrap (with-character) vs DM-only (mints `User` + `Party` + ONE `dm` membership + party-scope stashes only). Log entry's `characterId`/`name`/`inventoryStashId` became optional + a `dmOnly?: boolean` flag for log readers. Three-step Hub wizard: party name → "Will you also play a character?" Yes/No → character form if Yes. Server `applyBootstrapDelta` was already shape-agnostic; no server-side change needed. **5 new reducer tests** in `apps/web/src/store/reducer.test.ts`.
+> 2. **Multi-party local-mode storage** — Dexie keys each party's blob under `appState:<partyId>`; the Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through the pointer with legacy + first-keyed-blob fallbacks. Reducer's `state === null` invariant stays intact — the Hub flushes + clears in-memory state before each `create-character` dispatch. **7 new persistence tests** in `apps/web/src/db/persistence.test.ts`.
+> 3. **Reverse-proxy `/parties/*` routing** — `infra/docker/Caddyfile` only routed `/auth/*` + `/sync/*` + `/healthz` to the server; new `/parties/*` requests fell through to the SPA handler and returned `index.html`, surfacing client-side as a Zod `malformed_response` parse error. Added `/parties /parties/*` to the `@server` matcher; mirrored in the production Caddy + nginx examples in `README.md` so fresh self-host installs don't trip the same wire.
+> 4. **Sync queue race fix** — `store/index.ts` used `void import('@/sync/queue').then(({enqueue}) => enqueue(action))` which deferred enqueue across a microtask. Hub's `await flushSyncQueue()` then found an empty queue and bailed; bootstrap pull-after-push never ran. Replaced with a static `import { enqueue } from '@/sync/queue'` (no runtime cycle — `queue.ts` only depends on `@/store/session` + `@/store/types`, not `@/store/index.ts`).
+> 5. **Bootstrap pull canonicalisation** — the server's `/sync/actions` runs its own reducer with its own `randomUUID()` ctx, so the freshly-minted `partyId` server-side DIFFERS from the client's optimistic local id. The queue's pull-after-push was using the local id and getting 404. Now reads `response.applied[0].payload.partyId` (the `create-character` log entry the server wrote with its own ids) and pulls THAT. The Hub then re-reads `useStore.getState().appState` AFTER `flushSyncQueue()` so navigation uses the now-canonical (server-minted) character/party ids. The pull-after-push had been silently broken since R3.4.a; pre-R4.1.e it didn't matter because navigation read local state — R4.1.e's PartySettings → `/parties/:id/members` was the first screen to call a server API with the local id and immediately 404.
+> 6. **Settings → PartySettings refactor** — Character rename + Party rename moved from the global `/settings` screen to `/party/settings` (party-scoped, lives next to members + invite code). PartySettings dropped its `!isServerMode` redirect: local mode now sees the rename surfaces with server-only sections (members / invite code / kick / leave) hidden. New "Party" nav button in the header (Users icon), visible whenever `state.party !== null`. PartySettings also handles stale parties — `party_not_found` from `/parties/:id/members` redirects to Hub with a clear toast instead of stranding the user. Hub's `openServerParty` / `openLocalParty` route DM-only parties (no characters) to `/party/settings` instead of erroring "no characters yet." **4 new PartySettings tests**; 3 stale Settings rename tests removed.
+>
+> **Test totals.** 952 (after R4.1.e) → **964** (after R4.1.b's DM-only) → **972** at session-end (with multi-party + PartySettings tests added). All five workspaces typecheck; web lint clean. Server-side route tests at 154 (the 7 new R4.1.e route tests verified end-to-end against real Postgres).
+>
+> **Carryforwards (tracked under "Operational followups → Feature gaps"):** multi-party "vault" export (currently per-party) and explicit `archivedAt` check on `/sync/actions` (defensive).
 
 #### R4.1 — Notes
 
@@ -1939,9 +1974,334 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 
 ---
 
+### RH0 — Legacy-data scaffolding strip (cleanup)
+
+> **What this is.** A mechanical sweep that deletes every piece of code, schema leniency, fallback chain, migration test, doc comment, and inline rationale that exists ONLY to preserve old stored data or pre-current-version shapes. Per `CLAUDE.md` "Things to avoid → no legacy-data debt": the project is WIP with no production users; old Dexie blobs and old Postgres rows can be discarded. RH0 retires the scaffolding accumulated under the previous "preserve legacy compat" policy.
+>
+> **Sequencing.** No dependencies. Can ship in parallel with any in-flight feature work. Recommended FIRST because (a) the next architectural slices (RH1 / RH2 / RH3) inherit the codebase, and the smaller / clearer it is, the cheaper they get; (b) most of this is mechanical deletion with no design questions; (c) it reduces the audit-noise floor — when a future engineer asks "why is this `.strict()` off?" the answer should never again be "legacy."
+
+**Why now.** Every legacy-compat concession was justified at write-time by the same single rationale: a hypothetical user's stored Dexie blob or exported JSON would otherwise re-parse. With the WIP rule explicit (`CLAUDE.md`), that rationale is gone. Each concession costs ongoing readability + invites future drift: every new schema field is wrestled into a lenient shape "to match" the legacy pattern, then someone reads the schema later and assumes the leniency is principled rather than accidental. RH0 cuts the rationale at the root.
+
+**Approach.** Pure deletion + Zod tightening. No migrations, no API changes, no user-facing behaviour change. After RH0, every `.strict()` is on, every schema test exercises only the CURRENT shape, every fallback chain is reduced to a single explicit path, and every doc paragraph that says "kept for legacy" is gone. Anything that mints state writes the canonical shape directly — there is no "literal value kept as a placeholder for forward-compat with existing blobs."
+
+**Slicing.** Five sub-slices ordered by independence. Each can ship as a separate commit; together they retire all known legacy scaffolding.
+
+#### RH0.1 — Tighten Zod schemas to `.strict()`
+
+**Schemas (`packages/shared/src/schemas/*.ts`)**
+- [ ] Audit every `z.object({...})` declaration. Add `.strict()` unless it's a wire shape that intentionally tolerates extra fields (none currently exist — every shared schema is internal). Today the lenient default silently strips unknown keys; after RH0.1 a stray key throws.
+- [ ] Remove every schema doc comment that says "no `.strict()` here because legacy MVP-vintage blobs carry [field X]" — once `.strict()` is on, the rationale is gone. Specifically: `packages/shared/src/schemas/party.ts` (the comment about `isSoloShortcut` legacy parsing), and any sibling comments in `partyMembership.ts`, `appState.ts`, `transactionLog.ts`, etc.
+- [ ] Delete the migration tests in `packages/shared/src/schemas/appState.test.ts` that verify pre-RH-version shapes parse cleanly:
+  - `R4.1 migration — imports a legacy AppState carrying isSoloShortcut: true` (lines ~763–774)
+  - `pre-R1.3 ItemDefinition without flatWeight` (lines ~313–344)
+  - `pre-R1.5 transfer without toContainerInstanceId` (lines ~403–430)
+  - `pre-R2.2 ItemInstance with currentCharges: null` under old narrow schema (lines ~531–655)
+  - `pre-R2.3 ItemInstance with identified: true literal + no hint` (lines ~657–675)
+- [ ] Keep the R4.1 `partyMembership.leftAt: nullable` widening test — that's testing the CURRENT shape works for soft-deletion, not legacy preservation.
+
+#### RH0.2 — Drop MVP placeholder writes
+
+**Reducer (`packages/rules/src/reducer/index.ts`)**
+- [ ] Stop writing `Party.isSoloShortcut: true` in the bootstrap `createCharacter` branch. The field has been removed from Postgres + the Zod schema; the literal was being written purely to keep MVP-vintage Dexie blobs valid. RH0.1's `.strict()` would reject it anyway.
+- [ ] Audit `createCharacter` (both branches) and `createCharacterInExistingParty` for any other field whose only rationale is "match legacy shape." Strip them.
+
+**Tests**
+- [ ] Remove the `Party.isSoloShortcut as null` cast scaffolding in `packages/shared/src/guards/map.test.ts` lines ~31–35 — the comment says "type-asserted here so the guard tests can still exercise the banker path via a manual cast," but `partySchema.bankerUserId` is already `z.null()` for forward-compat. The cast was bridging legacy literal vs. current schema; after RH0.1 it's redundant.
+
+#### RH0.3 — Make `partyId` mandatory on Dexie hydration
+
+**Dexie loader (`apps/web/src/db/load.ts`)**
+- [ ] Remove the legacy unkeyed-slot fallback (lines ~12–40). `loadAppState(partyId: string)` becomes required-argument; callers that don't have a partyId must read it from `getCurrentPartyId()` first.
+- [ ] Remove the "first keyed blob" tertiary fallback. If no partyId is supplied AND no current-party pointer exists, return `null` cleanly (caller routes to Hub).
+
+**Boot hydration (`apps/web/src/store/hydrate.ts`)**
+- [ ] Reduce the four-tier fallback chain (lines ~29–59) to a single path: `currentPartyId from meta → loadAppState(partyId)`. If `currentPartyId` is missing, the store stays empty (`appState: null`) — Hub handles the empty case via the existing "no current party" branch.
+- [ ] Remove the Zod-parse-then-try-legacy-slot pattern in `hydrate.ts`. After RH0.1 the schema is strict — a parse failure means the blob is genuinely corrupted, not "old shape we should fall back from." Surface the error to the user (toast + wipe), don't silently retry against legacy slots.
+
+**Tests**
+- [ ] Audit every callsite of `loadAppState()` in `apps/web/src/**/*.test.ts` (and `*.test.tsx`). Migrate any call that previously relied on the legacy fallbacks to pass an explicit `partyId`.
+
+#### RH0.4 — Delete dead screens
+
+**Screens (`apps/web/src/screens/`)**
+- [ ] Delete `Welcome.tsx`. It's unrouted; the welcome / empty-state surface moved into the Hub in R3.5+.
+- [ ] Delete `CreateCharacter.tsx`. The character-creation form lives in `apps/web/src/components/CharacterForm.tsx` and is consumed by the Hub wizard + PartySettings CTA.
+
+**Tests**
+- [ ] Migrate the existing screen tests that mount these files:
+  - `apps/web/src/screens/Settings.test.tsx`
+  - `apps/web/src/screens/CharacterSheet.test.tsx`
+  - `apps/web/src/screens/ItemDetail.test.tsx`
+  - `apps/web/src/screens/StorageDetail.test.tsx`
+- [ ] For each, replace direct `<Welcome />` / `<CreateCharacter />` mounts with `bootstrap()` from `apps/web/src/test/fixtures.ts` + the screen under test. The bootstrap fixture already mints the right state; the legacy screens were only there to bypass it.
+
+#### RH0.5 — Flatten the `create-character` action union + tidy aliases
+
+**Action schema (`packages/shared/src/schemas/action.ts`)**
+- [ ] Today the `createCharacterAction` is a `z.union` of two payload shapes: legacy (with-character, `dmOnly?: false`) + DM-only (`dmOnly: true` + required `partyName`). The legacy variant's optional `dmOnly`/`partyName` exist because M0–R3 dispatches didn't carry them. Flatten to a single discriminated shape: `dmOnly: boolean` always required; with-character branch keeps `name`/`species`/`size`/`class`/`level`/`str`; DM-only branch keeps `partyName`.
+- [ ] Reducer + tests: every dispatch site now passes `dmOnly: false` explicitly. Audit + update.
+
+**Seeds (`packages/seeds/src/seedVersion.ts`)**
+- [ ] Delete the deprecated `PHB_SEED_VERSION` alias. Confirmed unused in-tree; was kept for out-of-tree consumers that don't exist.
+
+**Docs sweep**
+- [ ] Strip legacy-rationale paragraphs from:
+  - `docs/MVP.md` — references to `isSoloShortcut: true` as an "Invariant" (line ~217); the line ~109–112 deprecation block; line ~61 mention.
+  - `docs/OUTLINE.md` — the §4 paragraph (lines ~243–244) explaining "MVP code keeps writing `isSoloShortcut: true` so existing Dexie blobs validate."
+  - `docs/roadmap.md` — every "legacy MVP-vintage exports rehydrate cleanly" / "Zod's default object-strip behaviour silently drops the legacy field" comment in R4.1 notes (lines ~1741, 2369). Keep the historical "we removed this field in R4.1.a" trail; delete the "but we still write it because legacy blobs" rationale.
+  - `README.md` — line ~36 R4.1 status line that mentions the legacy preservation behavior.
+
+#### RH0 — Notes
+
+> -
+
+---
+
+### RH1 — Hardening Pass 1: Server-Authoritative IDs (architectural)
+
+> **What this is.** RH-slices are **hardening passes**: architectural cleanups that pay down debt accumulated during feature slices. They don't add user-facing capabilities — they make the existing ones structurally sound. RH1 sits between R4 and R5 because R5 (websocket live sync, multi-writer) compounds the id-canonicalisation problem; fixing it once, before N writers arrive, is much cheaper than patching the resulting conflicts.
+
+**Why now.** Today the **client's reducer** and the **server's persistor** independently call `ctx.newId()` for the same logical entity. They produce different UUIDs. The reported "move acquired item → `item_not_found`" bug (R4.1.f post-ship bug #2) is one visible symptom; the structural issue is that the system has **two id-minting authorities**. The current mitigation (post-flush `GET /sync/state` re-pull for any action in `ID_MINTING_ACTION_TYPES` — `apps/web/src/sync/queue.ts`) is a runtime patch:
+
+- It refetches the **entire** AppState after every `acquire` / `create-stash` / `split` / `create-homebrew` / `create-character`. For a 6-player party with hundreds of items the bandwidth cost scales linearly with party size.
+- The "list of action types we have to remember" drifts: R4.2 / R4.3 / R4.4 / R4.5 will each add actions; some mint ids, some don't; the queue's constant has to stay in lockstep with the server's `ctx.newId()` call sites.
+- Multi-writer (R5 websocket) makes echo-patching the canonical id (cheaper alternative — option B in the bug postmortem) intractable: with N clients each holding optimistic state, an id-rewrite on broadcast becomes "conflict resolution," a different problem class.
+- The documented architecture (SECURITY §2, CLAUDE.md, OUTLINE §8) says **server is authoritative**. Today's implementation contradicts that for ids — both sides mint, both write. RH1 aligns the code with the spec rather than expanding a contradiction.
+
+**Approach.** The client mints UUID v7 ids when dispatching id-creating actions. The action payload carries the new id explicitly. The server **accepts** the client's id (rather than minting its own), after validating that (a) it parses as UUID v7, (b) it isn't already in use, (c) its timestamp is within a sane clock-skew window. The TransactionLog becomes a single source of truth — entries describe the action with the same ids on both sides.
+
+**Slicing.** Three small sub-slices, each independently shippable. RH1.1 lays the foundation (shared UUID v7 utility + guard codes). RH1.2 migrates the id-minting action schemas + reducer / persistor (the bulk of the change). RH1.3 deletes the now-unnecessary post-flush re-pull from the queue.
+
+#### RH1.1 — Shared UUID v7 utility + guard codes
+
+**Shared package (`packages/shared`)**
+- [ ] Add `uuid` dep (or self-implement a minimal UUID v7 generator — ~30 LOC; avoids the dep)
+- [ ] Expose `newUuidV7(): string` from a new `packages/shared/src/ids.ts` module, plus `isValidUuidV7(s: string): boolean` and `timestampFromUuidV7(s: string): number`. Re-exported from `packages/shared/src/index.ts`.
+- [ ] Decision-doc comment at the top of `ids.ts` capturing: why v7 (time-ordered, debuggable, collision-safe with 74 random bits per ms), why client-mints (server authoritative for validation, client authoritative for id minting per RH1 charter), the clock-skew tolerance constant (±5 minutes default), and the security implication (no new attack surface — Prisma unique constraint catches forged collisions).
+
+**Reducer context (`packages/rules/src/reducer/types.ts`)**
+- [ ] `ReducerContext.newId` retains the same signature but its default implementation in both client (`apps/web/src/store/index.ts`) and server (`apps/server/src/sync/routes.ts`) is wired to `newUuidV7` from the new module. Server-side becomes a **no-op invariant check** rather than an id source in RH1.2 — see below.
+
+**Guards (`packages/shared/src/guards/index.ts`)**
+- [ ] Add three new `GuardRejectionCode` values: `'id_malformed'` (not a valid UUID v7), `'id_already_exists'` (collision), `'id_clock_skew'` (timestamp outside the tolerance window). Each gets a one-line javadoc.
+
+**Tests**
+- [ ] `packages/shared/src/ids.test.ts` — round-trip (`newUuidV7` → `isValidUuidV7` → true; `timestampFromUuidV7` within ±10ms of `Date.now()`); 100k collision sanity check; `isValidUuidV7` rejects v4 / malformed / empty.
+
+#### RH1.1 — Notes
+
+> -
+
+#### RH1.2 — Client-minted ids in action payloads + server validation
+
+**Action schemas (`packages/shared/src/schemas/action.ts`)**
+
+Each id-minting action's payload widens with an explicit "new entity id" field. The field is REQUIRED on the wire so the server can validate it; clients always provide it via `ctx.newId()`. Naming convention: `new<EntityName>Id` (matches the existing `inventoryStashId` naming on `create-character`).
+
+- [ ] `acquire.payload.newItemInstanceId: string` — required when NOT auto-stacking; ignored when stacking (the existing row's id wins). The reducer guard rejects `newItemInstanceId` for a stacking acquire (defensive: prevents the client from forging the wrong id). For simplicity in the initial cut: always send `newItemInstanceId`, server uses it only on the insert path.
+- [ ] `create-stash.payload.newStashId: string` + `newCurrencyHoldingId: string`
+- [ ] `split.payload.newItemInstanceId: string`
+- [ ] `create-homebrew.payload.newDefinitionId: string`
+- [ ] `create-character.payload.newCharacterId` / `newInventoryStashId` / `newCurrencyHoldingId` (bootstrap variant adds `newUserId` / `newPartyId` / `newPartyStashId` / `newRecoveredLootStashId` / `newPartyStashCurrencyId` / `newRecoveredLootCurrencyId`). The bootstrap branch is the largest payload widening but also the most-tested action — covered comprehensively in `apps/web/src/store/reducer.test.ts`.
+
+**Reducer (`packages/rules/src/reducer/index.ts`)**
+- [ ] Replace every `const newId = ctx.newId()` with `const newId = payload.newXId` for the corresponding action arm. The `ctx.newId()` call still exists at the **dispatch site** in the client (`apps/web/src/store/index.ts`) where it mints the payload field — but the reducer itself is now a pure transformer that doesn't generate ids.
+- [ ] Validate the new id at the reducer boundary: `if (!isValidUuidV7(payload.newItemInstanceId)) throw new Error('acquire: newItemInstanceId must be a valid UUID v7')`. Lets test failures surface fast and gives a clear "your client is misbehaving" diagnostic.
+- [ ] Invariant test (per action): dispatching with the same id twice → second dispatch rejected at the reducer (id collision detected before persistor).
+
+**Server route + guards (`apps/server/src/sync/routes.ts`, `packages/shared/src/guards/map.ts`)**
+- [ ] Each id-minting action's guard validates the new id: structural via `isValidUuidV7`, clock-skew via `timestampFromUuidV7` ± `CLOCK_SKEW_TOLERANCE_MS`. The collision check happens at the persistor (Prisma unique-constraint) rather than the guard — guards are pure state checks, and looking up "does this id exist in DB" isn't pure.
+- [ ] Server's `ctx.newId()` becomes a `() => { throw new Error('server reducer must not mint ids in RH1') }` shim during the migration window — catches any persistor or action arm that forgot to migrate. After RH1.2 ships, removed entirely (the context loses `newId` from its required surface).
+
+**Persistor (`apps/server/src/sync/persistor.ts`)**
+- [ ] Replace every `id: ctx.newId()` with `id: payload.newXId`. Five call sites (matching the action list above).
+- [ ] Collision detection: Prisma will throw `P2002` (unique constraint violation) on a duplicate primary key. The persistor catches it and re-throws as `BatchRejected` with `code: 'id_already_exists'` — the route layer translates that into the 422 response.
+
+**Web client (`apps/web/src/store/index.ts`)**
+- [ ] Dispatch sites for id-minting actions now pre-mint via `newUuidV7()` and inject the id into the payload before calling `dispatch`. Two patterns possible: (a) wrap `dispatch` in a thin `dispatchMintingAction` helper that knows which actions need new-id injection; (b) every call-site pre-mints inline. (a) is cleaner; recommended.
+
+**Tests**
+- [ ] Update every existing reducer test that previously didn't pass `newXId` (most tests use action payloads from `apps/web/src/store/reducer.test.ts`). The shared `bootstrap()` fixture (`apps/web/src/test/fixtures.ts`) gains a helper that pre-mints the canonical bootstrap ids so tests can pass them without boilerplate.
+- [ ] New reducer test: "rejects malformed newItemInstanceId" + "rejects already-used newItemInstanceId" + "rejects newItemInstanceId with future-clock-skew timestamp."
+- [ ] New server integration test: client dispatches `acquire` with its own UUID v7 → server writes a row with that exact id → `GET /sync/state` returns the same id back.
+
+#### RH1.2 — Notes
+
+> -
+
+#### RH1.3 — Remove post-flush re-pull; the queue trusts client ids
+
+**Sync queue (`apps/web/src/sync/queue.ts`)**
+- [ ] Delete the `ID_MINTING_ACTION_TYPES` constant and the re-pull branch added for the R4.1.f post-ship bug #2.
+- [ ] The bootstrap-specific re-pull (where `snapshot?.appState == null`) ALSO goes away — the client mints its own user / party / character / stash / currency ids in the bootstrap payload, and the server accepts them. `'will-be-minted'` as a placeholder partyId disappears from both client and server; the action payload IS the source of truth.
+- [ ] The queue's post-flush concern shrinks to: 200 → drop snapshot; 422 → rollback; 401 → sign out; 409 → display-name flow; network error → keep snapshot for retry. No re-pulls needed.
+
+**Server route (`apps/server/src/sync/routes.ts`)**
+- [ ] The `isBootstrap` heuristic disappears. `applyBootstrapDelta` vs. `applyDelta` dispatch is now keyed on `await prisma.party.findUnique(...) === null` alone (R4.1.f introduced this; RH1.3 simplifies because there's no `'will-be-minted'` placeholder to special-case).
+- [ ] The `'will-be-minted'` placeholder is removed from `POST /sync/actions` accepted input shapes.
+
+**Tests**
+- [ ] Update queue test (`apps/web/src/sync/queue.test.ts`) to assert the re-pull is NOT triggered after `acquire`. The current test that asserts the re-pull IS triggered gets replaced — moves to the regression archive in the Notes section.
+- [ ] Update reducer + server integration tests that hard-coded the `'will-be-minted'` placeholder to send the client-minted partyId instead.
+- [ ] New negative test: server rejects `POST /sync/actions` with a `partyId` that's already used by a different user (collision-on-bootstrap). Should surface as `id_already_exists` at the 422 layer.
+
+#### RH1.3 — Notes
+
+> -
+
+#### RH1 — Notes
+
+> **Sequencing rationale.** RH1 ships AFTER R4.5 (DM Dashboard) and BEFORE R5 (Live sync). R5 introduces N concurrent writers; an id-canonicalisation bug under one writer becomes a conflict-resolution problem under N. Fixing the id contract once, before websockets land, costs ~1 slice. Fixing it afterwards costs RH1 + a multi-writer reconciliation slice on top. The same logic applies to the SECURITY §2 invariant ("server is authoritative") — R5 cements client-server interaction patterns; we want the invariant true before that hardens.
+>
+> **Out of scope.** RH1 does NOT touch:
+> - The TransactionLog schema (log payloads already carry the entity ids — they're just now CANONICAL ids minted once rather than client/server twins).
+> - The Prisma schema (UUID columns stay `String`; v7 is structurally compatible with v4 — no migration needed; existing rows minted with v4 keep working).
+> - The optimistic-dispatch model (reducer still runs client-side first; only the id-minting authority changes).
+>
+> **Carryforward to RH2 + RH3.** Two follow-on hardening passes pick up the rest of the architectural-debt audit (see findings catalog from 2026-06-30):
+> - **RH2 — Determinism & Invariants**: dual-authority `timestamp` minting, `actorRole` derivation split between client + server, reducer iteration-order non-determinism in cascades, multi-tab queue race, `applied[]` count not validated, action-type registry drift, and the DB-level invariant constraints (`isCarried` uniqueness, recovered-loot uniqueness, `bankerUserId !== ownerUserId`, equip/attune/charges only on Inventory, container depth).
+> - **RH3 — Session + sync foundation**: introduce the `Session` entity + `sessionId` widening in the log schema BEFORE R5.2 lands the user-facing session tools.
+>
+> RH1 stays narrowly scoped to the id-authority cleanup; the broader determinism / invariant / session work lives in RH2 / RH3. Non-architectural cleanup (`Welcome.tsx`, vault export, etc.) is captured in RH0 (legacy-data scaffolding strip).
+
+---
+
+### RH2 — Hardening Pass 2: Determinism & Invariants (architectural)
+
+> **What this is.** Closes the remaining structural debt the 2026-06-30 audit surfaced AFTER RH1 resolved the id-minting authority. Three concerns under one slice: (a) RH1-shaped dual-authority problems for other non-deterministic reducer outputs (`timestamp`, `actorRole`), (b) reducer / queue determinism gaps that won't survive R5's N concurrent writers (iteration order, multi-tab race, `applied[]` count, registry drift), (c) documented invariants that exist only in the reducer and never made it down to the DB schema (uniqueness constraints, structural CHECKs).
+>
+> **Sequencing.** Ships AFTER RH1, BEFORE R5. Same R5-blocker rationale as RH1: every concern compounds under multi-writer broadcast. Concretely: a client and server that disagree on a timestamp are tolerable today (queue's full-state re-pull masks it) but unrecoverable once R5.1's websocket broadcast replays log entries verbatim. A reducer cascade whose log slice order depends on hashmap iteration is tolerable today (the queue re-pulls) but produces divergent log streams under R5. A `bankerUserId` row that doesn't satisfy `!== ownerUserId` is tolerable today (the guard rejects writes) but corrupts the DB if a future migration writes directly.
+
+**Why now.** Each concern is "works for single-writer, fails or becomes expensive under N." Without RH2 in place before R5.1:
+- A subtle timestamp-drift bug under broadcast → bisecting the cause across two reducers running with different clocks.
+- A cascade-order divergence between two clients → broadcast surfacing inconsistent log streams; reconciliation slice gets harder.
+- A documented invariant violated by a future code path → silent data corruption rather than a 22-line `BatchRejected`.
+
+**Approach.** Mostly small, surgical changes — each is independently testable. Schema layer adds CHECK / UNIQUE constraints; reducer layer adds stable sorts at cascade points; sync layer adds an assertion and tab-coordination shim. No grand redesign; each concern is one or two files.
+
+**Slicing.** Four sub-slices, ordered by independence.
+
+#### RH2.1 — Server-authoritative `timestamp` + shared `actorRole` derivation
+
+**Why grouped:** Both are the same RH1 shape — two sides computing the same value, the system relying on them agreeing. Same fix shape: server is authoritative for the value, client uses an optimistic placeholder that gets replaced from the `applied[]` echo.
+
+**Timestamp (`packages/rules/src/reducer/types.ts` + the two reducers)**
+- [ ] `ReducerContext.now` becomes server-only. Client-side reducer dispatches use a sentinel placeholder (e.g. `'PENDING'`) on log slices; the queue's post-flush hook overwrites it with `applied[].timestamp` once the server echoes it. Equivalent to the RH1 id treatment, applied to timestamp.
+- [ ] Add a Zod refinement: `transactionLogEntry.timestamp` must be a valid ISO datetime when persisted — `'PENDING'` is forbidden once an entry is server-canonical. The wire schema doesn't see `'PENDING'`; it's a client-internal sentinel.
+- [ ] Update `apps/web/src/store/index.ts` dispatch site to do the placeholder-then-patch dance.
+- [ ] Update `apps/web/src/sync/queue.ts` post-flush patch logic: for each entry in `applied[]`, locate the matching local log row by id and overwrite timestamp.
+- [ ] Tests: reducer unit test that a freshly-dispatched action's local log entry has `'PENDING'` timestamp; integration test that after queue flush, every local entry has the server-canonical timestamp.
+
+**`actorRole` shared derivation (`packages/shared/src/guards/actor.ts` — `deriveActorRole` exists)**
+- [ ] Today both `apps/web/src/store/index.ts:resolveActor` and `apps/server/src/sync/log-builder.ts` independently derive `actorRole` from `(actor, membership, party)`. Move the logic to a single shared function `deriveActorRole(state, action, actorUserId)` and call it from both sites.
+- [ ] Banker derivation: when `Party.bankerUserId === actorUserId`, return `'banker'`. Today both sites partially handle this; some action arms hard-code `'player'`. After RH2.1 there's one definition that handles all cases.
+- [ ] Guard test asserting the contract: given the same `(state, action, actorUserId)`, both sites return identical results.
+
+#### RH2.2 — Reducer determinism: stable iteration in cascades
+
+**Reducer (`packages/rules/src/reducer/index.ts`)**
+- [ ] Audit every cascade arm that iterates `state.items` / `state.stashes` to emit log slices: `delete-stash`, `delete-character`, `leave-party`, `kick-player`, `transfer` (container-with-contents). Each must sort by stable key (typically `id`) BEFORE emitting slices.
+- [ ] One-liner per call site: `const sortedItems = [...s.items].sort((a, b) => a.id.localeCompare(b.id));`. Apply to ~6 sites.
+- [ ] Property-based test in `packages/rules/src/reducer/`: given the same state in two random insertion orders, the cascade emits identical log slice sequences (modulo `ctx.newId` outputs, which RH1 makes deterministic anyway).
+
+#### RH2.3 — Multi-tab queue race + `applied[]` count validation
+
+**Multi-tab queue (`apps/web/src/sync/queue.ts`)**
+- [ ] Queue is currently module-level state (`queue`, `timer`, `preBatchSnapshot`, `inflight`). Two browser tabs on the same origin produce two independent queues against shared Dexie. Add a `BroadcastChannel`-based coordinator: one tab owns the queue at a time; other tabs forward enqueues to the owner via the channel.
+- [ ] Acceptance test: two `loadQueue()` instances in the same test process, both enqueue against the same party, only one issues a network request, the other receives the post-flush state.
+
+**`applied[]` count assertion (`apps/server/src/sync/routes.ts`)**
+- [ ] After the `prisma.$transaction` block, assert `applied.length === reducer.logEntries.length`. Mismatch indicates a persistor bug (silent slice drop) and should 500, not 200.
+- [ ] Integration test: dispatch a `delete-stash` cascade with 3+ items, expect `applied.length` to equal the reducer-emitted slice count.
+
+#### RH2.4 — Schema metadata replaces action-type registries
+
+**Action schema (`packages/shared/src/schemas/action.ts`)**
+- [ ] Today the queue uses `ID_MINTING_ACTION_TYPES: Set<Action['type']>` to know which actions need post-flush re-pull. After RH1 that set goes away. But the pattern WILL recur: R5.1 needs "which actions trigger broadcast"; R5.3 needs "which actions affect history visibility"; future slices will add more. Each registry is a drift-risk.
+- [ ] Replace registries with **schema metadata**. Each Zod action schema carries a metadata object: `{ broadcastOnApplied: true, affectsHistory: true, ... }`. Consumers iterate the metadata at runtime rather than maintaining a separate Set.
+- [ ] Document the pattern in `CLAUDE.md` "Code conventions": "no constant-set registry of action types; per-action concerns live as schema metadata."
+
+#### RH2.5 — DB-level invariant constraints (Postgres migration)
+
+**Prisma schema (`apps/server/prisma/schema.prisma`) + new migration**
+- [ ] **Single Inventory per character.** Partial unique index: `CREATE UNIQUE INDEX stash_inventory_per_character ON "Stash"("ownerCharacterId") WHERE "isCarried" = true AND scope = 'character'`.
+- [ ] **Single Recovered Loot per party.** Partial unique index: `CREATE UNIQUE INDEX recovered_loot_per_party ON "Stash"("partyId") WHERE scope = 'recovered_loot'`.
+- [ ] **Banker != Owner.** Check constraint: `CHECK ("bankerUserId" IS NULL OR "bankerUserId" != "ownerUserId")`.
+- [ ] **Equip/attune/charges only on Inventory.** Either a trigger (joins `ItemInstance` to its `Stash` and validates `equipped`/`attuned`/`currentCharges`), or denormalise `isCarried` onto `ItemInstance` and use a CHECK. Pick whichever is cheaper — likely the denormalised approach.
+- [ ] **Container depth (one-level).** Trigger asserting `containerInstanceId IS NULL OR (the row referenced has containerInstanceId IS NULL)`.
+- [ ] Pair each constraint with a schema-invariants test in `apps/server/src/db/schema-invariants.test.ts` that queries `pg_constraint` / `pg_indexes` and verifies the constraint is present (mirrors the existing DEFERRABLE FK check pattern).
+
+#### RH2 — Notes
+
+> -
+
+---
+
+### RH3 — Hardening Pass 3: Session entity + sync schema readiness (architectural)
+
+> **What this is.** Lifts the `Session` entity out of the R5.2 slice and onto its own pre-R5 hardening pass. Today `Session` is a single line in OUTLINE §3.12 and a placeholder in §4; `TransactionLog.sessionId` is hard-`z.null()`. R5.2 currently bundles "introduce Session entity + activate session tagging + ship history UI session-filter" into one bullet; that's 3-4 slices of work, and the entity / schema piece is a pre-requisite for everything else.
+>
+> **Sequencing.** Ships AFTER RH2, BEFORE R5.1. R5.1's websocket broadcast needs to know whether a log entry belongs to an active session for routing purposes (a "no, the user hasn't started a session yet — these are untagged events" is itself a state R5.1 must handle). Defining the entity + the routing rules cleanly before R5.1 lands prevents R5.1 from accreting session logic it doesn't want.
+
+**Why now.** Without RH3 the Session work is a mess of cross-cutting changes done piecemeal across R5.1, R5.2, R5.3:
+- R5.1 has to decide what to do about `sessionId: null` log entries in the broadcast.
+- R5.2 has to introduce the entity AND widen the schema AND activate tagging.
+- R5.3 has to filter by sessionId against a schema that was just widened.
+
+Pulling the entity + schema widening + the "Untagged" routing rule into RH3 means R5.1 / R5.2 / R5.3 each ship a clean feature on top of a stable foundation.
+
+**Approach.** No user-facing UI yet — that's R5.2's job. RH3 introduces the entity, the schema widening, the actions, and the routing rule. After RH3 every log entry has a non-null `sessionId` field type (value still may be null in the "Untagged" case), and the codebase is ready for the actual session-tools surface to land.
+
+**Slicing.** Two sub-slices.
+
+#### RH3.1 — `Session` entity + schema widening
+
+**Prisma schema (`apps/server/prisma/schema.prisma`) + migration**
+- [ ] New `Session` model: `id` (UUID v7, RH1-canonical), `partyId` (FK), `number` (auto-increment per party), `date` (date), `notes` (text, optional), `isCurrent` (bool — at most one true per party, enforced via partial unique index).
+- [ ] FK on `TransactionLog.sessionId → Session(id)` (nullable).
+- [ ] Partial unique index: at most one `Session` per party has `isCurrent = true`.
+
+**Zod schemas (`packages/shared/src/schemas/`)**
+- [ ] New `sessionSchema` in `packages/shared/src/schemas/session.ts`.
+- [ ] Widen `TransactionLog.sessionId` from `z.null()` to `z.string().uuid().nullable()`. Existing log entries keep `null`; future entries will carry the active session's id when one exists.
+- [ ] Add `Session[]` to `AppState`.
+
+**Reducer (`packages/rules/src/reducer/index.ts`)**
+- [ ] `start-session` action: mints a fresh Session row, sets `isCurrent: true`, demotes any prior current session for the party.
+- [ ] `end-session` action: clears `isCurrent` on the current session; subsequent log entries land with `sessionId: null` ("Untagged" bucket per OUTLINE §3.12).
+- [ ] Reducer guard: `start-session` rejects if a session is already current AND the user didn't pass an explicit "end-first" flag — preserves the "exactly one current session per party" invariant.
+
+**Log entry types (`packages/shared/src/schemas/transactionLog.ts`)**
+- [ ] Add `start-session` and `end-session` log entry types: `{ sessionId, number, date }`.
+- [ ] When the reducer applies any action, it stamps the active session's id (if `isCurrent: true` exists) onto every emitted log slice's `sessionId`. The stamping happens in the reducer, not in `log-builder.ts` — keeps the log entry self-describing.
+
+**Server-side**
+- [ ] `persistStartSession` / `persistEndSession` in `apps/server/src/sync/persistor.ts`.
+
+#### RH3.2 — Routing & "Untagged" filter rule
+
+**Per OUTLINE §3.12 — already documented but not implemented**
+
+- [ ] The "Untagged" filter bucket: every log entry with `sessionId: null` belongs to the "Untagged" filter. Define this as a derived predicate, not stored state. The session-filter UI in R5.3 reads this; R5.1's websocket broadcast uses it to gate "this happened outside a session" notifications.
+- [ ] **Server routing rule**: R5.1's broadcast doesn't filter by sessionId at the transport layer — every active member of a party receives every event. The session-filter is a client-side concern (display rule, history-view filter). Document this in SECURITY §6 (WebSocket Security) so R5.1 doesn't try to gate broadcasts by session.
+
+**Tests**
+- [ ] Reducer test: dispatching `start-session` then `acquire` produces an `acquire` log entry with `sessionId === <new session id>`.
+- [ ] Reducer test: dispatching `acquire` with no active session produces a log entry with `sessionId: null`.
+- [ ] Reducer test: dispatching `end-session` then `acquire` produces a log entry with `sessionId: null`.
+- [ ] Schema test: `transactionLogEntrySchema.parse(...)` accepts both `null` and a valid UUID for `sessionId`.
+
+#### RH3 — Notes
+
+> -
+
+---
+
 ### R5 — Live sync & history (outline §10 M5)
 
 Websocket sync; per-item history; party log with session-tag filter; offline banner in party mode. Covers OUTLINE §3.11, §3.12, §4 `Session`, §5.8 (History/Log).
+
+**Sequencing.** R5 depends on the **RH-chain** (RH0 cleanup, RH1 server-authoritative IDs, RH2 determinism + invariants, RH3 Session entity + sync schema) landing first. R5's websocket broadcast cements client-server interaction patterns; every architectural debt item handled BEFORE R5 lands costs one slice, every one deferred PAST R5 costs RH-slice + multi-writer-reconciliation. The RH chain ships in order; R5.1 starts once RH3 is done.
 
 **Slicing.** Three independently testable surfaces: R5.1 ships the websocket plumbing + reconciliation; R5.2 adds the `Session` entity and `sessionId` log tagging; R5.3 builds the history UI on top. R5.3 depends on R5.2 (session filter) but not R5.1 (history reads from `TransactionLog` directly).
 
@@ -2262,9 +2622,14 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 ### Test infrastructure
 
 - [ ] **Sync queue bootstrap pull-after-push test** — R3.5 dropped the bootstrap integration test from `apps/web/src/sync/queue.test.ts` because `instanceof BatchRejectedError` checks across `vi.resetModules()` boundaries proved flaky in the existing test rig. A proper fix wires module-singleton caching (or replaces `instanceof` with structural checks) so the bootstrap pull-after-push + 422 rollback paths get explicit coverage. The happy path + 401 path are tested; the rollback + bootstrap paths are exercised only through the type-checker today. (Source: R3.5 Notes.)
-- [ ] **Delete `apps/web/src/screens/Welcome.tsx` + `CreateCharacter.tsx`** — R3.5 kept them as legacy fixtures so the existing screen tests (`Settings.test.tsx`, `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `StorageDetail.test.tsx`) keep working without churn. The tests should be migrated to mount `Hub` (or their target screen) directly; once they do, the legacy files can be deleted. (Source: R3.5 Notes.)
+- [ ] **Delete `apps/web/src/screens/Welcome.tsx` + `CreateCharacter.tsx`** — R3.5 kept them as legacy fixtures so the existing screen tests (`Settings.test.tsx`, `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `StorageDetail.test.tsx`) keep working without churn. The tests should be migrated to mount `Hub` (or their target screen) directly; once they do, the legacy files can be deleted. (Source: R3.5 Notes.) **R4.1.f bug-fix note 2026-06-30:** these two files still read `characters[0]` for the actor's character. They're unrouted so the bug isn't user-visible, but the followup will also delete the only remaining `characters[0]` actor-identity reads when it lands.
+- [ ] **Sync queue unit test for the R4.1.f `isBootstrap` discrimination** — `queue.ts:142` now gates `isBootstrap` on `snapshot?.appState == null` in addition to the action type, but the existing 2 queue.test.ts tests don't isolate this branch. The integration test in `apps/server/src/parties/routes.test.ts` exercises the full path end-to-end; a focused unit test asserting `getActivePartyId()` is called (not `'will-be-minted'`) when `appState !== null` would catch a regression at the layer where it would surface. Same flaky-`instanceof` rig as the bootstrap pull-after-push followup above — likely lands together. (Source: R4.1.f.)
+- [ ] **`GET /sync/state` assertion in the R4.1.f integration test** — the current full-flow test in `apps/server/src/parties/routes.test.ts` asserts the DB rows after user B dispatches `create-character`, but doesn't round-trip through `GET /sync/state?partyId=...` for user B. The mapper layer is well-tested elsewhere, but a focused assertion here would close the seam between the persistor's write side and the state-loader's read side specifically for the post-bootstrap-created character. (Source: R4.1.f.)
 
 ### Feature gaps (small, web-only)
+
+- [ ] **`delete-character` UI entry point** — R4.1.b shipped the reducer action + cascade to Recovered Loot, but no UI surface dispatches it. The PartySettings "Create your character" CTA from R4.1.f explicitly supports the post-delete recreation case (the reducer + guard accept it), but until a deletion button exists somewhere — Character Sheet header? Settings → Danger zone? PartySettings → Members row? — the third use case is theoretical. Recommendation: small "Delete character" button on the Character Sheet header behind a confirm dialog showing the snapshot (item count + currency total cp moved to Recovered Loot), mirroring the existing `delete-stash` confirmation pattern. (Source: R4.1.b carryforward, surfaced by R4.1.f.)
+- [ ] **Reject `partyName` on the post-bootstrap `create-character` branch** — `createCharacterInExistingParty` currently ignores `partyName` silently if a client sends it (the party already exists; renaming is `rename-party`). A client could plausibly send `{ name: 'X', partyName: 'rename me' }` expecting both effects, and the partial silent ignore is a footgun. Either: (a) reject the action with `invalid_payload` when `partyName` is set on the post-bootstrap branch, OR (b) treat it as an implicit `rename-party` and emit both log entries. (a) is the simpler / safer choice. (Source: R4.1.f.)
 
 - [x] **Multiple local-mode parties** — **shipped 2026-06-29 (R4.1 followup)**. The Dexie persistence layer now keys each party's blob under `appState:<partyId>` (`apps/web/src/db/save.ts`, `load.ts`). The Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through that pointer with a fallback to the legacy unkeyed slot and a "first keyed blob" tertiary fallback. Hub flows now flush + clear the in-memory store before each `create-character` dispatch and before swapping to another party's blob — the reducer's `state === null` invariant stays intact. Local-mode users can hold N parties; server-mode users continue to use `GET /sync/parties` + per-party pull. **Carryforward (not blocking):** the JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) still operates on the active party only — a future "vault" export that bundles every keyed blob is a separate scope.
 
@@ -2277,7 +2642,7 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 
 - [x] **"Do you also play a character?" toggle on Create-party** — **shipped 2026-06-29 (R4.1 followup)**. The `create-character` reducer + action payload now accepts a `dmOnly: boolean` flag and an optional `partyName` override. When `dmOnly: true`, the reducer mints `User` + `Party` + ONE `role='dm'` `PartyMembership` + party-scope stashes (Party Stash + Recovered Loot) + their currency holdings, skipping the Character + Inventory stash + player membership. The log entry's `characterId`/`name`/`inventoryStashId` fields are now optional + a `dmOnly?: boolean` flag carries the intent for log readers. The Hub Create-party dialog became a three-step wizard: (1) party name input, (2) "Will you also play a character?" Yes / No, (3a) character form if Yes / dispatch dmOnly directly if No. Create-solo stays a single-step flow (party name auto-derived to "My Campaign"). DM-only bootstrap routes the user to `/party/settings` since they have no character sheet. Server-side `applyBootstrapDelta` is shape-agnostic — it iterates the reducer's `characters` / `stashes` / `memberships` arrays, so the empty-character branch just writes fewer rows.
 
-- **NOTE:** `create-character-in-existing-party` was previously listed here as a feature-gap followup. **Promoted to R4.1.f on 2026-06-29** — it's load-bearing for the canonical "DM invites players who join with their own character" flow, so it doesn't belong in the unscheduled backlog. See R4.1.f above.
+- **NOTE:** `create-character-in-existing-party` was previously listed here as a feature-gap followup. **Promoted to R4.1.f on 2026-06-29; shipped 2026-06-30.** See R4.1.f above.
 
 ### Multi-replica / scale
 

@@ -155,6 +155,20 @@ Per CLAUDE.md: "Validation: Zod everywhere data crosses a boundary (forms, Index
 - Discriminated unions for `TransactionLog.type` use Zod's `discriminatedUnion` so the wrong payload for a given type is a parse error.
 - IndexedDB reads carry a schema version; migration logic handles older shapes explicitly (no silent reinterpretation).
 
+### 3.1.5 Entity ID contract (RH1)
+
+Per `OUTLINE.md` §4 "Entity IDs (RH1 — Server-Authoritative ID contract)": every entity id in the data model is a **UUID v7** minted **by the client** and carried in the action payload (`new<EntityName>Id` field). The server validates rather than mints. Three new guard rejection codes capture the validation surface:
+
+| Code | When |
+|---|---|
+| `id_malformed` | Client-supplied id is not a valid UUID v7 (wrong shape, wrong version nibble, etc.). |
+| `id_clock_skew` | Client-supplied id's embedded timestamp is outside the server's tolerance window (±5 minutes default). Rejects backdated forgeries and clock-far-future ids. |
+| `id_already_exists` | Client-supplied id collides with an existing row. UUID v7 has 74 bits of random entropy per millisecond, so this is effectively impossible by accident — collision means a buggy / malicious client. The Prisma unique constraint catches it at the persistor; the route layer translates `P2002` into the 422 response with this code. |
+
+**Why this is safe.** Client-minted ids might look like "the client controls the namespace," but the server still controls every other invariant: who can dispatch which action (§2), what state mutations are legal (§3.4 stash/character invariants, §3.2 currency math), and whether the id collides with an existing row (Prisma unique constraint). The client only chooses **which** new UUID v7 to use; the server still decides **whether** to accept it.
+
+**Pre-RH1 deployments (R3 through R4.5)** mint UUID v4 server-side and don't yet validate client ids — see `docs/roadmap.md` RH1 for the migration plan. UUID v7 is structurally compatible with v4 columns; no DB migration is needed and existing v4 rows continue to work.
+
 ### 3.2 Currency Math
 
 Per §3.5: all storage is in CP (integer); `priceModifier` is a float applied only at the seed-price interpretation boundary; rounding happens once.

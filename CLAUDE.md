@@ -94,7 +94,8 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - **Don't** add `any`, `as any`, or `// @ts-ignore`. Fix the type.
 - **Don't** edit files in `src/components/ui/` directly — use `shadcn-ui add`.
 - **Don't** redistribute PHB/DMG seed files. They are private-use only; a note in the README must say so.
-- **Don't** rename or remove MVP placeholder fields (`equipped`, `attuned`, `encumbranceRule`, `bankerUserId`, etc.). The MVP schema is the final schema with defaults.
+- **Don't** carry legacy-data debt. The project is WIP with no production users; old Dexie blobs and old Postgres rows can be discarded. If a piece of code, schema leniency, fallback chain, migration test, or doc note exists ONLY to preserve old stored data or pre-current-version shapes, delete it. (Distinct from forward-compat slots like `bankerUserId: null` reserving the column for R4.2 — those stay; they preserve UNWRITTEN future code, not stored old data.)
+- **Don't** rename or remove forward-compat placeholder fields (`equipped`, `attuned`, `encumbranceRule`, `bankerUserId`, etc.) that reserve slots for unimplemented future features. The schema is the final schema with defaults. Backward-compat placeholders that exist only to keep old stored data parseable are exempt from this rule — see "no legacy-data debt" above.
 - **Don't** create parallel "solo" entities. Solo is a party-of-one — same model.
 - **Don't** commit secrets, OAuth client IDs, or PHB/DMG content files to git history.
 - **Don't** add error handling for cases that can't happen. Trust internal invariants; validate at boundaries only.

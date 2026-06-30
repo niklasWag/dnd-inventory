@@ -228,6 +228,18 @@ No HP, spells, AC, proficiencies in v1.
 
 > Stack-agnostic; tables/collections. Deployment mode (local vs synced) is **not** a data attribute — it's an environment/install choice. **Every user is always in at least one Party**; "solo" is just a party-of-one.
 
+### Entity IDs (RH1 — Server-Authoritative ID contract)
+
+> **Single id-minting authority: the client.** Every entity id in this section (`User.id`, `Party.id`, `Character.id`, `Stash.id`, `ItemInstance.id`, `ItemDefinition.id`, `CurrencyHolding.id`, `Session.id`, `TransactionLog.id`) is a **UUID v7** minted by the **client** at action-dispatch time and carried in the action payload (`new<EntityName>Id` field on every id-minting action — `acquire`, `create-stash`, `split`, `create-homebrew`, `create-character`). The server's role is **validate + persist**, not mint: every id-minting action's guard runs `isValidUuidV7(id)` + a clock-skew window check + a Prisma unique-constraint collision check; valid ids get written verbatim. New rejection codes added to the §8 guard layer: `id_malformed`, `id_already_exists`, `id_clock_skew`.
+
+> **Why UUID v7.** Time-ordered (debuggable in logs / DB inspection), 74 bits of random entropy per millisecond (collision-safe), structurally compatible with existing UUID v4 columns (no migration needed; legacy rows minted under the old dual-authority regime keep working). Clock-skew tolerance is ±5 minutes by default — large enough to absorb a misconfigured client, narrow enough that backdated forgeries can't poison the log.
+
+> **Why client-minted.** Optimistic dispatch (the reducer runs on the client first for sub-100ms UI feedback) needs an id the moment the action is created — so the client mints. The server runs the same reducer authoritatively (per SECURITY §2 / §3.1) and writes the row using the client's id. The TransactionLog becomes a single source of truth: client and server log entries describe the same action with the same ids. R5's websocket sync broadcasts these entries verbatim — there is no id-rewrite step on the wire.
+
+> **History.** Pre-RH1 (R3 through R4.5) the system had **two** id-minting authorities: the client reducer minted optimistic ids, the server reducer minted different "canonical" ids, and the sync queue patched over the divergence with a post-flush `GET /sync/state` re-pull. That worked under single-writer conditions but didn't scale to R5's multi-writer broadcast. RH1 retires the runtime patch by making the client's id authoritative — server still validates everything else (permission, payload, invariants), it just stops generating ids.
+
+> **MVP / R3 behaviour (pre-RH1).** MVP code synthesises a local UUID v4 in `ReducerContext.newId()` and never crosses a network boundary, so the dual-authority issue doesn't manifest. R3 through R4.5 mint v4 server-side too; RH1.2 flips both sides to v7. Existing R3+ rows persist unchanged — readers don't care which UUID version the id was minted with.
+
 ### `User`
 - id (opaque internal string — **R3.2 amendment**: stays a server-generated cuid and does NOT become the Discord snowflake; an earlier draft suggested `id === discordId` but the @auth/prisma-adapter mints its own ids during the OAuth flow, and a stable internal id decouples our identity from any one OAuth provider), discordId (nullable — absent for email-only accounts; UNIQUE), displayName, avatarUrl (nullable), createdAt
 - email (nullable — set for email-only users or Discord users who added a backup login; **unique** constraint)
@@ -584,6 +596,10 @@ When the **DM** leaves:
 - **`Character.size` field** → enum `tiny | small | medium | large | huge | gargantuan`. Set at character creation; not editable post-creation in v1 (Enlarge/Reduce and similar size-changing effects are out of scope). Decoupled from `Character.species` (which is a free-form string) because 2024 rules let several species pick from a size range, and size is the canonical carrying-capacity driver. See §3.3 + §4 `Character`.
 - **Encumbrance rule renamed + split into two fields.** Earlier draft used a single `encumbranceRule: 'off' | 'advisory' | 'hard'` enum that conflated "which math" with "is enforcement active". Renamed to `encumbranceRule: 'off' | 'phb' | 'variant'` (which math: PHB default single-band vs. variant three-band) and added an orthogonal `enforceEncumbrance: boolean` (does the reducer reject over-capacity moves?). The CapacityBar surfaces both via inline badges. See §3.3 + §3.6 + §4 `Character`.
 - **`set-encumbrance` TxType** → single log entry covers both fields in one dispatch with payload `{ characterId, oldRule, newRule, oldEnforce, newEnforce }`. Mirrors the `rename-*` pattern. Replaces the earlier short-lived `set-encumbrance-rule` entry. See §4 `TransactionLog`.
+
+### Resolved 2026-06-30 (RH1 — Server-Authoritative ID contract)
+
+- **Single id-minting authority** → **the client**, using **UUID v7**. Pre-RH1 the client reducer and the server persistor BOTH called `ctx.newId()`, producing different ids for the same logical entity. The sync queue patched over the divergence with a post-flush `GET /sync/state` re-pull, which (a) scaled badly with party size, (b) drifted as new id-minting actions landed, and (c) wouldn't survive R5's N-writer broadcast. The fix flips id-minting authority to the client: every id-minting action's payload carries an explicit `new<EntityName>Id` field, the server validates (UUID v7 shape + clock-skew window + Prisma unique-constraint collision check) rather than minting. The TransactionLog becomes a single source of truth — client and server log entries describe the same action with the same ids. See §4 "Entity IDs (RH1 — Server-Authoritative ID contract)" + `SECURITY.md` §3.1.5 + `docs/roadmap.md` RH1. Scheduled between R4 and R5; R5 (websocket live sync) depends on it.
 
 ---
 
