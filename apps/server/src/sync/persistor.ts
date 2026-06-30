@@ -1113,14 +1113,36 @@ async function persistJoinParty(
   ctx: ReducerContext,
 ): Promise<void> {
   const now = new Date(ctx.now());
-  await tx.partyMembership.create({
-    data: {
+  // BUG-002: PartyMembership PK is the composite (userId, partyId, role)
+  // and the R4.1.c/d departure cascades soft-delete (leftAt: <timestamp>;
+  // row preserved for audit). A plain `create` against the same tuple
+  // raises P2002. Use `upsert` so a previously-left user's row is
+  // reactivated atomically: `leftAt → null`, `joinedAt → now`,
+  // `characterId → null` (their prior character was cascaded to
+  // Recovered Loot on leave per BUG-001's path). The route's
+  // `already_member` check (filtered by `leftAt: null`) catches the
+  // double-active-join case before we get here, so the `update` branch
+  // only ever fires against soft-deleted rows.
+  await tx.partyMembership.upsert({
+    where: {
+      userId_partyId_role: {
+        userId: actor.userId,
+        partyId: actor.partyId,
+        role: 'player',
+      },
+    },
+    create: {
       userId: actor.userId,
       partyId: actor.partyId,
       role: 'player',
       characterId: null,
       joinedAt: now,
       leftAt: null,
+    },
+    update: {
+      leftAt: null,
+      joinedAt: now,
+      characterId: null,
     },
   });
 }

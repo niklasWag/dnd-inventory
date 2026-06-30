@@ -3261,18 +3261,51 @@ function joinParty(state: AppState, ctx: ReducerContext): ReducerResult {
   const actorUserId = s.user.id;
   const partyId = s.party.id;
 
-  const existingPlayer = s.memberships.find(
+  const existingActivePlayer = s.memberships.find(
     (m) =>
       m.userId === actorUserId &&
       m.partyId === partyId &&
       m.role === 'player' &&
       m.leftAt === null,
   );
-  if (existingPlayer !== undefined) {
+  if (existingActivePlayer !== undefined) {
     throw new Error('join-party: actor already has an active player membership in this party');
   }
 
   const now = ctx.now();
+
+  // BUG-002: a previously-left user has a SOFT-DELETED player row
+  // (`leftAt: <timestamp>`). The composite PK `(userId, partyId, role)`
+  // means we MUST reactivate that row, not append a duplicate. The
+  // server persistor's `partyMembership.create()` would otherwise raise
+  // P2002; the in-memory reducer would silently double-list the row.
+  // Rejoin is a state transition on the existing row.
+  const existingSoftDeletedPlayerIndex = s.memberships.findIndex(
+    (m) =>
+      m.userId === actorUserId &&
+      m.partyId === partyId &&
+      m.role === 'player' &&
+      m.leftAt !== null,
+  );
+
+  if (existingSoftDeletedPlayerIndex !== -1) {
+    const reactivated = s.memberships.map((m, i) =>
+      i === existingSoftDeletedPlayerIndex
+        ? { ...m, leftAt: null, joinedAt: now, characterId: null }
+        : m,
+    );
+    return {
+      state: { ...s, memberships: reactivated },
+      logEntries: [
+        {
+          type: 'join-party',
+          payload: { partyId },
+        },
+      ],
+    };
+  }
+
+  // No prior row — first-time join. Append a fresh membership.
   const newMembership = {
     userId: actorUserId,
     partyId,

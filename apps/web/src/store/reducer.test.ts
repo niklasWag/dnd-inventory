@@ -7406,3 +7406,83 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
     expect(last.actorRole).toBe('banker');
   });
 });
+
+// -------------------------------------------------------------------- //
+// BUG-002 regression — join-party reactivates a soft-deleted membership
+// -------------------------------------------------------------------- //
+//
+// `PartyMembership` PK is the composite `(userId, partyId, role)` and the
+// R4.1.c/d departure cascades use soft delete (`leftAt: <timestamp>`).
+// Pre-fix, `joinParty` checked only for `leftAt === null` rows and then
+// appended a NEW row when the check passed — resulting in a duplicate
+// `(userId, partyId, role)` tuple in local state and a P2002 unique-
+// constraint violation server-side when persisted.
+
+describe('reducer: join-party (BUG-002 regression — soft-deleted rejoin)', () => {
+  it('reactivates a soft-deleted player row instead of appending a duplicate', () => {
+    localBootstrap();
+    const actorUserId = useStore.getState().appState!.user.id;
+    const partyId = useStore.getState().appState!.party.id;
+    const originalJoinedAt = new Date(Date.now() - 60_000).toISOString();
+    const originalCharacterId = 'old-character-since-removed';
+
+    // Replace the actor's player membership with a soft-deleted one
+    // (their character was cascaded to Recovered Loot on leave per
+    // BUG-001's path). The dm row stays active so localBootstrap's
+    // implicit "actor is in the party" assumption isn't broken for
+    // other state inspection — but `join-party` only cares about the
+    // player row.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.map((m) =>
+            m.userId === actorUserId && m.role === 'player'
+              ? {
+                  ...m,
+                  characterId: originalCharacterId,
+                  joinedAt: originalJoinedAt,
+                  leftAt: new Date(Date.now() - 1000).toISOString(),
+                }
+              : m,
+          ),
+        },
+      };
+    });
+
+    const beforeCount = useStore.getState().appState!.memberships.filter(
+      (m) => m.userId === actorUserId && m.partyId === partyId && m.role === 'player',
+    ).length;
+    expect(beforeCount).toBe(1);
+
+    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+
+    const after = useStore.getState().appState!;
+    const playerRows = after.memberships.filter(
+      (m) => m.userId === actorUserId && m.partyId === partyId && m.role === 'player',
+    );
+    // Exactly one row — not a duplicate.
+    expect(playerRows).toHaveLength(1);
+    const row = playerRows[0]!;
+    expect(row.leftAt).toBeNull();
+    // joinedAt advanced; characterId reset.
+    expect(row.joinedAt).not.toBe(originalJoinedAt);
+    expect(Date.parse(row.joinedAt)).toBeGreaterThan(Date.parse(originalJoinedAt));
+    expect(row.characterId).toBeNull();
+    // One join-party log entry was emitted.
+    const log = useStore.getState().log;
+    expect(log[log.length - 1]!.type).toBe('join-party');
+  });
+
+  it('still rejects when an ACTIVE player membership already exists (idempotency)', () => {
+    localBootstrap();
+    // localBootstrap leaves the actor with an active player row, so this
+    // is the no-op-rejection case: dispatching join-party against an
+    // already-active membership should throw.
+    expect(() =>
+      useStore.getState().dispatch({ type: 'join-party', payload: {} }),
+    ).toThrow(/already.*active|already has an active player/i);
+  });
+});

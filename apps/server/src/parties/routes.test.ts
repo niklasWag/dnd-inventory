@@ -804,3 +804,106 @@ describe('R4.2.a — Banker lifecycle (appoint / revoke + kick/leave cascade)', 
     }
   });
 });
+
+// -------------------------------------------------------------------- //
+// BUG-002 regression — POST /parties/join reactivates a soft-deleted row
+// -------------------------------------------------------------------- //
+//
+// PartyMembership PK is composite (userId, partyId, role) + R4.1.c/d use
+// soft delete (leftAt: <timestamp>, row preserved). Pre-fix,
+// `persistJoinParty` called `partyMembership.create()` against the same
+// tuple, raising P2002 unique-constraint violation.
+
+describe('BUG-002 — POST /parties/join reactivates a soft-deleted membership', () => {
+  it('a user who left a party can rejoin via the same invite code', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap a 2-member party (user A is DM+player, user B is player).
+      const userA = await seedUser({ displayName: 'A' });
+      const tokenA = await seedSession(userA.userId);
+      const cookieA = cookieHeader(env, tokenA);
+      const { partyId, inviteCode } = await bootstrapParty(app, cookieA);
+
+      const userB = await seedUser({ displayName: 'B' });
+      const tokenB = await seedSession(userB.userId);
+      const cookieB = cookieHeader(env, tokenB);
+      const join1 = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieB, 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(join1.statusCode).toBe(200);
+
+      // User B leaves. Row is soft-deleted (leftAt non-null).
+      const leaveRes = await app.inject({
+        method: 'POST',
+        url: `/parties/${partyId}/leave`,
+        headers: { cookie: cookieB, 'content-type': 'application/json' },
+        payload: {},
+      });
+      expect(leaveRes.statusCode).toBe(200);
+      const softDeletedRows = await prisma.partyMembership.findMany({
+        where: { userId: userB.userId, partyId, role: 'player' },
+      });
+      expect(softDeletedRows).toHaveLength(1);
+      expect(softDeletedRows[0]!.leftAt).not.toBeNull();
+
+      // User B rejoins via the same invite code. Pre-fix returns 500 P2002.
+      const join2 = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieB, 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(join2.statusCode).toBe(200);
+
+      // DB invariant: exactly one player membership row, leftAt null,
+      // joinedAt advanced past the soft-delete window, characterId null.
+      const afterRows = await prisma.partyMembership.findMany({
+        where: { userId: userB.userId, partyId, role: 'player' },
+      });
+      expect(afterRows).toHaveLength(1);
+      const row = afterRows[0]!;
+      expect(row.leftAt).toBeNull();
+      expect(row.characterId).toBeNull();
+      expect(row.joinedAt.getTime()).toBeGreaterThan(softDeletedRows[0]!.joinedAt.getTime());
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('still rejects rejoin when the user has an ACTIVE membership (409 already_member)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const userA = await seedUser({ displayName: 'A' });
+      const tokenA = await seedSession(userA.userId);
+      const cookieA = cookieHeader(env, tokenA);
+      const { inviteCode } = await bootstrapParty(app, cookieA);
+
+      const userB = await seedUser({ displayName: 'B' });
+      const tokenB = await seedSession(userB.userId);
+      const cookieB = cookieHeader(env, tokenB);
+      const join1 = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieB, 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(join1.statusCode).toBe(200);
+
+      // Second join while still active: 409 already_member.
+      const join2 = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieB, 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(join2.statusCode).toBe(409);
+      const body = JSON.parse(join2.body) as { error?: string };
+      expect(body.error).toBe('already_member');
+    } finally {
+      await app.close();
+    }
+  });
+});

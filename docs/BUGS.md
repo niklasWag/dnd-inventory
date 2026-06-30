@@ -27,6 +27,68 @@ _(none currently open)_
 
 ## Recently fixed
 
+### BUG-002 — `POST /parties/join` 500s with P2002 when a previously-left user tries to rejoin
+
+- **Filed:** 2026-06-30
+- **Fixed:** 2026-06-30 (feature/r4-parties)
+- **Severity:** high (blocked the entire rejoin flow end-to-end whenever the user had any historical membership in the target party; no client-side workaround)
+- **Status:** fixed
+- **Affected slice:** R4.1.e (`POST /parties/join`) + R4.1.c/d departure cascades
+
+**Symptom.** `POST /parties/join` returned:
+
+```json
+{
+  "statusCode": 500,
+  "code": "P2002",
+  "error": "Internal Server Error",
+  "message": "\nInvalid `prisma.partyMembership.create()` invocation:\n\n\nUnique constraint failed on the fields: (`userId`, `partyId`, `role`)"
+}
+```
+
+**Reproduction.**
+
+1. User A creates a 2+-member party (or DM invites + user B joins).
+2. User B leaves via `POST /parties/:partyId/leave` (or DM kicks them via `/kick`). Their `PartyMembership` row gets `leftAt: <timestamp>` (soft-delete) — the row stays.
+3. User B redeems the same invite code (or a regenerated one for the same party) via `POST /parties/join`.
+4. Route's `already_member` check (filtered by `leftAt: null`) returns clean; route proceeds to `persistJoinParty`.
+5. `persistJoinParty` called `tx.partyMembership.create()` with `(userId: B, partyId: P, role: 'player')` → collided with the soft-deleted row → P2002.
+
+**Root cause analysis.**
+
+`PartyMembership` PK is the composite `(userId, partyId, role)` (OUTLINE §4). The R4.1.c/d departure cascades use **soft delete** — `leftAt` flips to a timestamp, the row stays for audit history. Three pieces of code participate in the rejoin path; only the route's `already_member` check was `leftAt`-aware, the other two were not:
+
+1. `apps/server/src/parties/routes.ts:74` — `already_member` check: `findFirst({ where: { userId, partyId, leftAt: null } })`. Correctly filters on `leftAt: null`. Lets the soft-deleted row pass.
+2. `apps/server/src/sync/persistor.ts:1116` (`persistJoinParty`) — `tx.partyMembership.create({ data: { userId, partyId, role: 'player', ... } })`. NOT `leftAt`-aware; collided with the existing row.
+3. `packages/rules/src/reducer/index.ts:3264` (`joinParty` reducer arm) — checked for `m.leftAt === null` existence and appended a new row. Same defect as #2 but in pure-state: appending a duplicate `(userId, partyId, role)` tuple instead of re-activating the existing soft-deleted row. The bug didn't surface in MVP party-of-one (only one membership exists), but it was structurally wrong and would have corrupted local-mode state for rejoin flows.
+
+The conceptual error: "rejoin" is **a state transition on the existing row**, not a create. The model is intentionally `(userId, partyId, role)` PK + audit-preserving soft delete; a fresh create would either (a) break the PK uniqueness invariant (server case — this bug), or (b) double the row (reducer case — silent corruption).
+
+**Postmortem (fixed 2026-06-30).** Two-touch fix:
+
+1. **Persistor** (`apps/server/src/sync/persistor.ts:persistJoinParty`) — switched `tx.partyMembership.create(...)` to `tx.partyMembership.upsert({ where: { userId_partyId_role: ... }, create: ..., update: { leftAt: null, joinedAt: now, characterId: null } })`. Single atomic statement; matches the composite-PK + soft-delete contract.
+2. **Reducer** (`packages/rules/src/reducer/index.ts:joinParty`) — extended to detect a soft-deleted row (`leftAt !== null`) for the same `(userId, partyId, role='player')` tuple and reactivate it in place. The pure-state mutation now mirrors the persistor's upsert semantics: optimistic UI on the client and authoritative replay on the server arrive at the same shape.
+
+**Decisions captured:**
+
+- `joinedAt` is updated to NOW on rejoin (current-tenure semantics). The first-join timestamp is preserved in the historical `join-party` log entry.
+- `characterId` is reset to `null` on rejoin. The user's original character was cascaded to Recovered Loot on leave (BUG-001 path), so the FK target no longer exists; the user creates a new character via the existing post-join CTA.
+
+**Lessons.**
+
+- Soft delete + composite PK = upsert, never create. Every code path that writes a row with a `(userId, partyId, role)`-shaped composite PK must consider the soft-deleted-row case. Worth a brief audit when R4.3 lands `dm-transfer` (which may add/remove DM rows).
+- Two-id-minting authorities (client reducer + server persistor) need the same defect fixed in both places. RH1 will retire the dual-authority for ID minting, but the **logic-duplication risk** persists for any state-transition rule; the only structural fix is keeping the reducer the single source of truth and letting the server replay it (which is what we already do — both fixes here are in shared code paths, not in two different implementations).
+- The route's `already_member` guard correctly checked `leftAt: null`, so the entry point was right; the bug was in the downstream write. A read-only "is this active?" check + a downstream "create" that doesn't know about soft delete is a classic asymmetry — easy to miss in review.
+
+**Related code changed.**
+
+- `apps/server/src/sync/persistor.ts` — `persistJoinParty` uses `upsert`.
+- `packages/rules/src/reducer/index.ts` — `joinParty` reactivates soft-deleted rows in place.
+- `apps/web/src/store/reducer.test.ts` — two new regression tests (rejoin reactivation + still-active-rejection).
+- `apps/server/src/parties/routes.test.ts` — two new integration regression tests (full leave → rejoin round-trip + 409 already_member still works).
+
+---
+
 ### BUG-001 — `kick-player` / `leave-party` fail with `Character_inventoryStashId_fkey` RESTRICT violation
 
 - **Filed:** 2026-06-30
