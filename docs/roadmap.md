@@ -1868,39 +1868,111 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 
 #### R4.2 — Banker role
 
+Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable sub-slices. R4.2.a ships the role lifecycle (appoint/revoke + auto-clear cascade); R4.2.b lights up the `'banker'` actorRole on all existing player-driven actions; R4.2.c gates shared-pool claim/distribution behind the Banker; R4.2.d adds the new distribution actions; R4.2.e adds the UI. Each sub-slice depends on the previous.
+
+#### R4.2.a — Foundation: schema widen + appoint/revoke + kick/leave auto-clear
+
 **Schema activations (§4)**
-- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP) — **carryforward from R3.4.a**: widen `partySchema.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`. Keep `partyMembershipSchema.role` narrow (`['dm', 'player']`) per OUTLINE §3.14 — banker is denormalized on Party, never a membership row.
+- [x] `Party.bankerUserId` becomes settable (was always `null` in MVP) — **carryforward from R3.4.a**: widen `partySchema.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`. Keep `partyMembershipSchema.role` narrow (`['dm', 'player']`) per OUTLINE §3.14 — banker is denormalized on Party, never a membership row.
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `appoint-banker` action + payload schema
-- [ ] `revoke-banker` action + payload schema
-- [ ] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker
-- [ ] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
-- [ ] `kick-player` Banker auto-clear with `reason: "kicked"`
-- [ ] Invariant test: DM cannot self-appoint as Banker (§3.14)
-- [ ] Invariant test: Banker target must have active `role="player"` membership
-- [ ] Invariant test: Banker role only legal when `memberCount >= 2`
+- [x] `appoint-banker` action + payload schema (`{ bankerUserId }`)
+- [x] `revoke-banker` action + payload schema (`reason: 'manual' | 'reassigned' | 'left-party' | 'kicked'`; `'dm-transfer'` reserved for R4.3)
+- [x] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker (R4.1.c stub lit up)
+- [x] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
+- [x] `kick-player` Banker auto-clear with `reason: "kicked"` (R4.1.d stub lit up)
+- [x] Invariant test: DM cannot self-appoint as Banker (§3.14)
+- [x] Invariant test: Banker target must have active `role="player"` membership
+- [x] Invariant test: Banker role only legal when `memberCount >= 2`
+- [x] Invariant test: reassignment requires explicit revoke first (no in-place overwrite of `bankerUserId`)
+
+**Server-side**
+- [x] Server-authoritative `appointBankerGuard` + `revokeBankerGuard` (mirror reducer invariants; `banker_membership_forbidden` rejection code first lit-up in R4.2.a)
+- [x] `persistAppointBanker` + `persistRevokeBanker` handlers (atomic `Party.update` on `bankerUserId`)
+- [x] R4.1's `persistLeaveParty` / `persistKickPlayer` banker-clear stub already wired; now load-bearing once schema permits non-null
+
+**Web store middleware**
+- [x] `resolveActor` widened to return `'dm' | 'player' | 'banker'` (was `'dm' | 'player'`); player-driven actions surface as `'banker'` when `state.party.bankerUserId === state.user.id`. Mirrors `@app/shared/guards/actor.ts::deriveActorRole`.
+
+#### R4.2.a — Notes
+
+> **Shipped 2026-06-30** (`feature/r4-parties`, commits `eb68da0 R4.2.a`).
+>
+> **Test totals:** 1030 across the workspace (web 661 ← 659 with 2 new BUG-002 regression tests; server 165 ← 158 with 5 new R4.2.a + 2 BUG-002 integration tests). All five workspaces typecheck.
+>
+> **Decisions captured:**
+> - **Reassignment is two-step.** `appoint-banker` against an already-set Banker rejects with `banker_membership_forbidden`; DM must `revoke-banker` first. The `'reassigned'` reason enum value is reserved for a future combined-CTA UX flow; no current emitter.
+> - **Cascade lives in the reducer; server replays.** `leave-party` / `kick-player` reducer arms emit the synthetic `revoke-banker` slice when the departing user was the Banker. Server persistor replays the same slice; no server-only cascade logic. Matches CLAUDE.md "reducer is single source of truth + server replays authoritatively" pattern.
+> - **`'dm-transfer'` reason intentionally absent from this slice's enum** so it can't be emitted prematurely. R4.3 widens the enum + adds the `dm-transfer`-driven Banker auto-clear cascade.
+>
+> **Did NOT ship (correctly deferred to later sub-slices):**
+> - Permission gating: shared-pool claim/distribute still works for non-Banker actors even when `bankerUserId !== null`. The §8.1 matrix's Banker-conditional rows aren't enforced yet.
+> - Banker distribution actions: `currency-distribute-evenly`, `currency-give-from-pool`, `currency-take-into-purse`, `item-distribute-from-pool`. None exist.
+> - UI: there's no Party Settings appoint/revoke CTA. The slice is CLI-/test-only.
+>
+> **Carryforward (BUG-002 surfaced 2026-06-30 while building R4.2.a):** any code path that writes a row with the `(userId, partyId, role)` composite PK must use `upsert` (or read-then-update) instead of `create` because the soft-delete cascade leaves the row in place. Fix shipped same day under `🐛 BUG-002`; the lesson generalises to future composite-PK writes — flagged in `docs/BUGS.md` postmortem for R4.3 (`dm-transfer` membership churn) to remember.
+
+#### R4.2.b — `actorRole: 'banker'` audit-trail polish
+
+**Reducer / store**
+- [x] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4) — **shipped in R3.4.a** for the derivation path (`deriveActorRole` in `@app/shared/guards/actor.ts`); R4.2.a lit it up by allowing `bankerUserId` to be non-null AND widening web `resolveActor` to mirror it.
+
+**UI (deferred to R4.2.e — banker badge on log entries)**
+- [ ] Party log UI: render `actorRole: 'banker'` distinct from `'player'` (badge color or label).
+
+> Most of R4.2.b's substance shipped as part of R4.2.a (the `resolveActor` widening). What's left is the log-rendering polish, which naturally rides along with the R4.2.e UI slice. Keeping R4.2.b as a roadmap anchor so the audit-trail concern doesn't get lost.
+
+#### R4.2.c — Permission gating: shared-pool claim/distribute is Banker-mediated
+
+**Guard layer (`@app/shared/guards/map.ts`)**
+- [ ] When `party.bankerUserId !== null` AND the action targets Party Stash / Recovered Loot as source, reject non-Banker actors with a new code `banker_required_for_claim`.
+- [ ] DM "gameplay drain" actions stay allowed (distinguish by destination: player stash vs. nowhere).
+- [ ] When `bankerUserId === null`, behavior unchanged — players self-claim freely.
+
+**Reducer**
+- [ ] Same guard logic runs client-side for instant optimistic rejection feedback.
+
+**Tests**
+- [ ] Matrix-driven: every {Banker active, actor role, source pool, destination} combination from §8.1.
+- [ ] Regression: existing "no Banker" tests still pass.
+
+#### R4.2.c — Notes
+
+> -
+
+#### R4.2.d — Banker distribution toolkit (new actions)
+
+**Reducer actions (§4 TransactionLog union)**
 - [ ] `currency-change` extended `reason` values (`split-evenly`, `gameplay-drain`)
-- [ ] Action: split Party Stash currency evenly across characters
+- [ ] Action: split Party Stash currency evenly across characters (one terminal entry + N `currency-change` entries with `reason: 'split-evenly'`)
 - [ ] Action: Banker gives currency / items to a specific player from Party Stash
 - [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
 - [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
-- [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4) — **shipped in R3.4.a** for the derivation path (`deriveActorRole` in `@app/shared/guards/actor.ts`); R4.2 makes it load-bearing by allowing `bankerUserId` to be non-null.
 
 **Server-side**
-- [ ] Server authoritative checks for every Banker action above — extends R3.4.a's `@app/shared/guards/map.ts`. The `banker_membership_forbidden` rejection code (already declared in R3.4.a's `GuardRejectionCode`) becomes load-bearing here — first triggered by a regression where a banker payload writes to `PartyMembership.role` instead of `Party.bankerUserId`.
+- [ ] Server authoritative checks for each new action; CP-integer currency math (per `docs/SECURITY.md` §3.2); no negative balances.
 
-**UI**
+#### R4.2.d — Notes
+
+> -
+
+#### R4.2.e — UI
+
 - [ ] Party Settings screen (§5.15): appoint / revoke Banker
 - [ ] Member list with role badges (DM / Player / Banker)
 - [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
 - [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
 - [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
+- [ ] Log-entry badge for `actorRole: 'banker'` (carryforward from R4.2.b)
 - [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
+
+#### R4.2.e — Notes
+
+> -
 
 #### R4.2 — Notes
 
-> -
+> **Sliced from a single roadmap section into R4.2.a–e on 2026-06-30** (planning session). The original section was a flat task list; the sub-slicing aligns Banker work with the R4.1.a/b/c/d/e/f rhythm so each PR stays reviewable and ships its own user-visible (or substrate-visible) value.
 
 #### R4.3 — DM cross-character actions + DM transfer
 
