@@ -6982,3 +6982,427 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     expect(s.stashes.some((st) => st.scope === 'character' && st.isCarried)).toBe(true);
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.2.a: appoint-banker / revoke-banker + kick/leave cascade
+// -------------------------------------------------------------------- //
+//
+// OUTLINE §3.14 rules exercised here:
+//   - DM appoints zero or one Banker from active players (memberCount ≥ 2).
+//   - DM cannot self-appoint.
+//   - Reassignment is two-step (revoke first, then appoint) — appoint
+//     against an already-set Banker is rejected.
+//   - kick / leave auto-clear the Banker when the departing user IS the
+//     Banker. The cascade emits a synthetic `revoke-banker` entry with
+//     `reason: 'kicked'` / `'left-party'`, between the existing cascade
+//     slices and the terminal kick-player / leave-party slice.
+//   - All Banker-emitted log entries (and any action a Banker takes once
+//     appointed) get `actorRole: 'banker'` via deriveActorRole.
+
+describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
+  /**
+   * Bootstrap + graft a second active player (`player-b`) so the
+   * `memberCount ≥ 2` rule passes and appoint has a real target. The
+   * grafted player has no character — the Banker doesn't require a
+   * character in R4.2.a (OUTLINE §3.14 says "active player membership"
+   * only); character ownership is orthogonal.
+   */
+  function bootstrapWithSecondPlayer(): { dmUserId: string; otherPlayerUserId: string } {
+    localBootstrap();
+    const dmUserId = useStore.getState().appState!.user.id;
+    const otherPlayerUserId = 'player-b';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherPlayerUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    return { dmUserId, otherPlayerUserId };
+  }
+
+  // ---------- appoint-banker ---------- //
+
+  it('DM can appoint an active player as Banker', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBe(otherPlayerUserId);
+
+    const entries = useStore.getState().log;
+    const appointEntry = entries[entries.length - 1]!;
+    expect(appointEntry.type).toBe('appoint-banker');
+    expect(appointEntry.actorRole).toBe('dm');
+    if (appointEntry.type !== 'appoint-banker') throw new Error('expected appoint-banker');
+    expect(appointEntry.payload.bankerUserId).toBe(otherPlayerUserId);
+  });
+
+  it('rejects when actor is a player (only DM may appoint)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    // Demote actor to player only by removing their dm row.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === s.appState!.user.id && m.role === 'dm'),
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } }),
+    ).toThrow(/dm/i);
+  });
+
+  it('rejects when DM tries to appoint themselves (no self-banker)', () => {
+    bootstrapWithSecondPlayer();
+    const dmUserId = useStore.getState().appState!.user.id;
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: dmUserId } }),
+    ).toThrow(/dm cannot.*banker|banker_membership_forbidden|self/i);
+  });
+
+  it('rejects when target has no active player membership in this party', () => {
+    bootstrapWithSecondPlayer();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: 'stranger-not-in-party' } }),
+    ).toThrow(/banker_membership_forbidden|not.*member|player/i);
+  });
+
+  it('rejects in a party-of-one (memberCount must be ≥ 2)', () => {
+    localBootstrap();
+    // Single-member party — no second player grafted.
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: 'whoever' } }),
+    ).toThrow(/memberCount|2\+|banker_membership_forbidden|two members/i);
+  });
+
+  it('rejects when a Banker is already set (reassign must revoke first)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    // Graft a third player to attempt reassignment.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'player-c',
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: 'player-c' } }),
+    ).toThrow(/already|banker_membership_forbidden|revoke/i);
+    // Banker unchanged.
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+  });
+
+  // ---------- revoke-banker ---------- //
+
+  it('DM can revoke an appointed Banker with reason="manual"', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+
+    useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBeNull();
+    const log = useStore.getState().log;
+    const last = log[log.length - 1]!;
+    expect(last.type).toBe('revoke-banker');
+    expect(last.actorRole).toBe('dm');
+    if (last.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(last.payload.reason).toBe('manual');
+  });
+
+  it('rejects when no Banker is currently set', () => {
+    bootstrapWithSecondPlayer();
+    expect(() =>
+      useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } }),
+    ).toThrow(/no banker|banker_membership_forbidden|not.*set/i);
+  });
+
+  it('rejects when actor is a player (only DM may revoke)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    // Demote actor to player only.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === s.appState!.user.id && m.role === 'dm'),
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } }),
+    ).toThrow(/dm/i);
+  });
+
+  // ---------- kick cascade ---------- //
+
+  it('kick-player auto-clears Banker and emits revoke-banker { reason: "kicked" }', () => {
+    // Set up: bootstrap + second player; appoint the second player as Banker.
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+
+    // Snapshot log length so we only inspect the entries emitted by the kick.
+    const beforeLogLength = useStore.getState().log.length;
+
+    useStore
+      .getState()
+      .dispatch({ type: 'kick-player', payload: { kickedUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBeNull();
+
+    const emitted = useStore.getState().log.slice(beforeLogLength);
+    const types = emitted.map((e) => e.type);
+    // Must contain both a revoke-banker AND a kick-player slice.
+    expect(types).toContain('revoke-banker');
+    expect(types).toContain('kick-player');
+    // revoke-banker comes BEFORE the terminal kick-player slice.
+    expect(types.indexOf('revoke-banker')).toBeLessThan(types.indexOf('kick-player'));
+
+    const revoke = emitted.find((e) => e.type === 'revoke-banker')!;
+    if (revoke.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(revoke.payload.reason).toBe('kicked');
+  });
+
+  it("kick-player of a non-Banker does NOT emit revoke-banker", () => {
+    // Banker is player-b; we'll kick a different player (player-c).
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'player-c',
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    const beforeLogLength = useStore.getState().log.length;
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId: 'player-c' } });
+
+    const s = useStore.getState().appState!;
+    // Banker untouched.
+    expect(s.party.bankerUserId).toBe(otherPlayerUserId);
+    const emitted = useStore.getState().log.slice(beforeLogLength);
+    expect(emitted.some((e) => e.type === 'revoke-banker')).toBe(false);
+  });
+
+  // ---------- leave cascade ---------- //
+
+  it('leave-party auto-clears Banker when the leaver was the Banker', () => {
+    // Bootstrap with a SECOND DM (so the actor can leave) AND a banker
+    // appointed on the actor. Trick: bootstrap actor is DM+player; we
+    // graft a second DM (other-dm) so the sole-DM guard passes, then
+    // appoint the actor's PLAYER membership as Banker via direct state
+    // patch (since OUTLINE §3.14 bars self-appointment via action).
+    // This isolates the cascade behavior from appoint-banker's guard.
+    localBootstrap();
+    const actorUserId = useStore.getState().appState!.user.id;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'other-dm',
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          // Set actor as banker directly — bypasses appoint-banker's
+          // self-banker guard, which is exactly the point: this test
+          // covers the AUTO-CLEAR CASCADE, not appoint's validation.
+          party: { ...s.appState.party, bankerUserId: actorUserId },
+        },
+      };
+    });
+
+    const beforeLogLength = useStore.getState().log.length;
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBeNull();
+
+    const emitted = useStore.getState().log.slice(beforeLogLength);
+    const types = emitted.map((e) => e.type);
+    expect(types).toContain('revoke-banker');
+    expect(types).toContain('leave-party');
+    expect(types.indexOf('revoke-banker')).toBeLessThan(types.indexOf('leave-party'));
+
+    const revoke = emitted.find((e) => e.type === 'revoke-banker')!;
+    if (revoke.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(revoke.payload.reason).toBe('left-party');
+  });
+
+  // ---------- actorRole derivation ---------- //
+
+  it("a Banker's subsequent action logs with actorRole='banker'", () => {
+    // Banker = player-b. They must have a character + inventory to dispatch
+    // an action through the reducer.
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    const partyId = useStore.getState().appState!.party.id;
+    const bankerCharId = 'banker-char';
+    const bankerInvStashId = 'banker-inv';
+
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.map((m) =>
+            m.userId === otherPlayerUserId && m.role === 'player'
+              ? { ...m, characterId: bankerCharId }
+              : m,
+          ),
+          characters: [
+            ...s.appState.characters,
+            {
+              id: bankerCharId,
+              partyId,
+              ownerUserId: otherPlayerUserId,
+              name: 'Bank Manager',
+              species: 'Human',
+              size: 'medium',
+              class: 'Cleric',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: bankerInvStashId,
+            },
+          ],
+          stashes: [
+            ...s.appState.stashes,
+            {
+              id: bankerInvStashId,
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: bankerCharId,
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...s.appState.currencies,
+            { id: 'banker-cur', stashId: bankerInvStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          ],
+        },
+      };
+    });
+
+    // DM appoints the Banker.
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    // Now SWITCH the acting user to the Banker (the test reducer reads
+    // state.user.id as the actor; production code uses session/cookie).
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: { ...s.appState, user: { ...s.appState.user, id: otherPlayerUserId } },
+      };
+    });
+
+    // Banker does any allowed action — e.g. currency-change on own inv.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: bankerInvStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    const log = useStore.getState().log;
+    const last = log[log.length - 1]!;
+    expect(last.type).toBe('currency-change');
+    expect(last.actorRole).toBe('banker');
+  });
+});

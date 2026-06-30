@@ -749,6 +749,101 @@ const joinPartyGuard: Guard<Extract<Action, { type: 'join-party' }>> = (state, _
   return { ok: true };
 };
 
+/**
+ * R4.2.a — `appoint-banker`. DM-only. Mirrors the reducer's invariants
+ * server-side per SECURITY §2 (server is authoritative; never trust
+ * client claims about role / target / state). Covers:
+ *   - actor must be DM in this party (`dm_only`).
+ *   - target must not equal `party.ownerUserId` (no self-banker).
+ *   - target must have an active `role='player'` membership.
+ *   - party must have memberCount ≥ 2 (solo has no Banker).
+ *   - party.bankerUserId must currently be null (reassign = explicit
+ *     two-step revoke + appoint per OUTLINE §3.14).
+ *
+ * `banker_membership_forbidden` is the rejection code defined in
+ * `GuardRejectionCode` (R3.4.a) — this guard is its first live caller.
+ */
+const appointBankerGuard: Guard<Extract<Action, { type: 'appoint-banker' }>> = (
+  state,
+  payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'appoint-banker: no state.' };
+  if (actor.role !== 'dm') {
+    return { ok: false, code: 'dm_only', message: 'Only the DM can appoint a Banker.' };
+  }
+  if (payload.bankerUserId === state.party.ownerUserId) {
+    return {
+      ok: false,
+      code: 'banker_membership_forbidden',
+      message: 'The DM cannot appoint themselves as Banker.',
+    };
+  }
+  if (state.party.bankerUserId !== null) {
+    return {
+      ok: false,
+      code: 'banker_membership_forbidden',
+      message: 'A Banker is already appointed; revoke first before appointing a new one.',
+    };
+  }
+  const targetIsActivePlayer = state.memberships.some(
+    (m) =>
+      m.userId === payload.bankerUserId &&
+      m.partyId === actor.partyId &&
+      m.role === 'player' &&
+      m.leftAt === null,
+  );
+  if (!targetIsActivePlayer) {
+    return {
+      ok: false,
+      code: 'banker_membership_forbidden',
+      message: 'Target user lacks an active player membership in this party.',
+    };
+  }
+  const activeUserIds = new Set(
+    state.memberships
+      .filter((m) => m.partyId === actor.partyId && m.leftAt === null)
+      .map((m) => m.userId),
+  );
+  if (activeUserIds.size < 2) {
+    return {
+      ok: false,
+      code: 'banker_membership_forbidden',
+      message: 'A Banker can only be appointed in a party with two or more members.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * R4.2.a — `revoke-banker`. DM-only. Rejects if no Banker is currently
+ * set. Only `reason: 'manual' | 'reassigned'` reach this guard via
+ * direct dispatch; `'left-party'` and `'kicked'` are emitted as
+ * synthetic cascade slices from the leave/kick reducer arms and don't
+ * go through `POST /sync/actions` separately, so the guard layer
+ * doesn't need to special-case them.
+ */
+const revokeBankerGuard: Guard<Extract<Action, { type: 'revoke-banker' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'revoke-banker: no state.' };
+  if (actor.role !== 'dm') {
+    return { ok: false, code: 'dm_only', message: 'Only the DM can revoke the Banker.' };
+  }
+  if (state.party.bankerUserId === null) {
+    return {
+      ok: false,
+      code: 'banker_membership_forbidden',
+      message: 'No Banker is currently set; nothing to revoke.',
+    };
+  }
+  return { ok: true };
+};
+
 export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>> } = {
   'create-character': createCharacterGuard,
   acquire: acquireGuard,
@@ -780,6 +875,8 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'leave-party': leavePartyGuard,
   'kick-player': kickPlayerGuard,
   'join-party': joinPartyGuard,
+  'appoint-banker': appointBankerGuard,
+  'revoke-banker': revokeBankerGuard,
 };
 
 /**

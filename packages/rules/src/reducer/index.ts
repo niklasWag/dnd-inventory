@@ -151,6 +151,10 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return kickPlayer(state, action.payload, ctx);
     case 'join-party':
       return joinParty(state, ctx);
+    case 'appoint-banker':
+      return appointBanker(state, action.payload);
+    case 'revoke-banker':
+      return revokeBanker(state, action.payload);
   }
 }
 
@@ -3092,6 +3096,14 @@ function leaveParty(state: AppState, ctx: ReducerContext): ReducerResult {
   const leavePayload: { partyId: string; characterId?: string } =
     characterId !== null ? { partyId, characterId } : { partyId };
 
+  // 5. Banker auto-clear slice (R4.2.a — light up the carryforward).
+  //    Sits AFTER the cascade slices and BEFORE the terminal leave-party
+  //    slice so the audit ordering reads: items/currency rollup → revoke →
+  //    terminal departure. Only emitted when the leaver IS the Banker.
+  const bankerSlice: LogEntrySlice[] = wasBanker
+    ? [{ type: 'revoke-banker', payload: { reason: 'left-party' } }]
+    : [];
+
   return {
     state: {
       ...afterCharacterCascade,
@@ -3100,9 +3112,7 @@ function leaveParty(state: AppState, ctx: ReducerContext): ReducerResult {
     },
     logEntries: [
       ...cascadeSlices,
-      // R4.2 stub: when `wasBanker` is reachable, append a `revoke-banker`
-      // slice here with `{ formerBankerUserId: actorUserId, reason:
-      // 'left-party' }`. Today the schema makes `wasBanker` always false.
+      ...bankerSlice,
       {
         type: 'leave-party',
         payload: leavePayload,
@@ -3200,11 +3210,15 @@ function kickPlayer(
       : m,
   );
 
-  // 3. Banker auto-clear stub (R4.2 carryforward — unreachable today).
+  // 3. Banker auto-clear (R4.2.a). Mirrors the `leave-party` cascade.
   const wasBanker = afterCharacterCascade.party.bankerUserId === kickedUserId;
   const nextParty = wasBanker
     ? { ...afterCharacterCascade.party, bankerUserId: null }
     : afterCharacterCascade.party;
+
+  const bankerSlice: LogEntrySlice[] = wasBanker
+    ? [{ type: 'revoke-banker', payload: { reason: 'kicked' } }]
+    : [];
 
   return {
     state: {
@@ -3214,9 +3228,7 @@ function kickPlayer(
     },
     logEntries: [
       ...cascadeSlices,
-      // R4.2 stub: when `wasBanker` is reachable, append a `revoke-banker`
-      // slice here with `{ formerBankerUserId: kickedUserId, reason:
-      // 'kicked' }`. Today the schema makes `wasBanker` always false.
+      ...bankerSlice,
       {
         type: 'kick-player',
         payload: { kickedUserId },
@@ -3279,6 +3291,155 @@ function joinParty(state: AppState, ctx: ReducerContext): ReducerResult {
       {
         type: 'join-party',
         payload: { partyId },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// appoint-banker / revoke-banker (R4.2.a)
+// -------------------------------------------------------------------- //
+
+/**
+ * DM appoints an active player as the party's Banker (OUTLINE §3.14).
+ *
+ * Rejects when:
+ *   - actor lacks an active `role='dm'` membership in this party
+ *     (`dm_only`).
+ *   - target equals `Party.ownerUserId` (no self-banker; the role is
+ *     for delegating to a player).
+ *   - target lacks an active `role='player'` membership in this party.
+ *   - `memberCount < 2` — solo parties have no Banker. memberCount is
+ *     the count of DISTINCT active user ids across all membership rows.
+ *   - `Party.bankerUserId` is already non-null. Reassignment is the
+ *     two-step revoke-then-appoint flow per §3.14; an `appoint` against
+ *     an already-set banker would otherwise silently overwrite the
+ *     existing audit anchor.
+ *
+ * Emits one `appoint-banker` log slice. `actorRole` is filled in by the
+ * store middleware via `deriveActorRole`; for this action it always
+ * resolves to `'dm'`.
+ */
+function appointBanker(
+  state: AppState,
+  payload: { bankerUserId: string },
+): ReducerResult {
+  const s = requireState(state, 'appoint-banker');
+  const actorUserId = s.user.id;
+  const partyId = s.party.id;
+  const { bankerUserId } = payload;
+
+  // DM guard.
+  const actorIsDm = s.memberships.some(
+    (m) =>
+      m.userId === actorUserId &&
+      m.partyId === partyId &&
+      m.role === 'dm' &&
+      m.leftAt === null,
+  );
+  if (!actorIsDm) {
+    throw new Error('appoint-banker: dm_only (actor must be an active DM of this party)');
+  }
+
+  // Self-appoint guard. OUTLINE §3.14: "the DM cannot appoint themselves".
+  if (bankerUserId === s.party.ownerUserId) {
+    throw new Error(
+      'appoint-banker: banker_membership_forbidden (DM cannot self-appoint as Banker)',
+    );
+  }
+
+  // Already-set guard (forces explicit revoke + re-appoint).
+  if (s.party.bankerUserId !== null) {
+    throw new Error(
+      'appoint-banker: banker_membership_forbidden (a Banker is already set; revoke first)',
+    );
+  }
+
+  // Target must be an active player in this party.
+  const targetIsActivePlayer = s.memberships.some(
+    (m) =>
+      m.userId === bankerUserId &&
+      m.partyId === partyId &&
+      m.role === 'player' &&
+      m.leftAt === null,
+  );
+  if (!targetIsActivePlayer) {
+    throw new Error(
+      'appoint-banker: banker_membership_forbidden (target lacks an active player membership in this party)',
+    );
+  }
+
+  // memberCount ≥ 2 guard. Count distinct active user ids across all
+  // membership rows (a creator's dm + player rows count as one user).
+  const activeUserIds = new Set(
+    s.memberships
+      .filter((m) => m.partyId === partyId && m.leftAt === null)
+      .map((m) => m.userId),
+  );
+  if (activeUserIds.size < 2) {
+    throw new Error(
+      'appoint-banker: banker_membership_forbidden (party must have two members before a Banker is allowed)',
+    );
+  }
+
+  return {
+    state: {
+      ...s,
+      party: { ...s.party, bankerUserId },
+    },
+    logEntries: [
+      {
+        type: 'appoint-banker',
+        payload: { bankerUserId },
+      },
+    ],
+  };
+}
+
+/**
+ * DM revokes the current Banker (OUTLINE §3.14). Only `reason: 'manual'`
+ * and `'reassigned'` are valid as direct dispatches; `'left-party'` and
+ * `'kicked'` are synthesized by the `leave-party` / `kick-player`
+ * cascades and never reach this function via the action route.
+ *
+ * Rejects when:
+ *   - actor lacks an active DM membership (`dm_only`).
+ *   - `Party.bankerUserId` is already null (nothing to revoke).
+ */
+function revokeBanker(
+  state: AppState,
+  payload: { reason: 'manual' | 'reassigned' | 'left-party' | 'kicked' },
+): ReducerResult {
+  const s = requireState(state, 'revoke-banker');
+  const actorUserId = s.user.id;
+  const partyId = s.party.id;
+
+  const actorIsDm = s.memberships.some(
+    (m) =>
+      m.userId === actorUserId &&
+      m.partyId === partyId &&
+      m.role === 'dm' &&
+      m.leftAt === null,
+  );
+  if (!actorIsDm) {
+    throw new Error('revoke-banker: dm_only (actor must be an active DM of this party)');
+  }
+
+  if (s.party.bankerUserId === null) {
+    throw new Error(
+      'revoke-banker: banker_membership_forbidden (no Banker is currently set)',
+    );
+  }
+
+  return {
+    state: {
+      ...s,
+      party: { ...s.party, bankerUserId: null },
+    },
+    logEntries: [
+      {
+        type: 'revoke-banker',
+        payload: { reason: payload.reason },
       },
     ],
   };

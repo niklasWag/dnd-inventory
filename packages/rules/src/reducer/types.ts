@@ -561,6 +561,31 @@ export type Action =
       // dispatching this action.
       type: 'join-party';
       payload: Record<string, never>;
+    }
+  | {
+      // R4.2.a: DM appoints an active player as the party's Banker per
+      // OUTLINE §3.14. Reducer rejects self-appointment, already-set
+      // Banker (forces a two-step revoke-then-appoint), and parties
+      // with memberCount < 2. The §3.14 invariant `bankerUserId !==
+      // ownerUserId` is enforced both here AND by the server guard
+      // layer per SECURITY §2 (server is authoritative).
+      type: 'appoint-banker';
+      payload: {
+        bankerUserId: string;
+      };
+    }
+  | {
+      // R4.2.a: DM clears `Party.bankerUserId`. `reason` distinguishes
+      // direct dispatches (`'manual'`, `'reassigned'`) from cascade-
+      // emitted entries (`'left-party'`, `'kicked'`) — only the first
+      // two reach this action via `POST /sync/actions`; the cascade
+      // entries are emitted directly from the kick/leave reducer arms
+      // and don't round-trip through dispatch. `'dm-transfer'` is
+      // reserved for R4.3 and intentionally absent from the enum.
+      type: 'revoke-banker';
+      payload: {
+        reason: 'manual' | 'reassigned' | 'left-party' | 'kicked';
+      };
     };
 
 /**

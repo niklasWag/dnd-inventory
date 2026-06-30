@@ -641,6 +641,8 @@ describe('guards — every action has an entry', () => {
       'leave-party',
       'kick-player',
       'join-party',
+      'appoint-banker',
+      'revoke-banker',
     ];
     for (const t of expected) {
       expect(typeof guards[t]).toBe('function');

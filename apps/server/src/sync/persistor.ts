@@ -124,6 +124,10 @@ export async function applyDelta(
       return persistKickPlayer(tx, action.payload, actor, ctx);
     case 'join-party':
       return persistJoinParty(tx, actor, ctx);
+    case 'appoint-banker':
+      return persistAppointBanker(tx, action.payload, actor);
+    case 'revoke-banker':
+      return persistRevokeBanker(tx, actor);
   }
 }
 
@@ -1118,6 +1122,41 @@ async function persistJoinParty(
       joinedAt: now,
       leftAt: null,
     },
+  });
+}
+
+/**
+ * R4.2.a — `appoint-banker`. Single `Party.update` setting
+ * `bankerUserId`. The guard layer (`@app/shared/guards/map.ts`) already
+ * vetted the §3.14 invariants (DM actor, target is an active player,
+ * memberCount ≥ 2, no prior Banker, not self-appoint). At the DB layer
+ * we only need to atomically write the column.
+ */
+async function persistAppointBanker(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'appoint-banker' }>['payload'],
+  actor: Actor,
+): Promise<void> {
+  await tx.party.update({
+    where: { id: actor.partyId },
+    data: { bankerUserId: payload.bankerUserId },
+  });
+}
+
+/**
+ * R4.2.a — `revoke-banker`. Clears `Party.bankerUserId`. Guard layer
+ * ensures a Banker is currently set + actor is DM. The cascade emits
+ * synthetic `revoke-banker` entries from `persistLeaveParty` /
+ * `persistKickPlayer` directly (those already null the column inline),
+ * so this function only fires on direct DM dispatches.
+ */
+async function persistRevokeBanker(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+): Promise<void> {
+  await tx.party.update({
+    where: { id: actor.partyId },
+    data: { bankerUserId: null },
   });
 }
 

@@ -803,6 +803,40 @@ const joinPartyEntry = z.object({
   }),
 });
 
+/**
+ * `appoint-banker` — R4.2.a. DM appoints an active player as the
+ * party's Banker per OUTLINE §3.14. `actorRole` is always `'dm'`
+ * (the only role allowed to dispatch this action; reducer rejects
+ * otherwise with `dm_only`).
+ */
+const appointBankerEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('appoint-banker'),
+  payload: z.object({
+    bankerUserId: z.string().min(1),
+  }),
+});
+
+/**
+ * `revoke-banker` — R4.2.a. Clears `Party.bankerUserId`. Reasons:
+ *   - `'manual'` — DM revoked explicitly via Party Settings.
+ *   - `'reassigned'` — reserved (future combined revoke+appoint UX).
+ *   - `'left-party'` — synthesized by `leave-party` reducer arm.
+ *   - `'kicked'`     — synthesized by `kick-player` reducer arm.
+ *
+ * `actorRole` on synthesized entries inherits from the parent
+ * `leave-party` / `kick-player` dispatch (`'player'` / `'dm'`).
+ * `'dm-transfer'` reason is reserved for R4.3 and intentionally
+ * absent here so it can't be emitted prematurely.
+ */
+const revokeBankerEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('revoke-banker'),
+  payload: z.object({
+    reason: z.enum(['manual', 'reassigned', 'left-party', 'kicked']),
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -836,6 +870,8 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   leavePartyEntry,
   kickPlayerEntry,
   joinPartyEntry,
+  appointBankerEntry,
+  revokeBankerEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

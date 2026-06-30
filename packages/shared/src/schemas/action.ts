@@ -407,6 +407,47 @@ const joinPartyAction = z.object({
   payload: z.object({}),
 });
 
+/**
+ * R4.2.a — `appoint-banker`. DM appoints an active player as the
+ * party's Banker per OUTLINE §3.14. Reducer guards reject if:
+ *   - actor lacks an active DM membership in this party (`dm_only`).
+ *   - target equals `Party.ownerUserId` (DM cannot self-appoint).
+ *   - target lacks an active `role='player'` membership in this party.
+ *   - `memberCount < 2` (solo parties have no Banker).
+ *   - `Party.bankerUserId` is already non-null (reassignment is a
+ *     two-step revoke-then-appoint per OUTLINE §3.14).
+ *
+ * Wire payload carries only `bankerUserId`; `partyId` comes from the
+ * URL/session per SECURITY §2.
+ */
+const appointBankerAction = z.object({
+  type: z.literal('appoint-banker'),
+  payload: z.object({
+    bankerUserId: z.string().min(1),
+  }),
+});
+
+/**
+ * R4.2.a — `revoke-banker`. Clears `Party.bankerUserId`. Reasons:
+ *   - `'manual'` — DM explicitly revokes.
+ *   - `'reassigned'` — reserved for a future "reassign Banker" CTA
+ *     that combines revoke + appoint in two clicks. R4.2.a only
+ *     emits `'manual'`; the enum value is reserved.
+ *   - `'left-party'` — synthesized by the `leave-party` reducer arm
+ *     when the leaver was the Banker.
+ *   - `'kicked'` — synthesized by `kick-player` when the kicked user
+ *     was the Banker.
+ *
+ * `'dm-transfer'` is reserved for R4.3 and intentionally NOT in this
+ * enum yet (would tempt premature emission from the wrong cascade).
+ */
+const revokeBankerAction = z.object({
+  type: z.literal('revoke-banker'),
+  payload: z.object({
+    reason: z.enum(['manual', 'reassigned', 'left-party', 'kicked']),
+  }),
+});
+
 export const actionSchema = z.discriminatedUnion('type', [
   createCharacterAction,
   acquireAction,
@@ -438,6 +479,8 @@ export const actionSchema = z.discriminatedUnion('type', [
   leavePartyAction,
   kickPlayerAction,
   joinPartyAction,
+  appointBankerAction,
+  revokeBankerAction,
 ]);
 
 export type Action = z.infer<typeof actionSchema>;

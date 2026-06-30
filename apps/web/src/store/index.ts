@@ -53,7 +53,17 @@ const webReducerCtx: ReducerContext = {
 function resolveActor(
   state: AppState,
   slice: LogEntrySlice,
-): { actorUserId: string; actorRole: 'dm' | 'player'; partyId: string } {
+): { actorUserId: string; actorRole: 'dm' | 'player' | 'banker'; partyId: string } {
+  // R4.2.a — `'banker'` is the third actorRole. Derived per OUTLINE
+  // §3.14: actor === party.bankerUserId AND the slice is a player-
+  // dispatched action (not appoint-banker / revoke-banker / kick-player
+  // / identify — those are DM-only by §8.1 and stay 'dm' even if the DM
+  // were somehow the banker, which §3.14 prohibits). Implementation
+  // mirrors `@app/shared/guards/actor.ts::deriveActorRole` for the
+  // player-driven branches below.
+  const playerOrBanker = (s: NonNullable<AppState>) =>
+    s.party.bankerUserId === s.user.id ? ('banker' as const) : ('player' as const);
+
   // Single switch over the discriminant. When new TxType variants land in
   // M2+, add a `case` here AND the @app/shared union, both type-checked.
   switch (slice.type) {
@@ -68,15 +78,16 @@ function resolveActor(
     case 'acquire':
     case 'consume':
     case 'edit-item-instance':
-      // Player-initiated mutations. In MVP the sole user wears both hats;
-      // R4 (multi-member parties) introduces the DM/player split + the
-      // `'banker'` actorRole variant.
+      // Player-initiated mutations. R4.2.a — when the actor IS the
+      // party's Banker, the log entry surfaces as `'banker'` per §3.14
+      // (the Banker keeps their underlying player rights AND inherits
+      // the Banker badge for audit purposes).
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
       }
       return {
         actorUserId: state.user.id,
-        actorRole: 'player',
+        actorRole: playerOrBanker(state),
         partyId: state.party.id,
       };
     case 'seed-catalog':
@@ -147,12 +158,14 @@ function resolveActor(
       // The cascade also emits synthetic `transfer` + (optional)
       // `currency-change` entries which share the same actor identity.
       // R4 (multi-member) will also let DM / Banker drive these.
+      // R4.2.a: actor surfaces as `'banker'` when state.user IS the
+      // Party's Banker, otherwise `'player'`.
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
       }
       return {
         actorUserId: state.user.id,
-        actorRole: 'player',
+        actorRole: playerOrBanker(state),
         partyId: state.party.id,
       };
     case 'identify':
@@ -170,12 +183,15 @@ function resolveActor(
         partyId: state.party.id,
       };
     case 'kick-player':
-      // R4.1.d — DM-only per OUTLINE §8.1 row "Kick player". Same
-      // routing as `identify` above: in MVP party-of-one the sole
-      // user wears both hats (and the reducer rejects self-kick); in
-      // 2+-member parties the server guard layer enforces DM-only.
+    case 'appoint-banker':
+    case 'revoke-banker':
+      // R4.1.d / R4.2.a — all DM-only per OUTLINE §8.1. Reducer rejects
+      // non-DM dispatches before this resolver runs, so `'dm'` is the
+      // structurally-correct value (and §3.14 bars the DM from being
+      // the Banker, so even when bankerUserId is set, the actor of
+      // these actions is never the Banker).
       if (state === null) {
-        throw new Error('resolveActor: kick-player requires populated AppState');
+        throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
       }
       return {
         actorUserId: state.user.id,

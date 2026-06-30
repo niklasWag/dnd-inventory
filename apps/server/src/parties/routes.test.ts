@@ -619,3 +619,188 @@ describe('BUG-001 — character cascade on departure (kick + leave)', () => {
     }
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.2.a — appoint-banker / revoke-banker + kick/leave cascade
+// -------------------------------------------------------------------- //
+
+describe('R4.2.a — Banker lifecycle (appoint / revoke + kick/leave cascade)', () => {
+  /**
+   * Helper: bootstrap a party as user A, have user B join it, then
+   * return their cookies and ids. Both helpers below need this shape.
+   */
+  async function setupTwoMemberParty(app: Awaited<ReturnType<typeof buildServer>>): Promise<{
+    partyId: string;
+    inviteCode: string;
+    userA: { userId: string; cookie: string };
+    userB: { userId: string; cookie: string };
+  }> {
+    const userA = await seedUser({ displayName: 'A' });
+    const tokenA = await seedSession(userA.userId);
+    const cookieA = cookieHeader(env, tokenA);
+    const { partyId, inviteCode } = await bootstrapParty(app, cookieA);
+
+    const userB = await seedUser({ displayName: 'B' });
+    const tokenB = await seedSession(userB.userId);
+    const cookieB = cookieHeader(env, tokenB);
+    const joinRes = await app.inject({
+      method: 'POST',
+      url: '/parties/join',
+      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      payload: { inviteCode },
+    });
+    expect(joinRes.statusCode).toBe(200);
+
+    return {
+      partyId,
+      inviteCode,
+      userA: { userId: userA.userId, cookie: cookieA },
+      userB: { userId: userB.userId, cookie: cookieB },
+    };
+  }
+
+  it('DM can appoint and revoke a Banker (Party.bankerUserId round-trip)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA, userB } = await setupTwoMemberParty(app);
+
+      // Appoint user B.
+      const appointRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'appoint-banker', payload: { bankerUserId: userB.userId } }],
+        },
+      });
+      expect(appointRes.statusCode).toBe(200);
+      const afterAppoint = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(afterAppoint.bankerUserId).toBe(userB.userId);
+
+      // Revoke.
+      const revokeRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'revoke-banker', payload: { reason: 'manual' } }],
+        },
+      });
+      expect(revokeRes.statusCode).toBe(200);
+      const afterRevoke = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(afterRevoke.bankerUserId).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects appoint-banker when DM tries to self-appoint', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA } = await setupTwoMemberParty(app);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'appoint-banker', payload: { bankerUserId: userA.userId } }],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('banker_membership_forbidden');
+      const party = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(party.bankerUserId).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects appoint-banker from a non-DM actor', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userB } = await setupTwoMemberParty(app);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'appoint-banker', payload: { bankerUserId: userB.userId } }],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('dm_only');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('kick-player auto-clears Party.bankerUserId when the kicked user is the Banker', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA, userB } = await setupTwoMemberParty(app);
+
+      const appoint = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'appoint-banker', payload: { bankerUserId: userB.userId } }],
+        },
+      });
+      expect(appoint.statusCode).toBe(200);
+
+      const kickRes = await app.inject({
+        method: 'POST',
+        url: `/parties/${partyId}/kick`,
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: { kickedUserId: userB.userId },
+      });
+      expect(kickRes.statusCode).toBe(200);
+
+      const after = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(after.bankerUserId).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('leave-party auto-clears Party.bankerUserId when the leaver is the Banker', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA, userB } = await setupTwoMemberParty(app);
+
+      const appoint = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'appoint-banker', payload: { bankerUserId: userB.userId } }],
+        },
+      });
+      expect(appoint.statusCode).toBe(200);
+
+      const leaveRes = await app.inject({
+        method: 'POST',
+        url: `/parties/${partyId}/leave`,
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {},
+      });
+      expect(leaveRes.statusCode).toBe(200);
+
+      const after = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(after.bankerUserId).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+});
