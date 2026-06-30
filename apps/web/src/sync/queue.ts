@@ -37,6 +37,30 @@ import { BatchRejectedError, pullState, pushActions } from './client';
 const DEBOUNCE_MS = 200;
 const MAX_BATCH = 100;
 
+/**
+ * Action types whose reducer mints fresh server-canonical entity ids
+ * (`ctx.newId()` server-side). The server's UUIDs differ from the
+ * client's optimistic ones, so after such an action lands we re-pull
+ * `/sync/state` to canonicalize local ids — otherwise the NEXT action
+ * that references the new id (e.g. `transfer` after `acquire`) sends
+ * the client's stale local id and the server rejects with
+ * `item_not_found` / `stash_not_found` / etc.
+ *
+ * Auto-stacking acquires don't mint a new id (they bump the existing
+ * row's quantity), but conservatively re-pulling on every acquire is
+ * cheaper than parsing the response to detect "stacked vs. new."
+ *
+ * Keep this list in sync with `apps/server/src/sync/persistor.ts`
+ * `ctx.newId()` call sites + `applyBootstrapDelta`.
+ */
+const ID_MINTING_ACTION_TYPES: ReadonlySet<Action['type']> = new Set([
+  'create-character',
+  'acquire',
+  'create-stash',
+  'split',
+  'create-homebrew',
+]);
+
 interface PendingFlushSnapshot {
   appState: AppState | null;
   log: TransactionLogEntry[];
@@ -139,10 +163,17 @@ export async function flush(): Promise<void> {
 
   inflight = (async () => {
     try {
-      const isBootstrap = batch[0]?.type === 'create-character';
+      // R4.1.f: `create-character` has TWO shapes — bootstrap (state was
+      // null pre-dispatch, mints the whole party) and post-bootstrap
+      // (state existed, only adds a Character + Inventory + Holding +
+      // membership patch). The snapshot captured by enqueue() is the
+      // PRE-batch state; bootstrap iff that was null.
+      const isCreateCharacter = batch[0]?.type === 'create-character';
+      const isBootstrap = isCreateCharacter && snapshot?.appState == null;
       // Resolve the partyId for the push. Bootstrap: send a synthetic
       // marker — the server's bootstrap branch mints the real one.
-      // Post-bootstrap: read from the active-party pointer (Dexie meta).
+      // Post-bootstrap (including post-bootstrap create-character):
+      // read from the active-party pointer (Dexie meta).
       const partyId = isBootstrap ? 'will-be-minted' : await deps.getActivePartyId();
       if (partyId === null) {
         toast.error('No active party — refresh and try again.');
@@ -152,27 +183,26 @@ export async function flush(): Promise<void> {
 
       const response = await pushActions(partyId, batch);
 
-      // Bootstrap success: re-pull canonical state so the new party's
-      // server-minted ids land in the store before the Hub navigates.
-      if (isBootstrap) {
-        // The server runs its own reducer with its own `randomUUID()`
-        // ctx, so the party's server-side id DIFFERS from the local
-        // optimistic id minted by the client's reducer. We have to
-        // read the server's id back from the `applied[]` response —
-        // specifically the `create-character` log entry, whose payload
-        // carries the server's `partyId` (server-derived from the
-        // applied reducer's `result.state.party.id`).
-        //
-        // Falls back to the optimistic local id only if (a) the
-        // response is empty or (b) the first applied entry isn't a
-        // create-character (defensive — the server route invariant
-        // says it always is for a bootstrap batch).
+      // R4.1.f post-ship: re-pull canonical state after ANY id-minting
+      // action lands. The server's reducer runs with its own
+      // `randomUUID()` ctx, so entity ids it mints DIFFER from the
+      // client's optimistic ids. Without a re-pull, a subsequent action
+      // referencing the freshly-minted id (e.g. `transfer` after
+      // `acquire`) hits the server with the client's stale id and gets
+      // `item_not_found`. See `ID_MINTING_ACTION_TYPES` below.
+      const mintsIds = batch.some((a) => ID_MINTING_ACTION_TYPES.has(a.type));
+      if (mintsIds) {
+        // For `create-character` (bootstrap or post-bootstrap), the
+        // server's `applied[]` response carries the canonical partyId
+        // on the log entry payload. For other id-minting actions the
+        // partyId is unchanged across the dispatch; we read it from
+        // post-flush local state.
         const firstApplied = response.applied[0];
         const post = deps.getSnapshot();
         if (post.appState === null) {
-          // Reducer must have produced a party for a bootstrap action;
-          // if not, something is structurally wrong — bail.
-          toast.error('Bootstrap failed to apply locally.');
+          // Reducer must have produced a party for any id-minting
+          // action; if not, something is structurally wrong — bail.
+          toast.error('Action failed to apply locally.');
           return;
         }
         const serverPartyId =

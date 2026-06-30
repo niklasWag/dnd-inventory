@@ -17,7 +17,7 @@ import { createSessionForUser } from '../auth/session.js';
 import { buildServer } from '../server.js';
 
 const TEST_DB_URL =
-  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test';
+  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
 
 const env: Env = {
   NODE_ENV: 'test',
@@ -290,6 +290,181 @@ describe('GET /parties/:partyId/members (R4.1.e)', () => {
       expect(roles).toEqual(new Set(['dm', 'player']));
       const playerRow = body.members.find((m) => m.role === 'player');
       expect(playerRow!.characterName).toBe('A');
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.f — post-bootstrap create-character (joiner adds their character)
+// -------------------------------------------------------------------- //
+
+describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () => {
+  it('joiner creates their character in an existing party', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      // User A bootstraps the party (becomes DM + player with character 'A').
+      const userA = await seedUser({ displayName: 'A' });
+      const tokenA = await seedSession(userA.userId);
+      const { partyId, inviteCode } = await bootstrapParty(app, cookieHeader(env, tokenA));
+
+      // User B joins via invite code.
+      const userB = await seedUser({ displayName: 'B' });
+      const tokenB = await seedSession(userB.userId);
+      const joinRes = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(joinRes.statusCode).toBe(200);
+
+      // User B's membership row currently has characterId: null.
+      const preMembership = await prisma.partyMembership.findFirst({
+        where: { userId: userB.userId, partyId, role: 'player' },
+      });
+      expect(preMembership!.characterId).toBeNull();
+
+      // User B dispatches create-character against the existing party.
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'B-Char',
+                species: 'Elf',
+                size: 'medium',
+                class: 'Rogue',
+                level: 2,
+                str: 12,
+              },
+            },
+          ],
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+
+      // The membership now points at B's new character.
+      const postMembership = await prisma.partyMembership.findFirst({
+        where: { userId: userB.userId, partyId, role: 'player' },
+      });
+      expect(postMembership!.characterId).not.toBeNull();
+
+      // The character row exists and is owned by B.
+      const bChar = await prisma.character.findUnique({
+        where: { id: postMembership!.characterId! },
+      });
+      expect(bChar).not.toBeNull();
+      expect(bChar!.ownerUserId).toBe(userB.userId);
+      expect(bChar!.partyId).toBe(partyId);
+      expect(bChar!.name).toBe('B-Char');
+
+      // B got their own Inventory stash + CurrencyHolding.
+      const bInv = await prisma.stash.findUnique({
+        where: { id: bChar!.inventoryStashId },
+      });
+      expect(bInv).not.toBeNull();
+      expect(bInv!.scope).toBe('character');
+      expect(bInv!.isCarried).toBe(true);
+      expect(bInv!.ownerCharacterId).toBe(bChar!.id);
+      const bHolding = await prisma.currencyHolding.findUnique({
+        where: { stashId: bInv!.id },
+      });
+      expect(bHolding).not.toBeNull();
+      expect(bHolding!.cp).toBe(0);
+
+      // A still has THEIR own character + inventory; not mutated.
+      const aCharacters = await prisma.character.findMany({
+        where: { partyId, ownerUserId: userA.userId },
+      });
+      expect(aCharacters).toHaveLength(1);
+      expect(aCharacters[0]!.name).toBe('PartyTest');
+
+      // The TransactionLog has one create-character entry per character.
+      const createLog = await prisma.transactionLog.findMany({
+        where: { partyId, type: 'create-character' },
+      });
+      expect(createLog).toHaveLength(2);
+      // B's entry was authored by B.
+      const bLog = createLog.find((e) => e.actorUserId === userB.userId);
+      expect(bLog).toBeDefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('DM-only DM adds their character later', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      // DM bootstraps a DM-only party.
+      const userDm = await seedUser({ displayName: 'DM' });
+      const tokenDm = await seedSession(userDm.userId);
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenDm), 'content-type': 'application/json' },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: { dmOnly: true, partyName: 'DM Sandbox' },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const parties = await prisma.party.findMany();
+      const partyId = parties[parties.length - 1]!.id;
+
+      // Initially there's no player row.
+      const preMembership = await prisma.partyMembership.findFirst({
+        where: { userId: userDm.userId, partyId, role: 'player' },
+      });
+      expect(preMembership).toBeNull();
+
+      // DM dispatches create-character to add their character.
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenDm), 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'DM Char',
+                species: 'Human',
+                size: 'medium',
+                class: 'Bard',
+                level: 1,
+                str: 10,
+              },
+            },
+          ],
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+
+      // A fresh player row was created pointing at the new character.
+      const postMembership = await prisma.partyMembership.findFirst({
+        where: { userId: userDm.userId, partyId, role: 'player' },
+      });
+      expect(postMembership).not.toBeNull();
+      expect(postMembership!.characterId).not.toBeNull();
+
+      const dmChar = await prisma.character.findUnique({
+        where: { id: postMembership!.characterId! },
+      });
+      expect(dmChar!.ownerUserId).toBe(userDm.userId);
+      expect(dmChar!.name).toBe('DM Char');
     } finally {
       await app.close();
     }

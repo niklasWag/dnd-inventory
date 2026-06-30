@@ -649,3 +649,105 @@ describe('guards — every action has an entry', () => {
     expect(new Set(Object.keys(guards))).toEqual(new Set(expected));
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.1.f: create-character post-bootstrap branch
+// -------------------------------------------------------------------- //
+
+describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
+  const newCharacterPayload = {
+    name: 'Lyra',
+    species: 'Elf',
+    size: 'medium' as const,
+    class: 'Rogue',
+    level: 2,
+    str: 12,
+  };
+
+  function makePostBootstrapState(actorUserId: string, characterId: string | null): AppState {
+    // Build a populated AppState where the actor has a player row whose
+    // characterId is `characterId` (null = joiner / post-delete, non-null =
+    // already-has-character invariant violation).
+    const base = makeState({ ownerUserId: actorUserId, ownerCharacterId: 'char-existing' });
+    if (base === null) throw new Error('makeState returned null unexpectedly');
+    return {
+      ...base,
+      memberships: [
+        makeMembership('dm-user', 'dm'),
+        {
+          userId: actorUserId,
+          partyId: 'p1',
+          role: 'player' as const,
+          characterId,
+          joinedAt: '2026-01-01T00:00:00.000Z',
+          leftAt: null,
+        },
+      ],
+      // If the actor has no character yet (characterId: null), drop the
+      // characters[] entry too so the state is internally consistent.
+      characters: characterId === null ? [] : base.characters,
+    };
+  }
+
+  it('accepts the joiner case (actor has player row with characterId: null)', () => {
+    const state = makePostBootstrapState('u1', null);
+    const result = guards['create-character'](
+      state,
+      newCharacterPayload,
+      makeActor('u1', 'player'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('accepts the DM-only DM case (actor has only a dm row)', () => {
+    const base = makeState({ ownerUserId: 'dm-user' });
+    if (base === null) throw new Error('expected state');
+    const state: AppState = {
+      ...base,
+      memberships: [makeMembership('dm-user', 'dm')],
+      characters: [],
+    };
+    const result = guards['create-character'](
+      state,
+      newCharacterPayload,
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('rejects when the actor already has an active player row with a non-null characterId', () => {
+    const state = makePostBootstrapState('u1', 'char-u1');
+    const result = guards['create-character'](
+      state,
+      newCharacterPayload,
+      makeActor('u1', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'character_already_exists' });
+  });
+
+  it('rejects dmOnly: true on the post-bootstrap branch', () => {
+    const state = makePostBootstrapState('u1', null);
+    const result = guards['create-character'](
+      state,
+      { dmOnly: true, partyName: 'X' },
+      makeActor('u1', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'state_already_initialized' });
+  });
+
+  it('rejects when the actor is not an active member of the party', () => {
+    const base = makeState({ ownerUserId: 'someone-else' });
+    if (base === null) throw new Error('expected state');
+    const state: AppState = {
+      ...base,
+      memberships: [makeMembership('dm-user', 'dm')],
+      characters: [],
+    };
+    const result = guards['create-character'](
+      state,
+      newCharacterPayload,
+      makeActor('outsider', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_a_member' });
+  });
+});

@@ -128,7 +128,7 @@ describe('reducer: create-character (M1)', () => {
     dispatch({ type: 'create-character', payload: validPayload });
     expect(() =>
       dispatch({ type: 'create-character', payload: { ...validPayload, name: 'Other' } }),
-    ).toThrow(/already exists/);
+    ).toThrow(/already has an active player character/);
   });
 
   it('debounced persist round-trips the new state + log through Dexie', async () => {
@@ -244,7 +244,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
           type: 'create-character',
           payload: { dmOnly: true, partyName: 'X' },
         }),
-    ).toThrow(/already exists/);
+    ).toThrow(/dmOnly is only valid on the bootstrap/);
   });
 });
 
@@ -6767,5 +6767,218 @@ describe('reducer: join-party (R4.1.e)', () => {
     expect(() => useStore.getState().dispatch({ type: 'join-party', payload: {} })).toThrow(
       /already has an active player membership/,
     );
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.f: create-character post-bootstrap (joiner / DM-only DM / post-delete)
+// -------------------------------------------------------------------- //
+
+describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
+  /**
+   * Post-bootstrap shape: a populated AppState already has a Party, a Party
+   * Stash, a Recovered Loot stash, and at least one membership row for the
+   * actor (player with characterId: null OR dm-only). Dispatching
+   * `create-character` on that state mints a Character + Inventory Stash +
+   * CurrencyHolding and either patches the existing player row's
+   * characterId (joiner / post-delete case) or appends a new player
+   * membership (DM-only DM adding their character later).
+   */
+
+  const newCharacterPayload = {
+    name: 'Lyra',
+    species: 'Elf',
+    size: 'medium',
+    class: 'Rogue',
+    level: 2,
+    str: 12,
+  } as const;
+
+  it('joiner with characterId: null player row — mints Character + Inventory + Holding and patches the membership', () => {
+    localBootstrap();
+    // Simulate the post-join state: clear the player row's characterId and
+    // drop the existing character + its stash + its currency holding so the
+    // actor is in the "joined a party, no character yet" state.
+    const charactersBefore = useStore.getState().appState!.characters;
+    const charIdBefore = charactersBefore[0]!.id;
+    const invStashIdBefore = charactersBefore[0]!.inventoryStashId;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: [],
+          stashes: s.appState.stashes.filter((st) => st.id !== invStashIdBefore),
+          currencies: s.appState.currencies.filter((c) => c.stashId !== invStashIdBefore),
+          memberships: s.appState.memberships.map((m) =>
+            m.role === 'player' && m.characterId === charIdBefore
+              ? { ...m, characterId: null }
+              : m,
+          ),
+        },
+      };
+    });
+
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(1);
+    const ch = s.characters[0]!;
+    expect(ch.name).toBe('Lyra');
+    expect(ch.species).toBe('Elf');
+    expect(ch.class).toBe('Rogue');
+    expect(ch.level).toBe(2);
+    expect(ch.abilityScores.STR).toBe(12);
+    expect(ch.maxAttunement).toBe(3);
+    expect(ch.encumbranceRule).toBe('off');
+    expect(ch.enforceEncumbrance).toBe(false);
+
+    // New Inventory stash carried, owned by new character
+    const inv = s.stashes.find((st) => st.id === ch.inventoryStashId)!;
+    expect(inv).toBeDefined();
+    expect(inv.scope).toBe('character');
+    expect(inv.isCarried).toBe(true);
+    expect(inv.ownerCharacterId).toBe(ch.id);
+
+    // CurrencyHolding for the new Inventory exists, zeros
+    const holding = s.currencies.find((c) => c.stashId === inv.id)!;
+    expect(holding).toBeDefined();
+    expect(holding.cp).toBe(0);
+    expect(holding.sp).toBe(0);
+    expect(holding.ep).toBe(0);
+    expect(holding.gp).toBe(0);
+    expect(holding.pp).toBe(0);
+
+    // Player membership row patched in place — characterId now non-null
+    const playerRow = s.memberships.find((m) => m.role === 'player' && m.userId === s.user.id)!;
+    expect(playerRow).toBeDefined();
+    expect(playerRow.characterId).toBe(ch.id);
+  });
+
+  it('joiner case emits one create-character log slice carrying the new ids', () => {
+    localBootstrap();
+    const charactersBefore = useStore.getState().appState!.characters;
+    const charIdBefore = charactersBefore[0]!.id;
+    const invStashIdBefore = charactersBefore[0]!.inventoryStashId;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: [],
+          stashes: s.appState.stashes.filter((st) => st.id !== invStashIdBefore),
+          currencies: s.appState.currencies.filter((c) => c.stashId !== invStashIdBefore),
+          memberships: s.appState.memberships.map((m) =>
+            m.role === 'player' && m.characterId === charIdBefore
+              ? { ...m, characterId: null }
+              : m,
+          ),
+        },
+      };
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    expect(cascade.length).toBe(1);
+    const entry = cascade[0]!;
+    if (entry.type !== 'create-character') throw new Error('expected create-character');
+    expect(entry.payload.characterId).toBeDefined();
+    expect(entry.payload.inventoryStashId).toBeDefined();
+    expect(entry.payload.name).toBe('Lyra');
+    expect(entry.payload.dmOnly).toBeUndefined();
+    // The post-bootstrap branch must also echo the existing party-scope ids
+    // (Party Stash + Recovered Loot) so log readers reconstruct the same
+    // payload shape for both bootstrap variants.
+    const s = useStore.getState().appState!;
+    expect(entry.payload.partyId).toBe(s.party.id);
+    expect(entry.payload.partyStashId).toBe(s.stashes.find((st) => st.scope === 'party')!.id);
+    expect(entry.payload.recoveredLootStashId).toBe(s.party.recoveredLootStashId);
+  });
+
+  it('DM-only DM (no player row) — appends a fresh player membership pointing at the new character', () => {
+    // Bootstrap via dmOnly so there's a DM membership only, no player row.
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+    });
+    const before = useStore.getState().appState!;
+    expect(before.memberships.filter((m) => m.role === 'player')).toHaveLength(0);
+    expect(before.characters).toHaveLength(0);
+
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(1);
+    const ch = s.characters[0]!;
+    expect(ch.name).toBe('Lyra');
+
+    // A fresh player row was appended, pointing at the new character.
+    const playerRows = s.memberships.filter((m) => m.role === 'player');
+    expect(playerRows).toHaveLength(1);
+    expect(playerRows[0]!.userId).toBe(s.user.id);
+    expect(playerRows[0]!.characterId).toBe(ch.id);
+    expect(playerRows[0]!.leftAt).toBeNull();
+
+    // DM row still present and untouched.
+    const dmRows = s.memberships.filter((m) => m.role === 'dm');
+    expect(dmRows).toHaveLength(1);
+  });
+
+  it('rejects when the actor already has an active player row with a non-null characterId', () => {
+    localBootstrap();
+    // localBootstrap leaves the actor with an active player membership +
+    // characterId set; dispatching create-character again must reject.
+    expect(() =>
+      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload }),
+    ).toThrow(/character/i);
+  });
+
+  it('rejects dmOnly: true on the post-bootstrap branch', () => {
+    localBootstrap();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'create-character', payload: { dmOnly: true, partyName: 'X' } }),
+    ).toThrow();
+  });
+
+  it('rejects when the actor is not an active member of the party', () => {
+    localBootstrap();
+    // Wipe the actor's memberships so they're not in the party.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: [],
+          memberships: s.appState.memberships.filter((m) => m.userId !== s.appState!.user.id),
+        },
+      };
+    });
+    expect(() =>
+      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload }),
+    ).toThrow(/not.*member|member/i);
+  });
+
+  it('bootstrap path (state === null) still mints the full party with a character', () => {
+    // Regression check: the existing legacy bootstrap behavior is unchanged.
+    expect(useStore.getState().appState).toBeNull();
+    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(1);
+    expect(s.characters[0]!.name).toBe('Thorin');
+    expect(s.memberships).toHaveLength(2);
+    expect(s.memberships.some((m) => m.role === 'dm')).toBe(true);
+    expect(s.memberships.some((m) => m.role === 'player')).toBe(true);
+    // Party-scope stashes + Inventory all present.
+    expect(s.stashes.some((st) => st.scope === 'party')).toBe(true);
+    expect(s.stashes.some((st) => st.scope === 'recovered-loot')).toBe(true);
+    expect(s.stashes.some((st) => st.scope === 'character' && st.isCarried)).toBe(true);
   });
 });

@@ -20,6 +20,7 @@ import { listKnownPartyIds, loadAppState } from '@/db/load';
 import { setCurrentPartyId } from '@/db/meta';
 import { ApiError, joinParty, listParties } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
+import { getOwnCharacter } from '@/lib/ownCharacter';
 import { useStore, flushPendingPersist } from '@/store';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { pullState } from '@/sync/client';
@@ -162,16 +163,15 @@ export function Hub(): ReactElement {
    * back into it via `main.tsx`), pull its canonical AppState, hydrate
    * the store, then navigate to the user's character sheet.
    *
-   * R3.5 — picks `characters[0]` from the pulled AppState. For a solo
-   * party that's the user's only character; for a multi-member party
-   * the server returns the party's full character list and the first
-   * one is still a sensible default landing for now (a future
-   * "switch character" picker is on the post-R5 roadmap).
-   *
-   * R4.1-followup — DM-only parties have `characters: []` by design.
-   * Route those to `/party/settings` instead of erroring with "no
-   * characters yet" (that message was an R3.5 invariant before the
-   * DM-only bootstrap existed).
+   * R3.5 picked `characters[0]` from the pulled AppState — fine when the
+   * schema was "exactly one character per party" but wrong post-R4.1.f:
+   * the pulled state contains EVERY character in the party, ordered by
+   * insertion. The fix routes the actor to their OWN character via
+   * `PartyMembership.characterId` (see `lib/ownCharacter.ts`). If the
+   * actor has no character of their own (DM-only DM, joiner who hasn't
+   * dispatched create-character yet, or post-delete recreation case),
+   * route to `/party/settings` where they get the "Create your
+   * character" CTA.
    */
   async function openServerParty(partyId: string): Promise<void> {
     if (openingPartyId !== null) return;
@@ -186,15 +186,16 @@ export function Hub(): ReactElement {
       await setCurrentPartyId(partyId);
       const pulled = await pullState(partyId);
       useStore.getState().hydrate({ appState: pulled.state, log: pulled.state.log });
-      const firstCharacterId = pulled.state.characters[0]?.id;
-      if (firstCharacterId === undefined) {
-        // DM-only party (R4.1-followup) — no character to land on.
-        // Route to the party-management screen so the DM has somewhere
-        // to go (manage members, rotate invite, etc.).
+      const ownCharacterId = getOwnCharacter(pulled.state)?.id;
+      if (ownCharacterId === undefined) {
+        // Either a DM-only party (R4.1-followup), or the actor is a
+        // joiner who hasn't created their character yet (R4.1.f), or
+        // they're recreating after delete-character. All three land on
+        // /party/settings, which shows the "Create your character" CTA.
         void navigate('/party/settings');
         return;
       }
-      void navigate(`/character/${firstCharacterId}`);
+      void navigate(`/character/${ownCharacterId}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'unauthenticated') {
         void navigate('/login', { replace: true });
@@ -243,7 +244,7 @@ export function Hub(): ReactElement {
           appState: persisted.appState as ReturnType<typeof useStore.getState>['appState'],
           log: persisted.log as ReturnType<typeof useStore.getState>['log'],
         });
-      const id = useStore.getState().appState?.characters[0]?.id;
+      const id = getOwnCharacter(useStore.getState().appState)?.id;
       if (id !== undefined) {
         void navigate(`/character/${id}`);
         return;
@@ -317,7 +318,7 @@ export function Hub(): ReactElement {
     // reducer with its own UUIDs). Navigating with the stale local
     // id would land on /character/<unknown-id>.
     const canonical = useStore.getState().appState;
-    const id = canonical?.characters[0]?.id;
+    const id = getOwnCharacter(canonical)?.id;
     if (id !== undefined) {
       void navigate(`/character/${id}`, { replace: true });
     }

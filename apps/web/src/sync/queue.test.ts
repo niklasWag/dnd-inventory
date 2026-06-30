@@ -95,3 +95,69 @@ describe('queue — 401 clears session', () => {
     queue.resetQueue();
   });
 });
+
+describe('queue — id canonicalization after id-minting actions', () => {
+  /**
+   * R4.1.f post-ship bug fix (2026-06-30): the queue's post-flush
+   * re-pull was wired only for `create-character`. Every other action
+   * that mints server-canonical entity ids (`acquire`, `create-stash`,
+   * `split`, `create-homebrew`) suffered the same divergence: the
+   * client's reducer minted a local UUID that the server's reducer
+   * never agreed with. Subsequent actions referencing the new id (e.g.
+   * `transfer` after `acquire`) then failed with `item_not_found`
+   * because the client was holding stale optimistic ids.
+   *
+   * The fix is to re-pull canonical state after ANY id-minting action
+   * lands, mirroring the create-character pattern.
+   */
+  it('re-pulls canonical state after `acquire` so optimistic ids get replaced', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
+    queue.configureQueue(deps);
+
+    const calls: { actions?: number; pulls?: number } = { actions: 0, pulls: 0 };
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () => {
+        calls.actions = (calls.actions ?? 0) + 1;
+        return HttpResponse.json({
+          applied: [
+            {
+              id: 'log-server-1',
+              partyId: 'party-1',
+              sessionId: null,
+              timestamp: '2026-06-30T00:00:00.000Z',
+              actorUserId: 'u1',
+              actorRole: 'player',
+              type: 'acquire',
+              payload: {
+                stashId: 'inv-1',
+                // Server-canonical itemInstanceId differs from any id
+                // the client minted locally.
+                itemInstanceId: 'server-minted-item-id',
+                definitionId: 'phb-2024:torch',
+                quantity: 1,
+                source: 'catalog-add',
+              },
+            },
+          ],
+          serverTime: '2026-06-30T00:00:00.000Z',
+        });
+      }),
+      // The bug: this handler isn't called today. The fix: it must be.
+      http.get(`${TEST_SERVER_ORIGIN}/sync/state`, () => {
+        calls.pulls = (calls.pulls ?? 0) + 1;
+        // Return a structurally-empty response — the queue's restore
+        // path will fail Zod-parse but the assertion we care about is
+        // "the pull was triggered." We catch the resulting toast / log.
+        return HttpResponse.json({}, { status: 500 });
+      }),
+    );
+
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    await queue.flush();
+
+    expect(calls.actions).toBe(1);
+    expect(calls.pulls).toBe(1);
+    queue.resetQueue();
+  });
+});

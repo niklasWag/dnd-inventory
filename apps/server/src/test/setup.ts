@@ -14,4 +14,4 @@ import 'dotenv/config';
 // Prefer the test DB; fall back to the explicit overload so the test DB
 // is always used when the runner imports PrismaClient with the singleton.
 process.env.DATABASE_URL =
-  process.env.DATABASE_URL_TEST ?? 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test';
+  process.env.DATABASE_URL_TEST ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';

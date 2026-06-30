@@ -54,13 +54,18 @@ export async function applyDelta(
 ): Promise<void> {
   switch (action.type) {
     case 'create-character':
-      // R3.4.a bootstrap is handled by `applyBootstrapDelta` (called
-      // directly from the routes handler with the reducer's result
-      // state) so the IDs the reducer minted are the same IDs the
-      // persistor writes. This switch arm is unreachable in the
-      // normal flow; it's a defensive fallback that surfaces as a
-      // 500 if a bug ever skips the special-case path.
-      throw new Error('create-character must be applied via applyBootstrapDelta');
+      // Two valid shapes (R4.1.f):
+      //
+      //   - Bootstrap: routed by /sync/actions to applyBootstrapDelta
+      //     directly (with the reducer's full result.state), NOT through
+      //     this switch. If we reach this case for a bootstrap, the
+      //     routes handler's `isBootstrap` check is wrong.
+      //
+      //   - Post-bootstrap: actor already in an existing party. Mints
+      //     Character + Inventory Stash + CurrencyHolding, then either
+      //     patches the existing role='player' membership's characterId
+      //     or appends a new player row (DM-only DM case).
+      return persistAddCharacterToExistingParty(tx, action.payload, actor, ctx);
     case 'acquire':
       return persistAcquire(tx, action.payload, ctx);
     case 'consume':
@@ -328,6 +333,126 @@ async function persistCreateStash(
   await tx.currencyHolding.create({
     data: { id: ctx.newId(), stashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
   });
+}
+
+/**
+ * R4.1.f — Persist a `create-character` dispatched against an EXISTING
+ * party (post-bootstrap). The bootstrap variant (state was null) is
+ * handled by `applyBootstrapDelta` upstream in the routes handler.
+ *
+ * Three use cases reach here:
+ *   1. Joiner who just minted a `role='player'` membership row with
+ *      `characterId: null` via `POST /parties/join`.
+ *   2. DM-only DM who bootstrapped with `dmOnly: true` and now adds
+ *      their own character.
+ *   3. User recreating after `delete-character` cleared their
+ *      `characterId` to null.
+ *
+ * All three land at the same end state: an active `role='player'` row
+ * pointing at a real Character with its own Inventory stash + zero-
+ * balance CurrencyHolding.
+ *
+ * Server-side ids are minted via `ctx.newId()` (server-canonical),
+ * which differ from the client's optimistic ids — the sync queue's
+ * post-flush re-pull surfaces canonical ids back to the client.
+ */
+async function persistAddCharacterToExistingParty(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'create-character' }>['payload'],
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  // Reject dmOnly defensively — the reducer + guard already do, but if a
+  // future regression slips one through, refuse here too.
+  if (payload.dmOnly === true) {
+    throw new Error(
+      'persistAddCharacterToExistingParty: dmOnly is bootstrap-only',
+    );
+  }
+
+  const now = new Date(ctx.now());
+  const characterId = ctx.newId();
+  const inventoryStashId = ctx.newId();
+
+  // Order matters because of the deferred Character.inventoryStashId FK:
+  // the FK to Stash is `INITIALLY DEFERRED`, so within this transaction
+  // we can write the Character before the Stash exists. Outside the
+  // transaction Postgres validates the constraint at commit time.
+  await tx.character.create({
+    data: {
+      id: characterId,
+      partyId: actor.partyId,
+      ownerUserId: actor.userId,
+      name: payload.name,
+      species: payload.species,
+      size: payload.size,
+      class: payload.class,
+      level: payload.level,
+      strScore: payload.str,
+      maxAttunement: 3,
+      encumbranceRule: 'off',
+      enforceEncumbrance: false,
+      inventoryStashId,
+    },
+  });
+
+  await tx.stash.create({
+    data: {
+      id: inventoryStashId,
+      name: 'Inventory',
+      isCarried: true,
+      createdAt: now,
+      scope: toDbStashScope('character'),
+      ownerCharacterId: characterId,
+      partyId: null,
+    },
+  });
+
+  await tx.currencyHolding.create({
+    data: { id: ctx.newId(), stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+  });
+
+  // Patch the existing role='player' row (joiner / post-delete case) or
+  // append a new one (DM-only DM case).
+  const existingPlayer = await tx.partyMembership.findUnique({
+    where: {
+      userId_partyId_role: {
+        userId: actor.userId,
+        partyId: actor.partyId,
+        role: toDbMembershipRole('player'),
+      },
+    },
+  });
+
+  if (existingPlayer !== null && existingPlayer.leftAt === null) {
+    if (existingPlayer.characterId !== null) {
+      // Defense-in-depth — the reducer + guard reject this case.
+      throw new Error(
+        'persistAddCharacterToExistingParty: actor already has a character in this party',
+      );
+    }
+    await tx.partyMembership.update({
+      where: {
+        userId_partyId_role: {
+          userId: actor.userId,
+          partyId: actor.partyId,
+          role: toDbMembershipRole('player'),
+        },
+      },
+      data: { characterId },
+    });
+  } else {
+    await tx.partyMembership.create({
+      data: {
+        userId: actor.userId,
+        partyId: actor.partyId,
+        role: toDbMembershipRole('player'),
+        characterId,
+        joinedAt: now,
+        leftAt: null,
+      },
+    });
+  }
 }
 
 async function persistRenameStash(

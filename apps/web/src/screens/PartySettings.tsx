@@ -14,9 +14,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { RenameField } from '@/components/settings/RenameField';
+import { CharacterForm, type CharacterFormOutput } from '@/components/CharacterForm';
 import { ApiError, kickPlayerApi, leavePartyApi, listPartyMembers, rotateInvite } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
-import { useStore } from '@/store';
+import { getOwnCharacter } from '@/lib/ownCharacter';
+import { useStore, flushPendingPersist } from '@/store';
+import { flush as flushSyncQueue } from '@/sync/queue';
 import type { PartyMemberItem } from '@app/shared';
 
 /**
@@ -49,11 +52,7 @@ export function PartySettings(): ReactElement {
     useShallow((s) => (s.appState !== null ? s.appState.party.name : null)),
   );
   const character = useStore(
-    useShallow((s) =>
-      s.appState !== null
-        ? (s.appState.characters[0] ?? null)
-        : null,
-    ),
+    useShallow((s) => getOwnCharacter(s.appState)),
   );
   const myUserId = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.user.id : null)),
@@ -65,6 +64,7 @@ export function PartySettings(): ReactElement {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmKick, setConfirmKick] = useState<PartyMemberItem | null>(null);
+  const [createCharacterOpen, setCreateCharacterOpen] = useState(false);
 
   // Load members + invite code on mount (server mode only).
   useEffect(() => {
@@ -187,6 +187,37 @@ export function PartySettings(): ReactElement {
     );
   }
 
+  /**
+   * R4.1.f — Submit handler for the "Create your character" CTA. Covers
+   * three flows that all land at the same end state:
+   *   1. Joiner who used POST /parties/join (their player row exists
+   *      with characterId: null).
+   *   2. DM-only DM adding their character later (no player row).
+   *   3. User recreating after `delete-character` cleared their pointer.
+   *
+   * Pattern mirrors Hub's `handleCreateSubmit`: dispatch, flush, re-read
+   * (so the server-canonical character id replaces the client's
+   * optimistic id), navigate.
+   */
+  async function handleCreateCharacterSubmit(values: CharacterFormOutput): Promise<void> {
+    try {
+      useStore.getState().dispatch({ type: 'create-character', payload: values });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create character');
+      return;
+    }
+    setCreateCharacterOpen(false);
+    await flushPendingPersist();
+    if (isServerMode) {
+      await flushSyncQueue();
+    }
+    const canonical = useStore.getState().appState;
+    const id = getOwnCharacter(canonical)?.id;
+    if (id !== undefined) {
+      void navigate(`/character/${id}`, { replace: true });
+    }
+  }
+
   // Server-mode loading: members + invite code are async-fetched. We
   // still render the rename surfaces synchronously below; the
   // server-only block toggles between "Loading…" and the full UI.
@@ -229,6 +260,32 @@ export function PartySettings(): ReactElement {
           />
         ) : null}
       </section>
+
+      {/* R4.1.f — "Create your character" CTA. Visible whenever the
+          actor is in a party but has no character yet. Three use cases
+          land here:
+            - Joiner who just used POST /parties/join (membership row
+              exists with characterId: null).
+            - DM-only DM who bootstrapped without a character.
+            - User recreating after `delete-character`.
+          All three dispatch the same `create-character` action against
+          the existing state; the reducer's R4.1.f post-bootstrap branch
+          picks the right path. The form lives in a modal dialog so the
+          CTA stays compact on the settings page. */}
+      {character === null && partyId !== null ? (
+        <section
+          aria-label="Create your character"
+          className="flex items-center justify-between gap-4 rounded-lg border border-border p-4"
+        >
+          <div>
+            <h2 className="font-semibold">Create your character</h2>
+            <p className="text-sm text-muted-foreground">
+              You&apos;re in this party but haven&apos;t created your character yet.
+            </p>
+          </div>
+          <Button onClick={() => setCreateCharacterOpen(true)}>Create character</Button>
+        </section>
+      ) : null}
 
       {/* Server-only sections below. Local mode has no member list,
           no invite code, and no leave-party flow. */}
@@ -327,6 +384,25 @@ export function PartySettings(): ReactElement {
           </section>
         </>
       )}
+
+      <Dialog
+        open={createCharacterOpen}
+        onOpenChange={(o) => setCreateCharacterOpen(o)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create your character</DialogTitle>
+            <DialogDescription>
+              Enter your character&apos;s details. They&apos;ll get their own Inventory and currency
+              in this party.
+            </DialogDescription>
+          </DialogHeader>
+          <CharacterForm
+            onSubmit={handleCreateCharacterSubmit}
+            onCancel={() => setCreateCharacterOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmLeave} onOpenChange={(o) => !o && setConfirmLeave(false)}>
         <DialogContent>

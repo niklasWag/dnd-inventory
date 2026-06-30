@@ -19,6 +19,7 @@ import { wipeAll } from '@/db/wipe';
 import { exportToFile, type ExportSnapshot } from '@/io/export';
 import { importFromText, type ImportResult } from '@/io/import';
 import { isServerMode } from '@/lib/serverMode';
+import { getOwnCharacter } from '@/lib/ownCharacter';
 import { APP_VERSION } from '@/lib/version';
 import { useStore } from '@/store';
 import { useSession } from '@/store/session';
@@ -129,7 +130,7 @@ export function Settings(): ReactElement {
     }
   }
 
-  const character = appState?.characters[0] ?? null;
+  const character = getOwnCharacter(appState);
   const seedVersion = appState?.seedVersion ?? 0;
 
   return (

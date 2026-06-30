@@ -18,7 +18,7 @@ import { getSession, sessionCookieName, createSessionForUser } from './session.j
  *   4. Expired session → returns null; row deleted.
  */
 const TEST_DB_URL =
-  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test';
+  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
 
 const env: Env = {
   NODE_ENV: 'test',

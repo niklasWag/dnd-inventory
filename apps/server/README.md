@@ -15,7 +15,7 @@ Fastify + Postgres + Prisma 7 server. R3.1 ships the scaffold (no auth, no sync)
 | Var                     | Purpose                                                                                                                                                                                      | Default                                     |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | `DATABASE_URL`          | Postgres connection string. Required.                                                                                                                                                        | _none_                                      |
-| `DATABASE_URL_TEST`     | Test DB connection string. Used by Vitest setup.                                                                                                                                             | falls back to `…/dnd_inv_test` on port 5433 |
+| `DATABASE_URL_TEST`     | Test DB connection string. Used by Vitest setup.                                                                                                                                             | falls back to `…/dnd_inv_test` on port 5434 |
 | `PORT`                  | HTTP listen port.                                                                                                                                                                            | `3000`                                      |
 | `HOST`                  | Network interface to bind. Loopback by default so local dev never exposes the port on Wi-Fi / VPN. Compose / production override to `0.0.0.0`.                                               | `127.0.0.1`                                 |
 | `WEB_ORIGIN`            | CORS allow-origin for the SPA.                                                                                                                                                               | `http://localhost:5173`                     |
@@ -37,11 +37,16 @@ Local dev reads `apps/server/.env` (see `.env.example`); production / Docker pas
 ## Local dev workflow
 
 ```bash
-# One-time: bring up a Postgres for dev + tests.
+# One-time: bring up a Postgres for dev on :5433.
 docker run -d --name dnd-inv-pg \
   -e POSTGRES_USER=dnd -e POSTGRES_PASSWORD=dnd -e POSTGRES_DB=dnd_inv \
   -p 5433:5432 postgres:18-alpine
-docker exec dnd-inv-pg psql -U dnd -d dnd_inv -c "CREATE DATABASE dnd_inv_test;"
+
+# Separate test DB on :5434 so it can run in parallel with the dev stack
+# (the docker-compose app stack also binds :5433 for Postgres).
+docker run -d --name dnd-inv-pg-test \
+  -e POSTGRES_USER=dnd -e POSTGRES_PASSWORD=dnd -e POSTGRES_DB=dnd_inv_test \
+  -p 5434:5432 postgres:18-alpine
 
 # Install deps + apply migrations + start the dev server.
 cp apps/server/.env.example apps/server/.env

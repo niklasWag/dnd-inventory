@@ -91,21 +91,59 @@ function ownsOrShares(state: AppState, actor: Actor, stashId: string): boolean {
 
 const createCharacterGuard: Guard<Extract<Action, { type: 'create-character' }>> = (
   state,
-  _payload,
-  _actor,
+  payload,
+  actor,
 ) => {
-  // create-character mints the user + party + memberships atomically; before
-  // this action runs there is no state. Anyone can create their own initial
-  // character — server enforces the actor.userId matches the minted user
-  // via the OUTER /sync/actions handler (not here). The guard's job is to
-  // assert the action is structurally legal in the current state.
-  if (state !== null) {
+  // Two valid shapes per R4.1.f:
+  //
+  //   1. Bootstrap (state === null): mints the user + party + memberships
+  //      atomically. The server enforces actor.userId == minted user via
+  //      the /sync/actions handler; the guard's job is structural.
+  //
+  //   2. Post-bootstrap (state !== null): a joiner who minted a player
+  //      row with characterId: null via POST /parties/join, a DM-only DM
+  //      adding their character later, or a user recreating after
+  //      delete-character. Requires the actor to be an active member of
+  //      this party and NOT already to hold a character here.
+  if (state === null) {
+    return { ok: true };
+  }
+
+  // Post-bootstrap path.
+  if (payload.dmOnly === true) {
     return {
       ok: false,
-      code: 'state_not_initialized',
-      message: 'create-character: state already initialized.',
+      code: 'state_already_initialized',
+      message: 'create-character: dmOnly is bootstrap-only; state is already initialized.',
     };
   }
+
+  const activeMembership = state.memberships.find(
+    (m) => m.userId === actor.userId && m.leftAt === null,
+  );
+  if (activeMembership === undefined) {
+    return {
+      ok: false,
+      code: 'not_a_member',
+      message: 'create-character: actor is not an active member of this party.',
+    };
+  }
+
+  const existingPlayerWithCharacter = state.memberships.find(
+    (m) =>
+      m.userId === actor.userId &&
+      m.role === 'player' &&
+      m.leftAt === null &&
+      m.characterId !== null,
+  );
+  if (existingPlayerWithCharacter !== undefined) {
+    return {
+      ok: false,
+      code: 'character_already_exists',
+      message: 'create-character: actor already has an active player character in this party.',
+    };
+  }
+
   return { ok: true };
 };
 

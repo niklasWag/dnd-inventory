@@ -245,17 +245,168 @@ function checkHardMode(
  * Per the resolved open question (roadmap §Open Questions): zero default
  * Storage stashes — those are user-opt-in via M3's "New Storage stash".
  *
- * Refuses to run if a character already exists (MVP §6: "exactly one
- * Character"). M1 enforces this at the reducer; future milestones may
- * allow re-creation after `delete-character`.
+ * **R4.1.f — post-bootstrap branch.** When `state !== null`, the action
+ * routes to `createCharacterInExistingParty` (below): a joiner who already
+ * minted a `role='player'` membership with `characterId: null` via
+ * `POST /parties/join`, OR a DM-only DM adding their character later, OR
+ * a user recreating after `delete-character`. All three end at the same
+ * shape: an active player membership pointing at a new Character with its
+ * own Inventory stash + zero-balance CurrencyHolding.
  */
+function createCharacterInExistingParty(
+  state: NonNullable<AppState>,
+  payload: Extract<Action, { type: 'create-character' }>['payload'],
+  ctx: ReducerContext,
+): ReducerResult {
+  // The action's payload union allows dmOnly: true alongside `partyName`,
+  // but that combination is a bootstrap-only flag (mints a party without a
+  // player slot). Adding a "non-character DM thing" to an existing party
+  // makes no sense — reject.
+  if (payload.dmOnly === true) {
+    throw new Error(
+      'create-character: dmOnly is only valid on the bootstrap (state === null) branch',
+    );
+  }
+
+  const actorUserId = state.user.id;
+
+  // The actor must be an active member of state.party (DM or player).
+  const activeMembership = state.memberships.find(
+    (m) => m.userId === actorUserId && m.leftAt === null,
+  );
+  if (activeMembership === undefined) {
+    throw new Error('create-character: actor is not an active member of this party');
+  }
+
+  // One-character-per-user-per-party invariant per OUTLINE §4. If the
+  // actor already has a player row with a non-null characterId, reject.
+  const existingPlayerWithCharacter = state.memberships.find(
+    (m) =>
+      m.userId === actorUserId &&
+      m.role === 'player' &&
+      m.leftAt === null &&
+      m.characterId !== null,
+  );
+  if (existingPlayerWithCharacter !== undefined) {
+    throw new Error(
+      'create-character: actor already has an active player character in this party',
+    );
+  }
+
+  // Locate the existing party-scope stash ids so the log entry can echo
+  // them in the same shape as the legacy bootstrap branch (consumers can
+  // reconstruct the same payload across both variants).
+  const partyStash = state.stashes.find(
+    (s) => s.scope === 'party' && s.partyId === state.party.id,
+  );
+  if (partyStash === undefined) {
+    throw new Error('create-character: party stash missing — state is structurally invalid');
+  }
+  const partyStashId = partyStash.id;
+  const recoveredLootStashId = state.party.recoveredLootStashId;
+
+  const now = ctx.now();
+  const characterId = ctx.newId();
+  const inventoryStashId = ctx.newId();
+
+  const newCharacter = {
+    id: characterId,
+    partyId: state.party.id,
+    ownerUserId: actorUserId,
+    name: payload.name,
+    species: payload.species,
+    size: payload.size,
+    class: payload.class,
+    level: payload.level,
+    abilityScores: { STR: payload.str },
+    maxAttunement: 3,
+    encumbranceRule: 'off' as const,
+    enforceEncumbrance: false,
+    inventoryStashId,
+  };
+
+  const newInventoryStash = {
+    id: inventoryStashId,
+    scope: 'character' as const,
+    name: 'Inventory',
+    ownerCharacterId: characterId,
+    partyId: null,
+    isCarried: true as const,
+    createdAt: now,
+  };
+
+  const newInventoryHolding = {
+    id: ctx.newId(),
+    stashId: inventoryStashId,
+    cp: 0,
+    sp: 0,
+    ep: 0,
+    gp: 0,
+    pp: 0,
+  };
+
+  // Membership patch: if an existing player row has characterId: null,
+  // update it in place (joiner / post-delete case). Otherwise the actor
+  // is a DM-only DM adding their character — append a fresh player row.
+  const existingNullPlayer = state.memberships.find(
+    (m) =>
+      m.userId === actorUserId &&
+      m.role === 'player' &&
+      m.leftAt === null &&
+      m.characterId === null,
+  );
+
+  const nextMemberships =
+    existingNullPlayer !== undefined
+      ? state.memberships.map((m) =>
+          m === existingNullPlayer ? { ...m, characterId } : m,
+        )
+      : [
+          ...state.memberships,
+          {
+            userId: actorUserId,
+            partyId: state.party.id,
+            role: 'player' as const,
+            characterId,
+            joinedAt: now,
+            leftAt: null,
+          },
+        ];
+
+  const nextState: NonNullable<AppState> = {
+    ...state,
+    memberships: nextMemberships,
+    characters: [...state.characters, newCharacter],
+    stashes: [...state.stashes, newInventoryStash],
+    currencies: [...state.currencies, newInventoryHolding],
+  };
+
+  return {
+    state: nextState,
+    logEntries: [
+      {
+        type: 'create-character',
+        payload: {
+          characterId,
+          userId: actorUserId,
+          partyId: state.party.id,
+          name: payload.name,
+          inventoryStashId,
+          partyStashId,
+          recoveredLootStashId,
+        },
+      },
+    ],
+  };
+}
+
 function createCharacter(
   state: AppState,
   payload: Extract<Action, { type: 'create-character' }>['payload'],
   ctx: ReducerContext,
 ): ReducerResult {
   if (state !== null) {
-    throw new Error('create-character: a character already exists');
+    return createCharacterInExistingParty(state, payload, ctx);
   }
 
   const now = ctx.now();

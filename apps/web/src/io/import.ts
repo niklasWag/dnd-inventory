@@ -58,6 +58,12 @@ export function importFromText(text: string): ImportResult {
   // the dispatch on `schemaVersion` happens here.
 
   const env = parsed.data;
+  // `characters[0]` here is intentional, NOT a `getOwnCharacter` site:
+  // the envelope is opaque external data, so this picks the first
+  // character in the imported file purely for the import-confirmation
+  // preview label. It is not "the importing user's own character" —
+  // for that we'd need to know who the actor is, which doesn't apply
+  // pre-import. Treats the file label-first for the user dialog.
   const firstCharacter = env.payload.appState?.characters[0];
   const meta: ImportMeta = {
     schemaVersion: env.schemaVersion,
