@@ -470,3 +470,152 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
     }
   });
 });
+
+// -------------------------------------------------------------------- //
+// BUG-001 regression — kick + leave with a character must succeed
+// -------------------------------------------------------------------- //
+
+describe('BUG-001 — character cascade on departure (kick + leave)', () => {
+  /**
+   * Both `POST /parties/:partyId/kick` and `POST /parties/:partyId/leave`
+   * funnel into `cascadeCharacterToRecoveredLootDb` when the departing
+   * user has a character. Pre-fix, the cascade deleted the owned-stash
+   * rows before deleting the Character row, triggering the
+   * `Character_inventoryStashId_fkey` ON DELETE RESTRICT constraint.
+   *
+   * These two tests reproduce the failure for both surface paths and
+   * lock the fix in.
+   */
+
+  it('DM can kick a player whose character has an Inventory stash', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      // User A bootstraps the party as DM + player.
+      const userA = await seedUser({ displayName: 'A' });
+      const tokenA = await seedSession(userA.userId);
+      const { partyId, inviteCode } = await bootstrapParty(app, cookieHeader(env, tokenA));
+
+      // User B joins + creates their character (so B has an Inventory stash).
+      const userB = await seedUser({ displayName: 'B' });
+      const tokenB = await seedSession(userB.userId);
+      const joinRes = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(joinRes.statusCode).toBe(200);
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'B-Char',
+                species: 'Elf',
+                size: 'medium',
+                class: 'Rogue',
+                level: 1,
+                str: 10,
+              },
+            },
+          ],
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+
+      // DM kicks user B. Pre-fix this returns 500 with the
+      // `Character_inventoryStashId_fkey` RESTRICT violation.
+      const kickRes = await app.inject({
+        method: 'POST',
+        url: `/parties/${partyId}/kick`,
+        headers: { cookie: cookieHeader(env, tokenA), 'content-type': 'application/json' },
+        payload: { kickedUserId: userB.userId },
+      });
+      expect(kickRes.statusCode).toBe(200);
+
+      // Side effects: B's character + stashes are gone; B's membership rows soft-deleted.
+      const bChars = await prisma.character.findMany({ where: { ownerUserId: userB.userId } });
+      expect(bChars).toHaveLength(0);
+      const bStashes = await prisma.stash.findMany({
+        where: { ownerCharacterId: { in: [] }, partyId },
+      });
+      expect(bStashes).toHaveLength(0);
+      const activeBMemberships = await prisma.partyMembership.count({
+        where: { userId: userB.userId, partyId, leftAt: null },
+      });
+      expect(activeBMemberships).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('player can leave a party when their character has an Inventory stash', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      // User A bootstraps the party as DM + player.
+      const userA = await seedUser({ displayName: 'A' });
+      const tokenA = await seedSession(userA.userId);
+      const { partyId, inviteCode } = await bootstrapParty(app, cookieHeader(env, tokenA));
+
+      // User B joins + creates their character.
+      const userB = await seedUser({ displayName: 'B' });
+      const tokenB = await seedSession(userB.userId);
+      const joinRes = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(joinRes.statusCode).toBe(200);
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'B-Char',
+                species: 'Elf',
+                size: 'medium',
+                class: 'Rogue',
+                level: 1,
+                str: 10,
+              },
+            },
+          ],
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+
+      // User B leaves. Pre-fix this returns 500 with the same FK violation.
+      const leaveRes = await app.inject({
+        method: 'POST',
+        url: `/parties/${partyId}/leave`,
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: {},
+      });
+      expect(leaveRes.statusCode).toBe(200);
+
+      // Side effects: B's character is gone; B's membership rows soft-deleted;
+      // party is NOT archived (A is still an active member).
+      const bChars = await prisma.character.findMany({ where: { ownerUserId: userB.userId } });
+      expect(bChars).toHaveLength(0);
+      const activeBMemberships = await prisma.partyMembership.count({
+        where: { userId: userB.userId, partyId, leftAt: null },
+      });
+      expect(activeBMemberships).toBe(0);
+      const party = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(party.archivedAt).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+});

@@ -956,21 +956,29 @@ async function cascadeCharacterToRecoveredLootDb(
         },
       });
     }
-
-    // 3. Drop owned stashes (CurrencyHolding cascades via FK).
-    await tx.stash.deleteMany({ where: { id: { in: ownedStashIds } } });
   }
 
-  // 4. Clear PartyMembership.characterId on the owning user's player row.
+  // 3. Clear PartyMembership.characterId on the owning user's player row.
+  //    Must happen BEFORE dropping the Character row because the membership's
+  //    `characterId` FK to Character is ON DELETE NO ACTION (no cascade).
   await tx.partyMembership.updateMany({
     where: { characterId: character.id, role: 'player' },
     data: { characterId: null },
   });
 
-  // 5. Drop the Character row. The `Character.inventoryStashId` FK is
-  //    deferrable (migration tail) so the order Stash-then-Character is
-  //    safe inside this single $transaction.
+  // 4. Drop the Character row BEFORE the owned stashes — order is load-bearing.
+  //    `Character.inventoryStashId → Stash.id` is `ON DELETE RESTRICT`, so
+  //    deleting the Inventory stash WHILE the Character still references it
+  //    raises a runtime FK violation regardless of `DEFERRABLE INITIALLY
+  //    DEFERRED` (deferral only delays the check; RESTRICT rejects either
+  //    way). Dropping the Character first removes the reference, then the
+  //    Stash delete becomes a free row removal. BUG-001 fix (2026-06-30).
   await tx.character.delete({ where: { id: character.id } });
+
+  // 5. Drop owned stashes (CurrencyHolding cascades via FK).
+  if (ownedStashIds.length > 0) {
+    await tx.stash.deleteMany({ where: { id: { in: ownedStashIds } } });
+  }
 }
 
 /**

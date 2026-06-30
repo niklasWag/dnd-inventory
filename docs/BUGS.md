@@ -21,14 +21,21 @@ Open + recently-closed bugs in the project. Each entry has a stable id (`BUG-<n>
 
 ## Open
 
-### BUG-001 — `kick-player` fails with `Character_inventoryStashId_fkey` RESTRICT violation
+_(none currently open)_
+
+---
+
+## Recently fixed
+
+### BUG-001 — `kick-player` / `leave-party` fail with `Character_inventoryStashId_fkey` RESTRICT violation
 
 - **Filed:** 2026-06-30
-- **Severity:** blocker (kick action is unusable in server mode)
-- **Status:** open
-- **Affected slice:** R4.1.d / R4.1.e (kick-player flow)
+- **Fixed:** 2026-06-30 (feature/r4-parties)
+- **Severity:** blocker (both kick + leave actions were unusable in server mode whenever the affected player had a character)
+- **Status:** fixed
+- **Affected slice:** R4.1.c / R4.1.d / R4.1.e (kick-player + leave-party flows)
 
-**Symptom.** DM clicks "Kick" on a non-DM party member in `/party/settings`. The `POST /parties/:partyId/kick` request returns:
+**Symptom.** Both `POST /parties/:partyId/kick { kickedUserId }` AND `POST /parties/:partyId/leave` return:
 
 ```json
 {
@@ -37,6 +44,8 @@ Open + recently-closed bugs in the project. Each entry has a stable id (`BUG-<n>
   "message": "update or delete on table \"Stash\" violates RESTRICT setting of foreign key constraint \"Character_inventoryStashId_fkey\" on table \"Character\""
 }
 ```
+
+The kick path was reported first (2026-06-30, server logs); the leave path was reproduced shortly after with the same error. Both routes call into the same persistor helper.
 
 **Reproduction.**
 
@@ -83,14 +92,33 @@ Recommended: **all three.** (1) unblocks the current deployed instance, (2) prev
 
 **Open questions before fixing.**
 
-- Does `leave-party` have the same bug? The persistor's `persistLeaveParty` uses the same `cascadeCharacterToRecoveredLootDb` helper. If yes, the fix automatically covers both flows; if not, that's a clue the constraint was reformed only between certain code paths.
+- ~~Does `leave-party` have the same bug?~~ **Confirmed yes 2026-06-30.** Same 500 error from `POST /parties/:partyId/leave` for a player whose character has an Inventory stash. Both routes call `cascadeCharacterToRecoveredLootDb` in `apps/server/src/sync/persistor.ts`, so a single fix to that helper resolves both surface paths.
 - Are there OTHER `ON DELETE RESTRICT` constraints that should be `NO ACTION` or `CASCADE`? Worth a one-time audit while we're here.
 - Did the R4.1.b `delete-character` integration tests in `apps/web/src/store/reducer.test.ts` cover the persistor path? They run client-side against an in-memory reducer (no Prisma), so they wouldn't catch this. A server-side integration test would have.
 
-**Repro test to write before the fix lands.** A new integration test in `apps/server/src/parties/routes.test.ts` exercising: party with DM + 1 player who has a character + Inventory items → `POST /parties/:partyId/kick { kickedUserId }` → expect 200 (currently 500). This becomes the regression test once the fix lands.
+**Repro tests to write before the fix lands.** Two new integration tests in `apps/server/src/parties/routes.test.ts`:
 
----
+1. **Kick path:** party with DM + 1 player who has a character + Inventory items → `POST /parties/:partyId/kick { kickedUserId }` → expect 200 (currently 500).
+2. **Leave path:** party with DM + 1 player who has a character + Inventory items → player calls `POST /parties/:partyId/leave` → expect 200 (currently 500).
 
-## Recently fixed
+Both become regression tests once the fix lands.
 
-_(nothing yet — first bug just filed)_
+**Postmortem (fixed 2026-06-30).** All three fix-sketch pieces landed together:
+
+1. **Persistor reorder** (`apps/server/src/sync/persistor.ts:cascadeCharacterToRecoveredLootDb`) — delete the `Character` row BEFORE the owned `Stash` rows. The `Character.inventoryStashId → Stash.id` FK is checked at row-write time on the referencing row; once the `Character` is gone, the `Stash` delete is unblocked regardless of the FK's `ON DELETE` action. This fix alone unblocked the deployed instance.
+2. **Migration tail** (`apps/server/prisma/migrations/20260630181911_bug001_character_inventory_fk_no_action/migration.sql`) — DROP + re-ADD the FK without `ON DELETE RESTRICT` (default `NO ACTION` composes correctly with `DEFERRABLE INITIALLY DEFERRED`). Defense-in-depth: any future caller doing the deletes in a different order is also safe.
+3. **CI hardening** (`apps/server/src/db/schema-invariants.test.ts`) — extended the existing invariant assertion to also check `confdeltype = 'a'` (NO ACTION). The original test only checked `condeferrable` + `condeferred`, which is why the R3.2-introduced regression slipped through. Same `pg_constraint`-catalog read pattern, no extra cost.
+
+**Lessons.**
+
+- `DEFERRABLE INITIALLY DEFERRED` only moves the FK check to COMMIT — it does NOT change `ON DELETE` semantics. RESTRICT rejects at row-write time regardless of deferral.
+- `prisma#8807` is broader than "DEFERRABLE drift": Prisma's DSL re-emits non-cascaded relations as `ON DELETE RESTRICT` by default on every `migrate dev` against a touched table. The R3.2 migration tail re-added DEFERRABLE but *kept* RESTRICT, which is what introduced this regression. The `schema.prisma` drift-warning comment was updated to call out the `confdeltype` axis alongside `condeferrable`.
+- Defensive DB-invariant tests are cheap; missing axes are expensive. The existing `schema-invariants.test.ts` had the right shape but was missing the `confdeltype` check, so the regression slipped through. Adding the assertion took 6 lines and one cast (`confdeltype::text` because `pg_constraint.confdeltype` is `"char"`, not `text`).
+
+**Related code changed.**
+
+- `apps/server/src/sync/persistor.ts` — cascade reorder + new comment block explaining the load-bearing order.
+- `apps/server/prisma/schema.prisma` — drift-warning comment updated to mention `ON DELETE` axis alongside DEFERRABLE.
+- `apps/server/prisma/migrations/20260630181911_bug001_character_inventory_fk_no_action/migration.sql` — new migration.
+- `apps/server/src/db/schema-invariants.test.ts` — extended invariant assertion.
+- `apps/server/src/parties/routes.test.ts` — two new regression integration tests (kick + leave with a character).

@@ -39,9 +39,9 @@ afterAll(async () => {
 describe('schema invariants — DB-level (hand-tailed in migration.sql)', () => {
   it('Character.inventoryStashId FK is DEFERRABLE INITIALLY DEFERRED', async () => {
     const rows = await prisma.$queryRawUnsafe<
-      { conname: string; condeferrable: boolean; condeferred: boolean }[]
+      { conname: string; condeferrable: boolean; condeferred: boolean; confdeltype: string }[]
     >(
-      `SELECT conname, condeferrable, condeferred
+      `SELECT conname, condeferrable, condeferred, confdeltype::text AS confdeltype
        FROM pg_constraint
        WHERE conname = 'Character_inventoryStashId_fkey'`,
     );
@@ -68,6 +68,30 @@ describe('schema invariants — DB-level (hand-tailed in migration.sql)', () => 
       fk.condeferred,
       'Character_inventoryStashId_fkey is DEFERRABLE but not INITIALLY DEFERRED.',
     ).toBe(true);
+    // BUG-001: the FK must NOT use ON DELETE RESTRICT ('r'). The cascade in
+    // `cascadeCharacterToRecoveredLootDb` drops the Inventory stash inside the
+    // same transaction as the Character — RESTRICT rejects at the row-write
+    // level regardless of DEFERRABLE, raising a 500. The hand-tailed
+    // migrations drop + re-add this FK without `ON DELETE RESTRICT` so the
+    // default NO ACTION (confdeltype 'a') composes correctly with DEFERRABLE.
+    expect(
+      fk.confdeltype,
+      [
+        "Character_inventoryStashId_fkey is NOT `ON DELETE NO ACTION` (got confdeltype",
+        `'${fk.confdeltype}', expected 'a').`,
+        '',
+        'Prisma emits non-cascaded relations as `ON DELETE RESTRICT` ("r") by',
+        'default, which breaks `cascadeCharacterToRecoveredLootDb` (BUG-001 — see',
+        'docs/BUGS.md). The most recent migration must include the canonical tail:',
+        '',
+        '  ALTER TABLE "Character" DROP CONSTRAINT "Character_inventoryStashId_fkey";',
+        '  ALTER TABLE "Character"',
+        '    ADD CONSTRAINT "Character_inventoryStashId_fkey"',
+        '    FOREIGN KEY ("inventoryStashId") REFERENCES "Stash"("id")',
+        '    ON UPDATE CASCADE',
+        '    DEFERRABLE INITIALLY DEFERRED;',
+      ].join('\n'),
+    ).toBe('a');
   });
 
   it('User has the discordId-or-emailVerified CHECK constraint (R3.2)', async () => {
