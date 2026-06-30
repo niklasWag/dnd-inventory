@@ -1,5 +1,5 @@
 export { loadDmgSeed, loadPhbSeed } from './loader';
-export { PHB_SEED_VERSION, SEED_VERSION } from './seedVersion';
+export { SEED_VERSION } from './seedVersion';
 export {
   phbSeedEntrySchema,
   phbSeedFileSchema,

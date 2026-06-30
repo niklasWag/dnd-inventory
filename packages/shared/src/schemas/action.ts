@@ -80,16 +80,18 @@ const createCharacterAction = z.object({
   /**
    * R4.1-followup — two payload shapes share the `create-character`
    * action:
-   *   - Legacy: full character payload, `dmOnly` absent (or `false`).
-   *     Mints User + Party + dm + player memberships + Character +
-   *     Inventory stash + party-scope stashes + currencies.
+   *   - With character: full character payload, `dmOnly` absent or
+   *     `false`. Mints User + Party + dm + player memberships +
+   *     Character + Inventory stash + party-scope stashes + currencies.
    *   - DM-only: `dmOnly: true` + `partyName`. No character fields.
    *     Mints User + Party + ONE dm membership + party-scope stashes
    *     + currencies.
    *
    * Modelled as a `z.union` (not `z.discriminatedUnion`) so the
-   * legacy variant can omit `dmOnly` entirely — keeping every M0–R3
-   * dispatch payload-compatible without a migration shim.
+   * with-character variant can omit `dmOnly` entirely — keeps the
+   * common-case dispatch ergonomic (`dispatch({ type: 'create-character',
+   * payload: { name, species, ... } })`) without forcing an explicit
+   * `dmOnly: false`.
    */
   payload: z.union([
     z.object({

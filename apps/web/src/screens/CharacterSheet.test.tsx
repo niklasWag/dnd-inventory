@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { CharacterSheet } from './CharacterSheet';
-import { Welcome } from './Welcome';
 import { ItemDetail } from './ItemDetail';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
@@ -28,7 +27,7 @@ beforeEach(async () => {
 function renderAt(path: string): void {
   const router = createMemoryRouter(
     [
-      { path: '/', Component: Welcome },
+      { path: '/', element: null },
       { path: '/character/:id', Component: CharacterSheet },
       { path: '/item/:itemInstanceId', Component: ItemDetail },
     ],
@@ -76,8 +75,9 @@ describe('CharacterSheet (M1)', () => {
 
   it('redirects to / when the character id is unknown', () => {
     renderAt('/character/does-not-exist');
-    // Welcome renders an h1 with that text; CharacterSheet renders the character name.
-    expect(screen.getByRole('heading', { name: /welcome, adventurer/i })).toBeInTheDocument();
+    // CharacterSheet renders its own h1 from the character name; if the redirect fires,
+    // we land on "/" (the test stub renders nothing) and that heading isn't present.
+    expect(screen.queryByRole('tab', { name: 'Inventory' })).not.toBeInTheDocument();
   });
 });
 
@@ -264,7 +264,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
   function renderWithToaster(path: string): void {
     const router = createMemoryRouter(
       [
-        { path: '/', Component: Welcome },
+        { path: '/', element: null },
         { path: '/character/:id', Component: CharacterSheet },
         { path: '/item/:itemInstanceId', Component: ItemDetail },
       ],

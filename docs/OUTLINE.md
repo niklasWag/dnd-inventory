@@ -252,7 +252,7 @@ No HP, spells, AC, proficiencies in v1.
 - recoveredLootStashId — direct FK to the per-party Recovered Loot stash, **auto-created on party creation**.
 - **bankerUserId** (nullable) — the currently-appointed Banker. Must reference a user with an active `PartyMembership` (role = `player`) in this party, and **must not equal `ownerUserId`** (DM can't be Banker). Auto-cleared when that membership ends, and also auto-cleared by `dm-transfer` when the incoming DM is the current Banker (§3.14). Only legal when `memberCount >= 2`.
 
-> **`isSoloShortcut` removed (2026-06-24).** Earlier drafts carried a `Party.isSoloShortcut: boolean` field set true on solo-creation. It's now derived: the hub renders a "solo" badge purely from `memberCount === 1` regardless of how the party was created. Reasoning: the flag's only consumer was display, it became stale the moment a second member joined, and "purely a display hint" data is better not stored at all. The MVP's `Party.isSoloShortcut: true` literal is a placeholder for forward-compat — MVP code keeps writing it so existing Dexie blobs validate, but the field reads as "derived → ignore" once R4 ships multi-member parties.
+> **`isSoloShortcut` removed (2026-06-24).** Earlier drafts carried a `Party.isSoloShortcut: boolean` field set true on solo-creation. It's now derived: the hub renders a "solo" badge purely from `memberCount === 1` regardless of how the party was created. Reasoning: the flag's only consumer was display, it became stale the moment a second member joined, and "purely a display hint" data is better not stored at all.
 
 ### `PartyMembership`
 - **Primary key**: composite `(userId, partyId, role)` — a single user can hold multiple roles in the same party (e.g., the creator is both `dm` and `player`).
@@ -587,7 +587,7 @@ When the **DM** leaves:
 - **Shop currency** → Shops have no `CurrencyHolding`. `purchase` deducts from the buyer's stash, `sale` adds to the buyer's stash; the shop side is bookkeeping-free. See §3.9.
 - **DM-transfer with Banker conflict** → Auto-clears `Party.bankerUserId` and emits `revoke-banker` with the new `reason: "dm-transfer"`. New DM must reappoint. Preserves the "DM cannot be Banker" invariant. See §3.14 + §4 `revoke-banker` enum.
 - **Player → player currency push under Banker** → Always allowed. The Banker mediates the shared pools (Party Stash + Recovered Loot), not character-to-character moves; players retain control of their own purses. See §3.14.
-- **`Party.isSoloShortcut` lifecycle** → Field removed. The "solo" badge is derived from `memberCount === 1`. MVP code keeps writing `isSoloShortcut: true` as a placeholder for forward-compat with existing Dexie blobs, but R4 multi-member work treats it as "derived, ignored". See §4 `Party`.
+- **`Party.isSoloShortcut` lifecycle** → Field removed. The "solo" badge is derived from `memberCount === 1`. See §4 `Party`.
 - **Bag of Holding identification** → `ItemDefinition.flatWeight: boolean` (default `false`). DMG 2024 seed sets `flatWeight: true` on BoH-class entries; `weight.ts` stops descending into contents when the flag is set. Homebrew opts in via the same field. See §3.6 + §4 `ItemDefinition`.
 
 ### Resolved 2026-06-24 (R1.1 encumbrance slice)

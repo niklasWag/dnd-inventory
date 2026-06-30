@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { Settings } from './Settings';
-import { Welcome } from './Welcome';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
@@ -28,12 +27,14 @@ beforeEach(async () => {
  *   6. App info renders APP_VERSION + seedVersion.
  *
  * Uses createMemoryRouter so Settings (which calls useNavigate from
- * the Wipe path) has a router context.
+ * the Wipe path) has a router context. The "/" fallback is a stub —
+ * the tests never assert on it, they just need a valid route to land
+ * on if navigation fires.
  */
 function renderSettings(initialPath = '/settings'): void {
   const router = createMemoryRouter(
     [
-      { path: '/', Component: Welcome },
+      { path: '/', element: null },
       { path: '/settings', Component: Settings },
     ],
     { initialEntries: [initialPath] },

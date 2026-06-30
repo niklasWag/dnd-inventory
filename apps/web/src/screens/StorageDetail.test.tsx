@@ -1,13 +1,14 @@
 import { describe, expect, it, beforeEach } from 'vitest';
+import type { ReactElement } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createMemoryRouter, Navigate, RouterProvider } from 'react-router-dom';
 
 import { StorageDetail } from './StorageDetail';
 import { CharacterSheet } from './CharacterSheet';
-import { Welcome } from './Welcome';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
+import { useShallow } from 'zustand/react/shallow';
 import { wipeAll } from '@/db/wipe';
 
 import { bootstrap } from '@/test/fixtures';
@@ -17,10 +18,25 @@ beforeEach(async () => {
   await wipeAll();
 });
 
+/**
+ * Local stand-in for the old Welcome auto-redirect: when "/" is rendered
+ * and a character exists in the store, redirect to that character's
+ * sheet. Used by tests that exercise StorageDetail's "unknown stashId
+ * → redirect to /" branch — the unknown-stash redirect lands here, then
+ * this redirect lands on the CharacterSheet.
+ */
+function RedirectToCharacter(): ReactElement | null {
+  const characterId = useStore(
+    useShallow((s) => (s.appState ? (s.appState.characters[0]?.id ?? null) : null)),
+  );
+  if (characterId === null) return null;
+  return <Navigate to={`/character/${characterId}`} replace />;
+}
+
 function renderAt(path: string): void {
   const router = createMemoryRouter(
     [
-      { path: '/', Component: Welcome },
+      { path: '/', Component: RedirectToCharacter },
       { path: '/character/:id', Component: CharacterSheet },
       { path: '/storage/:stashId', Component: StorageDetail },
     ],
@@ -51,10 +67,10 @@ function bootstrapWithStorage(name = 'Chest at home'): {
 }
 
 describe('StorageDetail (M3)', () => {
-  it('redirects away when stashId is unknown (lands on CharacterSheet via Welcome auto-redirect)', () => {
+  it('redirects away when stashId is unknown (lands on CharacterSheet via /-route redirect)', () => {
     bootstrapWithStorage();
     renderAt('/storage/does-not-exist');
-    // Welcome auto-redirects to CharacterSheet when a character exists.
+    // The "/" route's RedirectToCharacter helper redirects to /character/:id when a character exists.
     expect(screen.getByRole('heading', { name: 'Thorin' })).toBeInTheDocument();
   });
 

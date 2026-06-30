@@ -28,18 +28,20 @@ import { userSchema } from './user';
  * require a post-parse refine that essentially re-implements the reducer
  * validators — keeping them in one place (the reducer) is simpler.
  */
-export const appStateSchema = z.object({
-  version: z.literal(1),
-  seedVersion: z.number().int().nonnegative(),
-  user: userSchema,
-  party: partySchema,
-  memberships: z.array(partyMembershipSchema),
-  characters: z.array(characterSchema),
-  stashes: z.array(stashSchema),
-  catalog: z.array(itemDefinitionSchema),
-  items: z.array(itemInstanceSchema),
-  currencies: z.array(currencyHoldingSchema),
-  log: z.array(transactionLogEntrySchema),
-});
+export const appStateSchema = z
+  .object({
+    version: z.literal(1),
+    seedVersion: z.number().int().nonnegative(),
+    user: userSchema,
+    party: partySchema,
+    memberships: z.array(partyMembershipSchema),
+    characters: z.array(characterSchema),
+    stashes: z.array(stashSchema),
+    catalog: z.array(itemDefinitionSchema),
+    items: z.array(itemInstanceSchema),
+    currencies: z.array(currencyHoldingSchema),
+    log: z.array(transactionLogEntrySchema),
+  })
+  .strict();
 
 export type AppState = z.infer<typeof appStateSchema>;

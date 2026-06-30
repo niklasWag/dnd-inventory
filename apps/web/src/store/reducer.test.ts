@@ -4,7 +4,7 @@ import { useStore, flushPendingPersist } from './index';
 import { loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
 import { appStateSchema, transactionLogEntrySchema } from '@app/shared';
-import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
+import { SEED_VERSION, loadPhbSeed } from '@app/seeds';
 
 import { bootstrap } from '@/test/fixtures';
 
@@ -258,12 +258,12 @@ describe('reducer: seed-catalog (M2)', () => {
     const phb = loadPhbSeed();
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION, entries: phb },
+      payload: { seedVersion: SEED_VERSION, entries: phb },
     });
 
     const after = useStore.getState().appState!;
     expect(after.catalog).toHaveLength(phb.length);
-    expect(after.seedVersion).toBe(PHB_SEED_VERSION);
+    expect(after.seedVersion).toBe(SEED_VERSION);
     expect(() => appStateSchema.parse(after)).not.toThrow();
   });
 
@@ -272,7 +272,7 @@ describe('reducer: seed-catalog (M2)', () => {
     const sizeAfterFirst = useStore.getState().appState!.catalog.length;
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
+      payload: { seedVersion: SEED_VERSION, entries: loadPhbSeed() },
     });
     expect(useStore.getState().appState!.catalog).toHaveLength(sizeAfterFirst);
   });
@@ -304,14 +304,14 @@ describe('reducer: seed-catalog (M2)', () => {
     // Re-seed: PHB entries get upserted, homebrew should survive untouched.
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION + 1, entries: loadPhbSeed() },
+      payload: { seedVersion: SEED_VERSION + 1, entries: loadPhbSeed() },
     });
 
     const after = useStore.getState().appState!;
     const homebrew = after.catalog.find((d) => d.id === homebrewId);
     expect(homebrew).toBeDefined();
     expect(homebrew!.source).toBe('homebrew');
-    expect(after.seedVersion).toBe(PHB_SEED_VERSION + 1);
+    expect(after.seedVersion).toBe(SEED_VERSION + 1);
   });
 
   it('logs a seed-catalog entry with the right add/update split', () => {
@@ -320,7 +320,7 @@ describe('reducer: seed-catalog (M2)', () => {
 
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION, entries: phb },
+      payload: { seedVersion: SEED_VERSION, entries: phb },
     });
 
     const log = useStore.getState().log;
@@ -329,7 +329,7 @@ describe('reducer: seed-catalog (M2)', () => {
     if (seedEntry?.type === 'seed-catalog') {
       expect(seedEntry.payload.addedDefinitionIds).toHaveLength(phb.length);
       expect(seedEntry.payload.updatedDefinitionIds).toHaveLength(0);
-      expect(seedEntry.payload.seedVersion).toBe(PHB_SEED_VERSION);
+      expect(seedEntry.payload.seedVersion).toBe(SEED_VERSION);
     }
   });
 
@@ -337,7 +337,7 @@ describe('reducer: seed-catalog (M2)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'seed-catalog',
-        payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
+        payload: { seedVersion: SEED_VERSION, entries: loadPhbSeed() },
       }),
     ).toThrow(/no AppState/);
   });
