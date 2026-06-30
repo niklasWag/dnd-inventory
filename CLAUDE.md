@@ -86,6 +86,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
   - Anything that handles currency math or stash transfers.
 - **Pragmatic testing** elsewhere — component tests for critical flows (create character, move item, JSON round-trip), not coverage chasing.
 - Use Vitest + React Testing Library. Query by accessible role/label, not test IDs.
+- **Pick the lowest-cost test layer that can catch the defect category** — see `docs/TECH_STACK.md` §3.5 for the layer-selection table. Climb to Playwright (when it lands at M5+) only when a lower-cost layer can't catch the defect. Mutation routes that touch Postgres get a server-integration test (real DB, not mocked) — this is the layer that catches FK / constraint defects like BUG-001 and BUG-002.
 - When invoking calm-dev TDD skills, follow the RED → GREEN → REFACTOR cycle strictly.
 
 ### Things to avoid

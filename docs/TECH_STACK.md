@@ -16,7 +16,7 @@ This document is the **source of truth for technology choices** across both the 
 | State | **Zustand + Immer** | Reducer-shaped global store. |
 | Local persistence | **Dexie (IndexedDB)** | Async, generous quota. |
 | Validation | **Zod** | Schemas shared client ↔ server. |
-| Testing | **Vitest + React Testing Library** | E2E deferred. |
+| Testing | **Vitest + RTL + real-Postgres server integration** | Layered (§3). E2E (Playwright) deferred, re-eval at M5. |
 | Lint / format | **ESLint + Prettier + Husky + lint-staged** | Pre-commit hygiene. |
 | Backend (M3+) | **Node.js + Fastify** | Same TS toolchain as frontend. |
 | Database (M3+) | **PostgreSQL + Prisma** | Generated types; first-class migrations. |
@@ -81,17 +81,62 @@ This document is the **source of truth for technology choices** across both the 
 
 ## 3. Testing
 
-### 3.1 Unit + Component — Vitest + React Testing Library
+The test strategy uses **layered coverage**: each layer catches a class of defect the layer below can't, and each layer's pain shifts the next-layer decision. CLAUDE.md (§"Testing — TDD where it pays off") captures the conventions; this section captures the strategy and the open re-evaluation criteria.
+
+### 3.1 Test layers — what each one catches
+
+| Layer | Tooling | Lives in | Catches | Doesn't catch |
+|---|---|---|---|---|
+| **Pure rules** | Vitest, no mocking | `packages/rules/src/*.test.ts` | Currency math, capacity, attunement, charges — deterministic logic. TDD always. | Anything that requires `AppState`. |
+| **Shared schemas** | Vitest + Zod | `packages/shared/src/schemas/*.test.ts` | Wire-shape validation, discriminated-union shape drift between `Action` (TS) and `actionSchema` (Zod). | Anything semantic. |
+| **Reducer + store** | Vitest + Zustand | `apps/web/src/store/reducer.test.ts` | Every action's state transition, cascades (kick/leave/delete-character), invariant guards, log-entry emission shape. Per CLAUDE.md, always TDD for reducer actions that touch the transaction log. | Server replay; persistence layer behavior. |
+| **Web component** | Vitest + React Testing Library | colocated `*.test.tsx` | Critical user flows (create character, move item, JSON round-trip, role badge variants). Pragmatic — by-flow, not by-coverage. Query by accessible role/label, never test IDs. | Multi-page navigation; real network. |
+| **Server integration** | Vitest + Fastify `inject()` + real Postgres (Docker) | `apps/server/src/**/*.test.ts` | Route auth/permission gates, persistor writes against real Prisma (catches FK / constraint defects), guard rejection codes, end-to-end action dispatch through `POST /sync/actions`. | Browser behavior; multi-tab / multi-user UI interactions; real CSP / cookies; service-worker / Dexie persistence. |
+| **DB invariants** | Vitest + raw `pg_constraint` queries | `apps/server/src/db/schema-invariants.test.ts` | Hand-tailed migration drift (e.g. `DEFERRABLE INITIALLY DEFERRED`, `confdeltype` axis) that Prisma's DSL can't express. | Anything outside the catalogue. |
+| **DB-level FKs / constraints** | Postgres at runtime | The schema itself | Last-line invariants that survive bugs in the layers above (e.g. `Character.inventoryStashId` FK, `(userId, partyId, role)` composite PK). | N/A — this IS the last line. |
+
+### 3.2 Tooling — Vitest + React Testing Library
 - Vitest reuses Vite's config; tests run in the same toolchain as the app.
 - RTL for component tests — query by accessible role/label, not test IDs.
-- **Rules engine modules** (`currency.ts`, `inventory.ts`, future `capacity.ts`, etc.) get pure unit tests — no mocking needed.
+- Server-integration tests use Fastify's `inject()` against a real Postgres in the `dnd-inv-pg-test` Docker container (port 5434). The container persists across test runs; migrations are applied with `prisma migrate deploy`.
 
-### 3.2 E2E — deferred
-- No Playwright/Cypress yet. Re-evaluate at M5 (live sync) when bug categories shift to integration concerns.
+### 3.3 E2E (Playwright) — deferred, re-evaluate at M5
 
-### 3.3 Coverage targets
+**Decision:** still deferred per the original §3.3 stance.
+
+**Motivating evidence accumulated since (do NOT dismiss at M5 re-eval):**
+- **BUG-001** (`Character_inventoryStashId_fkey` RESTRICT violation on kick/leave) — every unit + Vitest server-integration test against `fastify.inject()` passed. The Prisma `$transaction` wrapper, the persistor logic, the guards — all green. The bug only surfaced when the **real** HTTP route hit the **real** Postgres FK constraint with the cascade in the wrong order. Was found in production by a human clicking kick.
+- **BUG-002** (P2002 unique-constraint violation on rejoin) — same story. The route's `already_member` check (Vitest-tested) said clean; `persistJoinParty`'s `create()` (Vitest-tested in isolation) raised P2002 only when a soft-deleted row already existed. Was found in production by a human leaving and rejoining.
+
+Both share a profile: **defects that only manifest in the full server-DB-client stack under specific state shapes**. Vitest can simulate "soft-deleted row exists" or "FK cascade ordering matters" only when the test author already knows to look. Playwright would catch the class by driving the actual flow.
+
+**Re-evaluation trigger** (per the original §3.3 note): M5 (live sync) lands. Two additional factors now in scope:
+- Multi-user concurrency surface (R5 websocket) — a class of bugs Vitest can't see at all.
+- The accumulating R4.x feature surface (party CRUD + Banker + DM-transfer + cross-character flows) — each new surface is a candidate "human clicks the flow, server returns 500" event.
+
+**Scope when picked up:** one happy-path Playwright spec per R4 sub-slice (R4.1.a–f, R4.2.a–e, R4.3, R4.4, R4.5) plus a regression spec per landed BUG-* entry. Tracked in `docs/roadmap.md` → Operational followups → Test infrastructure.
+
+### 3.4 Coverage targets
 - Rules engine modules: aim for high branch coverage (these are deterministic and easy to test).
 - UI components: prioritize critical flows (create character, move item, JSON import/export round-trip) over coverage percent.
+- Server-integration: every new mutation route gets at least one happy-path + one guard-rejection test against real Postgres. This is the layer that would have caught BUG-001 and BUG-002 if the right state shapes had been tested; it's the **highest-ROI layer to expand** before E2E lands.
+
+### 3.5 Test layer selection — which layer for a new test?
+
+When adding a test, pick the **lowest-cost layer that can catch the defect category**:
+
+| Defect category | Right layer |
+|---|---|
+| Currency math, capacity, attunement | Pure rules |
+| New action's state transition | Reducer + store |
+| Action payload shape on the wire | Shared schemas |
+| UI flow (create character, move item, etc.) | Web component |
+| Permission gate (`dm_only`, etc.) | Server integration (real route + real auth context) |
+| FK / unique-constraint violation | Server integration (real Postgres) |
+| Migration drift | DB invariants |
+| Multi-user race / cross-client UI sync | Playwright (M5+) |
+
+Climbing the table is a one-way ratchet: if a server-integration test would suffice, **don't** write a Playwright spec for the same defect; the Vitest run is faster, more focused, and runs in CI today without browser orchestration.
 
 ---
 
