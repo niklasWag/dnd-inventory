@@ -1735,8 +1735,8 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 #### R4.1 — Invites + join/leave/kick + multi-membership schema
 
 **Schema activations (§4)**
-- [ ] `Party.inviteCode` becomes user-visible / rotatable
-- [ ] `PartyMembership` supports count > 2
+- [x] `Party.inviteCode` becomes user-visible / rotatable — **R4.1.e**. `POST /parties/:partyId/invite/rotate` (DM-only) mints a fresh code; PartySettings shows the current code with Copy + DM-only Rotate buttons.
+- [x] `PartyMembership` supports count > 2 — **R4.1.e**. `partyMembershipSchema.leftAt` widened from `z.null()` to `z.string().datetime().nullable()` so members can soft-leave; the MVP-era "exactly two memberships per (userId, partyId)" invariant is now scoped to the party creator only (dm + player), with additional player rows added by `POST /parties/join`.
 - [x] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24) — **R4.1.a**. Field dropped from Zod `partySchema`, the `partyListItemSchema` API row shape, the reducer's `create-character` writer, the server persistor / mapper / restore CLI / sync route, and the Prisma `Party` model (migration `r41_drop_party_isSoloShortcut`). Hub "solo" badge derived from `memberCount === 1`. Zod's default object-strip behaviour silently drops the legacy field so MVP-vintage exports rehydrate cleanly.
 - [x] Migration test: an M0 / M1 / M2 / M3 / M4 / M5 / M5.5 AppState (with `isSoloShortcut: true`) imports cleanly under R4 schema; the hub renders the "solo" badge based purely on `memberCount` — **R4.1.a** (`packages/shared/src/schemas/appState.test.ts` "R4.1 migration — imports a legacy AppState carrying `isSoloShortcut: true`").
 - [x] Composite-key invariant test: `(userId, partyId, role)` allows DM+player for creator — already shipped (M1 reducer test asserts `memberships.length === 2` with `dm + player` roles for the creator).
