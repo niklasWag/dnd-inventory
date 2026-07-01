@@ -2262,7 +2262,7 @@ Sliced post-R4.2 (2026-07-01 planning session) into five independently-shippable
 > **Deferred UI polish (may fold into R4.5 or ship as R4.3.e.1):**
 > - Explicit "editing another player's character" visual cue on CharacterSheet when `character.ownerUserId !== state.user.id && actor.role === 'dm'`.
 > - Attune cap-override confirm dialog per OUTLINE §3.8 (mechanism ships in R4.3.d; explicit-confirm UX deferred).
-> - **DM UI to permanently grant more attunement slots to a character** (edit `Character.maxAttunement`). The reducer + guard mechanism has existed since R1.2 / R4.3.d: `edit-character` with `{ patch: { maxAttunement: N } }` is DM-only and logged as a `maxAttunement` change on the audit trail. What's missing is the UI affordance — no screen today dispatches `edit-character.maxAttunement`. Suggested implementation: a DM-only inline editor on the CharacterSheet's `EquippedSlotsPanel` (the panel that already reads + displays `attuned.length / maxAttunement`), or a field on a "DM edit character" dialog reachable from the character-sheet header. Distinct from R4.3.d's per-attune `overrideCap` — that's a one-shot bypass logged as `attune { overrideCap: true }`; this is a permanent cap raise logged as `edit-character { patch: { maxAttunement: N } }`. Both surface on the party log.
+> - **DM UI to permanently modify (grant OR reduce) a character's attunement slots** (edit `Character.maxAttunement`). The reducer + guard mechanism has existed since R1.2 / R4.3.d: `edit-character` with `{ patch: { maxAttunement: N } }` is DM-only and logged as a `maxAttunement` change on the audit trail. What's missing is the UI affordance — no screen today dispatches `edit-character.maxAttunement`. **Promoted to R6.0** on 2026-07-01 as a stand-alone slice (independent of R6's pricing / shops / hoard work). See R6.0 for the full spec including over-cap-reduce confirm dialog and DM-only visibility.
 > - StashItemsTable visibility revisit (parked in R4.2.e Notes, re-parked here).
 
 #### R4.4 — Cross-character currency + homebrew party scope + gating
@@ -2429,7 +2429,7 @@ Sliced into four independently-shippable sub-slices, mirroring the R4.1.a-f / R4
 > - **Two existing tests refactored** to explicitly force non-DM state (they used solo bootstrap which now grants the cap-override branch). Refactored tests still assert the same invariant (disabled button + reducer-rejection toast) — the semantics didn't change, just the setup preconditions became explicit.
 >
 > **Not shipped in R4.5 (deferred):**
-> - **`maxAttunement` inline editor** on `EquippedSlotsPanel` (parked deferred item from R4.2's carryforward). Not folded in per user's R4.5 planning decision. Reducer mechanism (`edit-character { patch: { maxAttunement: N } }`) has shipped since R1.2 — only the UI affordance is missing.
+> - **`maxAttunement` inline editor** on `EquippedSlotsPanel` — **promoted to R6.0** (2026-07-01). Parked deferred item from R4.2's carryforward; not folded into R4.5 per user's planning decision. Now scheduled as a stand-alone R6.0 sub-slice. Reducer mechanism (`edit-character { patch: { maxAttunement: N } }`) has shipped since R1.2 — only the UI affordance is missing. See R6.0 for the full spec.
 > - **StashItemsTable visibility revisit** (parked from R4.2.e). Re-parked here.
 > - **BUG-005 fix** (optimistic success toast flashes before rejection). Filed for triage; not blocking R4.5.
 > - **URL-scoped route rename** (`/dm` → `/party/:partyId/dm`). Deferred to RH4.1 per 2026-07-01 planning decision. R4.5 ships `/dm` unprefixed to stay consistent with the current unprefixed-route era; RH4.1 rewrites the whole route table in one sweep. Also ratified in that planning session: URL param is authoritative when it lands (see RH4.1 charter).
@@ -3020,7 +3020,28 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 Loot distribution wizard (per-hoard mode), hoard generator, identification flow with hints, shop manager (static + modifiers). Covers OUTLINE §3.7 (search), §3.9, §3.10, §6 `hoard.ts` / `pricing.ts` / `search.ts`.
 
-**Slicing.** R6 is the second-largest milestone after R4 (~30+ checkboxes). Splits along the rules-engine + UI surface axes: R6.1 lights up `pricing.ts` + the per-party economy controls (prerequisite for any priced transaction); R6.2 adds `Shop` + `purchase`/`sale` on top; R6.3 ships the hoard generator + loot distribution wizard; R6.4 adds identification UI + batch-identify (the R2.3 reducer already exists by this point); R6.5 swaps the Catalog Browser to `search.ts`. R6.1 is the hard dependency for R6.2 and the catalog price display.
+**Slicing.** R6 is the second-largest milestone after R4 (~30+ checkboxes). Splits along the rules-engine + UI surface axes: R6.0 lights up the DM character-field editors (independent, no rules-engine dep); R6.1 lights up `pricing.ts` + the per-party economy controls (prerequisite for any priced transaction); R6.2 adds `Shop` + `purchase`/`sale` on top; R6.3 ships the hoard generator + loot distribution wizard; R6.4 adds identification UI + batch-identify (the R2.3 reducer already exists by this point); R6.5 swaps the Catalog Browser to `search.ts`. R6.0 is independent of the others; R6.1 is the hard dependency for R6.2 and the catalog price display.
+
+#### R6.0 — DM character-field editors (`maxAttunement`, other catch-all fields)
+
+**Rationale.** The `edit-character` catch-all reducer + guard have shipped since R1.2 (schema + reducer + DM-only guard + audit-log entry), and R4.3.d widened the guard so DMs can dispatch against ANY character in their party. What's missing across the R1.2 → R4.5 arc is the UI affordance: no screen today dispatches `edit-character` with `{ patch: { maxAttunement: N } }` (or any of the other DM-editable fields). R6.0 lights up that surface as a stand-alone slice so subsequent R6 work can lean on it (e.g. R6.3's loot wizard may want to bump a character's `maxAttunement` when handing out a legendary; R6.4 identification runs alongside).
+
+**UI**
+- [ ] DM-only inline editor for `Character.maxAttunement` on `EquippedSlotsPanel` (or a "DM edit character" dialog reachable from the character-sheet header — pick during implementation). Dispatches `edit-character { characterId, patch: { maxAttunement: N } }`. **Both directions supported:** grant (raise cap, e.g. 3 → 5) AND reduce (lower cap, e.g. 3 → 2). Bounded by the R3.1 DB CHECK: `maxAttunement >= 0`, so 0 is the min (a valid legal value meaning "no attunement possible"), no negatives.
+- [ ] Over-cap-reduce confirm dialog. When the DM lowers `maxAttunement` BELOW the character's current attuned count (e.g. character has 3 attuned, DM sets max to 2), show an AlertDialog: "{Character} has {N} attuned items; reducing max to {M} will leave them over-cap. Continue?" Per R1.2 Notes line 865 this is legal (existing attunements NOT auto-revoked; over-cap state is a display flag, not an invariant violation) — but confirmation is warranted so the DM doesn't strand players over cap accidentally. Reuse the R4.3.d cap-override AlertDialog primitive pattern.
+- [ ] Suppressed / hidden for non-DM players in 2+-member parties. Solo bypass (§8.2) allows the sole member to edit their own `maxAttunement`. Reuse the `isCurrentUserDmOrSolo` helper from R4.5.
+- [ ] Optional stretch: an inline "DM edit character" dialog covering `species` / `class` / `level` / `str` / `maxAttunement` in one form (matches OUTLINE §5.15's Party Settings §5.15 amend flow). Skip if per-field inline editors are sufficient.
+
+**Tests**
+- [ ] Component test: DM raises `maxAttunement` from 3 → 5, next attune fires without the cap-override dialog (slot check now passes cleanly).
+- [ ] Component test: DM lowers `maxAttunement` from 3 → 2 while character has 3 attuned → over-cap confirm dialog appears; confirming dispatches the edit and leaves existing attunements intact (over-cap display state).
+- [ ] Component test: cancel on the over-cap confirm dialog leaves `maxAttunement` unchanged.
+- [ ] Component test: `maxAttunement = 0` accepted and rendered (edge case — character can no longer attune anything).
+- [ ] Guard test: non-DM player in 2+-member party cannot dispatch `edit-character { patch: { maxAttunement } }` (already covered by R1.2 tests; add one more if the UI adds a client-side pre-guard).
+
+#### R6.0 — Notes
+
+> -
 
 #### R6.1 — Pricing + per-party economy
 
