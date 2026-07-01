@@ -161,3 +161,66 @@ describe('queue — id canonicalization after id-minting actions', () => {
     queue.resetQueue();
   });
 });
+
+// ------------------------------------------------------------------ //
+// BUG-003 (2026-07-01) — pre-batch snapshot must be captured BEFORE
+// the store mutation, not after. If the queue's snapshot is captured
+// via `deps.getSnapshot()` inside `enqueue()` (which runs AFTER
+// `dispatch` has already applied the reducer to the store), then a
+// 422 rollback restores the mutated state to itself — the item stays
+// visually in the wrong place. The user reported this reproducing
+// every time on a non-Banker attempting to move an item out of
+// Party Stash post-R4.2.c.
+// ------------------------------------------------------------------ //
+
+describe('queue — 422 rollback restores PRE-mutation snapshot (BUG-003)', () => {
+  it('restores the snapshot the caller captured BEFORE mutating the store', async () => {
+    const queue = await loadQueue();
+    // Simulate the dispatch order: caller captures snapshot BEFORE
+    // mutating, then applies the mutation, then enqueues.
+    const preSnapshot: FakeSnapshot = { appState: { party: { id: 'party-1' } }, log: [{ marker: 'PRE' }] };
+    const postSnapshot: FakeSnapshot = { appState: { party: { id: 'party-1' } }, log: [{ marker: 'POST' }] };
+    let current: FakeSnapshot = preSnapshot;
+
+    queue.configureQueue({
+      // getSnapshot always returns the "current" store state, which
+      // will be the POST-mutation state by the time enqueue runs.
+      getSnapshot: () => current as unknown as ReturnType<QueueDeps['getSnapshot']>,
+      restoreSnapshot: (s) => {
+        const cast = s as unknown as FakeSnapshot;
+        current = cast;
+      },
+      getActivePartyId: () => Promise.resolve('party-1'),
+    });
+
+    // 422 response with a Banker-gate rejection (the exact shape
+    // R4.2.c returns; the queue only cares about the discriminator).
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json(
+          {
+            rejected: {
+              index: 0,
+              code: 'banker_required_for_claim',
+              message: 'A Banker is appointed; only the Banker can move items out of shared pools.',
+            },
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    // Caller (store.dispatch) captures the PRE snapshot first.
+    queue.captureRollbackSnapshot();
+    // Caller then mutates the store — simulated by flipping `current`
+    // to the post-mutation snapshot.
+    current = postSnapshot;
+    // Caller then enqueues the action.
+    queue.enqueue({ type: 'transfer' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    await queue.flush();
+
+    // The rollback must have restored the PRE snapshot, not the POST.
+    expect(current.log).toEqual([{ marker: 'PRE' }]);
+    queue.resetQueue();
+  });
+});

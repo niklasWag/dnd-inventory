@@ -111,8 +111,33 @@ export function resetQueue(): void {
 }
 
 /**
- * Append an action to the pending batch. The first call captures the
- * snapshot; subsequent calls (within the debounce window) ride along.
+ * BUG-003 (2026-07-01) — capture the pre-batch snapshot from the
+ * caller BEFORE the reducer applies its mutation to the store. Prior
+ * to this fix, `enqueue()` captured the snapshot via
+ * `deps.getSnapshot()` at first-in-batch time — but by that point the
+ * dispatcher had already applied the mutation, so the snapshot was
+ * post-mutation and 422 rollbacks were no-ops.
+ *
+ * The store's `dispatch` MUST call this BEFORE calling `reduce()`.
+ * Subsequent calls within the same debounce window are no-ops (the
+ * first snapshot in the batch is the one we want to restore to).
+ * `resetQueue()` clears the snapshot; a successful push also clears
+ * it via the normal `preBatchSnapshot = null` step in `flush()`.
+ */
+export function captureRollbackSnapshot(): void {
+  if (deps === null) return;
+  if (preBatchSnapshot !== null) return;
+  preBatchSnapshot = deps.getSnapshot();
+}
+
+/**
+ * Append an action to the pending batch. The pre-batch snapshot is
+ * expected to have been captured by `captureRollbackSnapshot()` before
+ * the caller applied the mutation to the store (see BUG-003). If it
+ * wasn't (tests that don't call the capture step, or a caller that
+ * forgets), fall back to the post-mutation snapshot from
+ * `deps.getSnapshot()` — same behaviour as pre-fix but with the caveat
+ * that rollback restores the mutated state.
  */
 export function enqueue(action: Action): void {
   if (deps === null) {
@@ -127,7 +152,11 @@ export function enqueue(action: Action): void {
   // in `apps/server/src/sync/routes.ts:244` which requires every action
   // in a bootstrap batch to be `create-character`.
   if (action.type === 'seed-catalog') return;
-  if (queue.length === 0) {
+  if (queue.length === 0 && preBatchSnapshot === null) {
+    // Fallback for callers that didn't call captureRollbackSnapshot
+    // first. This is the pre-BUG-003 behaviour; log-only paths and
+    // tests may end up here. Real dispatch flows call the capture
+    // helper.
     preBatchSnapshot = deps.getSnapshot();
   }
   queue.push(action);

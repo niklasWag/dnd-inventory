@@ -27,6 +27,67 @@ _(none currently open)_
 
 ## Recently fixed
 
+### BUG-003 — Sync-queue rollback restored post-mutation state, not pre-mutation state
+
+- **Filed:** 2026-07-01
+- **Fixed:** 2026-07-01 (feature/r4-parties)
+- **Severity:** high (in server mode with any R4.2.c/d-style guard rejection, the UI diverged from server truth after a rejected action; no client-side workaround)
+- **Status:** fixed
+- **Affected slice:** cross-cutting — surfaced by R4.2.c (`banker_required_for_claim` on Party Stash / Recovered Loot moves), but the defect predated it: the snapshot-capture ordering had been wrong since R3.5 shipped the sync queue.
+
+**Symptom.** In server mode, a non-Banker player attempted to move an item out of the Party Stash. The item visibly moved to their Inventory. The server correctly rejected the batch with `422 { rejected: { code: 'banker_required_for_claim' } }` and the "Action rejected" toast appeared. But the item stayed in the player's Inventory — no visual rollback. Reproduced every time (user report, 2026-07-01).
+
+**Reproduction.**
+
+1. Server mode, two-member party, Banker appointed on user B.
+2. User A (non-Banker) opens Party Stash and moves an item to their Inventory.
+3. Client reducer applies optimistically → item shows in Inventory locally.
+4. Sync queue POSTs `/sync/actions` after 200 ms debounce.
+5. Server's `checkGuard` rejects with `banker_required_for_claim` (per R4.2.c).
+6. Client receives 422, `BatchRejectedError` fires, toast shows.
+7. Queue's `restoreSnapshot(preBatchSnapshot)` runs — but the snapshot it held was the POST-mutation state, so restoring it was a no-op.
+
+**Root cause.**
+
+`apps/web/src/store/index.ts:dispatch` sequence pre-fix:
+
+```
+dispatch(action):
+  1. reduce(prev.appState, action) → next state
+  2. set(draft => { draft.appState = next.state; draft.log.push(...) })   // ← MUTATION LANDED HERE
+  3. saver.save(current)                                                   // schedule Dexie write
+  4. if (serverMode) enqueue(action)                                       // ← queue captured snapshot HERE
+```
+
+`apps/web/src/sync/queue.ts:enqueue` pre-fix:
+
+```ts
+if (queue.length === 0) {
+  preBatchSnapshot = deps.getSnapshot();  // called AFTER step 2 already mutated
+}
+```
+
+`getSnapshot()` read from `useStore.getState()`, which was already mutated by `set()` in step 2. The snapshot the queue held for rollback IS the mutated state; on 422 the queue called `restoreSnapshot(snapshot)` and the store was set to itself — no visible change.
+
+This defect was latent since R3.5 (sync queue landed) because until R4.2.c, no guard rejection was reachable by an action the client-side reducer would apply optimistically. All prior 422 causes (structural invariants like negative currency, missing entities) also throw in the client-side `reduce()` and short-circuit dispatch before the queue is called. R4.2.c introduced the first pure-permission rejection (`banker_required_for_claim`) that the client-side reducer permits but the server refuses — which surfaced the bug.
+
+**Postmortem (fixed 2026-07-01).** Three-touch fix:
+
+1. **`apps/web/src/sync/queue.ts`** — added `captureRollbackSnapshot()` export. Callers invoke it BEFORE mutating the store; the queue stores the resulting snapshot for later 422-rollback. Idempotent (subsequent calls within the same debounce window are no-ops). The `enqueue()` path keeps a fallback capture for callers that forget, so pre-existing tests that don't call the helper aren't broken.
+2. **`apps/web/src/store/index.ts:dispatch`** — first statement (server mode only) calls `captureRollbackSnapshot()`. Runs BEFORE `reduce()` and the `set()` that applies the mutation.
+3. **`apps/web/src/sync/queue.test.ts`** — new RED test that captured the pre-mutation snapshot, mutated the "store" (via a mutable fake), then enqueued the action. On 422 response the test asserted the queue restored the PRE snapshot, not the mutated one.
+
+**Decisions captured:**
+
+- **Named helper over augmented `enqueue` signature.** Considered `enqueue(action, preSnapshot?)` but rejected it — the queue's ownership of the debounce window is a queue-internal concern; forcing callers to thread the snapshot through the enqueue signature leaks that responsibility upward. `captureRollbackSnapshot()` is a separate step in the dispatcher's contract, which reads more naturally.
+- **Fallback path preserved.** `enqueue()` still captures a snapshot when `preBatchSnapshot === null` at first-in-batch time. This preserves the old behaviour for tests + any caller that dispatches without the store wrapper. The fallback restores the post-mutation state — same as the old bug — but no production path uses it: the store's `dispatch` is the only real caller and it now calls `captureRollbackSnapshot()` first.
+
+**Lessons.**
+
+- **Optimistic UI + server-authoritative rejection = mandatory rollback contract.** The rollback path existed and was wired end-to-end; only the snapshot timing was wrong. A single R3.5-era test that simulated 422 + asserted state restoration would have caught this — `apps/web/src/sync/queue.test.ts` had zero 422 tests until now. Worth adding a 401 / 409 rollback assertion at the same time (existing tests confirm the code paths but not the state effect).
+- **Cross-slice latent bugs are un-catchable by per-slice tests.** R3.5 shipped the queue's rollback machinery. R4.2.c shipped the first rejection code that reaches it. Neither slice's tests exercise BOTH ends of the pipe. Worth a checklist item for future features that introduce new rejection codes: "add an end-to-end optimistic-rollback test in the web workspace that simulates the 422 for this code and asserts state restoration."
+- **Named separately.** Not `resetSnapshot` — that would confuse with `resetQueue`. Not `snapshotForRollback` — that reads as a getter. `captureRollbackSnapshot()` reads as an imperative side-effecting step, which is what it is.
+
 ### BUG-002 — `POST /parties/join` 500s with P2002 when a previously-left user tries to rejoin
 
 - **Filed:** 2026-06-30

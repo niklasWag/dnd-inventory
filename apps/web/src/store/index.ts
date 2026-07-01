@@ -3,7 +3,7 @@ import { immer } from 'zustand/middleware/immer';
 
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
-import { enqueue } from '@/sync/queue';
+import { enqueue, captureRollbackSnapshot } from '@/sync/queue';
 import { generateInviteCode, reduce, type LogEntrySlice, type ReducerContext } from './reducer';
 import type { Action, AppState, TransactionLogEntry } from './types';
 
@@ -238,6 +238,14 @@ export const useStore = create<StoreState>()(
     appState: null,
     log: [],
     dispatch: (action) => {
+      // BUG-003 — capture the pre-mutation snapshot NOW so the sync
+      // queue can roll back to it on 422 rejection. Must run before
+      // any `set()` mutation below; the queue module guarantees
+      // idempotence (subsequent captures within the same debounce
+      // window are no-ops).
+      if (isServerMode) {
+        captureRollbackSnapshot();
+      }
       // Reduce against the pre-mutation snapshot (Immer's draft would
       // re-trigger our pure reducer with a proxy, which we deliberately
       // avoid — the reducer is meant to be plain-value pure).
