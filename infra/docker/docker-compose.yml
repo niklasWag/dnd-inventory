@@ -29,7 +29,7 @@ services:
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-dnd} -d ${POSTGRES_DB:-dnd_inv}']
-      interval: 5s
+      interval: 15s
       timeout: 5s
       retries: 10
 
@@ -105,7 +105,7 @@ services:
           'CMD-SHELL',
           'node -e "fetch(''http://localhost:3000/healthz'').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"',
         ]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 6
       start_period: 30s

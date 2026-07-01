@@ -19,7 +19,7 @@ interface HealthBody {
 }
 
 export function registerHealthRoute(app: FastifyInstance): void {
-  app.get('/healthz', async (_req, reply): Promise<HealthBody> => {
+  app.get('/healthz', { logLevel: 'silent' }, async (_req, reply): Promise<HealthBody> => {
     let dbOk = false;
     try {
       await app.prisma.$queryRaw`SELECT 1`;
