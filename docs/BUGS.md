@@ -105,6 +105,63 @@ Later, when the user transfers the item, the transfer flow reads UUID_B from loc
 
 ---
 
+### BUG-005 — Optimistic success toast flashes before the server rejection toast on guarded actions
+
+- **Filed:** 2026-07-01
+- **Severity:** medium (cosmetic + UX-confusing — no data corruption; the final state is correct because the queue rolls back via BUG-003's snapshot pattern, and the rejection toast is the last one shown. But a user who blinks may think their action succeeded before seeing the rejection.)
+- **Status:** open
+- **Affected slice:** cross-cutting — surfaced during R4.4 manual testing. Underlying defect predates R4 (present since R3.5 when the sync queue landed).
+
+**Symptom.** Server mode, multi-member party. A player attempts a DM-only action they don't have permission for (e.g. clicks "New homebrew" in the Catalog Browser, or drags an item out of Party Stash while a Banker is active). Two toasts flash in quick succession:
+1. A green success toast (e.g. "Homebrew created" / "Item transferred") appears for a brief moment.
+2. It's replaced by the red rejection toast ("Action rejected: dm_only" / "banker_required_for_claim").
+
+The final on-screen state is correct — the optimistic mutation is rolled back via `deps.restoreSnapshot(snapshot)` in `queue.ts:247`. But the two-toast flash makes the UX ambiguous: users may believe their action succeeded and only afterwards see the rejection.
+
+**Reproduction.**
+1. Server mode, 2+-member party with a dedicated DM.
+2. Sign in as a non-DM player.
+3. Attempt any DM-only action:
+   - Click "New homebrew" in `/catalog` → fill form → Save.
+   - As a non-Banker player with a Banker appointed: try to move currency OUT of Party Stash.
+   - Try to rename the party.
+4. Observe the two-toast sequence: green then red.
+
+**Root-cause hypothesis (needs verification).** The mutation dispatch path in the UI runs BEFORE the server round-trip:
+- User clicks Save → screen calls `useStore.getState().dispatch(action)` → the reducer runs locally, mutation applies to `appState`, `TransactionLog` entry appended. Screen shows the green "success" toast because the local dispatch didn't throw.
+- The action then joins the sync queue → `queue.ts:flushBatch` → `POST /sync/actions` → server calls `checkGuard` → 422 with the rejection code.
+- Queue catches the `BatchRejectedError`, restores the pre-batch snapshot, calls `toast.error(...)` with the rejected code. Red toast replaces the green one.
+
+The client-side reducer is **actor-role-agnostic** (it doesn't know whether the actor is DM or player — role is derived server-side per SECURITY §2.1). So the local dispatch always succeeds when the payload is well-formed; the auth rejection only surfaces after the network round-trip.
+
+**Why this pattern isn't a security issue.** SECURITY §2.1 mandates that the server is authoritative; the client's optimistic dispatch is display-only. The rejection + rollback is the correct enforcement path. This bug is about the UI showing a **misleading intermediate state** (the green toast), not about the enforcement itself failing.
+
+**Fix sketch (options — pick after triage).**
+
+- **Option A (recommended): suppress the success toast for actions that MAY be server-rejected.** Screens that dispatch a mutation subject to server auth guards should NOT show an immediate success toast. Instead, they should either (a) show no toast on optimistic dispatch and rely on the queue to show a success toast on 200, or (b) show a "queued..." toast that upgrades to success or gets replaced by rejection. Requires threading queue-completion callbacks into calling screens. Bigger change, cleaner UX.
+
+- **Option B: run client-side guards in the dispatch path.** Before calling `dispatch`, run `checkGuard(state, action, localActor, memberships)` in the UI and short-circuit with the same rejection toast. Faster feedback, no green flash. Downside: duplicates the guard check between client + server (client-side guard becomes a "prevalidation" that isn't security-load-bearing but must stay in sync). This is close to what §2.1 permits for "optimistic UI" — the client rules engine already runs for the mutation itself; extending it to guards is symmetric.
+
+- **Option C (minimal): change every screen's dispatch site to defer the success toast until the queue confirms.** Similar to Option A but per-screen rather than centralized. High per-screen surface area.
+
+Option B is the cheapest per-screen and structurally symmetric (client already runs the reducer for optimistic UI; adding the guard is the missing piece). Option A is cleaner long-term. Option C is highest churn.
+
+**Affected callsites (non-exhaustive).**
+- `apps/web/src/screens/CatalogBrowser.tsx` — "New homebrew" success toast.
+- `apps/web/src/components/catalog/HomebrewForm.tsx` — save/edit success toasts.
+- `apps/web/src/components/stash/CurrencyTransferModal.tsx` — currency transfer success toast.
+- `apps/web/src/screens/PartySettings.tsx` — rename-party / kick-player / dm-transfer success toasts.
+- Likely more; audit with `grep -rn "toast.success" apps/web/src`.
+
+**Roadmap placement.** Not architectural — this is a per-screen UX polish issue with a well-scoped fix (Option B is essentially "call `checkGuard` before `dispatch`"). Could ship as an RH-slice ("RH5 — client-side pre-guard for optimistic UI") or as a small polish slice inside R4.5 / a pre-M5 hardening pass. Filing here for triage; the user should decide the slice placement.
+
+**Related.**
+- BUG-003 (rollback captures pre-mutation state) — the rollback mechanism itself works correctly; this bug is upstream of that.
+- SECURITY §2.1 — server-authoritative rejection is the invariant; the fix must not soften it, only front-load the client-side check for display purposes.
+- `apps/web/src/sync/queue.ts:247` — where the current red rejection toast fires.
+
+---
+
 ## Recently fixed
 
 ### BUG-003 — Sync-queue rollback restored post-mutation state, not pre-mutation state
