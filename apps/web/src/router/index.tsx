@@ -4,6 +4,7 @@ import { RootLayout } from '@/components/Layout';
 import { ProtectedRoute, PublicOnlyRoute } from '@/components/auth/ProtectedRoute';
 import { CharacterSheet } from '@/screens/CharacterSheet';
 import { CatalogBrowser } from '@/screens/CatalogBrowser';
+import { DmDashboard, DmOnlyRoute } from '@/screens/DmDashboard';
 import { Hub } from '@/screens/Hub';
 import { ItemDetail } from '@/screens/ItemDetail';
 import { Login } from '@/screens/Login';
@@ -29,6 +30,7 @@ import { StorageDetail } from '@/screens/StorageDetail';
  *   /item/:itemInstanceId    — ItemDetail                    (protected)
  *   /storage/:stashId        — StorageDetail                 (protected)
  *   /settings                — Settings                      (protected)
+ *   /dm                      — DmDashboard                   (DM-only or solo)
  *
  * In LOCAL MODE `<ProtectedRoute />` is a no-op (renders `<Outlet />`
  * unconditionally) and `<PublicOnlyRoute />` redirects to `/hub` — so
@@ -73,6 +75,10 @@ export const router = createBrowserRouter([
           { path: 'storage/:stashId', Component: StorageDetail },
           { path: 'settings', Component: Settings },
           { path: 'party/settings', Component: PartySettings },
+          {
+            Component: DmOnlyRoute,
+            children: [{ path: 'dm', Component: DmDashboard }],
+          },
         ],
       },
       { path: '*', element: <Navigate to="/hub" replace /> },

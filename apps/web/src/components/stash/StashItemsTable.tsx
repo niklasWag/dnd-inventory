@@ -4,6 +4,16 @@ import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useStore } from '@/store';
 import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
@@ -11,6 +21,7 @@ import { attunement } from '@app/rules';
 import { rarityDotClass, rarityLabel } from '@/lib/rarity';
 import { formatChargesShort } from '@/lib/charges';
 import { displayName as computeDisplayName } from '@/lib/identify';
+import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { MoveItemModal } from './MoveItemModal';
 import { PackItemModal } from './PackItemModal';
 import { SplitModal } from './SplitModal';
@@ -91,12 +102,22 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
     }),
   );
 
+  // R4.5 — DM cap-override eligibility. When the current user is a DM
+  // (or solo per §8.2 union-of-rights) AND the target character's slots
+  // are full, the Attune button routes through a confirm dialog rather
+  // than being pre-disabled. Confirming dispatches `attune` with
+  // `overrideCap: true` per OUTLINE §3.8 amendment.
+  const userIsDmOrSolo = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
+
   // Modal state — one of each mounted at the table level; `activeItemId`
   // tells the modal which row to operate on.
   const [moveOpen, setMoveOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  // R4.5 — attune cap-override dialog state. Holds the target item id
+  // when the DM confirms bypassing the slot cap; null when idle.
+  const [capOverrideItemId, setCapOverrideItemId] = useState<string | null>(null);
 
   if (items.length === 0) {
     return (
@@ -367,20 +388,37 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
                             // letting the click reject into a toast. The
                             // "Unattune" direction stays clickable (and the
                             // reducer always allows it modulo no-op).
+                            // R4.5 — DM (or solo per §8.2) users skip the
+                            // disable and route through a cap-override
+                            // confirm dialog instead.
                             disabled={
                               !row.attuned &&
                               attunementState !== null &&
-                              !attunementState.hasFreeSlot
+                              !attunementState.hasFreeSlot &&
+                              !userIsDmOrSolo
                             }
                             title={
                               !row.attuned &&
                               attunementState !== null &&
-                              !attunementState.hasFreeSlot
+                              !attunementState.hasFreeSlot &&
+                              !userIsDmOrSolo
                                 ? `Attunement slots full (${attunementState.attunedCount}/${attunementState.maxAttunement})`
                                 : undefined
                             }
                             aria-label={`${row.attuned ? 'Unattune' : 'Attune'} ${displayName}`}
                             onClick={() => {
+                              // R4.5 — DM cap-override branch: open the
+                              // confirm dialog instead of dispatching
+                              // directly.
+                              if (
+                                !row.attuned &&
+                                attunementState !== null &&
+                                !attunementState.hasFreeSlot &&
+                                userIsDmOrSolo
+                              ) {
+                                setCapOverrideItemId(row.id);
+                                return;
+                              }
                               dispatchOrToast(
                                 {
                                   type: row.attuned ? 'unattune' : 'attune',
@@ -499,6 +537,51 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
           />
         </>
       ) : null}
+
+      {/* R4.5 — Attune cap-override confirm dialog. Only reachable by
+       * DM (or solo) users. Confirms bypass of the maxAttunement cap and
+       * dispatches `attune` with `overrideCap: true` per OUTLINE §3.8. */}
+      <AlertDialog
+        open={capOverrideItemId !== null}
+        onOpenChange={(open) => {
+          if (!open) setCapOverrideItemId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Bypass attunement cap?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {attunementState !== null
+                ? `This character is already attuned to ${attunementState.attunedCount} of ${attunementState.maxAttunement} items. `
+                : ''}
+              As DM you can override the cap for this attunement. The log entry will record the
+              override for the party audit trail.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (capOverrideItemId === null || characterId === undefined) return;
+                dispatchOrToast(
+                  {
+                    type: 'attune',
+                    payload: {
+                      characterId,
+                      itemInstanceId: capOverrideItemId,
+                      overrideCap: true,
+                    },
+                  },
+                  'Could not attune',
+                );
+                setCapOverrideItemId(null);
+              }}
+            >
+              Confirm override
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

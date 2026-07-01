@@ -66,6 +66,16 @@ export function CharacterSheet(): ReactElement {
       const userIsDm = s.appState.memberships.some(
         (m) => m.userId === myUserId && m.role === 'dm' && m.leftAt === null,
       );
+      // R4.5 — cross-character cue. When a DM is viewing another
+      // player's character, surface a subtle "editing X's character"
+      // banner so the mutation surface is unambiguous. Suppressed in
+      // solo (§8.2 union-of-rights makes the DM/owner distinction
+      // irrelevant) and for own-character views. The owner's display
+      // name is resolved server-side via memberships → user rows; the
+      // client doesn't have a user map in AppState, so we fall back to
+      // the character name.
+      const isCrossCharacterDmView =
+        userIsDm && c.ownerUserId !== null && c.ownerUserId !== myUserId;
       return {
         character: c,
         inventoryStashId: c.inventoryStashId,
@@ -74,6 +84,7 @@ export function CharacterSheet(): ReactElement {
         bankerActive,
         userIsBanker,
         userIsDm,
+        isCrossCharacterDmView,
       };
     }),
   );
@@ -92,6 +103,7 @@ export function CharacterSheet(): ReactElement {
     bankerActive,
     userIsBanker,
     userIsDm,
+    isCrossCharacterDmView,
   } = sheet;
   const targetStash = stashForTab(tab, {
     inventoryStashId,
@@ -125,6 +137,15 @@ export function CharacterSheet(): ReactElement {
         </div>
         <RestMenu characterId={character.id} />
       </header>
+
+      {isCrossCharacterDmView ? (
+        <div
+          role="note"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
+        >
+          Editing {character.name}'s character as DM.
+        </div>
+      ) : null}
 
       <div className="border-b border-border">
         <nav className="-mb-px flex gap-1" aria-label="Tabs">

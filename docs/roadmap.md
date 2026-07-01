@@ -2404,16 +2404,40 @@ Sliced into four independently-shippable sub-slices, mirroring the R4.1.a-f / R4
 
 #### R4.5 — DM Dashboard (§5.9)
 
-- [ ] `DmDashboard.tsx` route (DM-only; desktop-only per §5 form factor)
-- [ ] At-a-glance grid: all characters with name + class + level + GP-equivalent
-- [ ] Party Stash + Recovered Loot summary cards on the dashboard
-- [ ] Total party gold (sum of all GP-equivalent across characters + pools)
-- [ ] Click-through from any row navigates to that character's sheet (DM read-all)
-- [ ] DM-only route guard (hidden from non-DM members)
+- [x] `DmDashboard.tsx` route (DM-only; desktop-only per §5 form factor). New route `/dm` wrapped in `DmOnlyRoute` guard. Desktop-first table with `overflow-x-auto` fallback on narrow viewports (no hard block per user direction).
+- [x] At-a-glance grid: all characters with name + class + level + Inventory GP-equivalent. Renders `state.characters` mapped over their `inventoryStashId` currency holding via `currency.toGpEquivalent`.
+- [x] Party Stash + Recovered Loot summary cards on the dashboard. Each card shows GP-equivalent + distinct item count.
+- [x] Total party gold (sum of Inventory GP-eq per character + Party Stash + Recovered Loot). One `<section role="region" aria-label="Total party gold">` above the summary cards.
+- [x] Click-through from any row navigates to that character's sheet (DM read-all). Row-level button dispatches `navigate('/character/:id')`; the existing R4.3.c/d guard widening ensures cross-character write flows work for DMs from there.
+- [x] DM-only route guard (hidden from non-DM members). `DmOnlyRoute` reads `isCurrentUserDmOrSolo(appState)` — has a DM membership row OR is solo per §8.2 union-of-rights. Non-DM in a 2+-member party gets redirected to `/hub`. Nav button in `Layout.tsx` also gated by the same predicate.
+- [x] **R4.5 polish — cross-character DM cue on CharacterSheet.** When `actor.role === 'dm'` AND `character.ownerUserId !== state.user.id`, an amber banner "Editing {name}'s character as DM." renders below the header. Suppressed in solo (§8.2 makes the distinction moot) and on own-character views. 3 component tests.
+- [x] **R4.5 polish — attune cap-override confirm dialog.** DM (or solo per §8.2) clicking Attune on a row when the target character's slots are full opens an AlertDialog asking to bypass the cap; confirming dispatches `attune` with `overrideCap: true` (log entry preserves the flag per R4.3.d). Non-DM in multi-member party keeps the pre-disable behavior. 3 component tests + 2 refactored existing.
 
 #### R4.5 — Notes
 
-> -
+> **Shipped 2026-07-01** (`feature/r4-parties`). One-slice implementation (no sub-slicing needed per pre-implementation sizing check — R4.5 landed at ~470 LOC vs. R4.4's 611).
+>
+> **Test totals:** 1194 across the workspace (web 709 → 725, +16 R4.5: 10 DmDashboard tests + 3 CharacterSheet cross-character tests + 3 StashItemsTable cap-override tests). Other workspaces unchanged. All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **`isCurrentUserDmOrSolo` helper.** Extracted to `apps/web/src/lib/currentUserRole.ts` because two consumers landed simultaneously (`DmOnlyRoute` for the route guard, `Layout.tsx` for the nav-button gate, and `StashItemsTable.tsx` for the cap-override DM detection). Three consumers is the cost-benefit tip point for extracting a shared util (per CLAUDE.md "don't create helpers for one-time operations" — this isn't one-time). Solo bypass logic mirrors `isSolo` from `packages/shared/src/guards/actor.ts` — same predicate, distinct-active-userId count === 1.
+> - **DM Dashboard is a pure read-view.** Zero mutation surfaces. All actions happen via click-through to the character sheet, where R4.3.c/d's DM cross-character widening is already in force. Keeps R4.5 orthogonal to the guard/reducer layer.
+> - **`overflow-x-auto` mobile fallback.** Table stays functional on narrow viewports without responsive card reflow. Per user direction and CLAUDE.md minimalism — a card layout would double the component surface for marginal utility. Revisit if user testing surfaces mobile pain.
+> - **Route guard as `Outlet` wrapper.** Follows the `ProtectedRoute` pattern from R3.5. Nested inside the auth-protected group: `ProtectedRoute → DmOnlyRoute → DmDashboard`. Auth is checked first (session valid), then DM role, then the page renders. Non-DM redirect target is `/hub` (not `/`) so users land somewhere useful.
+> - **Cross-character cue uses `role="note"`.** Semantically distinct from the offline banner's `role="alert"` — the cue is a passive context marker, not an urgent state announcement. Amber (warning) intent, not destructive.
+> - **Attune cap-override reuses AlertDialog primitive.** Same shadcn primitive as `DeleteHomebrewDialog`; the pattern is consistent for confirm-then-mutate flows. `AlertDialogAction`'s Radix auto-close behavior + my synchronous `dispatch` composes cleanly — the dialog closes after the log entry is committed, keeping the UI in sync.
+> - **Two existing tests refactored** to explicitly force non-DM state (they used solo bootstrap which now grants the cap-override branch). Refactored tests still assert the same invariant (disabled button + reducer-rejection toast) — the semantics didn't change, just the setup preconditions became explicit.
+>
+> **Not shipped in R4.5 (deferred):**
+> - **`maxAttunement` inline editor** on `EquippedSlotsPanel` (parked deferred item from R4.2's carryforward). Not folded in per user's R4.5 planning decision. Reducer mechanism (`edit-character { patch: { maxAttunement: N } }`) has shipped since R1.2 — only the UI affordance is missing.
+> - **StashItemsTable visibility revisit** (parked from R4.2.e). Re-parked here.
+> - **BUG-005 fix** (optimistic success toast flashes before rejection). Filed for triage; not blocking R4.5.
+> - **URL-scoped route rename** (`/dm` → `/party/:partyId/dm`). Deferred to RH4.1 per 2026-07-01 planning decision. R4.5 ships `/dm` unprefixed to stay consistent with the current unprefixed-route era; RH4.1 rewrites the whole route table in one sweep. Also ratified in that planning session: URL param is authoritative when it lands (see RH4.1 charter).
+>
+> **Carryforwards to M5 / post-R4:**
+> - **`isCurrentUserDmOrSolo` becomes load-bearing.** If M5 adds more DM-only UI (Loot Distribution Wizard §5.10, Hoard Generator §5.11), keep using this helper. Consider promoting to `packages/shared/src/guards/` as `isUserDmOrSolo(AppState)` if server also needs to compute it (unlikely — server uses `deriveActorRole` directly).
+> - **DM Dashboard as a display invariant checkpoint.** If R5 adds real-time sync, the dashboard's totals become a nice smoke-test — a DM watching the dashboard should see character gold shift live as players push currency. Suggests a future WebSocket happy-path test.
+> - **Attune cap-override log audit.** R4.3.d's `overrideCap: true` flag lands in the party log; a future M5+ party log UI should surface this prominently (audit trail is why the flag exists per OUTLINE §3.8).
 
 #### R4 — Notes
 
@@ -2850,6 +2874,7 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
   - `/party/:partyId/item/:id` (was `/item/:id`)
   - `/party/:partyId/stash/:id` (was `/stash/:id`)
   - `/party/:partyId/catalog` (was `/catalog`) — catalog is party-scoped per R4.4 homebrew rules
+  - `/party/:partyId/dm` (was `/dm`) — **R4.5 carryforward.** The DM Dashboard route shipped as `/dm` on 2026-07-01 to stay consistent with the then-current unprefixed-route era. RH4.1 must rename it alongside every other party-scoped route. Also carries a `DmOnlyRoute` guard that must be preserved through the rewrite (its membership check is orthogonal to the URL structure and needs no change — just ensure the guard still wraps `DmDashboard` after the path change).
   - `/party/:partyId/log` (once a global party-log screen exists)
 - [ ] `/hub` remains as the pre-party-selection landing (party picker + create-party CTA); it doesn't need a partyId.
 - [ ] `/settings` (app-wide settings, backup/restore) remains party-agnostic and does NOT gain `:partyId`.
@@ -2868,6 +2893,12 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 - [ ] Update every screen test's `initialEntries` to include a `partyId` in the path. Existing fixtures are all `[/party/settings]`, `[/character/char-abc]`, etc. — becomes `[/party/${TEST_PARTY_ID}/settings]`, etc.
 - [ ] New test: URL `partyId` mismatched with loaded state triggers re-hydrate. Given `s.appState.party.id === 'A'` and route `/party/B/settings`, expect the store to reload B before the screen renders.
 - [ ] New test: URL `partyId` for a party the user isn't a member of → 403-style redirect to Hub.
+- [ ] Existing R4.5 tests for `/dm` (`DmDashboard.test.tsx`) — update `initialEntries` to `/party/${TEST_PARTY_ID}/dm` and add a URL-vs-state mismatch test specific to the DM Dashboard.
+
+**URL-vs-state authority decision (2026-07-01, ratified during R4.5 planning).**
+- **URL param is authoritative.** When `useParams.partyId !== s.appState.party.id`, the guard triggers a re-hydrate (`loadAppState(partyId)`) before rendering. State conforms to URL, not vice versa.
+- **Rationale.** Server-authoritative routing means bookmarks + shared links + back-button navigation resolve consistently. If state were authoritative, a URL rewrite wouldn't reload the party, breaking the browser primitive. The URL is the durable identifier.
+- **Mismatch semantics.** Not-a-member of the URL's partyId → redirect to `/hub` (same treatment as R4.5's non-DM redirect). Member-of-both parties → re-hydrate the correct one. Loading in-progress → the same `loading` state as `ProtectedRoute` handles today.
 
 #### RH4.1 — Notes
 

@@ -396,3 +396,128 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     expect(await screen.findByText(/1 item recharged/i)).toBeInTheDocument();
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.5 — cross-character DM cue
+// -------------------------------------------------------------------- //
+
+describe('CharacterSheet — R4.5 cross-character DM cue', () => {
+  it('shows an editing-cue banner when a DM views another player\'s character', () => {
+    // Bootstrap gives a solo party with u1 as DM+player of char-me.
+    // Convert to a 2-member party where the DM (me) is viewing another
+    // player's character (Bob).
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    const bobCharId = 'char-bob';
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: [
+          ...state.memberships,
+          {
+            userId: 'bob-user',
+            partyId: state.party.id,
+            role: 'player',
+            characterId: bobCharId,
+            joinedAt: '2026-01-01T00:00:00.000Z',
+            leftAt: null,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } as any,
+        ],
+        characters: [
+          ...state.characters,
+          {
+            id: bobCharId,
+            partyId: state.party.id,
+            ownerUserId: 'bob-user',
+            name: 'Bob',
+            species: 'Elf',
+            size: 'medium',
+            class: 'Rogue',
+            level: 3,
+            abilityScores: { STR: 8 },
+            maxAttunement: 3,
+            encumbranceRule: 'off',
+            enforceEncumbrance: false,
+            inventoryStashId: 's-inv-bob',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } as any,
+        ],
+        stashes: [
+          ...state.stashes,
+          {
+            id: 's-inv-bob',
+            scope: 'character',
+            name: 'Inventory',
+            ownerCharacterId: bobCharId,
+            partyId: null,
+            isCarried: true,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } as any,
+        ],
+        currencies: [
+          ...state.currencies,
+          { id: 'c-bob', stashId: 's-inv-bob', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+        ],
+      },
+    });
+    void base;
+
+    renderAt(`/character/${bobCharId}`);
+
+    const cue = screen.getByRole('note');
+    expect(cue).toHaveTextContent(/editing/i);
+    expect(cue).toHaveTextContent(/bob/i);
+  });
+
+  it('does NOT show the cue on my own character', () => {
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+
+  it('does NOT show the cue for a non-DM viewer looking at another player\'s character', () => {
+    // Solo bootstrap, then flip actor to non-DM AND change owner of the
+    // current character to someone else. The cue should still not show
+    // because the viewer isn't the DM.
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...state,
+        // Drop the DM row so the viewer is a plain player.
+        memberships: state.memberships.filter((m) => m.role !== 'dm'),
+        // Retag character ownership to a stranger (so it looks
+        // cross-character) AND add a second membership so we're not solo.
+        characters: [
+          {
+            ...state.characters[0]!,
+            ownerUserId: 'stranger',
+          },
+        ],
+      },
+    });
+    // Add a second member so isSolo becomes false.
+    const s2 = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...s2,
+        memberships: [
+          ...s2.memberships,
+          {
+            userId: 'stranger',
+            partyId: s2.party.id,
+            role: 'player',
+            characterId: s2.characters[0]!.id,
+            joinedAt: '2026-01-01T00:00:00.000Z',
+            leftAt: null,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } as any,
+        ],
+      },
+    });
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+});
