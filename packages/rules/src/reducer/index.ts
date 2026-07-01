@@ -155,6 +155,8 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return appointBanker(state, action.payload);
     case 'revoke-banker':
       return revokeBanker(state, action.payload);
+    case 'dm-transfer':
+      return dmTransfer(state, action.payload, ctx);
     case 'split-evenly':
       return splitEvenlyReducer(state, action.payload);
   }
@@ -2280,20 +2282,41 @@ function attuneOrUnattune(
       );
     }
 
-    // Slot cap is the character's `maxAttunement` (OUTLINE §3.3, default
-    // 3). Counted against the character's currently-attuned rows in
-    // Inventory — items in Storage / Party Stash / Recovered Loot / Shop
-    // cannot be attuned (the Inventory-only invariant above already
-    // rejects those rows before we get here).
-    const attunedCount = s.items.filter(
-      (i) => i.ownerId === character.inventoryStashId && i.attuned,
-    ).length;
-    if (!attunement.hasFreeSlot(attunedCount, character.maxAttunement)) {
-      throw new Error(
-        `attune: character ${character.id} has no free attunement slot (${attunedCount}/${character.maxAttunement})`,
-      );
+    // R4.3.d — DM cap-override per OUTLINE §3.8. When `overrideCap: true`
+    // is present on the payload, skip the slot-cap check entirely. The
+    // guard (`attuneGuard`) already rejected non-DM actors setting this
+    // flag before we get here. The `overrideCap: true` flag is preserved
+    // on the log entry for audit trail.
+    const overrideCap =
+      'overrideCap' in payload && (payload as { overrideCap?: boolean }).overrideCap === true;
+    if (!overrideCap) {
+      // Slot cap is the character's `maxAttunement` (OUTLINE §3.3, default
+      // 3). Counted against the character's currently-attuned rows in
+      // Inventory — items in Storage / Party Stash / Recovered Loot / Shop
+      // cannot be attuned (the Inventory-only invariant above already
+      // rejects those rows before we get here).
+      const attunedCount = s.items.filter(
+        (i) => i.ownerId === character.inventoryStashId && i.attuned,
+      ).length;
+      if (!attunement.hasFreeSlot(attunedCount, character.maxAttunement)) {
+        throw new Error(
+          `attune: character ${character.id} has no free attunement slot (${attunedCount}/${character.maxAttunement})`,
+        );
+      }
     }
   }
+
+  // R4.3.d — preserve `overrideCap: true` on the attune log entry per
+  // OUTLINE §3.8 "cap-override still logs". `unattune` never carries
+  // this field (only attune has a cap to override). Absent from the
+  // payload => absent from the log (audit reads absence as "normal
+  // attune within cap").
+  const overrideCapForLog =
+    type === 'attune' &&
+    'overrideCap' in payload &&
+    (payload as { overrideCap?: boolean }).overrideCap === true
+      ? { overrideCap: true }
+      : {};
 
   return {
     state: {
@@ -2306,6 +2329,7 @@ function attuneOrUnattune(
         payload: {
           itemInstanceId: row.id,
           characterId: payload.characterId,
+          ...overrideCapForLog,
         },
       },
     ],
@@ -3443,7 +3467,7 @@ function appointBanker(
  */
 function revokeBanker(
   state: AppState,
-  payload: { reason: 'manual' | 'reassigned' | 'left-party' | 'kicked' },
+  payload: { reason: 'manual' | 'reassigned' | 'left-party' | 'kicked' | 'dm-transfer' },
 ): ReducerResult {
   const s = requireState(state, 'revoke-banker');
   const actorUserId = s.user.id;
@@ -3475,6 +3499,182 @@ function revokeBanker(
       {
         type: 'revoke-banker',
         payload: { reason: payload.reason },
+      },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// R4.3.a — dm-transfer (DM role transfer + Banker auto-clear cascade)
+// -------------------------------------------------------------------- //
+
+/**
+ * R4.3.a — DM hands the DM role to another active player per OUTLINE
+ * §3.14 + §8.3. Atomic swap:
+ *   1. Outgoing DM's `role='dm'` row → soft-deleted (`leftAt: now`).
+ *   2. Outgoing DM's `role='player'` row → left active; if none exists
+ *      (DM-only outgoing DM case) an active row is auto-minted with
+ *      `characterId: null`. Matches the party-creator bootstrap shape
+ *      so the outgoing DM ends up as a plain player. They can add a
+ *      character later via the existing post-join CTA.
+ *   3. Incoming DM's `role='dm'` row → upsert to active. Reactivates a
+ *      historical soft-deleted row per the BUG-002 composite-PK lesson
+ *      (`(userId, partyId, role)` PK + soft-delete = never `create`,
+ *      always upsert). Creates fresh if no row exists.
+ *   4. `Party.ownerUserId` → newDmUserId.
+ *   5. If `party.bankerUserId === newDmUserId` → cleared + synthetic
+ *      `revoke-banker` slice with `reason: 'dm-transfer'` emitted
+ *      BEFORE the terminal `dm-transfer` slice. Preserves §4 invariant
+ *      `bankerUserId !== ownerUserId`.
+ *
+ * Reducer guards (reject order):
+ *   - `dm_only` — actor lacks an active DM membership in this party.
+ *   - `dm_transfer_self` — actor targets themselves. UI hides the
+ *     affordance for the actor's own row.
+ *   - `dm_transfer_target_not_member` — target lacks an active
+ *     `role='player'` membership in this party.
+ *
+ * `actorRole` on all emitted slices resolves to `'dm'` at the store
+ * middleware via `deriveActorRole`.
+ */
+function dmTransfer(
+  state: AppState,
+  payload: { newDmUserId: string },
+  ctx: ReducerContext,
+): ReducerResult {
+  const s = requireState(state, 'dm-transfer');
+  const actorUserId = s.user.id;
+  const partyId = s.party.id;
+  const { newDmUserId } = payload;
+
+  // Guard 1: actor must be an active DM.
+  const actorIsDm = s.memberships.some(
+    (m) =>
+      m.userId === actorUserId &&
+      m.partyId === partyId &&
+      m.role === 'dm' &&
+      m.leftAt === null,
+  );
+  if (!actorIsDm) {
+    throw new Error('dm-transfer: dm_only (actor must be an active DM of this party)');
+  }
+
+  // Guard 2: no self-transfer.
+  if (newDmUserId === actorUserId) {
+    throw new Error('dm-transfer: dm_transfer_self (cannot transfer DM to yourself)');
+  }
+
+  // Guard 3: target must be an active player.
+  const targetIsActivePlayer = s.memberships.some(
+    (m) =>
+      m.userId === newDmUserId &&
+      m.partyId === partyId &&
+      m.role === 'player' &&
+      m.leftAt === null,
+  );
+  if (!targetIsActivePlayer) {
+    throw new Error(
+      'dm-transfer: dm_transfer_target_not_member (target lacks an active player membership in this party)',
+    );
+  }
+
+  const now = ctx.now();
+
+  // Step 1 + 2 + 3: membership row swap.
+  //
+  // Build the next memberships in one pass. We track whether the
+  // outgoing DM already has an active player row and whether the
+  // incoming DM has a historical dm row we can reactivate; both drive
+  // the append list.
+  let outgoingDmHasActivePlayerRow = false;
+  let incomingDmHadHistoricalDmRow = false;
+
+  const nextMemberships = s.memberships.map((m) => {
+    // Outgoing DM's dm row → soft-delete.
+    if (
+      m.userId === actorUserId &&
+      m.partyId === partyId &&
+      m.role === 'dm' &&
+      m.leftAt === null
+    ) {
+      return { ...m, leftAt: now };
+    }
+    // Track outgoing DM's active player row (leave it as-is).
+    if (
+      m.userId === actorUserId &&
+      m.partyId === partyId &&
+      m.role === 'player' &&
+      m.leftAt === null
+    ) {
+      outgoingDmHasActivePlayerRow = true;
+      return m;
+    }
+    // Incoming DM's historical dm row → reactivate (BUG-002 upsert).
+    if (
+      m.userId === newDmUserId &&
+      m.partyId === partyId &&
+      m.role === 'dm' &&
+      m.leftAt !== null
+    ) {
+      incomingDmHadHistoricalDmRow = true;
+      return { ...m, leftAt: null, joinedAt: now, characterId: null };
+    }
+    return m;
+  });
+
+  // Append new rows for the ones that didn't exist.
+  if (!incomingDmHadHistoricalDmRow) {
+    nextMemberships.push({
+      userId: newDmUserId,
+      partyId,
+      role: 'dm',
+      characterId: null,
+      joinedAt: now,
+      leftAt: null,
+    });
+  }
+  if (!outgoingDmHasActivePlayerRow) {
+    // DM-only outgoing DM: auto-mint an active player row so they
+    // remain in the party as a plain player. `joinedAt: now` follows
+    // BUG-002's current-tenure semantics — the row represents "player
+    // role activated at transfer time", not "user joined the party".
+    // Historical DM tenure is preserved by the soft-deleted dm row's
+    // original `joinedAt` (untouched by this reducer).
+    nextMemberships.push({
+      userId: actorUserId,
+      partyId,
+      role: 'player',
+      characterId: null,
+      joinedAt: now,
+      leftAt: null,
+    });
+  }
+
+  // Step 4 + 5: party ownership + Banker cascade.
+  const bankerCascade = s.party.bankerUserId === newDmUserId;
+  const nextParty = {
+    ...s.party,
+    ownerUserId: newDmUserId,
+    bankerUserId: bankerCascade ? null : s.party.bankerUserId,
+  };
+
+  // Log slices. Ordering mirrors leave-party / kick-player: cascade
+  // slice (if any) → terminal.
+  const bankerSlice: LogEntrySlice[] = bankerCascade
+    ? [{ type: 'revoke-banker', payload: { reason: 'dm-transfer' } }]
+    : [];
+
+  return {
+    state: {
+      ...s,
+      party: nextParty,
+      memberships: nextMemberships,
+    },
+    logEntries: [
+      ...bankerSlice,
+      {
+        type: 'dm-transfer',
+        payload: { oldDmUserId: actorUserId, newDmUserId },
       },
     ],
   };

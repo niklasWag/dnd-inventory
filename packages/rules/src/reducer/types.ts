@@ -311,6 +311,10 @@ export type Action =
       payload: {
         itemInstanceId: string;
         characterId: string;
+        // R4.3.d — DM cap-override per OUTLINE §3.8. When true, reducer
+        // skips the maxAttunement slot-cap check. Guard rejects non-DM
+        // actors setting this flag.
+        overrideCap?: boolean;
       };
     }
   | {
@@ -575,16 +579,32 @@ export type Action =
       };
     }
   | {
-      // R4.2.a: DM clears `Party.bankerUserId`. `reason` distinguishes
-      // direct dispatches (`'manual'`, `'reassigned'`) from cascade-
-      // emitted entries (`'left-party'`, `'kicked'`) — only the first
-      // two reach this action via `POST /sync/actions`; the cascade
-      // entries are emitted directly from the kick/leave reducer arms
-      // and don't round-trip through dispatch. `'dm-transfer'` is
-      // reserved for R4.3 and intentionally absent from the enum.
+      // R4.2.a / R4.3.a: DM clears `Party.bankerUserId`. `reason`
+      // distinguishes direct dispatches (`'manual'`, `'reassigned'`)
+      // from cascade-emitted entries (`'left-party'`, `'kicked'`,
+      // `'dm-transfer'`) — only the first two reach this action via
+      // `POST /sync/actions`; the cascade entries are emitted directly
+      // from the kick/leave/dm-transfer reducer arms and don't
+      // round-trip through dispatch.
       type: 'revoke-banker';
       payload: {
-        reason: 'manual' | 'reassigned' | 'left-party' | 'kicked';
+        reason: 'manual' | 'reassigned' | 'left-party' | 'kicked' | 'dm-transfer';
+      };
+    }
+  | {
+      // R4.3.a: DM hands the DM role to another active player per
+      // OUTLINE §3.14 + §8.3. Atomic swap: outgoing DM's `role='dm'`
+      // row soft-deleted; incoming DM's `role='dm'` row upserted to
+      // active (reactivates historical soft-deleted row per BUG-002
+      // lesson, or creates fresh); outgoing DM's `role='player'` row
+      // auto-minted if missing (DM-only outgoing DM case);
+      // `Party.ownerUserId` updated. If the incoming DM is the current
+      // Banker, `bankerUserId` is cleared and a synthetic
+      // `revoke-banker` slice with `reason: 'dm-transfer'` is emitted
+      // (preserves §4 invariant `bankerUserId !== ownerUserId`).
+      type: 'dm-transfer';
+      payload: {
+        newDmUserId: string;
       };
     }
   | {

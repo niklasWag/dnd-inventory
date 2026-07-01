@@ -185,11 +185,12 @@ function resolveActor(
     case 'kick-player':
     case 'appoint-banker':
     case 'revoke-banker':
-      // R4.1.d / R4.2.a — all DM-only per OUTLINE §8.1. Reducer rejects
-      // non-DM dispatches before this resolver runs, so `'dm'` is the
-      // structurally-correct value (and §3.14 bars the DM from being
-      // the Banker, so even when bankerUserId is set, the actor of
-      // these actions is never the Banker).
+    case 'dm-transfer':
+      // R4.1.d / R4.2.a / R4.3.a — all DM-only per OUTLINE §8.1.
+      // Reducer rejects non-DM dispatches before this resolver runs,
+      // so `'dm'` is the structurally-correct value (and §3.14 bars
+      // the DM from being the Banker, so even when bankerUserId is
+      // set, the actor of these actions is never the Banker).
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
       }

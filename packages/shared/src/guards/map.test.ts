@@ -1104,6 +1104,441 @@ describe('guards — R4.2.d split-evenly', () => {
   });
 });
 
+describe('guards — R4.3.a dm-transfer', () => {
+  // makeBankerState memberships: dm-user (dm), u2 (player), banker-user (player).
+  // The party's ownerUserId is u2 per makeState defaults, but that's
+  // irrelevant to the guard — actor.role tells the guard the DM is who
+  // dispatched it, and actor.userId is where the guard reads.
+
+  it('accepts a DM transferring to an active player', () => {
+    const state = makeBankerState(null);
+    const result = guards['dm-transfer'](
+      state,
+      { newDmUserId: 'banker-user' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('rejects a non-DM actor', () => {
+    const state = makeBankerState(null);
+    const result = guards['dm-transfer'](
+      state,
+      { newDmUserId: 'banker-user' },
+      makeActor('u2', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('rejects a Banker actor (still dm-only, even for Banker)', () => {
+    const state = makeBankerState();
+    const result = guards['dm-transfer'](
+      state,
+      { newDmUserId: 'u2' },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('rejects self-transfer', () => {
+    const state = makeBankerState(null);
+    const result = guards['dm-transfer'](
+      state,
+      { newDmUserId: 'dm-user' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_transfer_self' });
+  });
+
+  it('rejects when target lacks an active player membership in this party', () => {
+    const state = makeBankerState(null);
+    const result = guards['dm-transfer'](
+      state,
+      { newDmUserId: 'stranger-not-in-party' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_transfer_target_not_member' });
+  });
+
+  it('rejects when target is a soft-deleted (left) player', () => {
+    // Widen state.memberships to include a soft-deleted player row.
+    const base = makeBankerState(null);
+    const state: AppState = {
+      ...base!,
+      memberships: [
+        ...base!.memberships,
+        {
+          userId: 'former-player',
+          partyId: 'p1',
+          role: 'player',
+          characterId: null,
+          joinedAt: '2026-01-01T00:00:00.000Z',
+          leftAt: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+    };
+    const result = guards['dm-transfer'](
+      state,
+      { newDmUserId: 'former-player' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_transfer_target_not_member' });
+  });
+
+  it('rejects when state is null', () => {
+    const result = guards['dm-transfer'](
+      null,
+      { newDmUserId: 'banker-user' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'state_not_initialized' });
+  });
+});
+
+describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => {
+  // makeBankerState fixture:
+  //   - Party ownerUserId: 'dm-user' (via makeParty)
+  //   - Characters: 'char-u2' (owned by u2, inv='inv'), 'char-banker-user'
+  //     (owned by banker-user, inv='inv-b')
+  //   - Stashes: 'inv' (u2's Inventory), 'inv-b' (banker's Inventory),
+  //     'ps' (Party Stash), 'rl' (Recovered Loot)
+  //   - Memberships: dm-user (dm), u2 (player), banker-user (player)
+  //
+  // Pre-R4.3.c: `ownsOrShares` returned false when actor.userId didn't
+  // own the character. R4.3.c widens to allow actor.role === 'dm' to
+  // access any character stash in their party per OUTLINE §8.1.
+  //
+  // NOTE: uses makeBankerState with bankerUserId=null to avoid the
+  // R4.2.c Banker gate short-circuiting on the shared-pool tests.
+
+  it('DM can acquire into another player\'s Inventory', () => {
+    const state = makeBankerState(null);
+    const result = guards.acquire(
+      state,
+      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can consume an item from another player\'s Inventory', () => {
+    // Base state's items include 'i1' at ownerId: 'inv' (u2's).
+    const state = makeBankerState(null);
+    const result = guards.consume(
+      state,
+      { itemInstanceId: 'i1', quantity: 1 },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can transfer an item from another player\'s Inventory to Party Stash', () => {
+    const state = makeBankerState(null);
+    const result = guards.transfer(
+      state,
+      { itemInstanceId: 'i1', toStashId: 'ps', quantity: 1 },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can transfer an item from Party Stash to another player\'s Inventory (deposit unaffected)', () => {
+    const state = makeBankerState(null);
+    // Add an item to Party Stash for the transfer OUT.
+    const s = {
+      ...state!,
+      items: [
+        ...state!.items,
+        {
+          id: 'i-ps-item',
+          definitionId: 'phb-2024:rope',
+          ownerType: 'stash' as const,
+          ownerId: 'ps',
+          containerInstanceId: null,
+          quantity: 1,
+          equipped: false,
+          attuned: false,
+          identified: true,
+          currentCharges: null,
+        },
+      ],
+    };
+    const result = guards.transfer(
+      s,
+      { itemInstanceId: 'i-ps-item', toStashId: 'inv-b', quantity: 1 },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('Player still cannot acquire into another player\'s Inventory (§8.1 preserved)', () => {
+    const state = makeBankerState(null);
+    const result = guards.acquire(
+      state,
+      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add' },
+      // u2 acting as player, targeting their own inventory is allowed;
+      // banker-user acting as player, targeting u2's inventory is NOT.
+      makeActor('banker-user', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_own_stash' });
+  });
+
+  it('Player still cannot consume from another player\'s Inventory (§8.1 preserved)', () => {
+    const state = makeBankerState(null);
+    const result = guards.consume(
+      state,
+      { itemInstanceId: 'i1', quantity: 1 },
+      makeActor('banker-user', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_own_stash' });
+  });
+
+  it('DM cannot access a character stash outside their party (partyId mismatch)', () => {
+    const state = makeBankerState(null);
+    // Simulate a foreign character whose inventory stash is in a
+    // different party (partyId mismatch on the character).
+    const s = {
+      ...state!,
+      characters: [
+        ...state!.characters,
+        {
+          ...state!.characters[0]!,
+          id: 'char-foreign',
+          partyId: 'p2', // different party
+          ownerUserId: 'other-user',
+          inventoryStashId: 'inv-foreign',
+        },
+      ],
+      stashes: [
+        ...state!.stashes,
+        {
+          id: 'inv-foreign',
+          scope: 'character' as const,
+          name: 'Foreign Inventory',
+          ownerCharacterId: 'char-foreign',
+          partyId: null,
+          isCarried: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    };
+    const result = guards.acquire(
+      s,
+      { stashId: 'inv-foreign', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_own_stash' });
+  });
+});
+
+describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/rename', () => {
+  // makeBankerState fixture: dm-user (dm), u2 (player, owns char-u2, inv='inv'
+  // with item 'i1'), banker-user (player, owns char-banker-user, inv='inv-b').
+  //
+  // Pre-R4.3.d: guards using `ownsCharacter` returned false for DM
+  // targeting another player's character (`not_own_character`).
+  // R4.3.d widens `ownsCharacter` to allow actor.role === 'dm' when
+  // character.partyId === actor.partyId per OUTLINE §8.1.
+
+  it('DM can equip an item on another player\'s character', () => {
+    const state = makeBankerState(null);
+    const result = guards.equip(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can unequip an item on another player\'s character', () => {
+    const state = makeBankerState(null);
+    const result = guards.unequip(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can attune an item on another player\'s character', () => {
+    const state = makeBankerState(null);
+    const result = guards.attune(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can unattune an item on another player\'s character', () => {
+    const state = makeBankerState(null);
+    const result = guards.unattune(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can use-charge on an item in another player\'s Inventory', () => {
+    const state = makeBankerState(null);
+    const result = guards['use-charge'](
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM cannot use-charge on an item in a Party Stash (§3.8 Inventory-only invariant preserved)', () => {
+    // Move i1 to Party Stash and try DM use-charge. Rejects because
+    // the item is not in char-u2's Inventory stash.
+    const state = makeBankerState(null);
+    const s = {
+      ...state!,
+      items: state!.items.map((i) => (i.id === 'i1' ? { ...i, ownerId: 'ps' } : i)),
+    };
+    const result = guards['use-charge'](
+      s,
+      { itemInstanceId: 'i1', characterId: 'char-u2' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'use_charge_only_in_inventory' });
+  });
+
+  it('DM can recharge (single-mode) an item in another player\'s Inventory', () => {
+    const state = makeBankerState(null);
+    const result = guards.recharge(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2', mode: 'single' as const, amount: 1 },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can recharge (batch-mode) another player\'s character', () => {
+    const state = makeBankerState(null);
+    const result = guards.recharge(
+      state,
+      { characterId: 'char-u2', mode: 'batch' as const, trigger: 'long-rest' as const },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('DM can rename another player\'s character', () => {
+    const state = makeBankerState(null);
+    const result = guards['rename-character'](
+      state,
+      { characterId: 'char-u2', newName: 'Renamed by DM' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('Player still cannot equip on another player\'s character (§8.1 preserved)', () => {
+    const state = makeBankerState(null);
+    const result = guards.equip(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2' },
+      makeActor('banker-user', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_own_character' });
+  });
+
+  it('Player still cannot rename another player\'s character (§8.1 preserved)', () => {
+    const state = makeBankerState(null);
+    const result = guards['rename-character'](
+      state,
+      { characterId: 'char-u2', newName: 'By player' },
+      makeActor('banker-user', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_own_character' });
+  });
+
+  it('DM cannot equip on a character outside their party (partyId mismatch)', () => {
+    const state = makeBankerState(null);
+    const s = {
+      ...state!,
+      characters: [
+        ...state!.characters,
+        {
+          ...state!.characters[0]!,
+          id: 'char-foreign',
+          partyId: 'p2',
+          ownerUserId: 'other-user',
+          inventoryStashId: 'inv-foreign',
+        },
+      ],
+      stashes: [
+        ...state!.stashes,
+        {
+          id: 'inv-foreign',
+          scope: 'character' as const,
+          name: 'Foreign Inventory',
+          ownerCharacterId: 'char-foreign',
+          partyId: null,
+          isCarried: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      items: [
+        ...state!.items,
+        {
+          id: 'i-foreign',
+          definitionId: 'phb-2024:rope',
+          ownerType: 'stash' as const,
+          ownerId: 'inv-foreign',
+          containerInstanceId: null,
+          quantity: 1,
+          equipped: false,
+          attuned: false,
+          identified: true,
+          currentCharges: null,
+        },
+      ],
+    };
+    const result = guards.equip(
+      s,
+      { itemInstanceId: 'i-foreign', characterId: 'char-foreign' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_own_character' });
+  });
+
+  it('DM can attune with overrideCap: true (cap-override allowed)', () => {
+    const state = makeBankerState(null);
+    const result = guards.attune(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2', overrideCap: true },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('Player cannot attune with overrideCap: true (§3.8 DM-only)', () => {
+    const state = makeBankerState(null);
+    // Player attunes on their own character with overrideCap — rejected
+    // because cap-override is DM-only per OUTLINE §3.8.
+    const result = guards.attune(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2', overrideCap: true },
+      makeActor('u2', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('Banker cannot attune with overrideCap: true (§3.8 DM-only, not Banker)', () => {
+    const state = makeBankerState();
+    const result = guards.attune(
+      state,
+      { itemInstanceId: 'i1', characterId: 'char-u2', overrideCap: true },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+});
+
 describe('guards — every action has an entry', () => {
   it('the map exposes one guard per Action type', () => {
     const expected: ReadonlyArray<Action['type']> = [
@@ -1139,6 +1574,7 @@ describe('guards — every action has an entry', () => {
       'join-party',
       'appoint-banker',
       'revoke-banker',
+      'dm-transfer',
       'split-evenly',
     ];
     for (const t of expected) {

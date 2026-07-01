@@ -61,6 +61,8 @@ export type GuardRejectionCode =
   | 'dm_only'
   | 'banker_membership_forbidden'
   | 'banker_required_for_claim'
+  | 'dm_transfer_self'
+  | 'dm_transfer_target_not_member'
   // domain
   | 'item_not_found'
   | 'stash_not_found'

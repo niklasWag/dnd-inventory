@@ -541,6 +541,10 @@ const attuneEntry = z.object({
   payload: z.object({
     itemInstanceId: z.string().min(1),
     characterId: z.string().min(1),
+    // R4.3.d — preserved on the log entry for audit trail per OUTLINE
+    // §3.8 "cap-override still logs". Optional; absent for normal
+    // attune, `true` for DM cap-override.
+    overrideCap: z.boolean().optional(),
   }),
 });
 
@@ -818,22 +822,46 @@ const appointBankerEntry = z.object({
 });
 
 /**
- * `revoke-banker` — R4.2.a. Clears `Party.bankerUserId`. Reasons:
+ * `revoke-banker` — R4.2.a / R4.3.a. Clears `Party.bankerUserId`.
+ * Reasons:
  *   - `'manual'` — DM revoked explicitly via Party Settings.
  *   - `'reassigned'` — reserved (future combined revoke+appoint UX).
  *   - `'left-party'` — synthesized by `leave-party` reducer arm.
  *   - `'kicked'`     — synthesized by `kick-player` reducer arm.
+ *   - `'dm-transfer'` — synthesized by `dm-transfer` reducer arm when
+ *     the incoming DM is the current Banker (§4 invariant preserves
+ *     `bankerUserId !== ownerUserId`). Added in R4.3.a.
  *
  * `actorRole` on synthesized entries inherits from the parent
- * `leave-party` / `kick-player` dispatch (`'player'` / `'dm'`).
- * `'dm-transfer'` reason is reserved for R4.3 and intentionally
- * absent here so it can't be emitted prematurely.
+ * `leave-party` / `kick-player` / `dm-transfer` dispatch.
  */
 const revokeBankerEntry = z.object({
   ...baseLogFields,
   type: z.literal('revoke-banker'),
   payload: z.object({
-    reason: z.enum(['manual', 'reassigned', 'left-party', 'kicked']),
+    reason: z.enum(['manual', 'reassigned', 'left-party', 'kicked', 'dm-transfer']),
+  }),
+});
+
+/**
+ * `dm-transfer` — R4.3.a. Terminal log entry emitted by the `dm-transfer`
+ * reducer arm. Records both old and new DM ids so the audit trail is
+ * self-contained (readers don't need to reconstruct old-DM state from
+ * prior log entries).
+ *
+ * `actorRole` is always `'dm'` — the outgoing DM is the only role
+ * allowed to dispatch this action; reducer rejects otherwise with
+ * `dm_only`. If the incoming DM was the current Banker, a synthetic
+ * `revoke-banker` entry with `reason: 'dm-transfer'` is emitted BEFORE
+ * this terminal entry (matches the leave-party / kick-player cascade
+ * ordering: revoke → terminal).
+ */
+const dmTransferEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('dm-transfer'),
+  payload: z.object({
+    oldDmUserId: z.string().min(1),
+    newDmUserId: z.string().min(1),
   }),
 });
 
@@ -896,6 +924,7 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   joinPartyEntry,
   appointBankerEntry,
   revokeBankerEntry,
+  dmTransferEntry,
   splitEvenlyEntry,
 ]);
 

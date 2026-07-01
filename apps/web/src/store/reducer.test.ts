@@ -3627,6 +3627,116 @@ describe('reducer: attune / unattune (R1.2)', () => {
   });
 });
 
+// -------------------------------------------------------------------- //
+// R4.3.d — attune cap-override (DM force-attune bypassing slot cap)
+// -------------------------------------------------------------------- //
+//
+// OUTLINE §3.8: "DM can attune with explicit confirm bypassing the cap;
+// cap-override still logs." Payload gains an optional `overrideCap`
+// boolean. When true, the reducer's slot-cap check is skipped. Guard
+// (packages/shared/src/guards/map.ts) rejects non-DM actors setting
+// `overrideCap: true`. In MVP-solo (party-of-one) the solo bypass in
+// checkGuard means the sole user (DM+player) can always set the flag.
+
+describe('reducer: attune cap-override (R4.3.d)', () => {
+  function bootstrapWithAttunables(count: number): {
+    characterId: string;
+    ids: string[];
+  } {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    for (let i = 0; i < count; i += 1) {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: magic.id,
+          quantity: 1,
+          source: 'catalog-add',
+          notes: `slot-${i}`,
+        },
+      });
+    }
+    const ids: string[] = [];
+    for (const it of useStore.getState().appState!.items) {
+      if (it.ownerId === inventoryStashId) ids.push(it.id);
+    }
+    return { characterId, ids };
+  }
+
+  it('attune with overrideCap: true bypasses the slot cap', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    // Fill 3 slots normally.
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    // 4th normally would fail (default cap 3).
+    // With overrideCap: true, it succeeds.
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[3]!, overrideCap: true },
+    });
+    expect(useStore.getState().appState!.items.find((i) => i.id === ids[3])!.attuned).toBe(true);
+  });
+
+  it('attune without overrideCap still respects the slot cap', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    // Without overrideCap, still rejects.
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[3]! },
+      }),
+    ).toThrow(/no free attunement slot/);
+  });
+
+  it('attune with overrideCap: false still respects the slot cap', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    // overrideCap: false is equivalent to the field being absent.
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[3]!, overrideCap: false },
+      }),
+    ).toThrow(/no free attunement slot/);
+  });
+
+  it('overrideCap: true is preserved on the log entry (audit trail)', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[3]!, overrideCap: true },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('attune');
+    if (last.type !== 'attune') throw new Error('expected attune');
+    expect(last.payload.overrideCap).toBe(true);
+    // Schema round-trip.
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+});
+
 describe('reducer: attune magic-item gate (R2.1)', () => {
   /**
    * R2.1 — `attune` rejects mundane rows (`def.requiresAttunement !== true`).
@@ -7405,6 +7515,374 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
     const last = log[log.length - 1]!;
     expect(last.type).toBe('currency-change');
     expect(last.actorRole).toBe('banker');
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.3.a: dm-transfer (DM role transfer + Banker auto-clear cascade)
+// -------------------------------------------------------------------- //
+//
+// OUTLINE §3.14 + §8.3 rules exercised here:
+//   - Only an active DM may dispatch. Non-DM actor → dm_only.
+//   - Self-transfer is rejected (dm_transfer_self).
+//   - Target must be an active player in this party.
+//   - Atomic swap: outgoing DM's dm row soft-deletes; incoming DM's dm
+//     row upserts to active; outgoing DM's player row is auto-minted
+//     if missing (DM-only outgoing DM case).
+//   - `Party.ownerUserId` updates to newDmUserId.
+//   - If incoming DM is the current Banker → clear + emit synthetic
+//     `revoke-banker { reason: 'dm-transfer' }` BEFORE the terminal
+//     `dm-transfer` slice. Preserves §4 invariant
+//     `bankerUserId !== ownerUserId`.
+
+describe('reducer: dm-transfer (R4.3.a)', () => {
+  /**
+   * Bootstrap + graft `player-b` as an active player. Mirrors the
+   * appoint-banker fixture — the outgoing DM (actor) keeps a player
+   * row from the bootstrap; the incoming DM (`player-b`) has only a
+   * player row. This is the common case.
+   */
+  function bootstrapWithSecondPlayer(): { dmUserId: string; otherPlayerUserId: string } {
+    localBootstrap();
+    const dmUserId = useStore.getState().appState!.user.id;
+    const otherPlayerUserId = 'player-b';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherPlayerUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    return { dmUserId, otherPlayerUserId };
+  }
+
+  it('DM can transfer the DM role to another active player', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+    const partyId = useStore.getState().appState!.party.id;
+
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+
+    // Party ownership swapped.
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+
+    // Outgoing DM's dm row soft-deleted.
+    const oldDmRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'dm' && m.partyId === partyId,
+    )!;
+    expect(oldDmRow).toBeDefined();
+    expect(oldDmRow.leftAt).not.toBeNull();
+
+    // Outgoing DM's player row still active.
+    const oldDmPlayerRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'player' && m.partyId === partyId,
+    )!;
+    expect(oldDmPlayerRow).toBeDefined();
+    expect(oldDmPlayerRow.leftAt).toBeNull();
+
+    // Incoming DM's dm row active.
+    const newDmRow = s.memberships.find(
+      (m) => m.userId === otherPlayerUserId && m.role === 'dm' && m.partyId === partyId,
+    )!;
+    expect(newDmRow).toBeDefined();
+    expect(newDmRow.leftAt).toBeNull();
+
+    // Incoming DM's player row still active.
+    const newDmPlayerRow = s.memberships.find(
+      (m) => m.userId === otherPlayerUserId && m.role === 'player' && m.partyId === partyId,
+    )!;
+    expect(newDmPlayerRow).toBeDefined();
+    expect(newDmPlayerRow.leftAt).toBeNull();
+
+    // Terminal log entry.
+    const entries = useStore.getState().log;
+    const last = entries[entries.length - 1]!;
+    expect(last.type).toBe('dm-transfer');
+    expect(last.actorRole).toBe('dm');
+    if (last.type !== 'dm-transfer') throw new Error('expected dm-transfer');
+    expect(last.payload.oldDmUserId).toBe(dmUserId);
+    expect(last.payload.newDmUserId).toBe(otherPlayerUserId);
+  });
+
+  it('rejects when actor is a player (only DM may transfer)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    // Demote actor to player only by removing their dm row.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === s.appState!.user.id && m.role === 'dm'),
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } }),
+    ).toThrow(/dm_only|active DM/i);
+  });
+
+  it('rejects when DM tries to transfer to themselves', () => {
+    bootstrapWithSecondPlayer();
+    const dmUserId = useStore.getState().appState!.user.id;
+    expect(() =>
+      useStore.getState().dispatch({ type: 'dm-transfer', payload: { newDmUserId: dmUserId } }),
+    ).toThrow(/dm_transfer_self|self/i);
+  });
+
+  it('rejects when target lacks an active player membership', () => {
+    bootstrapWithSecondPlayer();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'dm-transfer', payload: { newDmUserId: 'stranger-not-in-party' } }),
+    ).toThrow(/dm_transfer_target_not_member|active player/i);
+  });
+
+  it('auto-clears Banker and emits revoke-banker { reason: "dm-transfer" } when new DM is current Banker', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Appoint player-b as Banker first.
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+
+    // Log length BEFORE dm-transfer.
+    const logBefore = useStore.getState().log.length;
+
+    // Transfer DM to the current Banker.
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+
+    // Banker auto-cleared (§4 invariant: bankerUserId !== ownerUserId).
+    expect(s.party.bankerUserId).toBeNull();
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+
+    // Log slices in order: revoke-banker (dm-transfer), then dm-transfer.
+    const emitted = useStore.getState().log.slice(logBefore);
+    const types = emitted.map((e) => e.type);
+    expect(types).toContain('revoke-banker');
+    expect(types).toContain('dm-transfer');
+    // revoke-banker comes BEFORE the terminal dm-transfer slice.
+    expect(types.indexOf('revoke-banker')).toBeLessThan(types.indexOf('dm-transfer'));
+
+    const revoke = emitted.find((e) => e.type === 'revoke-banker')!;
+    if (revoke.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(revoke.payload.reason).toBe('dm-transfer');
+    // actorRole on the synthetic slice inherits from the dm-transfer
+    // dispatch — actor is the outgoing DM.
+    expect(revoke.actorRole).toBe('dm');
+    expect(revoke.actorUserId).toBe(dmUserId);
+  });
+
+  it('does NOT emit revoke-banker when new DM is not the Banker', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Graft a third player and appoint them Banker, so transferring
+    // DM to player-b (who is NOT the Banker) leaves the Banker in role.
+    const bankerUserId = 'player-c';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: bankerUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    useStore.getState().dispatch({ type: 'appoint-banker', payload: { bankerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(bankerUserId);
+
+    const logBefore = useStore.getState().log.length;
+
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+    // Banker stays; ownerUserId still != bankerUserId so §4 invariant holds.
+    expect(s.party.bankerUserId).toBe(bankerUserId);
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+
+    const emitted = useStore.getState().log.slice(logBefore);
+    expect(emitted.some((e) => e.type === 'revoke-banker')).toBe(false);
+    expect(emitted[emitted.length - 1]!.type).toBe('dm-transfer');
+  });
+
+  it('auto-mints a player row for a DM-only outgoing DM', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+    const partyId = useStore.getState().appState!.party.id;
+
+    // Simulate a DM-only outgoing DM: drop the bootstrap-minted player
+    // row for the DM (leaves them with only the dm row).
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === dmUserId && m.role === 'player'),
+          ),
+        },
+      };
+    });
+
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+
+    // Outgoing DM now has an active player row (auto-minted with
+    // characterId: null).
+    const oldDmPlayerRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'player' && m.partyId === partyId,
+    )!;
+    expect(oldDmPlayerRow).toBeDefined();
+    expect(oldDmPlayerRow.leftAt).toBeNull();
+    expect(oldDmPlayerRow.characterId).toBeNull();
+
+    // Outgoing DM's dm row soft-deleted.
+    const oldDmDmRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'dm' && m.partyId === partyId,
+    )!;
+    expect(oldDmDmRow.leftAt).not.toBeNull();
+  });
+
+  it('reactivates a historical soft-deleted dm row for the incoming DM (BUG-002 lesson)', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Simulate a historical dm row for the incoming DM (previously DM,
+    // was transferred out, soft-deleted). BUG-002 lesson: composite
+    // PK (userId, partyId, role) means we must upsert, not create.
+    const historicalLeftAt = new Date(Date.now() - 60_000).toISOString();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherPlayerUserId,
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: historicalLeftAt,
+              leftAt: historicalLeftAt,
+            },
+          ],
+        },
+      };
+    });
+
+    // Transfer should not throw (would P2002 without upsert semantics).
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } }),
+    ).not.toThrow();
+
+    const s = useStore.getState().appState!;
+
+    // Incoming DM has EXACTLY ONE `role='dm'` row and it is active.
+    const dmRows = s.memberships.filter((m) => m.userId === otherPlayerUserId && m.role === 'dm');
+    expect(dmRows.length).toBe(1);
+    expect(dmRows[0]!.leftAt).toBeNull();
+
+    // Outgoing DM's row is soft-deleted (unchanged expectation).
+    const oldDmRow = s.memberships.find((m) => m.userId === dmUserId && m.role === 'dm')!;
+    expect(oldDmRow.leftAt).not.toBeNull();
+  });
+
+  it('preserves the §4 invariant bankerUserId !== ownerUserId after any transfer', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Banker is the incoming DM → cleared (§4 invariant enforced).
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+    const s = useStore.getState().appState!;
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+    expect(s.party.bankerUserId).toBeNull();
+    // Post-transfer: either bankerUserId is null or differs from ownerUserId.
+    if (s.party.bankerUserId !== null) {
+      expect(s.party.bankerUserId).not.toBe(s.party.ownerUserId);
+    }
+  });
+
+  it('appends the schema-validated dm-transfer entry to the log', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const last = useStore.getState().log.slice(-1)[0]!;
+    // Zod round-trip. If the schema and reducer disagree, this throws.
+    const parsed = transactionLogEntrySchema.parse(last);
+    expect(parsed.type).toBe('dm-transfer');
+    if (parsed.type !== 'dm-transfer') throw new Error('expected dm-transfer');
+    expect(parsed.payload.oldDmUserId).toBe(dmUserId);
+    expect(parsed.payload.newDmUserId).toBe(otherPlayerUserId);
+  });
+
+  it('accepts a revoke-banker log entry with reason: "dm-transfer" (schema round-trip)', () => {
+    // Direct schema round-trip — the widened enum must accept the new
+    // reason value. If R4.3.b later needs the wire-level round-trip
+    // (POST /sync/actions), that test lives in the server workspace.
+    const entry = {
+      id: 'log-1',
+      partyId: 'party-1',
+      sessionId: null,
+      timestamp: new Date().toISOString(),
+      actorUserId: 'user-1',
+      actorRole: 'dm' as const,
+      type: 'revoke-banker' as const,
+      payload: { reason: 'dm-transfer' as const },
+    };
+    const parsed = transactionLogEntrySchema.parse(entry);
+    if (parsed.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(parsed.payload.reason).toBe('dm-transfer');
   });
 });
 

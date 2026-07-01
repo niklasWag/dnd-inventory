@@ -223,4 +223,60 @@ describe('queue — 422 rollback restores PRE-mutation snapshot (BUG-003)', () =
     expect(current.log).toEqual([{ marker: 'PRE' }]);
     queue.resetQueue();
   });
+
+  // ---------------------------------------------------------------- //
+  // R4.3.b — new rejection codes from R4.3.a's dm-transfer reducer
+  // (`dm_transfer_self`, `dm_transfer_target_not_member`). BUG-003
+  // lesson: every new rejection code needs a matching optimistic-
+  // rollback assertion so future regressions can't recur in a new
+  // slice. One representative case covers the code path since the
+  // rollback behavior is code-agnostic.
+  // ---------------------------------------------------------------- //
+
+  it('R4.3.a — rolls back on dm_transfer_target_not_member (BUG-003 lesson)', async () => {
+    const queue = await loadQueue();
+    const preSnapshot: FakeSnapshot = {
+      appState: { party: { id: 'party-1' } },
+      log: [{ marker: 'PRE_DM_TRANSFER' }],
+    };
+    const postSnapshot: FakeSnapshot = {
+      appState: { party: { id: 'party-1' } },
+      log: [{ marker: 'POST_DM_TRANSFER' }],
+    };
+    let current: FakeSnapshot = preSnapshot;
+
+    queue.configureQueue({
+      getSnapshot: () => current as unknown as ReturnType<QueueDeps['getSnapshot']>,
+      restoreSnapshot: (s) => {
+        const cast = s as unknown as FakeSnapshot;
+        current = cast;
+      },
+      getActivePartyId: () => Promise.resolve('party-1'),
+    });
+
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json(
+          {
+            rejected: {
+              index: 0,
+              code: 'dm_transfer_target_not_member',
+              message: 'Target user lacks an active player membership in this party.',
+            },
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    queue.captureRollbackSnapshot();
+    current = postSnapshot;
+    queue.enqueue({ type: 'dm-transfer' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    await queue.flush();
+
+    // Rollback restored the PRE snapshot (dm-transfer optimistic
+    // mutation was undone once the server rejected).
+    expect(current.log).toEqual([{ marker: 'PRE_DM_TRANSFER' }]);
+    queue.resetQueue();
+  });
 });

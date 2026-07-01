@@ -71,7 +71,13 @@ function isCharacterInventoryStash(state: AppState, stashId: string, characterId
  * must equal the character's `ownerUserId`. */
 function ownsCharacter(state: AppState, actor: Actor, characterId: string): boolean {
   const ch = state.characters.find((c) => c.id === characterId);
-  return ch !== undefined && ch.ownerUserId === actor.userId;
+  if (ch === undefined) return false;
+  // R4.3.d — DM can act on any character in their party per OUTLINE §8.1
+  // ("Edit any character equip/attune/use-charge/recharge/name via
+  // explicit action"). Enforced through the character's partyId; the
+  // solo bypass in checkGuard covers the party-of-one case.
+  if (actor.role === 'dm' && ch.partyId === actor.partyId) return true;
+  return ch.ownerUserId === actor.userId;
 }
 
 /** True iff the actor owns the stash (directly via stash's character
@@ -81,6 +87,17 @@ function ownsOrShares(state: AppState, actor: Actor, stashId: string): boolean {
   const stash = state.stashes.find((s) => s.id === stashId);
   if (stash === undefined) return false;
   if (stash.scope === 'character') {
+    // R4.3.c — DM can access any character stash in their party per
+    // OUTLINE §8.1 "Edit other players' inventory via explicit action".
+    // Verified through the character's partyId (not the stash's, since
+    // character stashes have partyId: null — party membership lives on
+    // the character row).
+    if (actor.role === 'dm' && stash.ownerCharacterId !== null) {
+      const character = state.characters.find((c) => c.id === stash.ownerCharacterId);
+      if (character !== undefined && character.partyId === actor.partyId) {
+        return true;
+      }
+    }
     return stash.ownerCharacterId !== null && ownsCharacter(state, actor, stash.ownerCharacterId);
   }
   // party / recovered-loot — any active member of the party can access
@@ -554,6 +571,15 @@ const unequipGuard: Guard<Extract<Action, { type: 'unequip' }>> = (state, payloa
 const attuneGuard: Guard<Extract<Action, { type: 'attune' }>> = (state, payload, actor) => {
   if (state === null)
     return { ok: false, code: 'state_not_initialized', message: 'attune: no state.' };
+  // R4.3.d — cap-override is DM-only per OUTLINE §3.8. Bankers stay
+  // bound by the cap; DM must explicitly opt in via `overrideCap: true`.
+  if (payload.overrideCap === true && actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'attune cap-override is a DM-only action.',
+    };
+  }
   if (!ownsCharacter(state, actor, payload.characterId)) {
     return {
       ok: false,
@@ -918,6 +944,54 @@ const revokeBankerGuard: Guard<Extract<Action, { type: 'revoke-banker' }>> = (
 };
 
 /**
+ * R4.3.a — `dm-transfer`. DM-only. Full server-authoritative guard
+ * lands in R4.3.b (with dedicated tests + integration coverage); this
+ * R4.3.a placeholder mirrors the reducer's three rejection cases so
+ * the type-level exhaustiveness of the guards map is satisfied and
+ * dispatches from the web client are gated identically on both sides
+ * of the wire (defense-in-depth per SECURITY §2).
+ *
+ * Rejects when:
+ *   - actor.role !== 'dm' (`dm_only`).
+ *   - actor.userId === newDmUserId (`dm_transfer_self`).
+ *   - newDmUserId lacks an active `role='player'` membership in this
+ *     party (`dm_transfer_target_not_member`).
+ */
+const dmTransferGuard: Guard<Extract<Action, { type: 'dm-transfer' }>> = (
+  state,
+  payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'dm-transfer: no state.' };
+  if (actor.role !== 'dm') {
+    return { ok: false, code: 'dm_only', message: 'Only the DM can transfer the DM role.' };
+  }
+  if (payload.newDmUserId === actor.userId) {
+    return {
+      ok: false,
+      code: 'dm_transfer_self',
+      message: 'The DM cannot transfer the DM role to themselves.',
+    };
+  }
+  const targetIsActivePlayer = state.memberships.some(
+    (m) =>
+      m.userId === payload.newDmUserId &&
+      m.partyId === actor.partyId &&
+      m.role === 'player' &&
+      m.leftAt === null,
+  );
+  if (!targetIsActivePlayer) {
+    return {
+      ok: false,
+      code: 'dm_transfer_target_not_member',
+      message: 'Target user lacks an active player membership in this party.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
  * R4.2.d — `split-evenly`. Banker-only. Splits `fromStashId`'s currency
  * across the supplied `recipientCharacterIds`. Guards:
  *   - actor.role must be 'banker' (rejected otherwise with the same
@@ -1008,6 +1082,7 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'join-party': joinPartyGuard,
   'appoint-banker': appointBankerGuard,
   'revoke-banker': revokeBankerGuard,
+  'dm-transfer': dmTransferGuard,
   'split-evenly': splitEvenlyGuard,
 };
 

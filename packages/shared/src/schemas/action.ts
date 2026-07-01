@@ -287,6 +287,11 @@ const attuneAction = z.object({
   payload: z.object({
     itemInstanceId: z.string().min(1),
     characterId: z.string().min(1),
+    // R4.3.d — DM cap-override per OUTLINE §3.8. When true, the reducer
+    // skips the maxAttunement slot-cap check. Guard (`attuneGuard`)
+    // rejects non-DM actors setting this flag. Absent / false = normal
+    // cap enforcement.
+    overrideCap: z.boolean().optional(),
   }),
 });
 
@@ -433,7 +438,8 @@ const appointBankerAction = z.object({
 });
 
 /**
- * R4.2.a — `revoke-banker`. Clears `Party.bankerUserId`. Reasons:
+ * R4.2.a / R4.3.a — `revoke-banker`. Clears `Party.bankerUserId`.
+ * Reasons:
  *   - `'manual'` — DM explicitly revokes.
  *   - `'reassigned'` — reserved for a future "reassign Banker" CTA
  *     that combines revoke + appoint in two clicks. R4.2.a only
@@ -442,14 +448,40 @@ const appointBankerAction = z.object({
  *     when the leaver was the Banker.
  *   - `'kicked'` — synthesized by `kick-player` when the kicked user
  *     was the Banker.
+ *   - `'dm-transfer'` — synthesized by the `dm-transfer` reducer arm
+ *     when the incoming DM is the current Banker (§4 invariant:
+ *     `bankerUserId !== ownerUserId`). Added in R4.3.a.
  *
- * `'dm-transfer'` is reserved for R4.3 and intentionally NOT in this
- * enum yet (would tempt premature emission from the wrong cascade).
+ * Only `'manual'` and `'reassigned'` reach this action via the
+ * `POST /sync/actions` route; the other three are synthesized by
+ * cascade reducer arms and never round-trip through dispatch.
  */
 const revokeBankerAction = z.object({
   type: z.literal('revoke-banker'),
   payload: z.object({
-    reason: z.enum(['manual', 'reassigned', 'left-party', 'kicked']),
+    reason: z.enum(['manual', 'reassigned', 'left-party', 'kicked', 'dm-transfer']),
+  }),
+});
+
+/**
+ * R4.3.a — `dm-transfer`. DM hands the DM role to another active
+ * player in the party per OUTLINE §3.14 + §8.3. Atomic swap:
+ *   - Outgoing DM's `role='dm'` row → soft-deleted (`leftAt: now`).
+ *   - Outgoing DM's `role='player'` row → left active; if none exists
+ *     (DM-only outgoing DM) it is auto-minted with `characterId: null`.
+ *   - Incoming DM's `role='dm'` row → upsert to active (reactivates a
+ *     historical soft-deleted row per BUG-002 lesson, or creates fresh).
+ *   - `Party.ownerUserId` → newDmUserId.
+ *   - If `Party.bankerUserId === newDmUserId` → cleared + synthetic
+ *     `revoke-banker` slice with `reason: 'dm-transfer'`.
+ *
+ * Wire payload carries only `newDmUserId`; `partyId` comes from the
+ * URL/session per SECURITY §2.
+ */
+const dmTransferAction = z.object({
+  type: z.literal('dm-transfer'),
+  payload: z.object({
+    newDmUserId: z.string().min(1),
   }),
 });
 
@@ -510,6 +542,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   joinPartyAction,
   appointBankerAction,
   revokeBankerAction,
+  dmTransferAction,
   splitEvenlyAction,
 ]);
 

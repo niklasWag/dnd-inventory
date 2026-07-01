@@ -128,6 +128,8 @@ export async function applyDelta(
       return persistAppointBanker(tx, action.payload, actor);
     case 'revoke-banker':
       return persistRevokeBanker(tx, actor);
+    case 'dm-transfer':
+      return persistDmTransfer(tx, action.payload, actor, ctx);
     case 'split-evenly':
       return persistSplitEvenly(tx, action.payload, ctx);
   }
@@ -1181,6 +1183,135 @@ async function persistRevokeBanker(
   await tx.party.update({
     where: { id: actor.partyId },
     data: { bankerUserId: null },
+  });
+}
+
+/**
+ * R4.3.a — `dm-transfer`. DM hands the DM role to another active player
+ * per OUTLINE §3.14 + §8.3. Guard layer (`dmTransferGuard`) already
+ * vetted DM-only actor, no-self-transfer, target-is-active-player.
+ *
+ * Steps (in order):
+ *   1. Soft-delete outgoing DM's active `role='dm'` row.
+ *   2. Upsert incoming DM's `role='dm'` row per BUG-002 lesson:
+ *      composite PK `(userId, partyId, role)` + soft-delete means a
+ *      previous DM's row may already exist. `create` would collide
+ *      with P2002; `upsert` reactivates in place.
+ *   3. Auto-mint outgoing DM's `role='player'` row if missing
+ *      (DM-only outgoing DM case per OUTLINE §3.14 amendment).
+ *      Uses `upsert` for the same BUG-002 reason — the outgoing DM
+ *      may have a soft-deleted `role='player'` row from a historical
+ *      leave+rejoin.
+ *   4. Update `Party.ownerUserId` and conditionally clear
+ *      `Party.bankerUserId` when the incoming DM was the Banker
+ *      (§4 invariant `bankerUserId != ownerUserId`).
+ */
+async function persistDmTransfer(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'dm-transfer' }>['payload'],
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  const partyId = actor.partyId;
+  const oldDmUserId = actor.userId;
+  const newDmUserId = payload.newDmUserId;
+  const now = new Date(ctx.now());
+
+  // Step 1: soft-delete outgoing DM's dm row.
+  await tx.partyMembership.update({
+    where: {
+      userId_partyId_role: {
+        userId: oldDmUserId,
+        partyId,
+        role: 'dm',
+      },
+    },
+    data: { leftAt: now },
+  });
+
+  // Step 2: upsert incoming DM's dm row (BUG-002: composite PK +
+  // soft-delete requires upsert, never create).
+  await tx.partyMembership.upsert({
+    where: {
+      userId_partyId_role: {
+        userId: newDmUserId,
+        partyId,
+        role: 'dm',
+      },
+    },
+    create: {
+      userId: newDmUserId,
+      partyId,
+      role: 'dm',
+      characterId: null,
+      joinedAt: now,
+      leftAt: null,
+    },
+    update: {
+      leftAt: null,
+      joinedAt: now,
+      characterId: null,
+    },
+  });
+
+  // Step 3: auto-mint outgoing DM's player row if it doesn't exist
+  // as active (DM-only outgoing DM case). Upsert again for BUG-002
+  // shape — a historical soft-deleted player row (e.g., left + rejoined
+  // before this transfer) must be reactivated in place, not re-created.
+  // In the common case (party-creator with both dm+player rows), this
+  // is a no-op because the row is already active and the update sets
+  // `leftAt: null` (already null) and `joinedAt: now` (bumps the
+  // current-tenure timestamp; matches reducer semantics).
+  const existingPlayerRow = await tx.partyMembership.findUnique({
+    where: {
+      userId_partyId_role: {
+        userId: oldDmUserId,
+        partyId,
+        role: 'player',
+      },
+    },
+  });
+  if (existingPlayerRow === null) {
+    // No historical row — plain create is safe (composite PK is unique).
+    await tx.partyMembership.create({
+      data: {
+        userId: oldDmUserId,
+        partyId,
+        role: 'player',
+        characterId: null,
+        joinedAt: now,
+        leftAt: null,
+      },
+    });
+  } else if (existingPlayerRow.leftAt !== null) {
+    // Reactivate soft-deleted historical row (BUG-002 upsert shape).
+    await tx.partyMembership.update({
+      where: {
+        userId_partyId_role: {
+          userId: oldDmUserId,
+          partyId,
+          role: 'player',
+        },
+      },
+      data: { leftAt: null, joinedAt: now, characterId: null },
+    });
+  }
+  // else: row is active — leave in place. The bootstrap party-creator
+  // case falls here (both dm + player rows minted at bootstrap; player
+  // row is untouched by this transfer).
+
+  // Step 4: swap party ownership + conditional Banker auto-clear.
+  const party = await tx.party.findUniqueOrThrow({
+    where: { id: partyId },
+    select: { bankerUserId: true },
+  });
+  const bankerCascade = party.bankerUserId === newDmUserId;
+  await tx.party.update({
+    where: { id: partyId },
+    data: {
+      ownerUserId: newDmUserId,
+      ...(bankerCascade ? { bankerUserId: null } : {}),
+    },
   });
 }
 

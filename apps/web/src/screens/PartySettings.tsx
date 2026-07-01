@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import { Copy, RefreshCw, UserMinus, LogOut, Coins } from 'lucide-react';
+import { Copy, RefreshCw, UserMinus, LogOut, Coins, Crown, ArrowLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -68,6 +68,7 @@ export function PartySettings(): ReactElement {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmKick, setConfirmKick] = useState<PartyMemberItem | null>(null);
+  const [confirmTransferDm, setConfirmTransferDm] = useState<PartyMemberItem | null>(null);
   const [createCharacterOpen, setCreateCharacterOpen] = useState(false);
 
   // Load members + invite code on mount (server mode only).
@@ -225,9 +226,48 @@ export function PartySettings(): ReactElement {
     }
   }
 
+  /**
+   * R4.3.e — transfer the DM role to another active player. Dispatches
+   * `dm-transfer`; the reducer (R4.3.a) enforces §3.14 invariants
+   * (DM-only, target is active player, no self-transfer) + swaps
+   * memberships + auto-clears Banker if the incoming DM was the Banker.
+   * Errors surface as toasts. On success, refresh the local members
+   * list from the server so the DM/player badges reflect the swap.
+   */
+  async function handleTransferDm(target: PartyMemberItem): Promise<void> {
+    if (partyId === null) return;
+    setBusy(`transfer-dm-${target.userId}`);
+    try {
+      useStore.getState().dispatch({
+        type: 'dm-transfer',
+        payload: { newDmUserId: target.userId },
+      });
+      // Refresh the member list from the server so role badges + DM
+      // affordances update after the swap. In local-mode the store's
+      // reactive read is enough; in server-mode we re-fetch to align
+      // with the authoritative list.
+      if (isServerMode) {
+        try {
+          const res = await listPartyMembers(partyId);
+          setMembers(res.members);
+        } catch {
+          // Non-fatal; user can refresh manually. The dispatch already
+          // succeeded server-side (or the sync queue will retry).
+        }
+      }
+      toast.success(`DM role transferred to ${target.displayName}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not transfer DM role.');
+    } finally {
+      setBusy(null);
+      setConfirmTransferDm(null);
+    }
+  }
+
   if (loadError !== null) {
     return (
-      <div className="mx-auto max-w-3xl py-10">
+      <div className="mx-auto max-w-3xl space-y-4 py-10">
+        <BackButton onBack={() => void navigate(-1)} />
         <p className="text-sm text-destructive">{loadError}</p>
       </div>
     );
@@ -272,6 +312,7 @@ export function PartySettings(): ReactElement {
 
   return (
     <div className="mx-auto max-w-3xl space-y-8 py-10">
+      <BackButton onBack={() => void navigate(-1)} />
       <header>
         <h1 className="text-3xl font-bold tracking-tight">Party settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -359,6 +400,14 @@ export function PartySettings(): ReactElement {
                   iAmDm && !isSolo && !isMe && m.role === 'player' && bankerUserId === null;
                 const canBeRevoked = iAmDm && !isSolo && !isMe && isThisRowBanker;
                 const bankerBusy = busy?.startsWith('banker-') === true;
+                // R4.3.e — Transfer DM CTA. DM-only, target is an
+                // active non-DM player (§3.14 + §8.3). One row per
+                // (userId, role); the target's player row is where
+                // the button lives (transferring hands over the dm
+                // role while leaving the player row untouched).
+                const canBeTransferredTo =
+                  iAmDm && !isSolo && !isMe && m.role === 'player';
+                const transferDmBusy = busy === `transfer-dm-${m.userId}`;
                 return (
                   <li
                     key={`${m.userId}-${m.role}`}
@@ -371,10 +420,15 @@ export function PartySettings(): ReactElement {
                         <RoleBadge role="banker" />
                       ) : null}
                       {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
-                      {m.characterName !== null ? (
-                        <span className="text-xs text-muted-foreground">
+                      {m.characterName !== null && m.characterId !== null ? (
+                        <button
+                          type="button"
+                          onClick={() => void navigate(`/character/${m.characterId!}`)}
+                          className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:underline"
+                          aria-label={`Open ${m.characterName}'s character sheet`}
+                        >
                           — {m.characterName}
-                        </span>
+                        </button>
                       ) : null}
                     </div>
                     <div className="flex items-center gap-2">
@@ -398,6 +452,17 @@ export function PartySettings(): ReactElement {
                         >
                           <Coins className="mr-1 h-4 w-4" />
                           Revoke Banker
+                        </Button>
+                      ) : null}
+                      {canBeTransferredTo ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={transferDmBusy || busy !== null}
+                          onClick={() => setConfirmTransferDm(m)}
+                        >
+                          <Crown className="mr-1 h-4 w-4" />
+                          Transfer DM
                         </Button>
                       ) : null}
                       {isKickable ? (
@@ -539,6 +604,60 @@ export function PartySettings(): ReactElement {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={confirmTransferDm !== null}
+        onOpenChange={(o) => !o && setConfirmTransferDm(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Transfer DM to {confirmTransferDm !== null ? confirmTransferDm.displayName : ''}?
+            </DialogTitle>
+            <DialogDescription>
+              You will become a regular player. {confirmTransferDm !== null ? confirmTransferDm.displayName : 'They'} will take
+              over DM responsibilities. If they are the current Banker, the Banker role will be
+              cleared automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmTransferDm(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={busy?.startsWith('transfer-dm-')}
+              onClick={() => {
+                if (confirmTransferDm !== null) void handleTransferDm(confirmTransferDm);
+              }}
+            >
+              Yes, transfer DM
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+/**
+ * R4.3.e.1 — small helper for the Back button at the top of the
+ * Party Settings screen. Mirrors the ItemDetail / StorageDetail
+ * pattern (ghost button + ArrowLeft + short label). Uses
+ * `navigate(-1)` for browser-back semantics so the user returns to
+ * whichever screen linked them here (Hub / character sheet / etc.),
+ * matching the M2.5 UX principle: detail routes own their own Back;
+ * `RootLayout` stays minimal.
+ */
+function BackButton({ onBack }: { onBack: () => void }): ReactElement {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onBack}
+      className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      Back
+    </Button>
   );
 }

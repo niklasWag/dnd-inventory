@@ -1520,3 +1520,297 @@ describe('R4.2.d — split-evenly on /sync/actions', () => {
     }
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.3.a — dm-transfer via /sync/actions
+// -------------------------------------------------------------------- //
+
+describe('R4.3.a — dm-transfer on /sync/actions', () => {
+  /**
+   * Setup: bootstrap party as user A (DM), user B joins as player.
+   * `dm-transfer` is dispatched via /sync/actions (same route pattern
+   * as appoint-banker / revoke-banker per R4.2.a precedent).
+   */
+  async function setupTwoMemberParty(app: Awaited<ReturnType<typeof buildServer>>): Promise<{
+    partyId: string;
+    userA: { userId: string; cookie: string };
+    userB: { userId: string; cookie: string };
+  }> {
+    const userA = await seedUser({ displayName: 'A' });
+    const tokenA = await seedSession(userA.userId);
+    const cookieA = cookieHeader(env, tokenA);
+    const { partyId, inviteCode } = await bootstrapParty(app, cookieA);
+
+    const userB = await seedUser({ displayName: 'B' });
+    const tokenB = await seedSession(userB.userId);
+    const cookieB = cookieHeader(env, tokenB);
+    const joinRes = await app.inject({
+      method: 'POST',
+      url: '/parties/join',
+      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      payload: { inviteCode },
+    });
+    expect(joinRes.statusCode).toBe(200);
+
+    return {
+      partyId,
+      userA: { userId: userA.userId, cookie: cookieA },
+      userB: { userId: userB.userId, cookie: cookieB },
+    };
+  }
+
+  it('DM can transfer the DM role to another active player (Party.ownerUserId + memberships persisted)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA, userB } = await setupTwoMemberParty(app);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'dm-transfer', payload: { newDmUserId: userB.userId } }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+
+      // Party.ownerUserId updated.
+      const party = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(party.ownerUserId).toBe(userB.userId);
+
+      // Outgoing DM's dm row → soft-deleted.
+      const oldDmRow = await prisma.partyMembership.findUnique({
+        where: {
+          userId_partyId_role: {
+            userId: userA.userId,
+            partyId,
+            role: 'dm',
+          },
+        },
+      });
+      expect(oldDmRow).not.toBeNull();
+      expect(oldDmRow!.leftAt).not.toBeNull();
+
+      // Outgoing DM's player row → active (bootstrap left it in place).
+      const oldDmPlayerRow = await prisma.partyMembership.findUnique({
+        where: {
+          userId_partyId_role: {
+            userId: userA.userId,
+            partyId,
+            role: 'player',
+          },
+        },
+      });
+      expect(oldDmPlayerRow).not.toBeNull();
+      expect(oldDmPlayerRow!.leftAt).toBeNull();
+
+      // Incoming DM's dm row → active.
+      const newDmRow = await prisma.partyMembership.findUnique({
+        where: {
+          userId_partyId_role: {
+            userId: userB.userId,
+            partyId,
+            role: 'dm',
+          },
+        },
+      });
+      expect(newDmRow).not.toBeNull();
+      expect(newDmRow!.leftAt).toBeNull();
+
+      // Incoming DM's player row → active (untouched by the transfer).
+      const newDmPlayerRow = await prisma.partyMembership.findUnique({
+        where: {
+          userId_partyId_role: {
+            userId: userB.userId,
+            partyId,
+            role: 'player',
+          },
+        },
+      });
+      expect(newDmPlayerRow).not.toBeNull();
+      expect(newDmPlayerRow!.leftAt).toBeNull();
+
+      // TransactionLog entry.
+      const entries = await prisma.transactionLog.findMany({
+        where: { partyId },
+        orderBy: { timestamp: 'asc' },
+      });
+      const last = entries[entries.length - 1]!;
+      expect(last.type).toBe('dm-transfer');
+      expect(last.actorUserId).toBe(userA.userId);
+      expect(last.actorRole).toBe('dm');
+      const payload = last.payload as { oldDmUserId: string; newDmUserId: string };
+      expect(payload.oldDmUserId).toBe(userA.userId);
+      expect(payload.newDmUserId).toBe(userB.userId);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects self-transfer with dm_transfer_self (422)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA } = await setupTwoMemberParty(app);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'dm-transfer', payload: { newDmUserId: userA.userId } }],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('dm_transfer_self');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects a non-DM actor with dm_only (422)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA, userB } = await setupTwoMemberParty(app);
+
+      // User B (player) tries to transfer DM to themselves.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'dm-transfer', payload: { newDmUserId: userA.userId } }],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('dm_only');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects target not in party with dm_transfer_target_not_member (422)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA } = await setupTwoMemberParty(app);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'dm-transfer', payload: { newDmUserId: 'stranger-not-in-party' } }],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('dm_transfer_target_not_member');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('auto-clears Party.bankerUserId when the incoming DM is the current Banker', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA, userB } = await setupTwoMemberParty(app);
+
+      // Appoint user B as Banker.
+      const appoint = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'appoint-banker', payload: { bankerUserId: userB.userId } }],
+        },
+      });
+      expect(appoint.statusCode).toBe(200);
+
+      // Transfer DM to userB (the current Banker).
+      const transfer = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'dm-transfer', payload: { newDmUserId: userB.userId } }],
+        },
+      });
+      expect(transfer.statusCode).toBe(200);
+
+      // Party.bankerUserId cleared, ownerUserId = userB.
+      const party = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(party.ownerUserId).toBe(userB.userId);
+      expect(party.bankerUserId).toBeNull();
+
+      // Cascade emitted a `revoke-banker { reason: 'dm-transfer' }`
+      // BEFORE the terminal `dm-transfer` entry.
+      const entries = await prisma.transactionLog.findMany({
+        where: { partyId },
+        orderBy: { timestamp: 'asc' },
+      });
+      const cascaded = entries.slice(-2);
+      expect(cascaded[0]!.type).toBe('revoke-banker');
+      const revokePayload = cascaded[0]!.payload as { reason: string };
+      expect(revokePayload.reason).toBe('dm-transfer');
+      expect(cascaded[1]!.type).toBe('dm-transfer');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('BUG-002 shape: reactivates a historical soft-deleted dm row on transfer (via a two-step round-trip)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, userA, userB } = await setupTwoMemberParty(app);
+
+      // First transfer: A → B. Soft-deletes A's dm row; creates B's dm row.
+      const first = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'dm-transfer', payload: { newDmUserId: userB.userId } }],
+        },
+      });
+      expect(first.statusCode).toBe(200);
+
+      // Second transfer: B → A. Reactivates A's historical dm row
+      // (would P2002 without upsert semantics per BUG-002).
+      const second = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'dm-transfer', payload: { newDmUserId: userA.userId } }],
+        },
+      });
+      expect(second.statusCode).toBe(200);
+
+      // A's dm row is active again; B's dm row soft-deleted.
+      const rowA = await prisma.partyMembership.findUnique({
+        where: { userId_partyId_role: { userId: userA.userId, partyId, role: 'dm' } },
+      });
+      expect(rowA!.leftAt).toBeNull();
+
+      const rowB = await prisma.partyMembership.findUnique({
+        where: { userId_partyId_role: { userId: userB.userId, partyId, role: 'dm' } },
+      });
+      expect(rowB!.leftAt).not.toBeNull();
+
+      // Party.ownerUserId back to A.
+      const party = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(party.ownerUserId).toBe(userA.userId);
+    } finally {
+      await app.close();
+    }
+  });
+});
