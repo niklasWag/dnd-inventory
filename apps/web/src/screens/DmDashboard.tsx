@@ -8,6 +8,15 @@ import type { Character, CurrencyHolding, ItemInstance, Stash } from '@app/share
 import { useStore } from '@/store';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 
+/** Stable empty-array references for the Zustand selector fallback when
+ * `appState === null`. Fresh `[]` literals would defeat `useShallow`'s
+ * reference equality and infinite-loop the render (same pattern as
+ * `CatalogBrowser.tsx`'s `EMPTY_CATALOG`). */
+const EMPTY_CHARACTERS: readonly Character[] = [];
+const EMPTY_STASHES: readonly Stash[] = [];
+const EMPTY_CURRENCIES: readonly CurrencyHolding[] = [];
+const EMPTY_ITEMS: readonly ItemInstance[] = [];
+
 /**
  * R4.5 — Route guard for the DM Dashboard (§5.9).
  *
@@ -40,10 +49,10 @@ export function DmDashboard(): ReactElement {
   const navigate = useNavigate();
   const { characters, stashes, currencies, items } = useStore(
     useShallow((s) => ({
-      characters: (s.appState?.characters ?? []) as readonly Character[],
-      stashes: (s.appState?.stashes ?? []) as readonly Stash[],
-      currencies: (s.appState?.currencies ?? []) as readonly CurrencyHolding[],
-      items: (s.appState?.items ?? []) as readonly ItemInstance[],
+      characters: s.appState?.characters ?? EMPTY_CHARACTERS,
+      stashes: s.appState?.stashes ?? EMPTY_STASHES,
+      currencies: s.appState?.currencies ?? EMPTY_CURRENCIES,
+      items: s.appState?.items ?? EMPTY_ITEMS,
     })),
   );
 
