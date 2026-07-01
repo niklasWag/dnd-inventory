@@ -43,7 +43,6 @@ function makeState(opts: {
       recoveredLootStashId: 's-rl',
       bankerUserId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
-      archivedAt: null,
     },
     memberships: opts.memberships,
     characters: opts.characters ?? [],
@@ -52,8 +51,7 @@ function makeState(opts: {
     items: opts.items ?? [],
     currencies: opts.currencies ?? [],
     log: [],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any;
+  };
 }
 
 function makeMembership(userId: string, role: 'dm' | 'player'): PartyMembership {
@@ -64,8 +62,7 @@ function makeMembership(userId: string, role: 'dm' | 'player'): PartyMembership 
     characterId: null,
     joinedAt: '2026-01-01T00:00:00.000Z',
     leftAt: null,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any;
+  };
 }
 
 const SOLO_MEMBERSHIPS: PartyMembership[] = [
@@ -180,7 +177,7 @@ describe('DmDashboard', () => {
           size: 'medium',
           class: 'Wizard',
           level: 5,
-          abilityScores: { str: 10 },
+          abilityScores: { STR: 10 },
           maxAttunement: 3,
           encumbranceRule: 'off',
           enforceEncumbrance: false,
@@ -195,14 +192,13 @@ describe('DmDashboard', () => {
           size: 'medium',
           class: 'Rogue',
           level: 3,
-          abilityScores: { str: 8 },
+          abilityScores: { STR: 8 },
           maxAttunement: 3,
           encumbranceRule: 'off',
           enforceEncumbrance: false,
           inventoryStashId: 's-inv-other',
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ] as any,
+      ],
       stashes: [
         {
           id: 's-inv-me',
@@ -240,8 +236,7 @@ describe('DmDashboard', () => {
           isCarried: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ] as any,
+      ],
       currencies: [
         // Alice: 15 gp equivalent = 10 gp + 5 sp (0.5 gp) + 45 cp (0.45 gp) = 10.95 gp
         // Simpler: give Alice 10 gp exact.
@@ -292,8 +287,7 @@ describe('DmDashboard', () => {
           identified: true,
           currentCharges: null,
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ] as any,
+      ],
     });
     useStore.setState({ appState: state, log: [] });
   }
@@ -394,8 +388,7 @@ describe('DmDashboard', () => {
             isCarried: false,
             createdAt: '2026-01-01T00:00:00.000Z',
           },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ] as any,
+        ],
         currencies: [
           { id: 'c-party', stashId: 's-party', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
           { id: 'c-rl', stashId: 's-rl', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 
 import { OfflineBanner } from './OfflineBanner';
+import type { AppState, PartyMembership } from '@app/shared';
 import { useStore } from '@/store';
 
 /**
@@ -19,10 +20,12 @@ import { useStore } from '@/store';
  * render.
  */
 
-// Mock the serverMode module — its `isServerMode` is captured at
-// module-load time from `import.meta.env`, so tests must vi.mock() to
-// flip between local and server mode. Each `describe` block sets the
-// mock once via `vi.doMock` before importing the component.
+// Mock the serverMode module — `isServerMode` is captured at module
+// load time from `import.meta.env`. `bootstrap()` isn't reachable here
+// because it dispatches through the store's server-mode enqueue path,
+// which requires a configured sync queue. Instead the tests build a
+// minimal but fully-typed AppState by hand (no `as any`) — the shape
+// is small enough that this is cheaper than wiring the queue.
 vi.mock('@/lib/serverMode', () => ({ isServerMode: true }));
 
 function setOnline(value: boolean): void {
@@ -40,49 +43,46 @@ function fireOfflineEvent(): void {
   window.dispatchEvent(new Event('offline'));
 }
 
-function seedMembers(count: number): void {
-  // Fresh AppState fixture with N distinct-userId memberships.
-  // The store's `appState.memberships` is what OfflineBanner reads
-  // for the memberCount derivation.
-  const memberships = Array.from({ length: count }, (_, i) => ({
+/** Build a fully-typed AppState with N distinct-userId memberships. */
+function makeAppStateFixture(memberCount: number): AppState {
+  const memberships: PartyMembership[] = Array.from({ length: memberCount }, (_, i) => ({
     userId: `u${i}`,
     partyId: 'p1',
-    role: 'player' as const,
+    role: 'player',
     characterId: null,
     joinedAt: '2026-01-01T00:00:00.000Z',
     leftAt: null,
   }));
-  useStore.setState({
-    appState: {
-      version: 1,
-      seedVersion: 0,
-      user: {
-        id: 'u0',
-        displayName: 'Tester',
-        discordId: 'discord-tester',
-        createdAt: '2026-01-01T00:00:00.000Z',
-      },
-      party: {
-        id: 'p1',
-        name: 'Party',
-        ownerUserId: 'u0',
-        inviteCode: 'inv-test',
-        recoveredLootStashId: 's-rl',
-        bankerUserId: null,
-        createdAt: '2026-01-01T00:00:00.000Z',
-        archivedAt: null,
-      },
-      memberships,
-      characters: [],
-      stashes: [],
-      catalog: [],
-      items: [],
-      currencies: [],
-      log: [],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any,
+  return {
+    version: 1,
+    seedVersion: 0,
+    user: {
+      id: 'u0',
+      displayName: 'Tester',
+      discordId: 'discord-tester',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+    party: {
+      id: 'p1',
+      name: 'Party',
+      ownerUserId: 'u0',
+      inviteCode: 'inv-test',
+      recoveredLootStashId: 's-rl',
+      bankerUserId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+    memberships,
+    characters: [],
+    stashes: [],
+    catalog: [],
+    items: [],
+    currencies: [],
     log: [],
-  });
+  };
+}
+
+function seedMembers(count: number): void {
+  useStore.setState({ appState: makeAppStateFixture(count), log: [] });
 }
 
 describe('OfflineBanner (R4.4.d)', () => {

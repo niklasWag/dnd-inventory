@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
 import { StashItemsTable } from './StashItemsTable';
+import type { PartyMembership } from '@app/shared';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
@@ -164,12 +165,11 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
           {
             userId: 'other-dm',
             partyId: state.party.id,
-            role: 'dm',
+            role: 'dm' as const,
             characterId: null,
             joinedAt: '2026-01-01T00:00:00.000Z',
             leftAt: null,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
+          } satisfies PartyMembership,
         ],
       },
     });
@@ -204,12 +204,11 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
           {
             userId: 'other-dm',
             partyId: state.party.id,
-            role: 'dm',
+            role: 'dm' as const,
             characterId: null,
             joinedAt: '2026-01-01T00:00:00.000Z',
             leftAt: null,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
+          } satisfies PartyMembership,
         ],
       },
     });
@@ -335,12 +334,11 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
           {
             userId: 'other-dm',
             partyId: state.party.id,
-            role: 'dm',
+            role: 'dm' as const,
             characterId: null,
             joinedAt: '2026-01-01T00:00:00.000Z',
             leftAt: null,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
+          } satisfies PartyMembership,
         ],
       },
     });

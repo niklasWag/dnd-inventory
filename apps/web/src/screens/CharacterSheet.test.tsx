@@ -5,6 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { CharacterSheet } from './CharacterSheet';
 import { ItemDetail } from './ItemDetail';
+import type { Character, PartyMembership, Stash } from '@app/shared';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
@@ -409,53 +410,44 @@ describe('CharacterSheet — R4.5 cross-character DM cue', () => {
     const base = bootstrap();
     const state = useStore.getState().appState!;
     const bobCharId = 'char-bob';
+    const bobMembership: PartyMembership = {
+      userId: 'bob-user',
+      partyId: state.party.id,
+      role: 'player',
+      characterId: bobCharId,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    const bobCharacter: Character = {
+      id: bobCharId,
+      partyId: state.party.id,
+      ownerUserId: 'bob-user',
+      name: 'Bob',
+      species: 'Elf',
+      size: 'medium',
+      class: 'Rogue',
+      level: 3,
+      abilityScores: { STR: 8 },
+      maxAttunement: 3,
+      encumbranceRule: 'off',
+      enforceEncumbrance: false,
+      inventoryStashId: 's-inv-bob',
+    };
+    const bobStash: Stash = {
+      id: 's-inv-bob',
+      scope: 'character',
+      name: 'Inventory',
+      ownerCharacterId: bobCharId,
+      partyId: null,
+      isCarried: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
     useStore.setState({
       appState: {
         ...state,
-        memberships: [
-          ...state.memberships,
-          {
-            userId: 'bob-user',
-            partyId: state.party.id,
-            role: 'player',
-            characterId: bobCharId,
-            joinedAt: '2026-01-01T00:00:00.000Z',
-            leftAt: null,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
-        ],
-        characters: [
-          ...state.characters,
-          {
-            id: bobCharId,
-            partyId: state.party.id,
-            ownerUserId: 'bob-user',
-            name: 'Bob',
-            species: 'Elf',
-            size: 'medium',
-            class: 'Rogue',
-            level: 3,
-            abilityScores: { STR: 8 },
-            maxAttunement: 3,
-            encumbranceRule: 'off',
-            enforceEncumbrance: false,
-            inventoryStashId: 's-inv-bob',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
-        ],
-        stashes: [
-          ...state.stashes,
-          {
-            id: 's-inv-bob',
-            scope: 'character',
-            name: 'Inventory',
-            ownerCharacterId: bobCharId,
-            partyId: null,
-            isCarried: true,
-            createdAt: '2026-01-01T00:00:00.000Z',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
-        ],
+        memberships: [...state.memberships, bobMembership],
+        characters: [...state.characters, bobCharacter],
+        stashes: [...state.stashes, bobStash],
         currencies: [
           ...state.currencies,
           { id: 'c-bob', stashId: 's-inv-bob', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
@@ -500,21 +492,18 @@ describe('CharacterSheet — R4.5 cross-character DM cue', () => {
     });
     // Add a second member so isSolo becomes false.
     const s2 = useStore.getState().appState!;
+    const strangerMembership: PartyMembership = {
+      userId: 'stranger',
+      partyId: s2.party.id,
+      role: 'player',
+      characterId: s2.characters[0]!.id,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
     useStore.setState({
       appState: {
         ...s2,
-        memberships: [
-          ...s2.memberships,
-          {
-            userId: 'stranger',
-            partyId: s2.party.id,
-            role: 'player',
-            characterId: s2.characters[0]!.id,
-            joinedAt: '2026-01-01T00:00:00.000Z',
-            leftAt: null,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
-        ],
+        memberships: [...s2.memberships, strangerMembership],
       },
     });
     renderAt(`/character/${base.characterId}`);
