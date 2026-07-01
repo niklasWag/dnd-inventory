@@ -907,3 +907,280 @@ describe('BUG-002 — POST /parties/join reactivates a soft-deleted membership',
     }
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.2.c — Banker-mediated shared-pool gate
+// -------------------------------------------------------------------- //
+
+describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
+  /**
+   * Two-member party where user A is the DM+player who bootstrapped, user
+   * B is a joined player. Optionally appoint user B as Banker so tests
+   * can compare Banker-active vs Banker-inactive rejection.
+   */
+  async function setupTwoMemberPartyWithBanker(
+    app: Awaited<ReturnType<typeof buildServer>>,
+    { appointBanker }: { appointBanker: boolean },
+  ): Promise<{
+    partyId: string;
+    partyStashId: string;
+    recoveredLootStashId: string;
+    userA: { userId: string; cookie: string };
+    userB: { userId: string; cookie: string };
+  }> {
+    const userA = await seedUser({ displayName: 'A' });
+    const tokenA = await seedSession(userA.userId);
+    const cookieA = cookieHeader(env, tokenA);
+    const { partyId, inviteCode } = await bootstrapParty(app, cookieA);
+
+    const userB = await seedUser({ displayName: 'B' });
+    const tokenB = await seedSession(userB.userId);
+    const cookieB = cookieHeader(env, tokenB);
+    const joinRes = await app.inject({
+      method: 'POST',
+      url: '/parties/join',
+      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      payload: { inviteCode },
+    });
+    expect(joinRes.statusCode).toBe(200);
+
+    // B needs a character (and therefore an Inventory stash) so
+    // ownsOrShares passes when B is the actor of the gated action.
+    const createBChar = await app.inject({
+      method: 'POST',
+      url: '/sync/actions',
+      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      payload: {
+        partyId,
+        actions: [
+          {
+            type: 'create-character',
+            payload: {
+              name: 'B-Char',
+              species: 'Elf',
+              size: 'medium',
+              class: 'Rogue',
+              level: 1,
+              str: 10,
+            },
+          },
+        ],
+      },
+    });
+    expect(createBChar.statusCode).toBe(200);
+
+    if (appointBanker) {
+      const appointRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieA, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [{ type: 'appoint-banker', payload: { bankerUserId: userB.userId } }],
+        },
+      });
+      expect(appointRes.statusCode).toBe(200);
+    }
+
+    const partyStash = await prisma.stash.findFirstOrThrow({
+      where: { partyId, scope: 'party' },
+    });
+    const party = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+
+    return {
+      partyId,
+      partyStashId: partyStash.id,
+      recoveredLootStashId: party.recoveredLootStashId,
+      userA: { userId: userA.userId, cookie: cookieA },
+      userB: { userId: userB.userId, cookie: cookieB },
+    };
+  }
+
+  it('rejects a non-Banker player withdrawing currency from Party Stash when Banker is active', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userA } = await setupTwoMemberPartyWithBanker(app, {
+        appointBanker: true,
+      });
+
+      // Seed the Party Stash with some currency so withdraw could apply
+      // (the guard runs BEFORE the reducer's invariant check, but seeding
+      // avoids a false negative if guard order ever changes).
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 10 },
+      });
+
+      // User A (DM+player, NOT the Banker) tries to withdraw.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'currency-change',
+              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 }, reason: 'withdraw' },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('banker_required_for_claim');
+
+      // Balance unchanged (whole batch rolled back).
+      const cur = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect(cur.gp).toBe(10);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('accepts the Banker withdrawing currency from Party Stash', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userB } = await setupTwoMemberPartyWithBanker(app, {
+        appointBanker: true,
+      });
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 10 },
+      });
+
+      // User B IS the Banker.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'currency-change',
+              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 }, reason: 'withdraw' },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const cur = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect(cur.gp).toBe(9);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('accepts a non-Banker player withdrawing when NO Banker is appointed', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userA } = await setupTwoMemberPartyWithBanker(app, {
+        appointBanker: false,
+      });
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 10 },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'currency-change',
+              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 }, reason: 'withdraw' },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const cur = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect(cur.gp).toBe(9);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects a non-Banker moving currency FROM Recovered Loot when Banker is active', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, recoveredLootStashId, userA } = await setupTwoMemberPartyWithBanker(app, {
+        appointBanker: true,
+      });
+      await prisma.currencyHolding.update({
+        where: { stashId: recoveredLootStashId },
+        data: { gp: 5 },
+      });
+
+      // A's Inventory stash id as the destination.
+      const aChar = await prisma.character.findFirstOrThrow({
+        where: { partyId, ownerUserId: userA.userId },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'currency-transfer',
+              payload: {
+                fromStashId: recoveredLootStashId,
+                toStashId: aChar.inventoryStashId,
+                delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('banker_required_for_claim');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('accepts DEPOSITING currency into Party Stash even when Banker is active (deposit is un-gated)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userA } = await setupTwoMemberPartyWithBanker(app, {
+        appointBanker: true,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'currency-change',
+              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 }, reason: 'deposit' },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const cur = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect(cur.gp).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+});

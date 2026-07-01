@@ -1937,20 +1937,35 @@ Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable
 #### R4.2.c — Permission gating: shared-pool claim/distribute is Banker-mediated
 
 **Guard layer (`@app/shared/guards/map.ts`)**
-- [ ] When `party.bankerUserId !== null` AND the action targets Party Stash / Recovered Loot as source, reject non-Banker actors with a new code `banker_required_for_claim`.
-- [ ] DM "gameplay drain" actions stay allowed (distinguish by destination: player stash vs. nowhere).
-- [ ] When `bankerUserId === null`, behavior unchanged — players self-claim freely.
+- [x] When `party.bankerUserId !== null` AND the action targets Party Stash / Recovered Loot as source, reject non-Banker actors with a new code `banker_required_for_claim`.
+- [~] DM "gameplay drain" actions stay allowed (distinguish by destination: player stash vs. nowhere). — **Deferred to R4.2.d.** R4.2.c intentionally gates the DM alongside players (matches §8.1 "DM blocked while Banker active; revoke first"). R4.2.d re-opens the DM path by adding the `gameplay-drain` `currency-change.reason` value which bypasses the gate.
+- [x] When `bankerUserId === null`, behavior unchanged — players self-claim freely.
 
 **Reducer**
-- [ ] Same guard logic runs client-side for instant optimistic rejection feedback.
+- [~] Same guard logic runs client-side for instant optimistic rejection feedback. — **Skipped for this slice** (planning session 2026-07-01). The web store currently does not call `checkGuard` (only the server does); the reducer's own inline invariants ARE the client-side path today. Rather than proliferate more inline duplication for three actions, R4.2.c relies on server-authoritative rejection + R4.2.e UI hiding/disabling the buttons based on `state.party.bankerUserId`. Revisit if UX evidence shows we need optimistic rejection (e.g. the wider "wire `checkGuard` into the web dispatch" change lands as its own architectural slice).
 
 **Tests**
-- [ ] Matrix-driven: every {Banker active, actor role, source pool, destination} combination from §8.1.
-- [ ] Regression: existing "no Banker" tests still pass.
+- [x] Matrix-driven: every {Banker active, actor role, source pool, destination} combination from §8.1. — 18 new guard tests in `packages/shared/src/guards/map.test.ts` (`currency-change` × 11 cases, `currency-transfer` × 5, `transfer` × 5, `split` un-gated × 1, solo-bypass × 1).
+- [x] Regression: existing "no Banker" tests still pass. — all pre-existing 82 shared-guard tests still pass; new deposit/inventory/no-Banker positive cases confirm no over-gating.
+- [x] Server integration: with a real Postgres, 2-member party with Banker set, non-Banker actor rejected with `banker_required_for_claim`; Banker actor accepted; no-Banker actor accepted; deposit un-gated. 5 new integration tests in `apps/server/src/parties/routes.test.ts`.
 
 #### R4.2.c — Notes
 
-> -
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1061 across the workspace (shared 90 ← 82, rules 114, seeds 22, web 665, server 170 ← 165). All five workspaces typecheck. Lint count unchanged from baseline (2 pre-existing errors in `shared/schemas/api.ts:77` and `shared/guards/map.test.ts:35`; 17 pre-existing in `apps/server`).
+>
+> **Design decisions captured (planning session 2026-07-01):**
+> - **Gate on source, not destination.** A single predicate — "is the source stash a Party Stash or Recovered Loot?" — applied uniformly to `currency-change` (withdraw/convert only), `currency-transfer` (fromStashId), and `transfer` (item.ownerId). Deposits (destination = shared pool, source = own stash) are un-gated. This matches §8.1's split between "Add currency/items to Party Stash or Recovered Loot" (allowed) and "Claim / Distribute" (Banker-only).
+> - **`split` is NOT gated.** It's an in-place stack reshape (new row inherits `ownerId`); nothing leaves the pool. Explicit positive test confirms behaviour.
+> - **DM path.** R4.2.c rejects the DM alongside players when a Banker is active. This matches §8.1's "DM blocked while Banker active; revoke first". The R4.2.d `gameplay-drain` `reason` value re-opens the DM path for gameplay-driven pool drains.
+> - **Web-side rejection skipped.** Server is authoritative; UI will hide/disable disallowed buttons in R4.2.e based on `state.party.bankerUserId`. If a user bypasses the UI, the server rejects with a clear code. Revisit if UX warrants optimistic rejection.
+>
+> **Implementation shape.** Two new helper functions in `map.ts`: `isSharedPoolStash(state, stashId)` (structural check) and `checkBankerGate(state, actor, sourceStashId, actionLabel)` (returns rejection or null; called from each of the three guards). The three guards remain single-purpose; the Banker gate is one line each.
+>
+> **Carryforward to R4.2.d:** the `currency-change.reason` enum widening (`gameplay-drain`, `split-evenly`) must be paired with a corresponding `checkBankerGate` bypass so DM drain actions pass. Concretely: R4.2.d's `currencyChangeGuard` should skip the gate when `reason === 'gameplay-drain'` (and the actor is DM, enforced by the same guard's role check).
+>
+> **Carryforward to R4.2.e:** the UI must read `state.party.bankerUserId` when rendering Party Stash / Recovered Loot controls: hide "claim" affordances for non-Banker actors when the value is non-null. `RoleBadge` (R4.2.b) already handles the log-side surface.
 
 #### R4.2.d — Banker distribution toolkit (new actions)
 

@@ -87,6 +87,45 @@ function ownsOrShares(state: AppState, actor: Actor, stashId: string): boolean {
   return stash.partyId === actor.partyId;
 }
 
+/** R4.2.c — true iff the supplied stash is a shared pool (Party Stash
+ * or Recovered Loot). Used by the Banker gate on `currency-change` /
+ * `currency-transfer` / `transfer` to distinguish "OUT of the shared
+ * pool" (gated) from "into own Inventory" or "deposit INTO the pool"
+ * (not gated). */
+function isSharedPoolStash(state: AppState, stashId: string): boolean {
+  const stash = state.stashes.find((s) => s.id === stashId);
+  if (stash === undefined) return false;
+  return stash.scope === 'party' || stash.scope === 'recovered-loot';
+}
+
+/** R4.2.c — Banker-mediated shared-pool gate. Returns a rejection
+ * `GuardResult` when the caller should stop; returns `null` when the
+ * gate is satisfied and the guard should continue. Applied by
+ * `currency-change` (withdraw/convert only), `currency-transfer` (on
+ * `fromStashId`), and `transfer` (on the item's `ownerId`). Deposits
+ * are un-gated by caller — this helper does NOT distinguish deposit
+ * from withdraw; the caller checks the reason/direction first.
+ *
+ * Solo bypass (§8.2) is handled by `checkGuard` before the guard map
+ * is consulted; individual guards (like this one) don't need to
+ * re-check. */
+function checkBankerGate(
+  state: AppState,
+  actor: Actor,
+  sourceStashId: string,
+  actionLabel: string,
+): { ok: false; code: 'banker_required_for_claim'; message: string } | null {
+  if (!state.party.bankerUserId) return null;
+  if (actor.role === 'banker') return null;
+  if (!isSharedPoolStash(state, sourceStashId)) return null;
+  return {
+    ok: false,
+    code: 'banker_required_for_claim',
+    message: `A Banker is appointed; only the Banker can ${actionLabel} shared-pool contents.`,
+  };
+}
+
+
 // -------------------- guard implementations --------------------
 
 const createCharacterGuard: Guard<Extract<Action, { type: 'create-character' }>> = (
@@ -273,6 +312,14 @@ const currencyChangeGuard: Guard<Extract<Action, { type: 'currency-change' }>> =
       message: 'Cannot change currency in a stash you do not own / share.',
     };
   }
+  // R4.2.c — Banker-mediated shared-pool gate. Withdrawals & currency
+  // conversions on a Party Stash / Recovered Loot are Banker-only when
+  // a Banker is appointed. Deposits are un-gated (§8.1: any member can
+  // add currency INTO a shared pool).
+  if (payload.reason === 'withdraw' || payload.reason === 'convert') {
+    const gated = checkBankerGate(state, actor, payload.stashId, 'withdraw or convert');
+    if (gated !== null) return gated;
+  }
   return { ok: true };
 };
 
@@ -293,6 +340,11 @@ const transferGuard: Guard<Extract<Action, { type: 'transfer' }>> = (state, payl
       message: 'Cannot transfer from a stash you do not own / share.',
     };
   }
+  // R4.2.c — Banker-mediated shared-pool gate. Moving an item OUT of a
+  // Party Stash / Recovered Loot is Banker-only when a Banker is
+  // appointed. Deposits (INTO the pool) stay allowed for anyone.
+  const gated = checkBankerGate(state, actor, item.ownerId, 'move items out of');
+  if (gated !== null) return gated;
   return { ok: true };
 };
 
@@ -326,6 +378,12 @@ const currencyTransferGuard: Guard<Extract<Action, { type: 'currency-transfer' }
       message: 'Cannot move currency from a stash you do not own / share.',
     };
   }
+  // R4.2.c — Banker-mediated shared-pool gate. Moving currency OUT of a
+  // Party Stash / Recovered Loot is Banker-only when a Banker is
+  // appointed. Depositing INTO a shared pool (fromStashId = character
+  // stash, toStashId = pool) stays allowed for anyone.
+  const gated = checkBankerGate(state, actor, payload.fromStashId, 'move currency out of');
+  if (gated !== null) return gated;
   return { ok: true };
 };
 

@@ -60,6 +60,7 @@ export type GuardRejectionCode =
   // role
   | 'dm_only'
   | 'banker_membership_forbidden'
+  | 'banker_required_for_claim'
   // domain
   | 'item_not_found'
   | 'stash_not_found'

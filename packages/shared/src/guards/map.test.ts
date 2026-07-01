@@ -608,6 +608,360 @@ describe('guards — ownership checks', () => {
   });
 });
 
+// -------------------- R4.2.c — Banker-mediated shared-pool gate --------------------
+
+/** Full CurrencyDelta helper — the payload schema requires all five
+ * denominations. Callers pass a partial and get zeros for the rest. */
+function delta(partial: Partial<{ cp: number; sp: number; ep: number; gp: number; pp: number }>): {
+  cp: number;
+  sp: number;
+  ep: number;
+  gp: number;
+  pp: number;
+} {
+  return {
+    cp: partial.cp ?? 0,
+    sp: partial.sp ?? 0,
+    ep: partial.ep ?? 0,
+    gp: partial.gp ?? 0,
+    pp: partial.pp ?? 0,
+  };
+}
+
+/**
+ * R4.2.c — when `party.bankerUserId !== null`, any action whose SOURCE
+ * stash is a party-scope or recovered-loot-scope stash must be driven
+ * by the Banker. Non-Banker actors (including the DM) get
+ * `banker_required_for_claim`. When `bankerUserId === null`, behaviour
+ * is unchanged from R3.4.a — players/DM self-claim freely.
+ *
+ * Applies to:
+ *   - `currency-change` with `reason ∈ {'withdraw','convert'}` and
+ *     `stashId` = shared pool. `reason: 'deposit'` is un-gated (adds
+ *     value INTO the pool, not out of it — §8.1 deposit row).
+ *   - `currency-transfer` with `fromStashId` = shared pool.
+ *   - `transfer` with `item.ownerId` = shared pool.
+ *
+ * Not gated in this slice: `split` (in-place stack reshape; no value
+ * leaves the pool) — reflected below with an explicit positive test.
+ * The DM "gameplay drain" bypass lands in R4.2.d.
+ */
+
+/** Two-member party fixture where u1 is the DM, u2 is a player, u3 is a
+ * player-Banker. Mirrors the shape expected by the R4.2.a+b banker
+ * derivation path. */
+const BANKER_MEMBERS: readonly PartyMembership[] = [
+  makeMembership('dm-user', 'dm'),
+  makeMembership('u2', 'player'),
+  makeMembership('banker-user', 'player'),
+];
+
+/** State with `party.bankerUserId = 'banker-user'` and a Party Stash +
+ * Recovered Loot + one item in each. Two characters (one per player)
+ * so the ownership helpers behave. */
+function makeBankerState(bankerUserId: string | null = 'banker-user'): AppState {
+  const base = makeState({ ownerUserId: 'u2', ownerCharacterId: 'char-u2' });
+  return {
+    ...base,
+    party: makeParty('p1', bankerUserId),
+    memberships: [...BANKER_MEMBERS],
+    characters: [
+      { ...base.characters[0]! },
+      {
+        ...base.characters[0]!,
+        id: 'char-banker-user',
+        ownerUserId: 'banker-user',
+        inventoryStashId: 'inv-b',
+      },
+    ],
+    stashes: [
+      ...base.stashes,
+      {
+        id: 'inv-b',
+        scope: 'character',
+        name: 'Banker Inventory',
+        ownerCharacterId: 'char-banker-user',
+        partyId: null,
+        isCarried: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    items: [
+      ...base.items,
+      {
+        id: 'i-ps',
+        definitionId: 'phb-2024:rope',
+        ownerType: 'stash',
+        ownerId: 'ps',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+      {
+        id: 'i-rl',
+        definitionId: 'phb-2024:rope',
+        ownerType: 'stash',
+        ownerId: 'rl',
+        containerInstanceId: null,
+        quantity: 1,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+    ],
+    currencies: [
+      ...base.currencies,
+      { id: 'c-invb', stashId: 'inv-b', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+    ],
+  };
+}
+
+describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
+  // -------------------- currency-change --------------------
+
+  describe('currency-change', () => {
+    it('rejects a player withdrawing from Party Stash when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'withdraw' },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('rejects the DM withdrawing from Party Stash when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'withdraw' },
+        makeActor('dm-user', 'dm'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('rejects a player withdrawing from Recovered Loot when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'rl', delta: delta({ gp: -1 }), reason: 'withdraw' },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('rejects a player converting Party Stash currency when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'ps', delta: delta({ gp: -1, sp: 10 }), reason: 'convert' },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('accepts the Banker withdrawing from Party Stash', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'withdraw' },
+        makeActor('banker-user', 'banker'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts the Banker withdrawing from Recovered Loot', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'rl', delta: delta({ gp: -1 }), reason: 'withdraw' },
+        makeActor('banker-user', 'banker'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player DEPOSITING into Party Stash when Banker active (deposit is un-gated)', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'ps', delta: delta({ gp: 1 }), reason: 'deposit' },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player DEPOSITING into Recovered Loot when Banker active (deposit is un-gated)', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'rl', delta: delta({ gp: 1 }), reason: 'deposit' },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player withdrawing from Party Stash when NO Banker is active', () => {
+      const state = makeBankerState(null);
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'withdraw' },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player editing their own Inventory currency even when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['currency-change'](
+        state,
+        { stashId: 'inv', delta: delta({ gp: -1 }), reason: 'withdraw' },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+  });
+
+  // -------------------- currency-transfer --------------------
+
+  describe('currency-transfer', () => {
+    it('rejects a player moving currency FROM Party Stash when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'ps', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('rejects a player moving currency FROM Recovered Loot when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'rl', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('accepts the Banker moving currency FROM Party Stash to a player', () => {
+      const state = makeBankerState();
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'ps', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('banker-user', 'banker'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player moving currency FROM their own Inventory even when Banker active (destination is shared pool = deposit)', () => {
+      const state = makeBankerState();
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'inv', toStashId: 'ps', delta: delta({ gp: 1 }) },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player moving currency FROM Party Stash when NO Banker is active', () => {
+      const state = makeBankerState(null);
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'ps', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+  });
+
+  // -------------------- transfer (item) --------------------
+
+  describe('transfer', () => {
+    it('rejects a player transferring an item OUT of Party Stash when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['transfer'](
+        state,
+        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1 },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('rejects a player transferring an item OUT of Recovered Loot when Banker active', () => {
+      const state = makeBankerState();
+      const result = guards['transfer'](
+        state,
+        { itemInstanceId: 'i-rl', toStashId: 'inv', quantity: 1 },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('accepts the Banker transferring an item OUT of Party Stash', () => {
+      const state = makeBankerState();
+      const result = guards['transfer'](
+        state,
+        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1 },
+        makeActor('banker-user', 'banker'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player depositing (transferring INTO Party Stash) when Banker active — source is their own Inventory', () => {
+      const state = makeBankerState();
+      const result = guards['transfer'](
+        state,
+        { itemInstanceId: 'i1', toStashId: 'ps', quantity: 1 },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('accepts a player transferring OUT of Party Stash when NO Banker is active', () => {
+      const state = makeBankerState(null);
+      const result = guards['transfer'](
+        state,
+        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1 },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+  });
+
+  // -------------------- split (NOT gated in R4.2.c) --------------------
+
+  describe('split (not gated)', () => {
+    it('allows a player to split a stack in Party Stash even when Banker active (split does not move value out)', () => {
+      const state = makeBankerState();
+      const result = guards['split'](
+        state,
+        { itemInstanceId: 'i-ps', quantity: 1 },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+  });
+
+  // -------------------- §8.2 solo bypass still applies --------------------
+
+  it('§8.2 solo bypass overrides the Banker gate — solo party allows any of these', () => {
+    const state = makeBankerState();
+    const soloMemberships = [makeMembership('u1', 'dm'), makeMembership('u1', 'player')];
+    const action: Action = {
+      type: 'currency-change',
+      payload: { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'withdraw' },
+    };
+    expect(checkGuard(state, action, makeActor('u1', 'player'), soloMemberships)).toEqual({
+      ok: true,
+    });
+  });
+});
+
 describe('guards — every action has an entry', () => {
   it('the map exposes one guard per Action type', () => {
     const expected: ReadonlyArray<Action['type']> = [
