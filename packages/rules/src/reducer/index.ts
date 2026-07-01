@@ -155,6 +155,8 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return appointBanker(state, action.payload);
     case 'revoke-banker':
       return revokeBanker(state, action.payload);
+    case 'split-evenly':
+      return splitEvenlyReducer(state, action.payload);
   }
 }
 
@@ -3475,5 +3477,122 @@ function revokeBanker(
         payload: { reason: payload.reason },
       },
     ],
+  };
+}
+
+// -------------------------------------------------------------------- //
+// R4.2.d — split-evenly (Banker distribution toolkit)
+// -------------------------------------------------------------------- //
+
+/**
+ * R4.2.d — Banker "split the pot" action. Splits the Party Stash's
+ * currency evenly across the supplied recipients using the cascade-
+ * down-denominations algorithm (`packages/rules/currency` `splitEvenly`).
+ *
+ * Emits ONE terminal `split-evenly` log entry (the audit anchor
+ * carrying `sharePerRecipient` + `remainderInPool`) plus N
+ * `currency-transfer` entries — one per recipient — that carry the
+ * atomic pool→character-Inventory debits/credits. The log order is:
+ * terminal entry first, then one transfer per recipient in the order
+ * the Banker supplied.
+ *
+ * Guards (see `packages/shared/guards/map.ts` `splitEvenlyGuard`)
+ * already ensure: actor is Banker, `fromStashId` is this party's
+ * Party Stash, every recipient is an active player's character in
+ * this party. The reducer re-checks the invariants for defence in
+ * depth, but the shapes it consults are already validated by the
+ * guard.
+ *
+ * Invariant: pool balance after = pool balance before − N × share.
+ * The `remainderInPool` in the terminal entry equals the leftover
+ * (0 to N-1 cp, per the `splitEvenly` contract).
+ */
+function splitEvenlyReducer(
+  state: AppState,
+  payload: { fromStashId: string; recipientCharacterIds: string[] },
+): ReducerResult {
+  const s = requireState(state, 'split-evenly');
+  const { fromStashId, recipientCharacterIds } = payload;
+  const n = recipientCharacterIds.length;
+  if (n < 1) {
+    throw new Error('split-evenly: recipient list must be non-empty');
+  }
+
+  const fromStash = s.stashes.find((st) => st.id === fromStashId);
+  if (fromStash === undefined || fromStash.scope !== 'party') {
+    throw new Error(`split-evenly: fromStashId ${fromStashId} is not a Party Stash`);
+  }
+  const poolHolding = s.currencies.find((c) => c.stashId === fromStashId);
+  if (poolHolding === undefined) {
+    throw new Error(`split-evenly: no CurrencyHolding for ${fromStashId}`);
+  }
+
+  // Resolve recipient Inventory stash ids (log entries + credits target
+  // Inventories, not the character rows themselves — matches every
+  // other currency-transfer in the codebase).
+  const recipientInventoryIds: string[] = recipientCharacterIds.map((charId) => {
+    const ch = s.characters.find((c) => c.id === charId);
+    if (ch === undefined) {
+      throw new Error(`split-evenly: character ${charId} not found`);
+    }
+    return ch.inventoryStashId;
+  });
+
+  const { share, remainder } = currency.splitEvenly(
+    {
+      cp: poolHolding.cp,
+      sp: poolHolding.sp,
+      ep: poolHolding.ep,
+      gp: poolHolding.gp,
+      pp: poolHolding.pp,
+    },
+    n,
+  );
+
+  // Debit N × share from the pool; new pool balance equals the
+  // remainder. This is a structural equality (splitEvenly's contract:
+  // N × share + remainder === pool) so we can just assign remainder
+  // directly rather than re-computing via subtract().
+  const nextPool: CurrencyHolding = { ...poolHolding, ...remainder };
+
+  // Credit each recipient Inventory by `share`.
+  const nextCurrencies = s.currencies.map((c) => {
+    if (c.stashId === fromStashId) return nextPool;
+    const idx = recipientInventoryIds.indexOf(c.stashId);
+    if (idx === -1) return c;
+    return { ...c, ...currency.add(c, share) };
+  });
+
+  const shareIsAllZero =
+    share.cp === 0 && share.sp === 0 && share.ep === 0 && share.gp === 0 && share.pp === 0;
+
+  // Terminal entry first, then N currency-transfer entries in
+  // recipient-order. When the pool was empty (share all zeros), skip
+  // the per-recipient transfer entries — nothing moved — but still
+  // emit the terminal for audit ("Banker attempted a split; pool was
+  // empty; nothing distributed").
+  const logEntries: LogEntrySlice[] = [
+    {
+      type: 'split-evenly',
+      payload: {
+        fromStashId,
+        recipientCharacterIds,
+        sharePerRecipient: share,
+        remainderInPool: remainder,
+      },
+    },
+  ];
+  if (!shareIsAllZero) {
+    for (const toStashId of recipientInventoryIds) {
+      logEntries.push({
+        type: 'currency-transfer',
+        payload: { fromStashId, toStashId, delta: share },
+      });
+    }
+  }
+
+  return {
+    state: { ...s, currencies: nextCurrencies },
+    logEntries,
   };
 }

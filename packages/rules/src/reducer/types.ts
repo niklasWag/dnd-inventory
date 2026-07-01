@@ -146,7 +146,7 @@ export type Action =
       payload: {
         stashId: string;
         delta: { cp: number; sp: number; ep: number; gp: number; pp: number };
-        reason: 'deposit' | 'withdraw' | 'convert';
+        reason: 'deposit' | 'withdraw' | 'convert' | 'gameplay-drain';
       };
     }
   | {
@@ -585,6 +585,21 @@ export type Action =
       type: 'revoke-banker';
       payload: {
         reason: 'manual' | 'reassigned' | 'left-party' | 'kicked';
+      };
+    }
+  | {
+      // R4.2.d — Banker-only "split the pot" action. Splits Party Stash
+      // currency evenly across the supplied recipients using the
+      // cascade-down-denominations algorithm (packages/rules `splitEvenly`).
+      // Emits one terminal `split-evenly` log entry + N `currency-transfer`
+      // entries (one per recipient). Guards enforce: Banker-only,
+      // fromStashId must be Party Stash, recipients must be active
+      // players' characters in this party. The Banker's own character
+      // is a valid recipient per OUTLINE §8.1.
+      type: 'split-evenly';
+      payload: {
+        fromStashId: string;
+        recipientCharacterIds: string[];
       };
     };
 

@@ -312,6 +312,21 @@ const currencyChangeGuard: Guard<Extract<Action, { type: 'currency-change' }>> =
       message: 'Cannot change currency in a stash you do not own / share.',
     };
   }
+  // R4.2.d — `gameplay-drain` is a DM-only reason. Any non-DM using it
+  // is rejected regardless of Banker state. For the DM it bypasses the
+  // R4.2.c Banker gate on shared-pool sources (§8.1: DM may drain the
+  // pool for gameplay reasons while a Banker is active — the Banker
+  // controls distribution to players, not the world-level drain).
+  if (payload.reason === 'gameplay-drain') {
+    if (actor.role !== 'dm') {
+      return {
+        ok: false,
+        code: 'dm_only',
+        message: 'Only the DM may drain a shared pool for gameplay reasons.',
+      };
+    }
+    return { ok: true };
+  }
   // R4.2.c — Banker-mediated shared-pool gate. Withdrawals & currency
   // conversions on a Party Stash / Recovered Loot are Banker-only when
   // a Banker is appointed. Deposits are un-gated (§8.1: any member can
@@ -902,6 +917,64 @@ const revokeBankerGuard: Guard<Extract<Action, { type: 'revoke-banker' }>> = (
   return { ok: true };
 };
 
+/**
+ * R4.2.d — `split-evenly`. Banker-only. Splits `fromStashId`'s currency
+ * across the supplied `recipientCharacterIds`. Guards:
+ *   - actor.role must be 'banker' (rejected otherwise with the same
+ *     `banker_required_for_claim` code as R4.2.c so the client can
+ *     branch uniformly on shared-pool distribution rejections).
+ *   - fromStashId must reference a Party Stash (`scope: 'party'`) in
+ *     this party. Recovered Loot / Inventory / other scopes rejected
+ *     with `stash_not_found` (the resource isn't a valid split source).
+ *   - Every recipient must be an active player's character in this
+ *     party; otherwise `character_not_found`. The Banker's own
+ *     character IS a valid recipient per OUTLINE §8.1.
+ */
+const splitEvenlyGuard: Guard<Extract<Action, { type: 'split-evenly' }>> = (
+  state,
+  payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'split-evenly: no state.' };
+  if (actor.role !== 'banker') {
+    return {
+      ok: false,
+      code: 'banker_required_for_claim',
+      message: 'Only the Banker can split shared-pool currency across the party.',
+    };
+  }
+  const stash = state.stashes.find((s) => s.id === payload.fromStashId);
+  if (stash === undefined || stash.scope !== 'party' || stash.partyId !== actor.partyId) {
+    return {
+      ok: false,
+      code: 'stash_not_found',
+      message: 'split-evenly source must be the Party Stash of this party.',
+    };
+  }
+  const activePartyCharacterIds = new Set(
+    state.memberships
+      .filter(
+        (m) =>
+          m.partyId === actor.partyId &&
+          m.role === 'player' &&
+          m.leftAt === null &&
+          m.characterId !== null,
+      )
+      .map((m) => m.characterId as string),
+  );
+  for (const recipientId of payload.recipientCharacterIds) {
+    if (!activePartyCharacterIds.has(recipientId)) {
+      return {
+        ok: false,
+        code: 'character_not_found',
+        message: `Recipient ${recipientId} is not an active player character in this party.`,
+      };
+    }
+  }
+  return { ok: true };
+};
+
 export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>> } = {
   'create-character': createCharacterGuard,
   acquire: acquireGuard,
@@ -935,6 +1008,7 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'join-party': joinPartyGuard,
   'appoint-banker': appointBankerGuard,
   'revoke-banker': revokeBankerGuard,
+  'split-evenly': splitEvenlyGuard,
 };
 
 /**

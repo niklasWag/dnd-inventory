@@ -25,7 +25,7 @@
  * if a pattern emerges (e.g. `applyItemDelta`).
  */
 import type { Action, Actor, AppState } from '@app/shared';
-import type { ReducerContext } from '@app/rules';
+import { currency, type ReducerContext } from '@app/rules';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
 import {
@@ -128,6 +128,8 @@ export async function applyDelta(
       return persistAppointBanker(tx, action.payload, actor);
     case 'revoke-banker':
       return persistRevokeBanker(tx, actor);
+    case 'split-evenly':
+      return persistSplitEvenly(tx, action.payload, ctx);
   }
 }
 
@@ -1180,6 +1182,70 @@ async function persistRevokeBanker(
     where: { id: actor.partyId },
     data: { bankerUserId: null },
   });
+}
+
+/**
+ * R4.2.d — persist a Banker `split-evenly` distribution. Server re-runs
+ * the shared `splitEvenly` helper against the current pool balance
+ * (same math the reducer just ran client-side), then debits the pool
+ * by N × share and credits each recipient Inventory by share. Every
+ * update is inside the enclosing `tx` so a partial failure rolls back
+ * the whole distribution.
+ *
+ * The log entries (1 terminal + N transfer) are already built by the
+ * reducer via `buildLogEntry`; this persistor only touches the
+ * CurrencyHolding rows.
+ */
+async function persistSplitEvenly(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'split-evenly' }>['payload'],
+  _ctx: ReducerContext,
+): Promise<void> {
+  const { fromStashId, recipientCharacterIds } = payload;
+  const n = recipientCharacterIds.length;
+  const pool = await tx.currencyHolding.findUniqueOrThrow({
+    where: { stashId: fromStashId },
+  });
+  const { share, remainder } = currency.splitEvenly(
+    { cp: pool.cp, sp: pool.sp, ep: pool.ep, gp: pool.gp, pp: pool.pp },
+    n,
+  );
+
+  // Set pool directly to the computed remainder (structural equality
+  // per splitEvenly's contract: N × share + remainder === pool).
+  await tx.currencyHolding.update({
+    where: { stashId: fromStashId },
+    data: {
+      cp: remainder.cp,
+      sp: remainder.sp,
+      ep: remainder.ep,
+      gp: remainder.gp,
+      pp: remainder.pp,
+    },
+  });
+
+  const characters = await tx.character.findMany({
+    where: { id: { in: recipientCharacterIds } },
+    select: { id: true, inventoryStashId: true },
+  });
+  const invByCharId = new Map(characters.map((c) => [c.id, c.inventoryStashId]));
+
+  for (const charId of recipientCharacterIds) {
+    const invStashId = invByCharId.get(charId);
+    if (invStashId === undefined) {
+      throw new Error(`split-evenly: character ${charId} not found in DB`);
+    }
+    await tx.currencyHolding.update({
+      where: { stashId: invStashId },
+      data: {
+        cp: { increment: share.cp },
+        sp: { increment: share.sp },
+        ep: { increment: share.ep },
+        gp: { increment: share.gp },
+        pp: { increment: share.pp },
+      },
+    });
+  }
 }
 
 // Silence unused-import lint for translators that future actions will use.

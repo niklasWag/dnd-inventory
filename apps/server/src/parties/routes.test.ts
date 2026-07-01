@@ -1184,3 +1184,339 @@ describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
     }
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.2.d — split-evenly (Banker distribution toolkit)
+// -------------------------------------------------------------------- //
+
+describe('R4.2.d — split-evenly on /sync/actions', () => {
+  /**
+   * Two-member party with a Banker + both members having characters
+   * (so each has an Inventory stash to receive their share). Returns
+   * ids the tests need.
+   */
+  async function setupSplitReady(app: Awaited<ReturnType<typeof buildServer>>): Promise<{
+    partyId: string;
+    partyStashId: string;
+    userA: { userId: string; cookie: string; characterId: string; inventoryStashId: string };
+    userB: { userId: string; cookie: string; characterId: string; inventoryStashId: string };
+  }> {
+    const userA = await seedUser({ displayName: 'A' });
+    const tokenA = await seedSession(userA.userId);
+    const cookieA = cookieHeader(env, tokenA);
+    const { partyId, inviteCode } = await bootstrapParty(app, cookieA);
+
+    const userB = await seedUser({ displayName: 'B' });
+    const tokenB = await seedSession(userB.userId);
+    const cookieB = cookieHeader(env, tokenB);
+    const joinRes = await app.inject({
+      method: 'POST',
+      url: '/parties/join',
+      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      payload: { inviteCode },
+    });
+    expect(joinRes.statusCode).toBe(200);
+    await app.inject({
+      method: 'POST',
+      url: '/sync/actions',
+      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      payload: {
+        partyId,
+        actions: [
+          {
+            type: 'create-character',
+            payload: {
+              name: 'B-Char',
+              species: 'Elf',
+              size: 'medium',
+              class: 'Rogue',
+              level: 1,
+              str: 10,
+            },
+          },
+        ],
+      },
+    });
+
+    // Appoint B as Banker.
+    const appointRes = await app.inject({
+      method: 'POST',
+      url: '/sync/actions',
+      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      payload: {
+        partyId,
+        actions: [{ type: 'appoint-banker', payload: { bankerUserId: userB.userId } }],
+      },
+    });
+    expect(appointRes.statusCode).toBe(200);
+
+    const partyStash = await prisma.stash.findFirstOrThrow({
+      where: { partyId, scope: 'party' },
+    });
+    const aChar = await prisma.character.findFirstOrThrow({
+      where: { partyId, ownerUserId: userA.userId },
+    });
+    const bChar = await prisma.character.findFirstOrThrow({
+      where: { partyId, ownerUserId: userB.userId },
+    });
+
+    return {
+      partyId,
+      partyStashId: partyStash.id,
+      userA: {
+        userId: userA.userId,
+        cookie: cookieA,
+        characterId: aChar.id,
+        inventoryStashId: aChar.inventoryStashId,
+      },
+      userB: {
+        userId: userB.userId,
+        cookie: cookieB,
+        characterId: bChar.id,
+        inventoryStashId: bChar.inventoryStashId,
+      },
+    };
+  }
+
+  it('splits 100 gp across 2 recipients — Banker triggers, both Inventories credited 50 gp, pool empty', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userA, userB } = await setupSplitReady(app);
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 100 },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'split-evenly',
+              payload: {
+                fromStashId: partyStashId,
+                recipientCharacterIds: [userA.characterId, userB.characterId],
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const pool = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect(pool.gp).toBe(0);
+      expect(pool.cp).toBe(0);
+
+      const aInv = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: userA.inventoryStashId },
+      });
+      expect(aInv.gp).toBe(50);
+
+      const bInv = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: userB.inventoryStashId },
+      });
+      expect(bInv.gp).toBe(50);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects a non-Banker player triggering split-evenly with banker_required_for_claim', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userA, userB } = await setupSplitReady(app);
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 100 },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'split-evenly',
+              payload: {
+                fromStashId: partyStashId,
+                recipientCharacterIds: [userA.characterId, userB.characterId],
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('banker_required_for_claim');
+
+      const pool = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect(pool.gp).toBe(100);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('cascade split: 100 gp / 3 recipients → each 33 gp 3 sp 3 cp, pool retains 1 cp', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userA, userB } = await setupSplitReady(app);
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 100 },
+      });
+      // Add user C so we have 3 recipients.
+      const userC = await seedUser({ displayName: 'C' });
+      const tokenC = await seedSession(userC.userId);
+      const cookieC = cookieHeader(env, tokenC);
+      const invite = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieC, 'content-type': 'application/json' },
+        payload: { inviteCode: invite.inviteCode },
+      });
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieC, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'C-Char',
+                species: 'Human',
+                size: 'medium',
+                class: 'Cleric',
+                level: 1,
+                str: 10,
+              },
+            },
+          ],
+        },
+      });
+      const cChar = await prisma.character.findFirstOrThrow({
+        where: { partyId, ownerUserId: userC.userId },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'split-evenly',
+              payload: {
+                fromStashId: partyStashId,
+                recipientCharacterIds: [userA.characterId, userB.characterId, cChar.id],
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const pool = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect({ cp: pool.cp, sp: pool.sp, ep: pool.ep, gp: pool.gp, pp: pool.pp }).toEqual({
+        cp: 1, sp: 0, ep: 0, gp: 0, pp: 0,
+      });
+
+      for (const invId of [userA.inventoryStashId, userB.inventoryStashId, cChar.inventoryStashId]) {
+        const inv = await prisma.currencyHolding.findUniqueOrThrow({
+          where: { stashId: invId },
+        });
+        expect({ cp: inv.cp, sp: inv.sp, ep: inv.ep, gp: inv.gp, pp: inv.pp }).toEqual({
+          cp: 3, sp: 3, ep: 0, gp: 33, pp: 0,
+        });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('DM can `gameplay-drain` Party Stash even when Banker is active (R4.2.d bypass)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userA } = await setupSplitReady(app);
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 10 },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userA.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'currency-change',
+              payload: {
+                stashId: partyStashId,
+                delta: { cp: 0, sp: 0, ep: 0, gp: -3, pp: 0 },
+                reason: 'gameplay-drain',
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const pool = await prisma.currencyHolding.findUniqueOrThrow({
+        where: { stashId: partyStashId },
+      });
+      expect(pool.gp).toBe(7);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects a player (even the Banker) using `gameplay-drain` (DM-only reason)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId, partyStashId, userB } = await setupSplitReady(app);
+      await prisma.currencyHolding.update({
+        where: { stashId: partyStashId },
+        data: { gp: 10 },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: userB.cookie, 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'currency-change',
+              payload: {
+                stashId: partyStashId,
+                delta: { cp: 0, sp: 0, ep: 0, gp: -3, pp: 0 },
+                reason: 'gameplay-drain',
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = JSON.parse(res.body) as { rejected?: { code?: string } };
+      expect(body.rejected?.code).toBe('dm_only');
+    } finally {
+      await app.close();
+    }
+  });
+});

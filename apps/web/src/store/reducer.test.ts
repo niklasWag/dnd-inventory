@@ -7409,6 +7409,309 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
 });
 
 // -------------------------------------------------------------------- //
+// R4.2.d — split-evenly (Banker distribution toolkit)
+// -------------------------------------------------------------------- //
+
+describe('reducer: split-evenly (R4.2.d)', () => {
+  /**
+   * Bootstrap DM+character, graft `player-b` with their own character
+   * `char-b` + Inventory `inv-b` + zeroed CurrencyHolding, appoint B as
+   * Banker. Seed the Party Stash with the supplied pool balance.
+   *
+   * Returns the ids the tests need to dispatch + assert.
+   */
+  function bootstrapForSplit(pool: {
+    cp?: number;
+    sp?: number;
+    ep?: number;
+    gp?: number;
+    pp?: number;
+  }): {
+    dmUserId: string;
+    dmCharacterId: string;
+    dmInventoryStashId: string;
+    bankerUserId: string;
+    bankerCharacterId: string;
+    bankerInventoryStashId: string;
+    partyStashId: string;
+  } {
+    localBootstrap();
+    const s0 = useStore.getState().appState!;
+    const dmUserId = s0.user.id;
+    const dmCharacterId = s0.characters[0]!.id;
+    const dmInventoryStashId = s0.characters[0]!.inventoryStashId;
+    const partyStashId = s0.stashes.find((st) => st.scope === 'party')!.id;
+
+    const bankerUserId = 'player-b';
+    const bankerCharacterId = 'char-b';
+    const bankerInventoryStashId = 'inv-b';
+
+    useStore.setState((prev) => {
+      if (prev.appState === null) return prev;
+      return {
+        ...prev,
+        appState: {
+          ...prev.appState,
+          memberships: [
+            ...prev.appState.memberships,
+            {
+              userId: bankerUserId,
+              partyId: prev.appState.party.id,
+              role: 'player',
+              characterId: bankerCharacterId,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          characters: [
+            ...prev.appState.characters,
+            {
+              id: bankerCharacterId,
+              partyId: prev.appState.party.id,
+              ownerUserId: bankerUserId,
+              name: 'Banker Character',
+              species: 'Human',
+              size: 'medium',
+              class: 'Rogue',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: bankerInventoryStashId,
+            },
+          ],
+          stashes: [
+            ...prev.appState.stashes,
+            {
+              id: bankerInventoryStashId,
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: bankerCharacterId,
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...prev.appState.currencies.map((c) =>
+              c.stashId === partyStashId
+                ? {
+                    ...c,
+                    cp: pool.cp ?? 0,
+                    sp: pool.sp ?? 0,
+                    ep: pool.ep ?? 0,
+                    gp: pool.gp ?? 0,
+                    pp: pool.pp ?? 0,
+                  }
+                : c,
+            ),
+            {
+              id: `hold-${bankerInventoryStashId}`,
+              stashId: bankerInventoryStashId,
+              cp: 0,
+              sp: 0,
+              ep: 0,
+              gp: 0,
+              pp: 0,
+            },
+          ],
+          party: { ...prev.appState.party, bankerUserId },
+        },
+      };
+    });
+
+    return {
+      dmUserId,
+      dmCharacterId,
+      dmInventoryStashId,
+      bankerUserId,
+      bankerCharacterId,
+      bankerInventoryStashId,
+      partyStashId,
+    };
+  }
+
+  it('splits 100 gp across DM + Banker character (2 recipients) — each gets 50 gp exactly', () => {
+    const { dmCharacterId, dmInventoryStashId, bankerCharacterId, bankerInventoryStashId, partyStashId } =
+      bootstrapForSplit({ gp: 100 });
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const s = useStore.getState().appState!;
+    const pool = s.currencies.find((c) => c.stashId === partyStashId)!;
+    const dmInv = s.currencies.find((c) => c.stashId === dmInventoryStashId)!;
+    const bankerInv = s.currencies.find((c) => c.stashId === bankerInventoryStashId)!;
+    expect({ cp: pool.cp, sp: pool.sp, ep: pool.ep, gp: pool.gp, pp: pool.pp }).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 0, pp: 0,
+    });
+    expect({ cp: dmInv.cp, sp: dmInv.sp, ep: dmInv.ep, gp: dmInv.gp, pp: dmInv.pp }).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 50, pp: 0,
+    });
+    expect({
+      cp: bankerInv.cp,
+      sp: bankerInv.sp,
+      ep: bankerInv.ep,
+      gp: bankerInv.gp,
+      pp: bankerInv.pp,
+    }).toEqual({ cp: 0, sp: 0, ep: 0, gp: 50, pp: 0 });
+  });
+
+  it('cascade split: 100 gp across 3 recipients → each 33 gp 3 sp 3 cp, pool retains 1 cp', () => {
+    const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({ gp: 100 });
+    // Graft a third player-c with character char-c + Inventory inv-c.
+    useStore.setState((prev) => {
+      if (prev.appState === null) return prev;
+      return {
+        ...prev,
+        appState: {
+          ...prev.appState,
+          memberships: [
+            ...prev.appState.memberships,
+            {
+              userId: 'player-c',
+              partyId: prev.appState.party.id,
+              role: 'player',
+              characterId: 'char-c',
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          characters: [
+            ...prev.appState.characters,
+            {
+              id: 'char-c',
+              partyId: prev.appState.party.id,
+              ownerUserId: 'player-c',
+              name: 'C',
+              species: 'Human',
+              size: 'medium',
+              class: 'Cleric',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: 'inv-c',
+            },
+          ],
+          stashes: [
+            ...prev.appState.stashes,
+            {
+              id: 'inv-c',
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: 'char-c',
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...prev.appState.currencies,
+            { id: 'hold-inv-c', stashId: 'inv-c', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          ],
+        },
+      };
+    });
+
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId, 'char-c'],
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    const pool = s.currencies.find((c) => c.stashId === partyStashId)!;
+    expect({ cp: pool.cp, sp: pool.sp, ep: pool.ep, gp: pool.gp, pp: pool.pp }).toEqual({
+      cp: 1, sp: 0, ep: 0, gp: 0, pp: 0,
+    });
+    for (const invId of [s.characters[0]!.inventoryStashId, 'inv-b', 'inv-c']) {
+      const inv = s.currencies.find((c) => c.stashId === invId)!;
+      expect({ cp: inv.cp, sp: inv.sp, ep: inv.ep, gp: inv.gp, pp: inv.pp }).toEqual({
+        cp: 3, sp: 3, ep: 0, gp: 33, pp: 0,
+      });
+    }
+  });
+
+  it('emits 1 split-evenly terminal entry + N currency-transfer entries in recipient order', () => {
+    const { dmCharacterId, dmInventoryStashId, bankerCharacterId, bankerInventoryStashId, partyStashId } =
+      bootstrapForSplit({ gp: 100 });
+    const beforeLog = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const log = useStore.getState().log;
+    const newEntries = log.slice(beforeLog);
+    expect(newEntries).toHaveLength(3); // 1 terminal + 2 transfers
+
+    const terminal = newEntries[0]!;
+    expect(terminal.type).toBe('split-evenly');
+    if (terminal.type !== 'split-evenly') throw new Error('expected split-evenly');
+    expect(terminal.payload.fromStashId).toBe(partyStashId);
+    expect(terminal.payload.recipientCharacterIds).toEqual([dmCharacterId, bankerCharacterId]);
+    expect(terminal.payload.sharePerRecipient).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 50, pp: 0,
+    });
+    expect(terminal.payload.remainderInPool).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 0, pp: 0,
+    });
+    expect(terminal.actorRole).toBe('banker');
+
+    const second = newEntries[1]!;
+    expect(second.type).toBe('currency-transfer');
+    if (second.type !== 'currency-transfer') throw new Error('expected currency-transfer');
+    expect(second.payload.fromStashId).toBe(partyStashId);
+    expect(second.payload.toStashId).toBe(dmInventoryStashId);
+
+    const third = newEntries[2]!;
+    expect(third.type).toBe('currency-transfer');
+    if (third.type !== 'currency-transfer') throw new Error('expected currency-transfer');
+    expect(third.payload.toStashId).toBe(bankerInventoryStashId);
+  });
+
+  it('empty pool: emits only the terminal entry (share is all zeros, no transfers)', () => {
+    const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({});
+    const beforeLog = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const newEntries = useStore.getState().log.slice(beforeLog);
+    expect(newEntries).toHaveLength(1);
+    expect(newEntries[0]!.type).toBe('split-evenly');
+  });
+
+  it('terminal entry always includes remainderInPool even when zero', () => {
+    const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({ gp: 100 });
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const log = useStore.getState().log;
+    const terminal = log[log.length - 3]!;
+    if (terminal.type !== 'split-evenly') throw new Error('expected split-evenly');
+    expect(terminal.payload.remainderInPool).toEqual({ cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+});
+
+// -------------------------------------------------------------------- //
 // BUG-002 regression — join-party reactivates a soft-deleted membership
 // -------------------------------------------------------------------- //
 //

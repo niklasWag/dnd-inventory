@@ -172,3 +172,56 @@ export function subtract(a: CurrencyDelta, b: CurrencyDelta): Currency {
   }
   return result;
 }
+
+/**
+ * R4.2.d — cascade-down-denominations split. For each denom in
+ * [pp, gp, ep, sp, cp] (largest → smallest), give each of N recipients
+ * `floor(pool[d] / N)`. The per-denom remainder converts to the next
+ * lower denom (via the OUTLINE §4 rate constants) and cascades. The
+ * CP-level remainder (0 to N-1 cp) stays in the pool.
+ *
+ * Invariant: `N × toCopper(share) + toCopper(remainder) === toCopper(pool)`.
+ *
+ * Throws when N < 1 or non-integer. Empty pool is valid input (returns
+ * all-zeros share + all-zeros remainder).
+ */
+export function splitEvenly(pool: Currency, n: number): { share: Currency; remainder: Currency } {
+  if (!Number.isInteger(n)) {
+    throw new Error(`currency.splitEvenly: n must be a positive integer, got ${String(n)}`);
+  }
+  if (n < 1) {
+    throw new Error(`currency.splitEvenly: n must be >= 1, got ${String(n)}`);
+  }
+
+  // Work on a mutable copy of the pool so we can cascade remainders
+  // into the next-lower denomination during the walk.
+  const working: Currency = { ...pool };
+  const share: Currency = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
+
+  // Walk largest → smallest. Each remainder is converted to the next
+  // lower denom via the ratio of multipliers (always an integer factor
+  // in the D&D 5e ladder: pp/gp = 10, gp/ep = 2, ep/sp = 5, sp/cp = 10).
+  for (let i = 0; i < DENOMS_LARGEST_FIRST.length; i++) {
+    const d = DENOMS_LARGEST_FIRST[i]!;
+    const qty = working[d];
+    share[d] = Math.floor(qty / n);
+    const leftover = qty - share[d] * n;
+    // The distributed portion leaves the pool regardless of leftover
+    // (share * n coins go to recipients; the remainder cascades below).
+    working[d] = 0;
+    if (leftover === 0) continue;
+    const next = DENOMS_LARGEST_FIRST[i + 1];
+    if (next === undefined) {
+      // At cp — the leftover stays in `working[cp]` as the pool remainder.
+      working.cp = leftover;
+      break;
+    }
+    // Convert the leftover to the next denom via multiplier ratio.
+    // Both multipliers are powers-of-ten-ish integers so this is exact.
+    const factor = MULTIPLIER[d] / MULTIPLIER[next];
+    working[next] += leftover * factor;
+  }
+
+  return { share, remainder: working };
+}
+

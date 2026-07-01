@@ -1970,18 +1970,40 @@ Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable
 #### R4.2.d — Banker distribution toolkit (new actions)
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `currency-change` extended `reason` values (`split-evenly`, `gameplay-drain`)
-- [ ] Action: split Party Stash currency evenly across characters (one terminal entry + N `currency-change` entries with `reason: 'split-evenly'`)
-- [ ] Action: Banker gives currency / items to a specific player from Party Stash
-- [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
-- [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
+- [x] `currency-change` extended `reason` values (`gameplay-drain` added to the action enum; `split-evenly` stayed out — see Notes for rationale).
+- [x] Action: split Party Stash currency evenly across characters — new `split-evenly` action + `currency.splitEvenly` cascade helper. Emits ONE terminal `split-evenly` log entry + N `currency-transfer` entries (§4 rule: transfers replace paired `currency-change` in stash-to-stash moves).
+- [x] DM `gameplay-drain` bypass — the `checkBankerGate` skip lets the DM `currency-change` a shared pool with `reason: 'gameplay-drain'` even when a Banker is active; non-DM actors using this reason are rejected outright (`dm_only`).
 
 **Server-side**
-- [ ] Server authoritative checks for each new action; CP-integer currency math (per `docs/SECURITY.md` §3.2); no negative balances.
+- [x] Server authoritative checks for each new action; CP-integer currency math (per `docs/SECURITY.md` §3.2); no negative balances. `persistSplitEvenly` re-runs `splitEvenly` inside the sync `$transaction`, debits the pool, and increments N recipient Inventory holdings atomically.
+
+**Tests**
+- [x] TDD RED/GREEN/REFACTOR on `currency.splitEvenly` (12 new tests in `packages/rules/src/currency.test.ts` — worked examples, edge cases, conservation invariant `N × share + remainder === pool`, argument validation).
+- [x] Guard matrix in `packages/shared/src/guards/map.test.ts` (13 new tests — DM `gameplay-drain` bypass across Banker-active/inactive, non-DM rejection with `gameplay-drain`, R4.2.c behaviour preserved for `withdraw`, `splitEvenlyGuard` Banker-only + source-must-be-Party-Stash + recipient-must-be-active-player).
+- [x] Reducer tests in `apps/web/src/store/reducer.test.ts` (5 new tests — 100gp/2, 100gp/3 cascade, terminal + N transfer log shape, empty-pool → terminal only, `remainderInPool` always present).
+- [x] Server integration tests in `apps/server/src/parties/routes.test.ts` (5 new tests — 100gp/2 happy path, non-Banker rejection, 100gp/3 cascade end-to-end DB verification, DM `gameplay-drain` when Banker active, non-DM rejection).
 
 #### R4.2.d — Notes
 
-> -
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1096 across the workspace (shared 103 ← 90, rules 126 ← 114, seeds 22, web 670 ← 665, server 175 ← 170). All five workspaces typecheck. Lint clean workspace-wide.
+>
+> **Design decisions captured (planning session 2026-07-01):**
+> - **Cascade rounding.** For each denom in `[pp, gp, ep, sp, cp]` (largest → smallest), give each recipient `floor(pool[d] / N)`, then convert the per-denom remainder into the next lower denom via the OUTLINE §4 rate constants (all integer factors: pp/gp=10, gp/ep=2, ep/sp=5, sp/cp=10). CP-level remainder (0 to N-1 cp) stays in the pool. Matches how a DM splits loot at the table — piles of coins in each denomination, not raw copper. Compared to naive-CP-flatten: same total value, but the recipient sees `+33 gp +3 sp +3 cp` instead of `+3333 cp`.
+> - **`split-evenly` action shape.** `{ fromStashId, recipientCharacterIds: string[] }`. Banker picks recipients (opt-in; the Banker can distribute to a subset if, e.g., a player is absent from the session). Banker's own character IS a valid recipient per OUTLINE §8.1 "Take Party Stash currency into own character's purse" (Banker: allowed).
+> - **Log shape.** ONE terminal `split-evenly` entry carrying `{ fromStashId, recipientCharacterIds, sharePerRecipient, remainderInPool }` as the audit anchor; N child `currency-transfer` entries (one per recipient) as the atomic debit/credit machinery. Follows §4's rule that `currency-transfer` replaces paired `currency-change` in stash-to-stash moves. `remainderInPool` is ALWAYS present, even when zero — uniform log shape.
+> - **Empty pool.** If the Banker triggers split-evenly on an empty pool, ONE terminal entry emits (audit: "Banker attempted a split; nothing distributed") but the N transfer entries are skipped (no zero-delta transfers).
+> - **`split-evenly` NOT in `currency-change.reason` enum.** The roadmap text mentioned `'split-evenly'` as a `currency-change.reason` value; that was pre-design language. Our final design uses `currency-transfer` for the child entries (which has no `reason` field) and a dedicated `split-evenly` log-entry type for the terminal. So `'split-evenly'` never appears as a `reason` value at runtime. Left in the log-entry schema's enum (line 336) as a tolerant leftover; not added to the action enum.
+> - **Source restricted to Party Stash.** R4.2.d does NOT support split-evenly on Recovered Loot. Recovered Loot is the incidental pile from character departures; distributing it evenly is uncommon and the Banker can do it manually via `currency-transfer` if needed. Recovered Loot rejection is `stash_not_found` (semantically: not a valid split-source).
+> - **`gameplay-drain` is DM-only.** Even the Banker can't use it — `dm_only` rejection. The reason label describes a world-level effect (magical drain, NPC tax, theft), which is the DM's domain per OUTLINE §8.1 row 464. The DM uses this to remove currency from a pool for gameplay reasons; the Banker uses `withdraw` to prepare a distribution (which the Banker gate then permits).
+> - **Web-side rejection.** Same as R4.2.c: skipped for this slice. Server is authoritative; R4.2.e UI hides/disables buttons based on `state.party.bankerUserId` and `actor.role`. Optimistic UI rejection would require wiring `checkGuard` into the web store's dispatch — that's a broader architectural change outside R4.2.d's scope.
+>
+> **Implementation shape.** `currency.splitEvenly` is a 15-line loop over the 5 denoms; reducer arm is ~90 lines including comments (mostly the recipient-Inventory resolution + log entry construction); server persistor is ~60 lines (Prisma updates in-transaction). Guards add a `splitEvenlyGuard` and extend `currencyChangeGuard` with the `gameplay-drain` bypass. The `checkBankerGate` helper introduced in R4.2.c did not need changes.
+>
+> **Carryforward to R4.2.e:** the UI for "Split the Pot" lives on the Party Stash screen (§5.5). Recipient picker should default to all active players' characters with the Banker's character pre-selected; the Banker can uncheck any to skip them. Preview should show the computed share + remainder BEFORE dispatch so the Banker sees "each player gets 33 gp 3 sp 3 cp; pool retains 1 cp" and can confirm. Pure client-side math via `currency.splitEvenly` — no round-trip.
+>
+> **Carryforward to R4.3:** the `dm-transfer` action lands with the caveat from BUG-002 (soft-delete composite-PK) — no direct interaction with R4.2.d.
 
 #### R4.2.e — UI
 

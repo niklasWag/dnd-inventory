@@ -837,6 +837,30 @@ const revokeBankerEntry = z.object({
   }),
 });
 
+/**
+ * R4.2.d — Banker split-evenly terminal log entry. Emitted by the
+ * `split-evenly` reducer arm as the audit anchor; the N child
+ * `currency-transfer` entries (one per recipient) carry the atomic
+ * debit/credit machinery. Together they form a single logical
+ * distribution event.
+ *
+ * `sharePerRecipient` is the per-recipient share as computed by the
+ * cascade algorithm (packages/rules `splitEvenly`); `remainderInPool`
+ * is the CP-level leftover that stayed in `fromStashId` (0 to N-1 cp).
+ * Both fields are ALWAYS present, even when zero — keeps the shape
+ * uniform for log readers.
+ */
+const splitEvenlyEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('split-evenly'),
+  payload: z.object({
+    fromStashId: z.string().min(1),
+    recipientCharacterIds: z.array(z.string().min(1)).min(1),
+    sharePerRecipient: currencyDeltaSchema,
+    remainderInPool: currencyDeltaSchema,
+  }),
+});
+
 // MVP TxType subset (MVP §6). Each post-M1 milestone adds a variant here
 // AND a reducer case in apps/web/src/store/reducer.ts.
 export const transactionLogEntrySchema = z.discriminatedUnion('type', [
@@ -872,6 +896,7 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   joinPartyEntry,
   appointBankerEntry,
   revokeBankerEntry,
+  splitEvenlyEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

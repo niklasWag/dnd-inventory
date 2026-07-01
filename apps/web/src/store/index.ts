@@ -198,6 +198,19 @@ function resolveActor(
         actorRole: 'dm',
         partyId: state.party.id,
       };
+    case 'split-evenly':
+      // R4.2.d — Banker-only per OUTLINE §8.1. Reducer + guard both
+      // reject non-Banker dispatches, so the actor is always the Banker
+      // by the time this resolver runs. Emitted with `actorRole:
+      // 'banker'` for audit-trail clarity.
+      if (state === null) {
+        throw new Error('resolveActor: split-evenly requires populated AppState');
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'banker',
+        partyId: state.party.id,
+      };
   }
 }
 

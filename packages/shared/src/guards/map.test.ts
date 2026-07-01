@@ -958,6 +958,152 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
   });
 });
 
+// -------------------- R4.2.d — DM gameplay-drain bypass + split-evenly --------------------
+
+/**
+ * R4.2.d — DM `gameplay-drain` bypasses the R4.2.c Banker gate. Any
+ * non-DM using `gameplay-drain` is rejected outright — the reason is
+ * DM-only regardless of Banker state.
+ *
+ * R4.2.d also adds the `split-evenly` action: Banker-only, source must
+ * be Party Stash, non-empty recipient list, every recipient must be an
+ * active player's character in this party.
+ */
+
+describe('guards — R4.2.d DM gameplay-drain bypass', () => {
+  it('allows the DM to `gameplay-drain` Party Stash currency when Banker active', () => {
+    const state = makeBankerState();
+    const result = guards['currency-change'](
+      state,
+      { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'gameplay-drain' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('allows the DM to `gameplay-drain` Recovered Loot currency when Banker active', () => {
+    const state = makeBankerState();
+    const result = guards['currency-change'](
+      state,
+      { stashId: 'rl', delta: delta({ gp: -1 }), reason: 'gameplay-drain' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('allows the DM to `gameplay-drain` even when NO Banker is active', () => {
+    const state = makeBankerState(null);
+    const result = guards['currency-change'](
+      state,
+      { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'gameplay-drain' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('rejects a player using `gameplay-drain` (DM-only reason)', () => {
+    const state = makeBankerState(null);
+    const result = guards['currency-change'](
+      state,
+      { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'gameplay-drain' },
+      makeActor('u2', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('rejects the Banker using `gameplay-drain` (still DM-only, even for Banker)', () => {
+    const state = makeBankerState();
+    const result = guards['currency-change'](
+      state,
+      { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'gameplay-drain' },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('R4.2.c behaviour preserved: DM `withdraw` from Party Stash still rejected when Banker active', () => {
+    const state = makeBankerState();
+    const result = guards['currency-change'](
+      state,
+      { stashId: 'ps', delta: delta({ gp: -1 }), reason: 'withdraw' },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+  });
+});
+
+describe('guards — R4.2.d split-evenly', () => {
+  it('accepts a Banker splitting Party Stash across active player characters', () => {
+    const state = makeBankerState();
+    const result = guards['split-evenly'](
+      state,
+      { fromStashId: 'ps', recipientCharacterIds: ['char-u2', 'char-banker-user'] },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('rejects a non-Banker player from split-evenly', () => {
+    const state = makeBankerState();
+    const result = guards['split-evenly'](
+      state,
+      { fromStashId: 'ps', recipientCharacterIds: ['char-u2'] },
+      makeActor('u2', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+  });
+
+  it('rejects the DM from split-evenly (Banker-only per §8.1)', () => {
+    const state = makeBankerState();
+    const result = guards['split-evenly'](
+      state,
+      { fromStashId: 'ps', recipientCharacterIds: ['char-u2'] },
+      makeActor('dm-user', 'dm'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+  });
+
+  it('rejects when fromStashId is Recovered Loot (out of scope for R4.2.d)', () => {
+    const state = makeBankerState();
+    const result = guards['split-evenly'](
+      state,
+      { fromStashId: 'rl', recipientCharacterIds: ['char-u2', 'char-banker-user'] },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'stash_not_found' });
+  });
+
+  it('rejects when fromStashId is a character Inventory', () => {
+    const state = makeBankerState();
+    const result = guards['split-evenly'](
+      state,
+      { fromStashId: 'inv', recipientCharacterIds: ['char-u2', 'char-banker-user'] },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'stash_not_found' });
+  });
+
+  it('rejects when a recipient character is not in this party', () => {
+    const state = makeBankerState();
+    const result = guards['split-evenly'](
+      state,
+      { fromStashId: 'ps', recipientCharacterIds: ['char-u2', 'char-nonexistent'] },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'character_not_found' });
+  });
+
+  it('accepts when the Banker includes their own character', () => {
+    const state = makeBankerState();
+    const result = guards['split-evenly'](
+      state,
+      { fromStashId: 'ps', recipientCharacterIds: ['char-banker-user'] },
+      makeActor('banker-user', 'banker'),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+});
+
 describe('guards — every action has an entry', () => {
   it('the map exposes one guard per Action type', () => {
     const expected: ReadonlyArray<Action['type']> = [
@@ -993,6 +1139,7 @@ describe('guards — every action has an entry', () => {
       'join-party',
       'appoint-banker',
       'revoke-banker',
+      'split-evenly',
     ];
     for (const t of expected) {
       expect(typeof guards[t]).toBe('function');

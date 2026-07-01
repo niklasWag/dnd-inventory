@@ -177,7 +177,12 @@ const currencyChangeAction = z.object({
   payload: z.object({
     stashId: z.string().min(1),
     delta: currencyDeltaPayloadSchema,
-    reason: z.enum(['deposit', 'withdraw', 'convert']),
+    // `deposit | withdraw | convert` — self-managed adjustments a player
+    // makes to a stash they own. `gameplay-drain` (R4.2.d) is a DM-only
+    // reason for removing currency from Party Stash / Recovered Loot
+    // for gameplay reasons (magical drain, NPC tax, theft). The guard
+    // layer enforces the DM-only constraint.
+    reason: z.enum(['deposit', 'withdraw', 'convert', 'gameplay-drain']),
   }),
 });
 
@@ -448,6 +453,30 @@ const revokeBankerAction = z.object({
   }),
 });
 
+/**
+ * R4.2.d — Banker-only "split-evenly" action. Splits `fromStashId`'s
+ * currency across the supplied `recipientCharacterIds` using the
+ * cascade-down-denominations algorithm (`packages/rules/currency.ts`
+ * `splitEvenly`). Emits one terminal `split-evenly` log entry plus N
+ * `currency-transfer` entries (one per recipient).
+ *
+ * `fromStashId` must be the party's Party Stash (`scope: 'party'`).
+ * Recovered Loot is out of scope for R4.2.d — the Banker can move that
+ * currency manually via `currency-transfer` if needed.
+ *
+ * `recipientCharacterIds` must all be active players' characters in
+ * this party. The Banker's own character is a valid recipient per
+ * OUTLINE §8.1 ("Take Party Stash currency into own character's
+ * purse" — Banker: allowed).
+ */
+const splitEvenlyAction = z.object({
+  type: z.literal('split-evenly'),
+  payload: z.object({
+    fromStashId: z.string().min(1),
+    recipientCharacterIds: z.array(z.string().min(1)).min(1),
+  }),
+});
+
 export const actionSchema = z.discriminatedUnion('type', [
   createCharacterAction,
   acquireAction,
@@ -481,6 +510,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   joinPartyAction,
   appointBankerAction,
   revokeBankerAction,
+  splitEvenlyAction,
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
