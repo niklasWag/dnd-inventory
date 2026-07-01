@@ -2007,21 +2007,54 @@ Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable
 
 #### R4.2.e — UI
 
-- [ ] Party Settings screen (§5.15): appoint / revoke Banker CTAs (DM-only, hidden in solo, hidden on the DM's own row)
-- [ ] Member list with role badges (DM / Player / Banker) — `RoleBadge` already exists from R4.2.b; the new work is joining `Party.bankerUserId` to the members list at render time to surface the Banker badge alongside the player row whose `userId === party.bankerUserId`. Keep the API type `PartyMemberItem.role` narrow `'dm' | 'player'` per OUTLINE §3.14; derive Banker client-side.
+- [x] Party Settings screen (§5.15): appoint / revoke Banker CTAs (DM-only, hidden in solo, hidden on the DM's own row).
+- [x] Member list with role badges (DM / Player / Banker) — Banker badge attaches to the player row whose `userId === Party.bankerUserId`. Derivation is client-side; API type `PartyMemberItem.role` stays narrow per §3.14.
 - [x] ~~Log-entry badge for `actorRole: 'banker'`~~ — **shipped in R4.2.b** (via `RoleBadge` in `ItemHistory`).
-- [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
-- [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
-- [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
-- [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
+- [x] Party Stash (§5.5): Banker distribution — new `SplitEvenlyModal` for split-the-pot (Party Stash only per R4.2.d). "Give currency to player" / "Give items to player" reuse the existing `CurrencyTransferModal` / `MoveItemModal` — R4.2.c gate lets the Banker drive them; the Banker sees the normal Transfer button while non-Banker/non-DM users have it hidden.
+- [x] Party Stash for DM-when-Banker-active: withdraw controls hidden; `DrainCurrencyModal` visible instead (dispatches `currency-change` with `reason: 'gameplay-drain'`). Deposit (`+`) stays visible for the DM per §8.1 deposit row.
+- [x] Recovered Loot (§5.6): same Banker/DM split as Party Stash, minus the Split Evenly button (per R4.2.d, split-evenly source is Party Stash only).
+- [x] Component tests: `SplitEvenlyModal` (7 tests — selection, preview, dispatch), `DrainCurrencyModal` (5 tests — payload, overspending), `CurrencyRow.bankerContext` (5 tests — visibility flags per role permutation).
 
 #### R4.2.e — Notes
 
-> -
+> **Shipped 2026-07-01** (`feature/r4-parties`). **R4.2 complete.**
+>
+> **Test totals:** 1113 across the workspace (shared 103, rules 126, seeds 22, web 687 ← 670, server 175). Typecheck + lint clean workspace-wide.
+>
+> **Design decisions captured (planning session 2026-07-01):**
+> - **DM drain UX.** Confirmation modal (`DrainCurrencyModal`) instead of an inline rename. Deliberate friction — draining a shared pool for gameplay reasons is a world-level effect (magical drain, NPC tax, theft — §8.1 row 464); a per-denom form + explicit Drain button + destructive-variant styling reads as "you are removing this from the game" instead of "you are moving this somewhere". Deposit path stays inline (+) — depositing IS the fast path.
+> - **Per-row Banker CTAs in PartySettings.** DM sees a "Make Banker" button on every non-DM, non-self player row when no Banker is set; sees "Revoke Banker" next to the current Banker. Hidden in solo (memberCount < 2). Rejected on the DM's own row (§3.14 forbids DM-as-Banker anyway; the reducer + guard enforce it — the UI just avoids the reject-path click).
+> - **Prop-gated visibility over "many components".** Rather than five new modals for Banker/DM permutations, `CurrencyRow` accepts an optional `bankerContext: BankerContext` prop with four flags: `userIsBanker`, `userIsDmWithBankerActive`, `userIsGatedFromPool`, `isPartyStash`. `CharacterSheet` computes these once per render and passes them; character-scope tabs (Inventory / Storage) pass `undefined` and the row falls back to its M4 default control set. Zero behavioural change for non-shared-pool stashes.
+> - **Split-evenly recipient default: all-checked.** When the Banker opens the modal, every eligible active player character is pre-selected (including the Banker's own). Matches R4.2.d's "distribute across the party" default flow. The Banker unchecks recipients only for the absentee/skip-one case.
+> - **Full per-denom preview.** The modal renders the exact cascade output via `currency.splitEvenly` before dispatch. The Banker sees "Each recipient gets: 33 gp, 3 sp, 3 cp" and "Party Stash retains: 1 cp" — no round-trip, no surprise.
+> - **StashItemsTable NOT gated in R4.2.e.** Item-side controls (transfer / split / remove) remain visible for all roles even on shared pools. Non-Banker item transfers already fail at the server with `banker_required_for_claim` and toast the error — that's acceptable friction. Hiding item controls would double the visibility-flag surface for marginal UX gain; revisit if telemetry shows non-Banker users frequently attempting shared-pool item moves.
+> - **PartySettings component tests deferred to server integration.** The Banker CTAs live in the server-mode-only members section, which requires a live API mock. The dispatch pipeline for `appoint-banker` / `revoke-banker` is already covered by R4.2.a's reducer + server integration tests. R4.2.e tests focus on the two new modals + the visibility prop mechanics — the parts with novel logic.
+>
+> **Implementation shape.**
+> - `SplitEvenlyModal` (~230 lines) — recipient checkbox list, `useMemo` preview via `currency.splitEvenly`, single dispatch on Confirm.
+> - `DrainCurrencyModal` (~140 lines) — five per-denom inputs with `max={pool[denom]}`, overspending warning, single dispatch with `reason: 'gameplay-drain'`.
+> - `CurrencyRow` (~65 lines added) — five visibility flags derived from `bankerContext`; existing modals reused; two new modals conditionally mounted.
+> - `CharacterSheet` (~15 lines added) — Banker context computed inside the `useShallow` selector alongside stash ids; passed as a prop only for shared-pool tabs.
+> - `PartySettings` (~60 lines added) — extended selector for `bankerUserId`; two new handlers (`handleAppointBanker` / `handleRevokeBanker`); per-row CTAs with the DM/solo/own-row visibility rule; second `RoleBadge` on the Banker's player row.
+>
+> **Selector pattern gotcha (resolved).** SplitEvenlyModal's first draft used a single `useShallow` selector that built a fresh `EligibleRecipient[]` on each store change. React 19 + Zustand rejected this with "The result of getSnapshot should be cached to avoid an infinite loop" and hit the max-update-depth guard. Fix: split into two primitive `useShallow` selects (`memberships`, `characters`) + `useMemo` for the derived list. Same pattern CLAUDE.md notes for `CatalogBrowser` and `StashItemsTable`.
+>
+> **Negative-zero gotcha (resolved).** `DrainCurrencyModal` originally emitted `delta: { cp: -0, sp: -0, ..., gp: -3 }` because JS `-0 === 0` but the object shape reads oddly. Fixed with `-amounts.cp || 0` per denom — the `|| 0` short-circuits when the negation is `-0`.
 
 #### R4.2 — Notes
 
-> **Sliced from a single roadmap section into R4.2.a–e on 2026-06-30** (planning session). The original section was a flat task list; the sub-slicing aligns Banker work with the R4.1.a/b/c/d/e/f rhythm so each PR stays reviewable and ships its own user-visible (or substrate-visible) value.
+> **R4.2 shipped 2026-07-01 (five sub-slices R4.2.a–e).** The Banker role is now fully implemented across schema, reducer, guards, server persistence, and UI. Sliced from a single roadmap section into R4.2.a–e on 2026-06-30 (planning session). The original section was a flat task list; the sub-slicing aligned Banker work with the R4.1.a/b/c/d/e/f rhythm so each PR stayed reviewable and shipped its own user-visible (or substrate-visible) value.
+>
+> **Total test growth across R4.2:** MVP baseline ~659 tests → 1113 after R4.2 (+454). Guard tests: 82 → 103 (+21 across R4.2.a/c/d). Reducer tests (rules): 114 → 126 (+12 R4.2.d). Web component tests: ~605 → 687 (+82 across R4.2.a/b/e). Server integration: 158 → 175 (+17 across R4.2.a/c/d).
+>
+> **Carryforward to R4.3 (`dm-transfer`):**
+> - `dm-transfer` auto-clears `Party.bankerUserId` when the incoming DM is the current Banker per OUTLINE §3.14. The R4.2.a `revokeBankerGuard` + `revoke-banker` reducer arm are ready; R4.3 extends the `revoke-banker.reason` enum with `'dm-transfer'`.
+> - Every code path that writes a `(userId, partyId, role)` composite-PK row must use `upsert` (BUG-002 lesson). `dm-transfer` will churn DM rows — audit the new persistor arm against the pattern used in `persistJoinParty`.
+> - The R4.2.c/d/e "banker or DM" affordance-visibility pattern generalises to R4.3's DM cross-character actions. When R4.3 lands, StashItemsTable-side visibility gating may be worth revisiting (currently un-gated per R4.2.e Notes).
+>
+> **Carryforward to R4.4 (cross-character currency + homebrew party scope):**
+> - Player→player currency push is Banker-independent per §3.14 amendment (2026-06-24). `currency-transfer` already supports it; R4.4 adds the receiver UX + party-log surfacing.
+> - Homebrew visibility is party-scoped — R4.4 adds the catalog filter. R4.2 doesn't touch homebrew.
 
 #### R4.3 — DM cross-character actions + DM transfer
 

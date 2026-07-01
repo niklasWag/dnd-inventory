@@ -6,9 +6,49 @@ import { useStore } from '@/store';
 import { currency } from '@app/rules';
 import { ConvertCurrencyModal } from './ConvertCurrencyModal';
 import { CurrencyTransferModal } from './CurrencyTransferModal';
+import { SplitEvenlyModal } from './SplitEvenlyModal';
+import { DrainCurrencyModal } from './DrainCurrencyModal';
+
+/**
+ * R4.2.e — Banker-context flags for shared-pool CurrencyRow rendering.
+ * Computed by the caller (CharacterSheet) so the row itself stays a
+ * dumb consumer of visibility rules. All three flags are `false` for
+ * character-scope stashes (Inventory / Storage) — those rows are the
+ * unaffected default.
+ */
+export interface BankerContext {
+  /**
+   * When true, this row is a shared pool with a Banker appointed AND
+   * the current user IS that Banker. Show the "Split Evenly" affordance
+   * (Party Stash only, per R4.2.d) and keep normal withdraw controls.
+   */
+  readonly userIsBanker: boolean;
+  /**
+   * When true, the current user is the DM AND a Banker is appointed.
+   * Show the "Drain" affordance (dispatches `gameplay-drain`); HIDE the
+   * inline −/+ controls for withdrawals so the DM's world-level intent
+   * is explicit (§8.1 row 464). Deposits (+) stay visible for both
+   * roles regardless of Banker state.
+   */
+  readonly userIsDmWithBankerActive: boolean;
+  /**
+   * When true, this shared pool is under a Banker and the current user
+   * is NEITHER the Banker NOR the DM. Hide all withdrawal / transfer
+   * / convert controls — the user can only look at the balance.
+   */
+  readonly userIsGatedFromPool: boolean;
+  /**
+   * True iff this row's stash is the Party Stash (as opposed to
+   * Recovered Loot). Only Party Stash gets the Split Evenly button
+   * per R4.2.d.
+   */
+  readonly isPartyStash: boolean;
+}
 
 interface CurrencyRowProps {
   stashId: string;
+  /** Optional Banker context. Absent means "character-scope stash" (unaffected). */
+  bankerContext?: BankerContext;
 }
 
 const DENOMS = ['cp', 'sp', 'ep', 'gp', 'pp'] as const;
@@ -30,10 +70,17 @@ const ZERO_HOLDING = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 } as const;
  * positive delta → 'deposit'; negative delta → 'withdraw'. Convert
  * dispatches its own entry with reason: 'convert'. Debouncing is an M4
  * follow-up if the log gets noisy in practice.
+ *
+ * R4.2.e — when `bankerContext` is supplied (Party Stash / Recovered
+ * Loot), the row conditionally hides withdrawal controls for
+ * non-Banker users and swaps in Banker / DM-drain affordances per the
+ * §8.1 permission matrix + R4.2.d design notes.
  */
-export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
+export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): ReactElement {
   const [convertOpen, setConvertOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [drainOpen, setDrainOpen] = useState(false);
 
   const holding = useStore(
     useShallow((s) => {
@@ -60,6 +107,19 @@ export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
     });
   };
 
+  // R4.2.e visibility flags. Character-scope stashes (bankerContext
+  // undefined) get the full default control set. Shared pools consult
+  // the flags per role.
+  const showTransferConvert =
+    bankerContext === undefined || (!bankerContext.userIsGatedFromPool && !bankerContext.userIsDmWithBankerActive);
+  const showWithdrawInline =
+    bankerContext === undefined || (!bankerContext.userIsGatedFromPool && !bankerContext.userIsDmWithBankerActive);
+  const showDepositInline = bankerContext === undefined || !bankerContext.userIsGatedFromPool;
+  const showSplitButton =
+    bankerContext !== undefined && bankerContext.userIsBanker && bankerContext.isPartyStash;
+  const showDrainButton =
+    bankerContext !== undefined && bankerContext.userIsDmWithBankerActive;
+
   return (
     <section className="space-y-2 rounded-lg border border-border bg-card p-3">
       <div className="flex items-center justify-between">
@@ -67,26 +127,50 @@ export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
           Currency
         </h3>
         <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setTransferOpen(true);
-            }}
-          >
-            Transfer
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setConvertOpen(true);
-            }}
-          >
-            Convert
-          </Button>
+          {showSplitButton ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setSplitOpen(true)}
+            >
+              Split evenly
+            </Button>
+          ) : null}
+          {showDrainButton ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setDrainOpen(true)}
+            >
+              Drain
+            </Button>
+          ) : null}
+          {showTransferConvert ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setTransferOpen(true);
+                }}
+              >
+                Transfer
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setConvertOpen(true);
+                }}
+              >
+                Convert
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -95,35 +179,39 @@ export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
           <li key={d} className="flex flex-col items-center gap-1">
             <span className="text-xs font-medium text-muted-foreground">{DENOM_LABEL[d]}</span>
             <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={holding[d] === 0}
-                aria-label={`Decrement ${DENOM_LABEL[d]}`}
-                onClick={() => {
-                  adjust(d, -1);
-                }}
-              >
-                −
-              </Button>
+              {showWithdrawInline ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={holding[d] === 0}
+                  aria-label={`Decrement ${DENOM_LABEL[d]}`}
+                  onClick={() => {
+                    adjust(d, -1);
+                  }}
+                >
+                  −
+                </Button>
+              ) : null}
               <span
                 aria-label={DENOM_LABEL[d]}
                 className="min-w-[2ch] text-center tabular-nums text-sm"
               >
                 {holding[d]}
               </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                aria-label={`Increment ${DENOM_LABEL[d]}`}
-                onClick={() => {
-                  adjust(d, 1);
-                }}
-              >
-                +
-              </Button>
+              {showDepositInline ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Increment ${DENOM_LABEL[d]}`}
+                  onClick={() => {
+                    adjust(d, 1);
+                  }}
+                >
+                  +
+                </Button>
+              ) : null}
             </div>
           </li>
         ))}
@@ -133,6 +221,17 @@ export function CurrencyRow({ stashId }: CurrencyRowProps): ReactElement {
 
       <ConvertCurrencyModal stashId={stashId} open={convertOpen} onOpenChange={setConvertOpen} />
       <CurrencyTransferModal stashId={stashId} open={transferOpen} onOpenChange={setTransferOpen} />
+      {showSplitButton ? (
+        <SplitEvenlyModal stashId={stashId} open={splitOpen} onOpenChange={setSplitOpen} />
+      ) : null}
+      {showDrainButton ? (
+        <DrainCurrencyModal
+          stashId={stashId}
+          stashLabel={bankerContext?.isPartyStash === true ? 'Party Stash' : 'Recovered Loot'}
+          open={drainOpen}
+          onOpenChange={setDrainOpen}
+        />
+      ) : null}
     </section>
   );
 }

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import { Copy, RefreshCw, UserMinus, LogOut } from 'lucide-react';
+import { Copy, RefreshCw, UserMinus, LogOut, Coins } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -51,6 +51,9 @@ export function PartySettings(): ReactElement {
   );
   const partyName = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.party.name : null)),
+  );
+  const bankerUserId = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.party.bankerUserId : null)),
   );
   const character = useStore(
     useShallow((s) => getOwnCharacter(s.appState)),
@@ -180,6 +183,48 @@ export function PartySettings(): ReactElement {
     }
   }
 
+  /**
+   * R4.2.e — appoint the supplied player as Banker. Dispatches
+   * `appoint-banker`; the reducer (§3.14) enforces the invariants
+   * (DM-only, target must be an active player, memberCount ≥ 2, no
+   * existing Banker). Errors surface as toasts.
+   */
+  function handleAppointBanker(targetUserId: string): void {
+    setBusy(`banker-${targetUserId}`);
+    try {
+      useStore.getState().dispatch({
+        type: 'appoint-banker',
+        payload: { bankerUserId: targetUserId },
+      });
+      toast.success('Banker appointed.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not appoint Banker.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * R4.2.e — revoke the current Banker. Reducer emits a `revoke-banker`
+   * entry with `reason: 'manual'`. UI-driven revocations are always
+   * `'manual'`; the other enum values (`'left-party'`, `'kicked'`,
+   * `'reassigned'`) are emitted from cascade paths, not this button.
+   */
+  function handleRevokeBanker(): void {
+    setBusy('banker-revoke');
+    try {
+      useStore.getState().dispatch({
+        type: 'revoke-banker',
+        payload: { reason: 'manual' },
+      });
+      toast.success('Banker revoked.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not revoke Banker.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (loadError !== null) {
     return (
       <div className="mx-auto max-w-3xl py-10">
@@ -303,6 +348,17 @@ export function PartySettings(): ReactElement {
                 const isMe = m.userId === myUserId;
                 const isKickable = iAmDm && !isMe && m.role !== 'dm';
                 const kickBusy = busy === `kick-${m.userId}`;
+                // R4.2.e — Banker CTAs. Only meaningful when the party
+                // has 2+ unique members (solo skips the Banker concept
+                // per OUTLINE §8.2). DM controls appoint/revoke; the
+                // DM's own player row cannot become Banker (§3.14).
+                const uniqueMemberCount = new Set(members!.map((mm) => mm.userId)).size;
+                const isSolo = uniqueMemberCount < 2;
+                const isThisRowBanker = bankerUserId !== null && m.userId === bankerUserId;
+                const canBeAppointed =
+                  iAmDm && !isSolo && !isMe && m.role === 'player' && bankerUserId === null;
+                const canBeRevoked = iAmDm && !isSolo && !isMe && isThisRowBanker;
+                const bankerBusy = busy?.startsWith('banker-') === true;
                 return (
                   <li
                     key={`${m.userId}-${m.role}`}
@@ -311,6 +367,9 @@ export function PartySettings(): ReactElement {
                     <div className="flex items-center gap-3">
                       <span className="font-medium">{m.displayName}</span>
                       <RoleBadge role={m.role} />
+                      {isThisRowBanker && m.role === 'player' ? (
+                        <RoleBadge role="banker" />
+                      ) : null}
                       {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
                       {m.characterName !== null ? (
                         <span className="text-xs text-muted-foreground">
@@ -318,17 +377,41 @@ export function PartySettings(): ReactElement {
                         </span>
                       ) : null}
                     </div>
-                    {isKickable ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={kickBusy || busy !== null}
-                        onClick={() => setConfirmKick(m)}
-                      >
-                        <UserMinus className="mr-1 h-4 w-4" />
-                        Kick
-                      </Button>
-                    ) : null}
+                    <div className="flex items-center gap-2">
+                      {canBeAppointed ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={bankerBusy}
+                          onClick={() => handleAppointBanker(m.userId)}
+                        >
+                          <Coins className="mr-1 h-4 w-4" />
+                          Make Banker
+                        </Button>
+                      ) : null}
+                      {canBeRevoked ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={bankerBusy}
+                          onClick={handleRevokeBanker}
+                        >
+                          <Coins className="mr-1 h-4 w-4" />
+                          Revoke Banker
+                        </Button>
+                      ) : null}
+                      {isKickable ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={kickBusy || busy !== null}
+                          onClick={() => setConfirmKick(m)}
+                        >
+                          <UserMinus className="mr-1 h-4 w-4" />
+                          Kick
+                        </Button>
+                      ) : null}
+                    </div>
                   </li>
                 );
               })}

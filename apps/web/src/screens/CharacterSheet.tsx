@@ -53,11 +53,27 @@ export function CharacterSheet(): ReactElement {
       if (c === undefined) return null;
       const partyStash = s.appState.stashes.find((st) => st.scope === 'party');
       if (partyStash === undefined) return null;
+      // R4.2.e — resolve Banker + DM context up-front so CurrencyRow /
+      // StashItemsTable can render conditional affordances without
+      // reaching back into the store themselves. `userIsBanker` uses
+      // OUTLINE §3.14: banker is derived from `Party.bankerUserId`,
+      // never from a membership row. `userIsDm` reads from the local
+      // DM membership; §3.14 also bars the DM from being the Banker so
+      // the two flags are mutually exclusive.
+      const myUserId = s.appState.user.id;
+      const bankerActive = s.appState.party.bankerUserId !== null;
+      const userIsBanker = bankerActive && s.appState.party.bankerUserId === myUserId;
+      const userIsDm = s.appState.memberships.some(
+        (m) => m.userId === myUserId && m.role === 'dm' && m.leftAt === null,
+      );
       return {
         character: c,
         inventoryStashId: c.inventoryStashId,
         partyStashId: partyStash.id,
         recoveredLootStashId: s.appState.party.recoveredLootStashId,
+        bankerActive,
+        userIsBanker,
+        userIsDm,
       };
     }),
   );
@@ -68,12 +84,33 @@ export function CharacterSheet(): ReactElement {
     return <Navigate to="/" replace />;
   }
 
-  const { character, inventoryStashId, partyStashId, recoveredLootStashId } = sheet;
+  const {
+    character,
+    inventoryStashId,
+    partyStashId,
+    recoveredLootStashId,
+    bankerActive,
+    userIsBanker,
+    userIsDm,
+  } = sheet;
   const targetStash = stashForTab(tab, {
     inventoryStashId,
     partyStashId,
     recoveredLootStashId,
   });
+
+  // R4.2.e — CurrencyRow banker context. Only meaningful for shared-
+  // pool tabs (party / recovered-loot); Inventory / Storage get
+  // `undefined` so the row renders the default control set.
+  const currencyRowBankerContext =
+    tab === 'party' || tab === 'recovered-loot'
+      ? {
+          userIsBanker,
+          userIsDmWithBankerActive: bankerActive && userIsDm && !userIsBanker,
+          userIsGatedFromPool: bankerActive && !userIsBanker && !userIsDm,
+          isPartyStash: tab === 'party',
+        }
+      : undefined;
 
   return (
     <div className="space-y-6">
@@ -119,7 +156,12 @@ export function CharacterSheet(): ReactElement {
           <StorageStashList characterId={character.id} />
         ) : (
           <div className="space-y-4">
-            <CurrencyRow stashId={targetStash} />
+            <CurrencyRow
+              stashId={targetStash}
+              {...(currencyRowBankerContext !== undefined
+                ? { bankerContext: currencyRowBankerContext }
+                : {})}
+            />
             {tab === 'inventory' ? <CapacityBar characterId={character.id} /> : null}
             {tab === 'inventory' ? <EquippedSlotsPanel characterId={character.id} /> : null}
             <div className="flex items-center justify-between">
