@@ -2412,7 +2412,7 @@ Sliced post-R4.2 (2026-07-01 planning session) into five independently-shippable
 
 > **What this is.** RH-slices are **hardening passes**: architectural cleanups that pay down debt accumulated during feature slices. They don't add user-facing capabilities — they make the existing ones structurally sound. RH1 sits between R4 and R5 because R5 (websocket live sync, multi-writer) compounds the id-canonicalisation problem; fixing it once, before N writers arrive, is much cheaper than patching the resulting conflicts.
 
-**Why now.** Today the **client's reducer** and the **server's persistor** independently call `ctx.newId()` for the same logical entity. They produce different UUIDs. The reported "move acquired item → `item_not_found`" bug (R4.1.f post-ship bug #2) is one visible symptom; the structural issue is that the system has **two id-minting authorities**. The current mitigation (post-flush `GET /sync/state` re-pull for any action in `ID_MINTING_ACTION_TYPES` — `apps/web/src/sync/queue.ts`) is a runtime patch:
+**Why now.** Today the **client's reducer** and the **server's persistor** independently call `ctx.newId()` for the same logical entity. They produce different UUIDs. The reported "move acquired item → `item_not_found`" bug (R4.1.f post-ship bug #2) is one visible symptom; **BUG-004 (server persistor mints a different UUID than the reducer → Item Detail history empty after `acquire` / `split`, surfaced 2026-07-01 in R4.3 manual testing) is another.** The structural issue is that the system has **two id-minting authorities**. The current mitigation (post-flush `GET /sync/state` re-pull for any action in `ID_MINTING_ACTION_TYPES` — `apps/web/src/sync/queue.ts`) is a runtime patch:
 
 - It refetches the **entire** AppState after every `acquire` / `create-stash` / `split` / `create-homebrew` / `create-character`. For a 6-player party with hundreds of items the bandwidth cost scales linearly with party size.
 - The "list of action types we have to remember" drifts: R4.2 / R4.3 / R4.4 / R4.5 will each add actions; some mint ids, some don't; the queue's constant has to stay in lockstep with the server's `ctx.newId()` call sites.
@@ -2582,6 +2582,62 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 - [ ] **Container depth (one-level).** Trigger asserting `containerInstanceId IS NULL OR (the row referenced has containerInstanceId IS NULL)`.
 - [ ] Pair each constraint with a schema-invariants test in `apps/server/src/db/schema-invariants.test.ts` that queries `pg_constraint` / `pg_indexes` and verifies the constraint is present (mirrors the existing DEFERRABLE FK check pattern).
 
+#### RH2.6 — Mode-aware log-authority split (client owns log in local mode, server owns log in server mode)
+
+**Why now.** RH1 retires client id-minting. RH2.1 retires client timestamp/actorRole minting via placeholder-then-patch. But those still have the CLIENT build the log slice, then patch fields post-flush. That's a half-measure — the client-built slice is a source of drift (BUG-004 surfaced this: the client mints a log payload that references a client-minted item id, and the two never reconcile with server truth on the same row). The correct architecture per SECURITY §3.6 ("in server mode the server is the sole authority for TransactionLog contents") is a **mode-aware split**:
+
+- **Local mode** (Dexie-only, no server): the client-side reducer builds the log slice, appends to `state.log`, persists to Dexie. Unchanged from today.
+- **Server mode** (Postgres backend): the client-side reducer does NOT build log slices. The dispatch pipeline calls `reduce(state, action, ctx)` for the state mutation only; log slices are the server's exclusive output. After the queue flushes, the response's `applied[]` (or the post-batch `/sync/state` pull) delivers the canonical log entries, and the store appends them to `state.log`. Between dispatch-time and flush-response, the UI has NO log entries for the in-flight action — displays either "pending…" states or defer log-dependent reads.
+
+**Sequencing.** Ships AFTER RH1 and RH2.1. RH1 removes the client-vs-server id divergence (so the server's log entry references the correct entity id). RH2.1 removes the timestamp/actorRole divergence (so the returned log entries don't need patching for those fields either). Once both are in, log entries returned by the server are structurally identical to what a placeholder-then-patch pipeline would produce — at which point emitting them client-side is pure duplication + drift risk, and this slice retires the duplication.
+
+**Why NOT bundle into RH1 / RH2.1.** RH1 changes id-minting mechanics but keeps the client emitting log slices (with server-canonical ids). RH2.1 patches placeholder fields on client-emitted slices. Both are "same shape, better contents." RH2.6 is a **shape change**: the client stops emitting slices in server mode entirely. That's a bigger conceptual shift with implications for the reducer's return type, the store middleware, and every optimistic-UI reader that assumes `state.log` has an entry for the just-dispatched action. Better as its own slice than as a hidden effect of RH2.1's cleanup.
+
+**Approach.** Two-way `ReducerResult`:
+- **Reducer stays pure.** `reduce(state, action, ctx)` still returns `{ state, logEntries }`. The reducer doesn't know about modes; it produces the full slice list as before.
+- **Store middleware branches on mode.** In `apps/web/src/store/index.ts`, the dispatch pipeline:
+  - **Local mode:** unchanged — build full entries via `buildLogEntry` + append to `state.log`.
+  - **Server mode:** apply `result.state` locally (optimistic UI), but DO NOT append log entries. The reducer's `logEntries` slice output is DISCARDED at the store boundary. The queue's post-flush hook (existing `pullState` re-pull path, or the response's `applied[]` array) is the sole writer of `state.log` in server mode.
+- **Queue owns log append in server mode.** After `/sync/actions` returns `applied[]`, iterate and `set(draft => draft.log.push(entry))` for each. For id-minting actions (RH1's list, or RH2.4's metadata replacement), still `pullState` and replace the full log.
+
+**Consequences.**
+- **In-flight log gap.** Between local dispatch and queue flush (~200 ms debounce window), server-mode UI has no log entry for the in-flight action. `ItemHistory` shows the pre-dispatch state; a subsequent flush repopulates. Acceptable per SECURITY §3.6's carve-out ("readers must not assume the local entry's id/timestamp/actorRole match the server's").
+- **Local-mode behaviour preserved.** Users running local-only Dexie (no backend) see log entries immediately, exactly as today. Zero UX regression for the local-mode path.
+- **BUG-004 auto-fixes.** The server-emitted log entry references the server's canonical `itemInstanceId` (post-RH1). The client's `ItemHistory` reads the server-emitted entry via `pullState` and filters correctly. No client-side patching needed.
+- **Rollback stays intact.** BUG-003's rollback captures the store snapshot BEFORE the mutation lands. In server mode, that snapshot's `log` is the last-known-server-canonical state; on 422, restoring it correctly undoes both state AND any speculative log append (there's nothing to undo in server mode because the client never appended).
+
+**Slicing.** Two sub-slices to keep the change reviewable:
+
+**RH2.6.a — Store dispatch mode-branch**
+- [ ] Add `isServerMode` guard around the log-append block in `apps/web/src/store/index.ts` `dispatch()`. When true, apply `result.state` but skip the `draft.log.push(entry)` loop.
+- [ ] Wire the queue's `applied[]` response into a new `appendServerLogEntries(entries: TransactionLogEntry[])` store method. Called from `apps/web/src/sync/queue.ts` after `pushActions` succeeds.
+- [ ] Update `pullState`-based canonicalisation path to use the same method (or unify with the existing `restoreSnapshot({log, appState})` call — decide during execution).
+- [ ] Reducer, guards, schemas: unchanged. This slice touches ONLY the web store + queue.
+
+**RH2.6.b — UI readers: pending-state ergonomics**
+- [ ] Audit log-reading components for "log entry immediately present" assumptions:
+  - `apps/web/src/components/item/ItemHistory.tsx` — falls back to "No log entries yet" when empty. In server mode with an in-flight action, this shows briefly (~200 ms). Acceptable; document.
+  - Party log (if / when it exists) — same behaviour.
+- [ ] Add a "sync pending" indicator when the queue has an in-flight batch (optional; may fold into R5 offline-banner work). Signals "action pending server confirmation" so users don't misread the empty-log state as failure.
+- [ ] Optional: an in-flight action count in `useStore` derived from the queue's public API. Skip if the empty-log window is short enough (200 ms debounce + network) that users don't notice.
+
+**Tests.**
+- [ ] Store test: in server mode, `dispatch({type: 'acquire', ...})` mutates `state.appState` but does NOT push to `state.log`.
+- [ ] Store test: in local mode, same dispatch appends to `state.log` (unchanged behaviour).
+- [ ] Queue test: after `/sync/actions` responds with `applied: [{type: 'acquire', payload: {itemInstanceId: SERVER_ID}, ...}]`, `state.log` has exactly one entry with `itemInstanceId: SERVER_ID`.
+- [ ] Integration test (server workspace): full round-trip proves the log-read cycle works for the BUG-004 case — dispatch acquire, wait for queue flush, navigate to Item Detail, history shows the acquire entry.
+- [ ] Rollback regression: 422 mid-flight rejection in server mode does not require log rollback (there was nothing to append). Existing BUG-003 tests continue to pass unchanged.
+
+**Documentation.**
+- [ ] Update `docs/SECURITY.md` §3.6 to describe the mode-aware split concretely (the 2026-07-01 bullet added post-BUG-004 can be tightened once this slice lands).
+- [ ] Update `CLAUDE.md` "All mutations go through the reducer" line to clarify: reducer produces the state + slices; **in server mode the slices are for the server to persist and echo back, not for the client to append.**
+
+#### RH2.6 — Notes
+
+> **Filed:** 2026-07-01, following BUG-004 triage. User direction: "In local mode the UI is responsible and in server mode the server is responsible for all log types since it is the source of truth."
+>
+> **Dependency graph:** RH1 → RH2.1 → **RH2.6** → (RH2.5 / RH3 / R5 all continue independently). RH2.2-2.4 are unblocked by RH2.6 (they touch reducer + queue mechanics but not log-authority).
+
 #### RH2 — Notes
 
 > -
@@ -2645,6 +2701,114 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 #### RH3 — Notes
 
 > -
+
+---
+
+### RH4 — Hardening Pass 4: URL-scoped routing (architectural)
+
+> **What this is.** Retires the "implicit current-party" scoping pattern in favour of URL-scoped routes. Every party-scoped screen gains `:partyId` in its route pattern (`/party/settings` → `/party/:partyId/settings`; `/character/:id` → `/party/:partyId/character/:id`; etc.). Same shift for other resource-scoped surfaces if any surface later.
+>
+> **Sequencing.** Ships AFTER RH3, BEFORE R5.1. Same "R5-blocker" rationale as the other RH slices: R5.1's websocket broadcast subscribes rooms scoped by resource id; the natural mapping is URL → room (`/party/:partyId/*` → `party:${partyId}`). An implicit-pointer scoping forces R5.1 to invent a parallel "which party is this tab in" resolution, which is brittle under multi-tab and untestable in unit tests.
+
+**Why now.** Today the app uses School-B implicit scoping (per 2026-07-01 discussion of URL-scoping conventions). The pattern is fine for a single-writer WIP but bakes in three long-term costs:
+
+- **Multi-tab correctness.** Two tabs on different parties currently share the Dexie `currentPartyId` pointer — activating a party in tab A silently switches tab B on next dispatch. RH2.3 addresses same-party multi-tab (BroadcastChannel coordinator); it doesn't fix cross-party multi-tab because both tabs use the same origin. URL-scoped routing eliminates the shared pointer: each tab's URL identifies its party, no cross-tab activation state to synchronise for the different-party case.
+- **Deep-linking / shareability.** "Copy this URL to your co-DM" fails today — the URL is `/party/settings` regardless of which party is loaded. RH4 makes URLs meaningful outside the current session.
+- **R5 broadcast rooms.** WebSocket subscriptions are naturally scoped by URL params. Matching against a mutable `currentPartyId` pointer under N concurrent tabs = a class of subtle race bugs. URL scoping is the standard fix pattern (see e.g. React Router v6 + Remix docs on nested resource routing).
+- **Client-server URL asymmetry.** Server already uses URL-scoped routes (`POST /parties/:partyId/kick`, `GET /parties/:partyId/members`). Client's implicit scoping means every code review carries a small "does this route need the id explicitly?" tax. Alignment reduces friction.
+
+**Prior art.** GitHub, Linear, Notion, Vercel, Figma, Discord, Slack (post-workspace-switch) all use URL-scoped resource ids for the same reason. React Router v6 + Remix + Next.js App Router all push nested-route scoping as the default. Kent C. Dodds / Ryan Florence's "URL is the world's under-appreciated state manager" is the school this slice adopts.
+
+**What stays.** Local-mode's Dexie `meta.currentPartyId` pointer stays for two derived reasons: (a) it still tracks "which party did the user last activate" for the Hub landing screen; (b) it's the single-writer local-mode's natural home. Server-mode routes read `partyId` from the URL and NEVER from `meta.currentPartyId`; the pointer becomes a UX-hint only, not a source of truth.
+
+**Approach.** Route pattern refactor. Every party-scoped route gains `:partyId`. Every navigation call updates. Every screen reads `partyId` from `useParams()` instead of from `useStore(s => s.appState.party.id)`. Store still exposes `party.id` for reads that don't have URL context (e.g. modals mounted outside a route); but the URL is the source of truth for scope.
+
+**Slicing.** Three sub-slices, ordered by dependency.
+
+#### RH4.1 — Route pattern refactor
+
+**Router (`apps/web/src/router/index.tsx`)**
+- [ ] Rewrite the route table so every party-scoped surface takes `:partyId`. Target patterns:
+  - `/party/:partyId/settings` (was `/party/settings`)
+  - `/party/:partyId/hub` (was `/hub`) — Hub becomes party-agnostic AT the app-level (party picker); per-party Hub content moves under the id
+  - `/party/:partyId/character/:id` (was `/character/:id`)
+  - `/party/:partyId/item/:id` (was `/item/:id`)
+  - `/party/:partyId/stash/:id` (was `/stash/:id`)
+  - `/party/:partyId/catalog` (was `/catalog`) — catalog is party-scoped per R4.4 homebrew rules
+  - `/party/:partyId/log` (once a global party-log screen exists)
+- [ ] `/hub` remains as the pre-party-selection landing (party picker + create-party CTA); it doesn't need a partyId.
+- [ ] `/settings` (app-wide settings, backup/restore) remains party-agnostic and does NOT gain `:partyId`.
+- [ ] `/login`, `/login/*`, other auth routes remain unchanged.
+
+**Component-side (`apps/web/src/screens/*.tsx`, `apps/web/src/components/**/*.tsx`)**
+- [ ] Every screen that currently reads `s.appState.party.id` from the store switches to `useParams<{ partyId: string }>()` and validates the id matches `s.appState.party.id` on mount. Mismatch → trigger a party-switch (Dexie re-hydrate) before rendering.
+- [ ] Every `navigate('/...')` / `<Link to="/..." />` call updates to include the current party id. New helper: `useCurrentPartyId()` returns the id from `useParams`, throws if missing (routes that opt into the helper are guaranteed inside a `/party/:partyId/*` subtree).
+- [ ] `Layout.tsx` (nav bar) — the "Party Settings" link becomes `to={`/party/${partyId}/settings`}` using the same helper.
+
+**Party-switching flow (`apps/web/src/screens/Hub.tsx`)**
+- [ ] Hub's "Enter this party" CTA navigates to `/party/${partyId}/hub` (or a per-party landing). Setting `meta.currentPartyId` in Dexie stays for the local-mode UX hint but is no longer the source of truth.
+- [ ] The party-switching path becomes: URL change → route mount → screen reads `partyId` from `useParams` → if `s.appState.party.id !== partyId`, trigger `loadAppState(partyId)` → replace store. Same shape as today's Hub re-hydrate flow, just triggered by URL rather than a state pointer.
+
+**Tests**
+- [ ] Update every screen test's `initialEntries` to include a `partyId` in the path. Existing fixtures are all `[/party/settings]`, `[/character/char-abc]`, etc. — becomes `[/party/${TEST_PARTY_ID}/settings]`, etc.
+- [ ] New test: URL `partyId` mismatched with loaded state triggers re-hydrate. Given `s.appState.party.id === 'A'` and route `/party/B/settings`, expect the store to reload B before the screen renders.
+- [ ] New test: URL `partyId` for a party the user isn't a member of → 403-style redirect to Hub.
+
+#### RH4.1 — Notes
+
+> -
+
+#### RH4.2 — Retire `meta.currentPartyId` as source-of-truth (local-mode carryforward)
+
+**Dexie meta (`apps/web/src/db/meta.ts`)**
+- [ ] `getCurrentPartyId()` / `setCurrentPartyId()` remain as functions but their role shrinks to: "which party should the pre-URL landing show first?" — used only by `/hub` and the initial post-login redirect.
+- [ ] Every server-mode read of `currentPartyId` (in the sync queue, in `PartySettings`, in `CharacterSheet` state loading) is replaced by the `useParams<{partyId}>()`-based helper. Only local-mode single-writer paths retain the Dexie pointer.
+- [ ] Boot hydration (`apps/web/src/store/hydrate.ts`): on app load, read `currentPartyId` from meta, redirect to `/party/${id}/hub`. On first-login (no current party), redirect to `/hub` (party picker).
+
+**Sync queue (`apps/web/src/sync/queue.ts`)**
+- [ ] `getActivePartyId` dep is replaced by a URL-derived helper. Since queue is module-scoped (not React), it needs to be told the current partyId on each enqueue. Options: (a) `enqueue(action, partyId)` signature widening, (b) `configureQueue({ currentPartyId })` re-run on route changes. Prefer (a) — explicit, no hidden route-listener state.
+
+**Tests**
+- [ ] Test that server-mode routes ignore `meta.currentPartyId` entirely (mismatched pointer + correct URL = correct behaviour).
+- [ ] Test that local-mode boot still uses `meta.currentPartyId` for the initial redirect.
+
+#### RH4.2 — Notes
+
+> -
+
+#### RH4.3 — Cross-party access denial + party-switcher polish
+
+**Route guards**
+- [ ] Add a `PartyScopeGuard` component wrapping every `/party/:partyId/*` route. Reads `partyId` from `useParams`, checks `s.appState.memberships` for an active membership of `state.user.id` in that party. If missing → redirect to `/hub` with a toast: "You're not a member of that party." Prevents URL tampering (deep-linking to another party's screen).
+- [ ] Server-side already enforces this via `resolveActor` (`apps/server/src/sync/actor.ts`) returning 403 for cross-party access; RH4.3 is the client-side mirror for UX.
+
+**Party-switcher**
+- [ ] Optional: add a party picker in the nav bar (dropdown of the user's active parties). Clicking switches URL to `/party/${newId}/hub`. Nice-to-have; not required for RH4 correctness. Consider deferring to R4.6 as UX polish.
+
+**Tests**
+- [ ] `PartyScopeGuard` unit test: user is a member of party A only; navigating to `/party/B/settings` redirects to `/hub` + toast.
+- [ ] `PartyScopeGuard` unit test: user is a member; renders the child screen.
+
+#### RH4.3 — Notes
+
+> -
+
+#### RH4 — Notes
+
+> **Filed 2026-07-01** following BUG-004 triage + a discussion of URL-scoping conventions. User direction: "We should fix this as part of RH slices." Chosen scope: URL scoping is the industry-consensus modern-SaaS pattern (GitHub / Linear / Notion / Vercel / Discord all URL-scope), it eliminates multi-tab pointer-sharing bugs, and it prepares R5's broadcast rooms.
+>
+> **What RH4 does NOT do:**
+> - Change server routes. Server already URL-scopes (`/parties/:partyId/*`); RH4 is purely a client-side alignment.
+> - Rearchitect the store. `useStore(s => s.appState.party.id)` still works; RH4 just makes `useParams<{partyId}>()` the authoritative read.
+> - Retire the Dexie `meta.currentPartyId` pointer entirely. It stays for the "first-load, no URL" case in local mode. See RH4.2.
+>
+> **Interaction with RH2.3.** RH2.3's multi-tab BroadcastChannel coordinator handles the case where TWO TABS OPERATE ON THE SAME PARTY (same URL) — queue coordination for concurrent enqueues. RH4 makes the DIFFERENT-PARTY multi-tab case work correctly (each tab's URL identifies its party, no cross-activation). Both slices remain needed; RH4 doesn't subsume RH2.3.
+>
+> **Interaction with R5.1 (websocket broadcast).** R5.1 subscribes rooms scoped by `partyId`. With URL-scoped routes, `useEffect(() => subscribe(partyId), [partyId])` reads the id from `useParams` and re-subscribes on URL change. Clean; testable. Without URL scoping, the subscription would follow `s.appState.party.id`, which can change under N tabs — R5.1 would need to distinguish "which tab is authoritative" (a much harder problem).
+>
+> **Cost estimate.** ~1 afternoon of work: route table refactor + `useParams` migration in ~15 screens + test `initialEntries` updates. No user-visible behaviour change beyond bookmarkable URLs. Tests need mechanical updates but no new invariants.
+>
+> **Reversibility.** Fully reversible. If URL scoping proves too noisy after ship, revert the router patterns and the migration is complete. Store still exposes `party.id` throughout — no data-model changes to unwind.
 
 ---
 
