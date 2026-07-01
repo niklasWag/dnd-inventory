@@ -298,7 +298,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
    * no additional information (the Discord button would otherwise just
    * lead the user to a 503).
    */
-  app.get('/auth/methods', async () => {
+  app.get('/auth/methods', () => {
     return {
       discord: isDiscordAuthEnabled(env),
       email: isEmailAuthEnabled(env),

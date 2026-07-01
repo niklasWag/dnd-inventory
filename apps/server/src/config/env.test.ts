@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { loadEnv } from './env.js';
 
@@ -48,7 +48,7 @@ function applyEnv(values: Record<string, string | undefined>): void {
   }
 }
 
-let warnSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: MockInstance<(...args: unknown[]) => void>;
 
 function warnMessages(): string[] {
   return warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));

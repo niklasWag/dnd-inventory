@@ -29,7 +29,6 @@ import {
   partyMembersResponseSchema,
 } from '@app/shared';
 import { generateInviteCode, reduce } from '@app/rules';
-import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 
 import type { PrismaClient } from '../../prisma/generated/prisma/client.js';

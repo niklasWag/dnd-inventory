@@ -28,11 +28,7 @@ function makeParty(id = 'p1', bankerUserId: string | null = null): Party {
     ownerUserId: 'dm-user',
     inviteCode: 'INV-XXXXXX',
     recoveredLootStashId: 'rl',
-    // Party.bankerUserId is z.null() in the MVP schema. The structural
-    // value is null; type-asserted here so the guard tests can still
-    // exercise the banker path via a manual cast in the deriveActorRole
-    // test below.
-    bankerUserId: bankerUserId as null,
+    bankerUserId,
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
@@ -151,14 +147,14 @@ describe('actor helpers', () => {
     const m = makeMembership('u1', 'player');
     expect(deriveActorRole(party, m)).toBe('player');
 
-    // Simulate post-R4.2: bankerUserId set. The Zod schema doesn't allow
-    // a non-null value today but the function is forward-compatible —
-    // cast for the test.
-    const bankerParty = { ...party, bankerUserId: 'u1' as unknown as null };
+    // Banker set to this membership's user — banker role wins over the
+    // membership's `player` role. R4.2.a widened `Party.bankerUserId` to
+    // `string | null`, so no cast is needed.
+    const bankerParty = { ...party, bankerUserId: 'u1' };
     expect(deriveActorRole(bankerParty, m)).toBe('banker');
 
     // Banker on a different user: membership role wins.
-    const otherBankerParty = { ...party, bankerUserId: 'someone-else' as unknown as null };
+    const otherBankerParty = { ...party, bankerUserId: 'someone-else' };
     expect(deriveActorRole(otherBankerParty, m)).toBe('player');
   });
 

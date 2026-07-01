@@ -74,6 +74,12 @@ const sessionResponseObjectSchema = z
 
 export const sessionResponseSchema = z.union([
   sessionResponseObjectSchema,
+  // The `as z.infer<...>` cast is load-bearing: without it the union
+  // widens to `{} | SessionResponseObject`, and downstream `.user?` /
+  // `.expires?` accessors break in the web app. ESLint's
+  // no-unnecessary-type-assertion flags this as redundant, but removing
+  // it fails apps/web typecheck.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
   z.null().transform(() => ({}) as z.infer<typeof sessionResponseObjectSchema>),
 ]);
 
