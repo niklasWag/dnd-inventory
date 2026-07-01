@@ -2267,25 +2267,140 @@ Sliced post-R4.2 (2026-07-01 planning session) into five independently-shippable
 
 #### R4.4 — Cross-character currency + homebrew party scope + gating
 
-**Reducer actions (§4 TransactionLog union)**
-- [ ] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash
-- [ ] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Test: with a Banker active, player A can push 5 gp to player B's Inventory and the entry surfaces in the party log (Banker has visibility but no veto).
-- [ ] `currency-transfer` invariant test: Banker-from-pool allowed always; DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1)
-- [ ] `currency-transfer` invariant test: when no Banker, players self-claim freely (including pushing to own character's Inventory)
-- [ ] Invariant test: when Banker active, DM cannot distribute to specific players (§8.1)
-- [ ] Invariant test: when Banker active, players cannot self-claim from Party Stash / Recovered Loot (§3.14)
-- [ ] Invariant test: when no Banker, players self-claim freely from both pools (§3.14)
-- [ ] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1)
-- [ ] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Catalog Browser filters definitions where `partyId === null` (PHB/DMG) OR `partyId === activePartyId` (this party's homebrew). Definitions belonging to other parties the same user is in are NOT visible from the active party's catalog.
-- [ ] Invariant test: user is a member of parties A + B; creates homebrew "Vorpal Spork" in party A; switches to party B's view → Catalog Browser doesn't list it. Switches back to party A → it's there again.
-- [ ] Invariant test: user creates homebrew in party A; another user joins party A later → the new member sees the homebrew (party-scoped, not user-scoped).
+Sliced into four independently-shippable sub-slices, mirroring the R4.1.a-f / R4.2.a-e / R4.3.a-e rhythm. R4.4.a locks in `currency-transfer` cross-character invariants (test-only slice — the R4.3.c `ownsOrShares` widening + R4.2.c Banker gate already compose correctly, so no reducer / guard / schema changes are needed; the invariants only need to be codified). R4.4.b filters the Catalog Browser to the active party's homebrew. R4.4.c enforces DM-only custom-item creation once `memberCount >= 2`. R4.4.d ships the multi-member offline banner.
 
-**UI**
-- [ ] Offline banner activates for multi-member parties (§9)
+#### R4.4.a — `currency-transfer` cross-character invariants (test-only lock-in)
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash — **already supported** by the R4.3.c `ownsOrShares` widening + R4.2.c Banker gate composing correctly. No reducer / guard / schema code change needed; R4.4.a locks the invariants in with tests.
+- [x] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Two guard tests in `packages/shared/src/guards/map.test.ts` (Banker active + no Banker).
+- [x] `currency-transfer` invariant test: Banker-from-pool allowed always (already covered by R4.2.c test at map.test.ts:847); DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1) — two new guard tests (Party Stash + Recovered Loot).
+- [x] `currency-transfer` invariant test: when no Banker, DM can distribute freely + players self-claim freely from Recovered Loot (Party Stash covered by pre-existing R4.2.c test at map.test.ts:867) — two new guard tests.
+- [x] Server integration coverage — the existing test at `routes.test.ts:1114` ("rejects a non-Banker moving currency FROM Recovered Loot when Banker is active") already exercises the `/sync/actions` transport for DM-blocked-while-Banker (userA resolves as `dm` via `resolveActor`'s DM > player preference). No new server tests added — the R4.4.a widening doesn't change the transport surface.
+
+#### R4.4.a — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). Test-only lock-in slice.
+>
+> **Test totals:** 1171 across the workspace (shared 132 → 138, +6 R4.4.a guard tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Audit-first approach vindicated.** Pre-slice audit revealed that R4.3.c's widening of `ownsOrShares` (DM cross-character path) + R4.2.c's `checkBankerGate` (source-side "OUT of shared pool" gate) already implement all four §3.14 + §8.1 semantics R4.4.a requires. The `currencyTransferGuard` at `packages/shared/src/guards/map.ts:399` is unchanged; the six new tests exercise the composition.
+> - **Player→player push is source-side only.** The guard checks `ownsOrShares(state, actor, fromStashId)` — the destination stash is unrestricted at the guard level. Player u2 pushing from their own Inventory to player u3's Inventory passes because (a) u2 owns the source, (b) source is a character stash so `checkBankerGate` short-circuits (`isSharedPoolStash` returns false). This matches §3.14: "Banker mediates the shared pools, not character-to-character moves."
+> - **DM-blocked-while-Banker follows automatically.** `checkBankerGate` rejects any non-Banker actor (including DM) moving OUT of a shared pool while `bankerUserId !== null`. No DM-specific branch was needed — the actor's role only matters for the `banker` short-circuit. Matches §8.1's "DM cannot self-distribute while Banker active."
+> - **Reducer coverage inherited.** The `currencyTransfer` reducer at `packages/rules/src/reducer/index.ts:1726` is actor-agnostic — it only validates stash existence, non-negative deltas, and funds. All existing reducer tests (28 for `currency-transfer`) cover the mutation shape for any actor. No new reducer tests were added; adding them would duplicate existing coverage.
+> - **No BUG-002 / BUG-003 risk.** R4.4.a adds no new `PartyMembership` writes and no new rejection codes — both patterns are irrelevant here. The R4.3 carryforward checklist is satisfied by omission.
+>
+> **Not shipped in R4.4.a (deferred to R4.4.b+):**
+> - Catalog Browser homebrew party-scope filter — R4.4.b.
+> - DM-only custom-item creation gating for `memberCount >= 2` — R4.4.c.
+> - Multi-member offline banner — R4.4.d.
+>
+> **Carryforwards to R4.4.b/c/d:**
+> - None directly. R4.4.a is a substrate slice — the visibility (R4.4.b), gating (R4.4.c), and banner (R4.4.d) slices don't depend on it.
+
+#### R4.4.b — Homebrew party-scope filter (Catalog Browser)
+
+- [x] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Server-side filter in `apps/server/src/sync/state-loader.ts:151-155` (`OR: [{ source: PHB | DMG }, { partyId }]`) already scopes the catalog to system rows + this-party homebrew — no client-side filter needed. Homebrew from other parties never reaches the client's `catalog` array.
+- [x] Invariant test: user is a member of parties A + B; a homebrew "Vorpal Spork" scoped to party A is NOT included in `GET /sync/state?partyId=<partyB>`. Sanity: same user querying party A DOES see it. Server integration test in `apps/server/src/sync/routes.test.ts`.
+- [x] Invariant test: creator makes homebrew in party A; another user joins party A → the new member's `GET /sync/state?partyId=<partyA>` includes the homebrew (party-scoped, not user-scoped). Server integration test.
+
+#### R4.4.b — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). Test-only lock-in slice.
+>
+> **Test totals:** 1173 across the workspace (server 181 → 183, +2 R4.4.b integration tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Audit-first approach vindicated again.** Pre-slice audit revealed that the visibility filter already exists at the server sync boundary. The client-side Catalog Browser (`apps/web/src/screens/CatalogBrowser.tsx`) needs no change — it renders whatever's in `state.catalog`, and the server delivers a party-scoped catalog on every `GET /sync/state?partyId=X`. Party switches trigger full-state replacement via `hydrate({ appState: pulled.state })` in `Hub.tsx:openServerParty`, so cross-party homebrew leakage isn't possible.
+> - **Homebrew stamped with `partyId` at creation.** `packages/rules/src/reducer/index.ts:createHomebrew` sets `newDef.partyId = s.party.id`, and `apps/server/src/sync/persistor.ts:persistCreateHomebrew` sets `data.partyId = actor.partyId`. Both write paths converge on the same invariant, and the server sync-loader filter enforces it on read.
+> - **`seedPartyDirect` helper introduced.** Direct-Prisma seeder that bootstraps a party (party row + character + 3 stashes + memberships + currency holdings) inside a single `$transaction` to satisfy the `Character ↔ Stash INITIALLY DEFERRED` FK cycle. Mirrors the real bootstrap in `persistCreateCharacter` but avoids the full `/sync/actions` roundtrip. Reusable pattern for future multi-party integration tests (e.g. RH4's URL-scoped routing when it lands).
+> - **No client-side change needed.** The Catalog Browser doesn't need a `partyId === activePartyId` filter — the catalog it receives from the server is already scoped. If R5's real-time sync ever pushes cross-party updates over WebSocket, a client-side belt-and-braces filter may be worth revisiting, but that's an R5+ concern.
+> - **No reducer / guard / schema code changed.** Pure test slice.
+>
+> **Not shipped in R4.4.b (deferred to R4.4.c+):**
+> - DM-only custom-item creation gating for `memberCount >= 2` — R4.4.c.
+> - Multi-member offline banner — R4.4.d.
+>
+> **Carryforwards to R4.4.c/d:**
+> - None directly. R4.4.b is orthogonal to R4.4.c (gating on `create-homebrew`) and R4.4.d (offline banner).
+
+#### R4.4.c — DM-only custom-item gating for `memberCount >= 2`
+
+- [x] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1). Enforced by `createHomebrewGuard` in `packages/shared/src/guards/map.ts:422` (rejects `actor.role !== 'dm'` with `dm_only`) + solo bypass in `checkGuard` per §8.2 (a party-of-one bypasses the matrix, so a solo actor can create homebrew regardless of their role). Composition: solo → allowed for anyone; multi-member → DM-only. Matches the R4.4.c invariant exactly.
+
+#### R4.4.c — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). No new code — the R4.4.c invariant is already enforced by the existing `createHomebrewGuard` + §8.2 solo bypass composition, and both branches have direct test coverage.
+>
+> **Test totals:** 1173 across the workspace (unchanged from R4.4.b). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Pre-existing coverage.** Three tests in `packages/shared/src/guards/map.test.ts` already cover R4.4.c's invariant:
+>   1. Line 183–192 (`checkGuard — §8.2 solo bypass > bypasses the matrix for a solo party`): a player actor in a solo party is allowed to `create-homebrew` (solo bypass). Locks in the "solo = anyone can create homebrew" branch.
+>   2. Line 251–258 (`guards — DM-only actions > create-homebrew rejects a player`): a player actor in a 2+-member party is rejected with `dm_only`. Locks in the "multi-member = DM-only" branch.
+>   3. Line 259–267 (`guards — DM-only actions > create-homebrew accepts a DM`): the DM actor in a 2+-member party is allowed. Locks in the DM path.
+> - **`memberCount >= 2` is expressed via `isSolo` inversion.** `checkGuard` calls `isSolo(memberships)` (distinct-active-userId count === 1); when true, the guard is bypassed. When false, the per-guard rejection fires. This is the same predicate `docs/OUTLINE.md` §8.2 specifies.
+> - **`edit-homebrew` and `delete-homebrew` inherit the same pattern.** Both guards (`map.ts:439` + `map.ts:456`) require `actor.role === 'dm'` and are bypassed by §8.2 in solo. Same three-test pattern would apply if we wanted explicit lock-in; current coverage exercises `create-homebrew` as the representative case (following the R4.2.c/R4.3.c "one representative per rejection family" precedent).
+> - **No reducer / guard / schema code changed.** Pure documentation slice — the invariant was already enforced and tested; R4.4.c formally acknowledges it.
+>
+> **Not shipped in R4.4.c (deferred to R4.4.d):**
+> - Multi-member offline banner — R4.4.d.
+>
+> **Carryforwards to R4.4.d:**
+> - None directly. R4.4.d (UI banner) is orthogonal to R4.4.c (guard).
+
+#### R4.4.d — Multi-member offline banner (UI)
+
+- [x] Offline banner activates for multi-member parties (§9). Persistent alert bar below the header renders when all three predicates hold: (a) server mode (`isServerMode === true`, build-time `VITE_SERVER_URL`), (b) browser is offline (`navigator.onLine === false`, subscribed via `online` / `offline` window events), (c) party has 2+ distinct active members (`new Set(memberships.filter(m => m.leftAt === null).map(m => m.userId)).size >= 2`). Solo parties never see the banner per §9's "party-of-one works offline indefinitely" rule. New `OfflineBanner.tsx` mounted in `Layout.tsx` below the header. 5 component tests locking in each visibility branch + online↔offline transition.
+
+#### R4.4.d — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). UI slice.
+>
+> **Test totals:** 1178 across the workspace (web 704 → 709, +5 R4.4.d component tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Banner-only; write-blocking deferred to M5.** OUTLINE §9 says "show offline banner; block writes; auto-resume on reconnect" — the banner is shipped as R4 groundwork (per M5's "offline banner in party mode" line item, line 555), but write-blocking (queue.ts short-circuiting when `!navigator.onLine`) lands with M5's WebSocket layer. Today the sync queue already handles fetch failures gracefully: keeps optimistic state, surfaces a toast (`queue.ts:275`). The banner + graceful fetch failure is a reasonable interim UX; explicit write-blocking is a stricter guardrail that pairs naturally with WebSocket reconnect handling.
+> - **`useOnline` inline hook, not a shared util.** The hook is 15 LOC and used by exactly one component; extracting to `lib/` would be premature abstraction (per CLAUDE.md "don't create helpers, utilities, or abstractions for one-time operations"). If R5's realtime layer needs to gate other components on online state, promote it then.
+> - **Three-predicate visibility.** Server mode + offline + multi-member. The order matters: `isServerMode` is a build-time constant so it short-circuits without cost; `isOnline` is component-local state; `memberCount` reads from the store (`useShallow` on a scalar to avoid re-renders on every reducer mutation). Only the last predicate can flip while a party is loaded — the others are effectively constants for the lifetime of an AppState.
+> - **Solo-bypass symmetry with §8.2.** Same predicate as the guard-level solo bypass: `new Set(memberships.filter(m => m.leftAt === null).map(m => m.userId)).size >= 2`. Consistent semantics between "banker mediation kicks in at 2+ members" (R4.2) and "offline banner kicks in at 2+ members" (R4.4). Both use distinct-active-userId, so a party creator (dm + player rows for the same user) counts as 1.
+> - **`role="alert"` + `aria-live="polite"`.** Accessible announcement without stealing focus. Icon has `aria-hidden` since the text carries the same info.
+> - **No new lib/ files.** The banner is one component + one 15-LOC hook, both colocated. Follows the R4.2.e / R4.3.e minimalism precedent.
+>
+> **Not shipped in R4.4.d (deferred to M5+):**
+> - Write-blocking when offline (queue.ts short-circuit on `!navigator.onLine`) — M5 with the WebSocket reconnect flow.
+> - Retry / reconnect countdown ("reconnecting in 5s...") — M5.
+> - Server-heartbeat detection (banner also shows on server-unreachable, not just browser-offline) — M5.
+>
+> **Carryforwards to R4.5 / M5:**
+> - **Reuse the `useOnline` hook** when M5 needs to gate mutations. Consider extracting it to `apps/web/src/lib/useOnline.ts` at that point (single-use → dual-use tips the abstraction cost the other way).
+> - **Banner styling.** Currently uses `bg-destructive/10` + `text-destructive`. If M5 adds a "reconnecting" transient state, consider a `warning` intent for that (yellow) vs. `destructive` for confirmed-offline (red).
 
 #### R4.4 — Notes
 
-> -
+> **R4.4 shipped 2026-07-01 (four sub-slices R4.4.a–d).** Cross-character currency invariants (R4.4.a), homebrew party-scope filter (R4.4.b), DM-only custom-item gating for `memberCount >= 2` (R4.4.c), and multi-member offline banner (R4.4.d) — all per OUTLINE §3.7 + §3.14 + §8.1 + §9. Sliced from a single roadmap section into R4.4.a–d on 2026-07-01 (planning session, mid-execution), mirroring the R4.1.a-f / R4.2.a-e / R4.3.a-e rhythm.
+>
+> **Total test growth across R4.4:** 1165 → 1178 (+13). Breakdown:
+> - **R4.4.a — currency-transfer invariants (+6):** 6 shared guard tests locking in player→player push, Banker-from-pool, DM-blocked-while-Banker, and no-Banker self-claim rules.
+> - **R4.4.b — homebrew party-scope (+2):** 2 server integration tests exercising the state-loader's `partyId` filter (cross-party isolation + new-joiner visibility).
+> - **R4.4.c — DM-only custom-item gating (+0):** Pure documentation slice — 3 pre-existing tests (solo bypass + player-rejects + DM-accepts) already covered the invariant.
+> - **R4.4.d — offline banner (+5):** 5 component tests exercising the three-predicate visibility (server mode + offline + memberCount ≥ 2) and the online↔offline transition.
+>
+> **Audit-first slicing paid off.** Three of the four sub-slices (R4.4.a, R4.4.b, R4.4.c) required NO new reducer / guard / schema / persistor code — only tests to lock in behaviors already correct from prior slices' composition. R4.4 landed as an unusually thin milestone: 8 test additions across three test-only slices plus one 60-LOC UI slice.
+> - R4.3.c's `ownsOrShares` widening + R4.2.c's `checkBankerGate` compose correctly for R4.4.a's cross-character currency semantics.
+> - `state-loader.ts:151-155` already filters catalog by party (system rows + this-party homebrew), covering R4.4.b's visibility invariant end-to-end.
+> - `createHomebrewGuard` + §8.2 solo bypass compose to give R4.4.c's exact semantics: solo = allowed for anyone; multi-member = DM-only.
+>
+> The audit-first pattern (established in R4.3.c's `ownsOrShares` widening decision) is now proven across R4.3 + R4.4 and worth carrying forward to R4.5 (DM Dashboard).
+>
+> **Carryforwards to R4.5:**
+> - **DM Dashboard is DM-only** and needs a route guard. Reuse the same `actor.role === 'dm'` predicate the guards already use; solo bypass is irrelevant here (the dashboard is only meaningful for multi-member parties, where §8.2 doesn't fire).
+> - **Party summary cards.** `partyStash` + `recoveredLoot` currency + item totals — no new schema, existing state suffices.
+> - **Homebrew visibility.** R4.4.b's filter already ensures the DM sees only their party's homebrew when the dashboard queries the catalog.
+>
+> **Carryforward to RH4 (URL-scoped routing):**
+> - `OfflineBanner` reads `state.appState.memberships` — if RH4 introduces a "no party loaded" URL state, the `memberCount === 0` short-circuit (already in the component) is the correct fallback.
 
 #### R4.5 — DM Dashboard (§5.9)
 

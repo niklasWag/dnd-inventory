@@ -373,3 +373,192 @@ describe('GET + POST /sync round trip (R3.4.a)', () => {
     }
   });
 });
+
+// -------------------------------------------------------------------- //
+// R4.4.b — Homebrew visibility is party-scoped
+// -------------------------------------------------------------------- //
+
+/**
+ * Locks in the invariant from OUTLINE §3.7 + §4 `ItemDefinition.partyId`:
+ * homebrew is scoped to the party that created it. Party A's homebrew
+ * MUST NOT appear in party B's `GET /sync/state` even if the requesting
+ * user is a member of both parties.
+ *
+ * The server-side filter lives at `state-loader.ts:151-155`
+ * (`OR: [{ source: PHB | DMG }, { partyId }]`); these tests exercise
+ * that filter through the real /sync/state route.
+ */
+describe('R4.4.b — homebrew party-scope filter', () => {
+  async function seedPartyDirect(
+    ownerUserId: string,
+    partyName: string,
+  ): Promise<{ partyId: string; inventoryStashId: string }> {
+    const partyId = `p-${Math.random().toString(36).slice(2, 10)}`;
+    const characterId = `c-${Math.random().toString(36).slice(2, 10)}`;
+    const inventoryStashId = `s-${Math.random().toString(36).slice(2, 10)}`;
+    const partyStashId = `s-${Math.random().toString(36).slice(2, 10)}`;
+    const recoveredStashId = `s-${Math.random().toString(36).slice(2, 10)}`;
+    // Transaction so the Character ↔ Stash INITIALLY DEFERRED FK cycle
+    // resolves at commit (mirrors the real bootstrap in persistor.ts).
+    await prisma.$transaction(async (tx) => {
+      await tx.party.create({
+        data: {
+          id: partyId,
+          name: partyName,
+          ownerUserId,
+          inviteCode: `inv-${Math.random().toString(36).slice(2, 18)}`,
+          recoveredLootStashId: recoveredStashId,
+        },
+      });
+      // Character references the Inventory stash; Stash references the
+      // Character. Both writes go inside the same transaction so the
+      // deferred FKs are satisfied at commit.
+      await tx.character.create({
+        data: {
+          id: characterId,
+          partyId,
+          ownerUserId,
+          name: 'Hero',
+          species: 'Human',
+          size: 'medium',
+          class: 'Fighter',
+          level: 1,
+          strScore: 10,
+          maxAttunement: 3,
+          encumbranceRule: 'off',
+          enforceEncumbrance: false,
+          inventoryStashId,
+        },
+      });
+      await tx.stash.createMany({
+        data: [
+          {
+            id: inventoryStashId,
+            scope: 'character',
+            name: 'Inventory',
+            ownerCharacterId: characterId,
+            isCarried: true,
+          },
+          {
+            id: partyStashId,
+            scope: 'party',
+            name: 'Party Stash',
+            partyId,
+            isCarried: false,
+          },
+          {
+            id: recoveredStashId,
+            scope: 'recovered_loot',
+            name: 'Recovered Loot',
+            partyId,
+            isCarried: false,
+          },
+        ],
+      });
+      // dm + player rows for creator (mirrors bootstrap-create-character)
+      await tx.partyMembership.createMany({
+        data: [
+          { userId: ownerUserId, partyId, role: 'dm', characterId: null },
+          { userId: ownerUserId, partyId, role: 'player', characterId },
+        ],
+      });
+      await tx.currencyHolding.createMany({
+        data: [
+          { id: `c-${inventoryStashId}`, stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          { id: `c-${partyStashId}`, stashId: partyStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          { id: `c-${recoveredStashId}`, stashId: recoveredStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+        ],
+      });
+    });
+    return { partyId, inventoryStashId };
+  }
+
+  it('excludes party A homebrew from GET /sync/state?partyId=B when user is in both parties', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { userId } = await seedUser({ displayName: 'A' });
+      const token = await seedSession(userId);
+
+      // User creates two parties (both as DM).
+      const { partyId: partyA } = await seedPartyDirect(userId, 'Party A');
+      const { partyId: partyB } = await seedPartyDirect(userId, 'Party B');
+
+      // Seed a homebrew ItemDefinition scoped to party A.
+      await prisma.itemDefinition.create({
+        data: {
+          id: 'hb-vorpal-spork',
+          name: 'Vorpal Spork',
+          source: 'homebrew',
+          category: 'gear',
+          tags: [],
+          createdBy: userId,
+          partyId: partyA,
+        },
+      });
+
+      // GET state for party B — must NOT include the Vorpal Spork.
+      const resB = await app.inject({
+        method: 'GET',
+        url: `/sync/state?partyId=${partyB}`,
+        headers: { cookie: cookieHeader(env, token) },
+      });
+      expect(resB.statusCode).toBe(200);
+      const { state: stateB } = resB.json<{ state: { catalog: { id: string; name: string }[] } }>();
+      expect(stateB.catalog.some((d) => d.id === 'hb-vorpal-spork')).toBe(false);
+      expect(stateB.catalog.some((d) => d.name === 'Vorpal Spork')).toBe(false);
+
+      // Sanity: party A DOES include it (rules out "no homebrew anywhere" bug).
+      const resA = await app.inject({
+        method: 'GET',
+        url: `/sync/state?partyId=${partyA}`,
+        headers: { cookie: cookieHeader(env, token) },
+      });
+      expect(resA.statusCode).toBe(200);
+      const { state: stateA } = resA.json<{ state: { catalog: { id: string; name: string }[] } }>();
+      expect(stateA.catalog.some((d) => d.id === 'hb-vorpal-spork')).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('exposes party A homebrew to a new joiner (party-scoped, not user-scoped)', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      const { userId: creatorId } = await seedUser({ displayName: 'A' });
+      const { userId: joinerId } = await seedUser({ displayName: 'B' });
+      const joinerToken = await seedSession(joinerId);
+
+      const { partyId } = await seedPartyDirect(creatorId, 'Party A');
+
+      // Creator makes a homebrew in party A.
+      await prisma.itemDefinition.create({
+        data: {
+          id: 'hb-shared-item',
+          name: 'Shared Item',
+          source: 'homebrew',
+          category: 'gear',
+          tags: [],
+          createdBy: creatorId,
+          partyId,
+        },
+      });
+
+      // Joiner joins party A (add a player membership row directly).
+      await prisma.partyMembership.create({
+        data: { userId: joinerId, partyId, role: 'player', characterId: null },
+      });
+
+      // Joiner GETs party A state — should see the homebrew.
+      const res = await app.inject({
+        method: 'GET',
+        url: `/sync/state?partyId=${partyId}`,
+        headers: { cookie: cookieHeader(env, joinerToken) },
+      });
+      expect(res.statusCode).toBe(200);
+      const { state } = res.json<{ state: { catalog: { id: string }[] } }>();
+      expect(state.catalog.some((d) => d.id === 'hb-shared-item')).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+});

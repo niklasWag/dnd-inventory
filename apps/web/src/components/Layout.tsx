@@ -4,6 +4,7 @@ import { BookOpen, LogOut, Settings as SettingsIcon, Users } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
+import { OfflineBanner } from '@/components/OfflineBanner';
 import { isServerMode } from '@/lib/serverMode';
 import { useSession } from '@/store/session';
 import { useStore } from '@/store';
@@ -103,6 +104,7 @@ export function RootLayout(): ReactElement {
           </nav>
         </div>
       </header>
+      <OfflineBanner />
       <main className="container py-8">
         <Outlet />
       </main>

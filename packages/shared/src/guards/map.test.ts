@@ -873,6 +873,76 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
       );
       expect(result).toEqual({ ok: true });
     });
+
+    // -------------------- R4.4.a: cross-character currency-transfer --------------------
+
+    it('R4.4.a — accepts player→player push even when Banker is active (§3.14 amendment)', () => {
+      // Player u2 pushes 1gp from their own Inventory to another player's
+      // Inventory (banker-user's). Banker mediates SHARED POOLS, not
+      // character-to-character moves — this must always be allowed.
+      const state = makeBankerState();
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'inv', toStashId: 'inv-b', delta: delta({ gp: 1 }) },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('R4.4.a — accepts player→player push when no Banker is active', () => {
+      const state = makeBankerState(null);
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'inv', toStashId: 'inv-b', delta: delta({ gp: 1 }) },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('R4.4.a — rejects DM distributing from Party Stash to a player while Banker active (§8.1)', () => {
+      // With a Banker active, the DM cannot distribute from shared pools
+      // to specific players — that's the Banker's role. DM must revoke
+      // the Banker first if they want to distribute.
+      const state = makeBankerState();
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'ps', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('dm-user', 'dm'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('R4.4.a — rejects DM distributing from Recovered Loot while Banker active (§8.1)', () => {
+      const state = makeBankerState();
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'rl', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('dm-user', 'dm'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
+    });
+
+    it('R4.4.a — accepts DM distributing from Party Stash to a player when no Banker (§3.14)', () => {
+      const state = makeBankerState(null);
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'ps', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('dm-user', 'dm'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('R4.4.a — accepts a player self-claim from Recovered Loot when no Banker is active', () => {
+      // Symmetric coverage: the existing test at line 867 covers Party
+      // Stash; this locks in the same rule for Recovered Loot per §3.14.
+      const state = makeBankerState(null);
+      const result = guards['currency-transfer'](
+        state,
+        { fromStashId: 'rl', toStashId: 'inv', delta: delta({ gp: 1 }) },
+        makeActor('u2', 'player'),
+      );
+      expect(result).toEqual({ ok: true });
+    });
   });
 
   // -------------------- transfer (item) --------------------
