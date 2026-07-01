@@ -13,7 +13,8 @@
     "lint": "pnpm -r --parallel lint",
     "test": "pnpm -r --parallel test",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "docker:dev": "cd infra/docker && docker compose --profile proxy --profile mail up -d --build"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
