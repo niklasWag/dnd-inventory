@@ -9,9 +9,21 @@ import { Toaster } from '@/components/ui/sonner';
 import { useStore, flushPendingPersist } from '@/store';
 import { loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
-import { appStateSchema } from '@app/shared';
+import { newUuidV7, appStateSchema } from '@app/shared';
 
 import { bootstrap, bootstrapWithItem } from '@/test/fixtures';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function transferIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -180,7 +192,7 @@ describe('ItemDetail — R2.1 rarity + attunement display', () => {
         definitionId: def.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -237,7 +249,7 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
       throw new Error(`bootstrapWithChargedRow: ${definitionId} not in catalog`);
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: base.inventoryStashId, definitionId, quantity: 1, source: 'catalog-add' },
+      payload: { stashId: base.inventoryStashId, definitionId, quantity: 1, source: 'catalog-add' , ...acquireIds() , ...acquireIds() },
     });
     const itemInstanceId = useStore
       .getState()
@@ -271,7 +283,7 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
     // Move the wand to the Party Stash; currentCharges clears via cascade.
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
     const movedId = useStore.getState().appState!.items.find((i) => i.ownerId === partyStashId)!.id;
     renderAt(`/item/${movedId}`);
@@ -401,7 +413,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
         definitionId: cloak.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -511,7 +523,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     useStore.getState().dispatch({

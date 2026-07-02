@@ -16,7 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useStore, dispatchMintingAction } from '@/store';
 import { buildStashLabels } from '@/lib/stashLabels';
 
 interface MoveItemModalProps {
@@ -74,7 +74,6 @@ export function MoveItemModal({
   onOpenChange,
   itemInstanceId,
 }: MoveItemModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Source row snapshot.
@@ -161,7 +160,7 @@ export function MoveItemModal({
     }
     try {
       setSubmitError(null);
-      dispatch({
+      dispatchMintingAction({
         type: 'transfer',
         payload: {
           itemInstanceId,

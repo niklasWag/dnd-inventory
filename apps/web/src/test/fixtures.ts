@@ -1,4 +1,5 @@
 import {
+  newUuidV7,
   transactionLogEntrySchema,
   type ItemDefinition,
   type TransactionLogEntry,
@@ -52,18 +53,42 @@ export interface BootstrapResult {
   partyStashId: string;
   recoveredLootStashId: string;
   catalog: ItemDefinition[];
+  // RH1.2 — pre-minted party-scope ids the fixture supplied to the
+  // reducer. Exposed so downstream tests can assert against exact ids
+  // (BUG-004 canonicalisation invariant).
+  userId: string;
+  partyId: string;
+  partyStashCurrencyId: string;
+  recoveredLootCurrencyId: string;
+  inventoryCurrencyId: string;
 }
 
 /**
  * Bring the store to the post-M2-bootstrap baseline — a fresh character
  * plus a seeded catalog. Every M2+ test starts here so each suite focuses
  * on its own action rather than the create-character setup.
+ *
+ * RH1.2 — pre-mints all 9 bootstrap UUID v7 ids and returns them in
+ * `BootstrapResult`. Downstream tests inherit those ids without having
+ * to mint their own — keeps the ~150 bootstrap-consuming tests unchanged
+ * except for the widened return shape.
  */
 export function bootstrap(
   payload: CreateCharacterPayload = VALID_CREATE_CHARACTER_PAYLOAD,
 ): BootstrapResult {
+  const ids = {
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
   const { dispatch } = useStore.getState();
-  dispatch({ type: 'create-character', payload });
+  dispatch({ type: 'create-character', payload: { ...payload, ...ids } });
   dispatch({
     type: 'seed-catalog',
     payload: { seedVersion: SEED_VERSION, entries: [...loadPhbSeed(), ...loadDmgSeed()] },
@@ -71,11 +96,16 @@ export function bootstrap(
   const s = useStore.getState().appState;
   if (s === null) throw new Error('bootstrap: appState should be populated');
   return {
-    characterId: s.characters[0]!.id,
-    inventoryStashId: s.characters[0]!.inventoryStashId,
-    partyStashId: s.stashes.find((st) => st.scope === 'party')!.id,
-    recoveredLootStashId: s.party.recoveredLootStashId,
+    characterId: ids.newCharacterId,
+    inventoryStashId: ids.newInventoryStashId,
+    partyStashId: ids.newPartyStashId,
+    recoveredLootStashId: ids.newRecoveredLootStashId,
     catalog: s.catalog,
+    userId: ids.newUserId,
+    partyId: ids.newPartyId,
+    partyStashCurrencyId: ids.newPartyStashCurrencyId,
+    recoveredLootCurrencyId: ids.newRecoveredLootCurrencyId,
+    inventoryCurrencyId: ids.newCurrencyHoldingId,
   };
 }
 
@@ -106,6 +136,7 @@ export function bootstrapWithItem(
       definitionId: torch.id,
       quantity: 1,
       source: 'catalog-add',
+      newItemInstanceId: newUuidV7(),
       ...(initial.notes !== undefined ? { notes: initial.notes } : {}),
     },
   });
@@ -143,10 +174,11 @@ export function bootstrapWithHomebrew(
   overrides: Partial<HomebrewDefinitionInput> = {},
 ): BootstrapWithHomebrewResult {
   const base = bootstrap();
-  const payload: HomebrewDefinitionInput = {
+  const payload: HomebrewDefinitionInput & { newDefinitionId: string } = {
     name: 'Test Homebrew',
     category: 'gear',
     ...overrides,
+    newDefinitionId: newUuidV7(),
   };
   useStore.getState().dispatch({ type: 'create-homebrew', payload });
   const homebrewDefId = useStore.getState().appState!.catalog.at(-1)!.id;

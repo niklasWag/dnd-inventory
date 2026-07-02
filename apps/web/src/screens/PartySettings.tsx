@@ -19,7 +19,7 @@ import { RoleBadge } from '@/components/RoleBadge';
 import { ApiError, kickPlayerApi, leavePartyApi, listPartyMembers, rotateInvite } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
 import { getOwnCharacter } from '@/lib/ownCharacter';
-import { useStore, flushPendingPersist } from '@/store';
+import { useStore, flushPendingPersist, dispatchMintingAction } from '@/store';
 import { flush as flushSyncQueue } from '@/sync/queue';
 import type { PartyMemberItem } from '@app/shared';
 
@@ -287,7 +287,7 @@ export function PartySettings(): ReactElement {
    */
   async function handleCreateCharacterSubmit(values: CharacterFormOutput): Promise<void> {
     try {
-      useStore.getState().dispatch({ type: 'create-character', payload: values });
+      dispatchMintingAction({ type: 'create-character', payload: values });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not create character');
       return;

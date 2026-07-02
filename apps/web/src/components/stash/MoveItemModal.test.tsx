@@ -8,6 +8,19 @@ import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 import { bootstrap } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function createStashIds() {
+  return { newStashId: newUuidV7(), newCurrencyHoldingId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -31,7 +44,7 @@ function setupWithStacks(quantity: number): SetupResult {
   const base = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: base.characterId, name: 'Chest at home' },
+    payload: { ownerCharacterId: base.characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
   });
   const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
   const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -42,7 +55,7 @@ function setupWithStacks(quantity: number): SetupResult {
       definitionId: torch.id,
       quantity,
       source: 'catalog-add',
-    },
+      ...acquireIds(), },
   });
   const itemInstanceId = useStore.getState().appState!.items[0]!.id;
   return {
@@ -224,7 +237,7 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
         definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const magicItemId = useStore
       .getState()

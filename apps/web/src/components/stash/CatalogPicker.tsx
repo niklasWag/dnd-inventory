@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useStore } from '@/store';
+import { useStore, dispatchMintingAction } from '@/store';
 import type { ItemCategory, ItemDefinition } from '@app/shared';
 
 /** Stable empty-catalog reference — see CatalogBrowser for the why. */
@@ -49,7 +49,6 @@ const ALL_CATEGORIES: ReadonlyArray<{ value: 'all' | ItemCategory; label: string
  */
 export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerProps): ReactElement {
   const catalog = useStore((s) => s.appState?.catalog ?? EMPTY_CATALOG);
-  const dispatch = useStore((s) => s.dispatch);
 
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<'all' | ItemCategory>('all');
@@ -116,7 +115,7 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
                   // Surface as a toast so the user sees why the add didn't
                   // land instead of an uncaught console error.
                   try {
-                    dispatch({
+                    dispatchMintingAction({
                       type: 'acquire',
                       payload: {
                         stashId,

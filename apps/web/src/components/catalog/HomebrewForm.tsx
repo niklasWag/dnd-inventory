@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useStore, dispatchMintingAction } from '@/store';
 import type { HomebrewDefinitionInput, HomebrewDefinitionPatch } from '@/store/types';
 import type { ItemCategory, ItemDefinition } from '@app/shared';
 
@@ -251,7 +251,7 @@ export function HomebrewForm({
       // create OR duplicate
       const input = formOutputToCreateInput(values);
       const duplicatedFromId = mode === 'duplicate' ? definition?.id : undefined;
-      dispatch({
+      dispatchMintingAction({
         type: 'create-homebrew',
         payload: {
           ...input,

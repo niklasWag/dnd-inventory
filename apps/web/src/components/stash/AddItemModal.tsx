@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { HomebrewForm } from '@/components/catalog/HomebrewForm';
-import { useStore } from '@/store';
+import { dispatchMintingAction } from '@/store';
 
 import { CatalogPicker } from './CatalogPicker';
 
@@ -48,7 +48,6 @@ export function AddItemModal({
   stashLabel,
 }: AddItemModalProps): ReactElement {
   const [tab, setTab] = useState<Tab>('catalog');
-  const dispatch = useStore((s) => s.dispatch);
 
   // Reset to Catalog every time the modal opens. Without this, a user
   // who left on the Custom tab last time would see it again — confusing
@@ -67,7 +66,7 @@ export function AddItemModal({
     // encumbrance would be tripped; surface as a toast so the homebrew
     // creation still survives but the add doesn't silently fail.
     try {
-      dispatch({
+      dispatchMintingAction({
         type: 'acquire',
         payload: {
           stashId,

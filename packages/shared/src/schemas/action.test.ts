@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
+import { newUuidV7 } from '../ids';
+
 import { actionSchema, type Action } from './action';
+
+// RH1.2 — pre-mint canonical UUID v7 ids once per test run for the six
+// minting-action samples below. Reusing a stable id per sample makes
+// the fixture easy to eyeball; each sample still exercises the wire
+// validator against a real UUID v7 shape + a within-tolerance timestamp.
+const id = {
+  character: newUuidV7(),
+  inventoryStash: newUuidV7(),
+  inventoryCurrency: newUuidV7(),
+  user: newUuidV7(),
+  party: newUuidV7(),
+  partyStash: newUuidV7(),
+  recoveredLootStash: newUuidV7(),
+  partyStashCurrency: newUuidV7(),
+  recoveredLootCurrency: newUuidV7(),
+  acquireItem: newUuidV7(),
+  newStash: newUuidV7(),
+  newStashCurrency: newUuidV7(),
+  transferItem: newUuidV7(),
+  splitItem: newUuidV7(),
+  homebrewDef: newUuidV7(),
+};
 
 /**
  * R3.4.a — wire-validation smoke tests. One representative payload per
@@ -19,29 +43,73 @@ import { actionSchema, type Action } from './action';
 const samples: Action[] = [
   {
     type: 'create-character',
-    payload: { name: 'A', species: 'Human', size: 'medium', class: 'Fighter', level: 1, str: 16 },
+    payload: {
+      name: 'A',
+      species: 'Human',
+      size: 'medium',
+      class: 'Fighter',
+      level: 1,
+      str: 16,
+      newCharacterId: id.character,
+      newInventoryStashId: id.inventoryStash,
+      newCurrencyHoldingId: id.inventoryCurrency,
+      newUserId: id.user,
+      newPartyId: id.party,
+      newPartyStashId: id.partyStash,
+      newRecoveredLootStashId: id.recoveredLootStash,
+      newPartyStashCurrencyId: id.partyStashCurrency,
+      newRecoveredLootCurrencyId: id.recoveredLootCurrency,
+    },
   },
   {
     type: 'acquire',
-    payload: { stashId: 's', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add' },
+    payload: {
+      stashId: 's',
+      definitionId: 'phb-2024:rope',
+      quantity: 1,
+      source: 'catalog-add',
+      newItemInstanceId: id.acquireItem,
+    },
   },
   { type: 'consume', payload: { itemInstanceId: 'i', quantity: 1 } },
   { type: 'seed-catalog', payload: { seedVersion: 1, entries: [] } },
   { type: 'edit-item-instance', payload: { itemInstanceId: 'i', patch: { notes: 'n' } } },
-  { type: 'create-stash', payload: { ownerCharacterId: 'c', name: 'Backpack' } },
+  {
+    type: 'create-stash',
+    payload: {
+      ownerCharacterId: 'c',
+      name: 'Backpack',
+      newStashId: id.newStash,
+      newCurrencyHoldingId: id.newStashCurrency,
+    },
+  },
   { type: 'rename-stash', payload: { stashId: 's', newName: 'New' } },
   { type: 'delete-stash', payload: { stashId: 's' } },
   {
     type: 'currency-change',
     payload: { stashId: 's', delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 }, reason: 'deposit' },
   },
-  { type: 'transfer', payload: { itemInstanceId: 'i', toStashId: 's', quantity: 1 } },
-  { type: 'split', payload: { itemInstanceId: 'i', quantity: 1 } },
+  {
+    type: 'transfer',
+    payload: {
+      itemInstanceId: 'i',
+      toStashId: 's',
+      quantity: 1,
+      newItemInstanceId: id.transferItem,
+    },
+  },
+  {
+    type: 'split',
+    payload: { itemInstanceId: 'i', quantity: 1, newItemInstanceId: id.splitItem },
+  },
   {
     type: 'currency-transfer',
     payload: { fromStashId: 'a', toStashId: 'b', delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 } },
   },
-  { type: 'create-homebrew', payload: { name: 'Magic Sword', category: 'magic' } },
+  {
+    type: 'create-homebrew',
+    payload: { name: 'Magic Sword', category: 'magic', newDefinitionId: id.homebrewDef },
+  },
   { type: 'edit-homebrew', payload: { definitionId: 'd', patch: { name: 'X' } } },
   { type: 'delete-homebrew', payload: { definitionId: 'd' } },
   { type: 'rename-character', payload: { characterId: 'c', newName: 'Z' } },

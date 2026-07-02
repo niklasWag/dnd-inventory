@@ -5,6 +5,7 @@ import type {
   Stash,
   TransactionLogEntry,
 } from '@app/shared';
+import { isValidUuidV7 } from '@app/shared';
 
 import * as attunement from '../attunement';
 import * as capacity from '../capacity';
@@ -43,20 +44,24 @@ import type { Action, AppState } from './types';
  */
 
 /**
- * R3.4.a — non-determinism injection seam. Both web and server inject
- * `crypto.randomUUID` + `new Date().toISOString` + a 128-bit base32
- * invite-code generator. Tests inject deterministic sequences to make
- * reducer behaviour bit-reproducible.
+ * R3.4.a — non-determinism injection seam. Web and server both inject
+ * `new Date().toISOString` + a 128-bit base32 invite-code generator.
+ * Tests inject deterministic sequences to make reducer behaviour
+ * bit-reproducible.
+ *
+ * RH1.2 — `newId` is no longer part of the context. Every id-creating
+ * action carries its ids explicitly in the payload
+ * (`payload.new<EntityName>Id`); the reducer + persistor consume those
+ * fields instead of minting ids from the context. See `docs/roadmap.md`
+ * RH1 charter and `packages/shared/src/ids.ts`.
  */
 export interface ReducerContext {
-  /** Returns a fresh UUID v4 (or any sufficiently-unique string id). */
-  newId(): string;
   /** Returns the current time as an ISO-8601 string. */
   now(): string;
   /**
    * Returns a fresh invite code. OUTLINE §3.1 says 128-bit base32 with
-   * an `INV-` prefix. Kept distinct from `newId` so the keyspace stays
-   * separate — a UUID is not a valid invite code and vice versa.
+   * an `INV-` prefix. Kept distinct from the id namespace so a UUID is
+   * never a valid invite code and vice versa.
    */
   newInviteCode(): string;
 }
@@ -276,6 +281,20 @@ function createCharacterInExistingParty(
     );
   }
 
+  // RH1.2 — reducer-boundary id-shape assertions. The guard layer has
+  // already validated these upstream; this is defense-in-depth.
+  // (TS has already narrowed `payload` to the with-character branch via
+  // the `dmOnly === true` throw above — no cast needed.)
+  if (!isValidUuidV7(payload.newCharacterId)) {
+    throw new Error('create-character: newCharacterId must be a valid UUID v7');
+  }
+  if (!isValidUuidV7(payload.newInventoryStashId)) {
+    throw new Error('create-character: newInventoryStashId must be a valid UUID v7');
+  }
+  if (!isValidUuidV7(payload.newCurrencyHoldingId)) {
+    throw new Error('create-character: newCurrencyHoldingId must be a valid UUID v7');
+  }
+
   const actorUserId = state.user.id;
 
   // The actor must be an active member of state.party (DM or player).
@@ -314,8 +333,8 @@ function createCharacterInExistingParty(
   const recoveredLootStashId = state.party.recoveredLootStashId;
 
   const now = ctx.now();
-  const characterId = ctx.newId();
-  const inventoryStashId = ctx.newId();
+  const characterId = payload.newCharacterId;
+  const inventoryStashId = payload.newInventoryStashId;
 
   const newCharacter = {
     id: characterId,
@@ -344,7 +363,7 @@ function createCharacterInExistingParty(
   };
 
   const newInventoryHolding = {
-    id: ctx.newId(),
+    id: payload.newCurrencyHoldingId,
     stashId: inventoryStashId,
     cp: 0,
     sp: 0,
@@ -417,11 +436,39 @@ function createCharacter(
     return createCharacterInExistingParty(state, payload, ctx);
   }
 
+  // RH1.2 — bootstrap-branch id-shape assertions. The 6 party-scope ids
+  // are always required at bootstrap. The guard layer has already
+  // validated these upstream; this is defense-in-depth.
+  const requiredBootstrapIds = {
+    newUserId: payload.newUserId,
+    newPartyId: payload.newPartyId,
+    newPartyStashId: payload.newPartyStashId,
+    newRecoveredLootStashId: payload.newRecoveredLootStashId,
+    newPartyStashCurrencyId: payload.newPartyStashCurrencyId,
+    newRecoveredLootCurrencyId: payload.newRecoveredLootCurrencyId,
+  };
+  for (const [key, value] of Object.entries(requiredBootstrapIds)) {
+    if (typeof value !== 'string' || !isValidUuidV7(value)) {
+      throw new Error(`create-character (bootstrap): ${key} must be a valid UUID v7`);
+    }
+  }
+  if (payload.dmOnly !== true) {
+    if (!isValidUuidV7(payload.newCharacterId)) {
+      throw new Error('create-character (bootstrap): newCharacterId must be a valid UUID v7');
+    }
+    if (!isValidUuidV7(payload.newInventoryStashId)) {
+      throw new Error('create-character (bootstrap): newInventoryStashId must be a valid UUID v7');
+    }
+    if (!isValidUuidV7(payload.newCurrencyHoldingId)) {
+      throw new Error('create-character (bootstrap): newCurrencyHoldingId must be a valid UUID v7');
+    }
+  }
+
   const now = ctx.now();
-  const userId = ctx.newId();
-  const partyId = ctx.newId();
-  const partyStashId = ctx.newId();
-  const recoveredLootStashId = ctx.newId();
+  const userId = payload.newUserId!;
+  const partyId = payload.newPartyId!;
+  const partyStashId = payload.newPartyStashId!;
+  const recoveredLootStashId = payload.newRecoveredLootStashId!;
   const partyName = payload.partyName ?? 'My Campaign';
 
   // Shared shell (User, Party, party-scope stashes + currency).
@@ -472,7 +519,7 @@ function createCharacter(
     createdAt: now,
   };
   const partyStashCurrency = {
-    id: ctx.newId(),
+    id: payload.newPartyStashCurrencyId!,
     stashId: partyStashId,
     cp: 0,
     sp: 0,
@@ -481,7 +528,7 @@ function createCharacter(
     pp: 0,
   };
   const recoveredLootCurrency = {
-    id: ctx.newId(),
+    id: payload.newRecoveredLootCurrencyId!,
     stashId: recoveredLootStashId,
     cp: 0,
     sp: 0,
@@ -527,8 +574,8 @@ function createCharacter(
 
   // Legacy bootstrap (`dmOnly: false` or absent): mint Character +
   // Inventory stash + player membership alongside the shell.
-  const characterId = ctx.newId();
-  const inventoryStashId = ctx.newId();
+  const characterId = payload.newCharacterId;
+  const inventoryStashId = payload.newInventoryStashId;
 
   const nextState: NonNullable<AppState> = {
     version: 1,
@@ -579,7 +626,7 @@ function createCharacter(
     catalog: [],
     items: [],
     currencies: [
-      { id: ctx.newId(), stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+      { id: payload.newCurrencyHoldingId, stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
       partyStashCurrency,
       recoveredLootCurrency,
     ],
@@ -623,9 +670,13 @@ function createCharacter(
 function acquire(
   state: AppState,
   payload: Extract<Action, { type: 'acquire' }>['payload'],
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): ReducerResult {
   const s = requireState(state, 'acquire');
+
+  if (!isValidUuidV7(payload.newItemInstanceId)) {
+    throw new Error('acquire: newItemInstanceId must be a valid UUID v7');
+  }
 
   if (payload.quantity <= 0) {
     throw new Error('acquire: quantity must be positive');
@@ -672,7 +723,7 @@ function acquire(
       i.id === existing.id ? { ...i, quantity: i.quantity + payload.quantity } : i,
     );
   } else {
-    resolvedItemId = ctx.newId();
+    resolvedItemId = payload.newItemInstanceId;
     // R2.2 — if the destination is a character's Inventory AND the
     // definition has a `charges` block, initialise `currentCharges` to
     // `def.charges.max`. Items entering non-Inventory stashes start at
@@ -982,6 +1033,13 @@ function createStash(
 ): ReducerResult {
   const s = requireState(state, 'create-stash');
 
+  if (!isValidUuidV7(payload.newStashId)) {
+    throw new Error('create-stash: newStashId must be a valid UUID v7');
+  }
+  if (!isValidUuidV7(payload.newCurrencyHoldingId)) {
+    throw new Error('create-stash: newCurrencyHoldingId must be a valid UUID v7');
+  }
+
   const name = payload.name.trim();
   if (name.length === 0) {
     throw new Error('create-stash: name is empty');
@@ -991,7 +1049,7 @@ function createStash(
     throw new Error(`create-stash: unknown ownerCharacterId ${payload.ownerCharacterId}`);
   }
 
-  const stashId = ctx.newId();
+  const stashId = payload.newStashId;
   const newStash: Stash = {
     id: stashId,
     scope: 'character',
@@ -1002,7 +1060,7 @@ function createStash(
     createdAt: ctx.now(),
   };
   const newCurrency: CurrencyHolding = {
-    id: ctx.newId(),
+    id: payload.newCurrencyHoldingId,
     stashId,
     cp: 0,
     sp: 0,
@@ -1341,9 +1399,13 @@ function currencyChange(
 function transfer(
   state: AppState,
   payload: Extract<Action, { type: 'transfer' }>['payload'],
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): ReducerResult {
   const s = requireState(state, 'transfer');
+
+  if (!isValidUuidV7(payload.newItemInstanceId)) {
+    throw new Error('transfer: newItemInstanceId must be a valid UUID v7');
+  }
 
   const source = s.items.find((i) => i.id === payload.itemInstanceId);
   if (source === undefined) {
@@ -1570,7 +1632,7 @@ function transfer(
     // row in the destination, decrement source. The cascade applies to
     // the NEW row (it's the one that left Inventory). Source row stays
     // in Inventory — flags untouched.
-    const newId = ctx.newId();
+    const newId = payload.newItemInstanceId;
     survivingId = newId;
     const newRow: ItemInstance = applyMovedRowMutations({
       ...source,
@@ -1661,9 +1723,13 @@ function transfer(
 function split(
   state: AppState,
   payload: Extract<Action, { type: 'split' }>['payload'],
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): ReducerResult {
   const s = requireState(state, 'split');
+
+  if (!isValidUuidV7(payload.newItemInstanceId)) {
+    throw new Error('split: newItemInstanceId must be a valid UUID v7');
+  }
 
   const source = s.items.find((i) => i.id === payload.itemInstanceId);
   if (source === undefined) {
@@ -1671,7 +1737,7 @@ function split(
   }
   inventory.validateSplit(source, payload.quantity);
 
-  const newId = ctx.newId();
+  const newId = payload.newItemInstanceId;
   // Spread source to inherit notes / customName / conditionOverrides;
   // overwrite id + quantity.
   const newRow: ItemInstance = {
@@ -1826,7 +1892,7 @@ type HomebrewEditableField = (typeof HOMEBREW_EDITABLE_FIELDS)[number];
 /**
  * Create a homebrew `ItemDefinition`. The reducer:
  *   - validates the name (trimmed, non-empty),
- *   - mints `definitionId` via `ctx.newId()`,
+ *   - consumes `payload.newDefinitionId` (RH1.2 — client-minted UUID v7),
  *   - stamps `source: 'homebrew'`, `partyId`, `createdBy` from the
  *     post-bootstrap state,
  *   - preserves the optional `duplicatedFromId` lineage from the
@@ -1839,16 +1905,20 @@ type HomebrewEditableField = (typeof HOMEBREW_EDITABLE_FIELDS)[number];
 function createHomebrew(
   state: AppState,
   payload: Extract<Action, { type: 'create-homebrew' }>['payload'],
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): ReducerResult {
   const s = requireState(state, 'create-homebrew');
+
+  if (!isValidUuidV7(payload.newDefinitionId)) {
+    throw new Error('create-homebrew: newDefinitionId must be a valid UUID v7');
+  }
 
   const name = payload.name.trim();
   if (name.length === 0) {
     throw new Error('create-homebrew: name is empty');
   }
 
-  const definitionId = ctx.newId();
+  const definitionId = payload.newDefinitionId;
   const newDef: ItemDefinition = {
     id: definitionId,
     name,

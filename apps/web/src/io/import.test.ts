@@ -6,6 +6,16 @@ import { bootstrap, bootstrapWithHomebrew } from '@/test/fixtures';
 
 import { buildExportEnvelope, serializeExport, type ExportSnapshot } from './export';
 import { importFromText } from './import';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -104,7 +114,7 @@ describe('round-trip identity (MVP DoD)', () => {
         definitionId: homebrewDefId,
         quantity: 3,
         source: 'custom-create',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'currency-change',

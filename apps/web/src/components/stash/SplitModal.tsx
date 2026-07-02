@@ -16,7 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useStore, dispatchMintingAction } from '@/store';
 
 interface SplitModalProps {
   open: boolean;
@@ -46,7 +46,6 @@ type FormValues = z.input<typeof formSchema>;
 type FormOutput = z.output<typeof formSchema>;
 
 export function SplitModal({ open, onOpenChange, itemInstanceId }: SplitModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const source = useStore(
@@ -98,7 +97,7 @@ export function SplitModal({ open, onOpenChange, itemInstanceId }: SplitModalPro
     }
     try {
       setSubmitError(null);
-      dispatch({
+      dispatchMintingAction({
         type: 'split',
         payload: { itemInstanceId, quantity: values.quantity },
       });

@@ -1,5 +1,6 @@
 import type { Action, PartyMembership } from '../schemas';
 import type { AppState } from '../schemas';
+import { CLOCK_SKEW_TOLERANCE_MS, isValidUuidV7, timestampFromUuidV7 } from '../ids';
 
 import type { Actor, GuardResult, GuardState } from './index';
 import { isSolo, isMember } from './actor';
@@ -1087,6 +1088,89 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
 };
 
 /**
+ * RH1.2 — Validate all client-minted UUID v7 ids attached to an action's
+ * payload. Runs upstream of every per-action guard (see `checkGuard`
+ * below) so a malformed or clock-skewed id is rejected regardless of
+ * §8.1 permissions and the §8.2 solo bypass.
+ *
+ * Returns `null` on success, or a `GuardResult` rejection with code
+ * `id_malformed` / `id_clock_skew` on failure. The `id_already_exists`
+ * code is NOT checked here — it requires a Prisma unique-constraint
+ * round-trip and is mapped at the server route layer (§3 in the RH1
+ * charter: `POST /sync/actions` catches `P2002` and re-throws as
+ * `BatchRejected(index, 'id_already_exists', ...)`).
+ *
+ * Actions with no client-minted ids (25 of the 31 in the union) pass
+ * through as `null`. The six minting actions per RH1.2 are:
+ *   - `create-character` (3 or 9 ids depending on branch/state)
+ *   - `acquire` (`newItemInstanceId`)
+ *   - `create-stash` (`newStashId`, `newCurrencyHoldingId`)
+ *   - `transfer` (`newItemInstanceId`)
+ *   - `split` (`newItemInstanceId`)
+ *   - `create-homebrew` (`newDefinitionId`)
+ */
+function checkMintedIds(action: Action): GuardResult | null {
+  const ids: string[] = [];
+  switch (action.type) {
+    case 'acquire':
+    case 'transfer':
+    case 'split':
+      ids.push(action.payload.newItemInstanceId);
+      break;
+    case 'create-stash':
+      ids.push(action.payload.newStashId, action.payload.newCurrencyHoldingId);
+      break;
+    case 'create-homebrew':
+      ids.push(action.payload.newDefinitionId);
+      break;
+    case 'create-character': {
+      // Both branches carry party-scope bootstrap ids (optional on the
+      // with-character branch, required on the dmOnly branch). Collect
+      // whatever is present; the reducer boundary is the authority on
+      // "which subset is required for this state".
+      const p = action.payload;
+      const maybeIds = [
+        p.newUserId,
+        p.newPartyId,
+        p.newPartyStashId,
+        p.newRecoveredLootStashId,
+        p.newPartyStashCurrencyId,
+        p.newRecoveredLootCurrencyId,
+      ];
+      for (const id of maybeIds) {
+        if (typeof id === 'string') ids.push(id);
+      }
+      if (p.dmOnly !== true) {
+        // with-character branch: character/inventory ids are always required.
+        ids.push(p.newCharacterId, p.newInventoryStashId, p.newCurrencyHoldingId);
+      }
+      break;
+    }
+    default:
+      return null;
+  }
+  const now = Date.now();
+  for (const id of ids) {
+    if (!isValidUuidV7(id)) {
+      return {
+        ok: false,
+        code: 'id_malformed',
+        message: `Action ${action.type} carries a malformed id (not a UUID v7): ${id}`,
+      };
+    }
+    const drift = Math.abs(timestampFromUuidV7(id) - now);
+    if (drift > CLOCK_SKEW_TOLERANCE_MS) {
+      return {
+        ok: false,
+        code: 'id_clock_skew',
+        message: `Action ${action.type} carries an id with clock skew ${drift}ms > ${CLOCK_SKEW_TOLERANCE_MS}ms tolerance.`,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Dispatch a guard for an action. Per OUTLINE §8.2: solo parties bypass
  * the §8.1 matrix (the sole member gets the UNION of DM + Player rights),
  * so we short-circuit to `{ ok: true }` for those cases. The per-action
@@ -1099,6 +1183,14 @@ export function checkGuard(
   actor: Actor,
   memberships: readonly PartyMembership[],
 ): GuardResult {
+  // RH1.2 — id-shape + clock-skew validation on client-minted UUID v7
+  // ids in the payload. Runs BEFORE the solo bypass so a malformed or
+  // clock-skewed id is rejected even for party-of-one. This is a pure
+  // check (payload-only + Date.now()) that applies to every mutation
+  // regardless of §8.1 permission logic.
+  const idCheck = checkMintedIds(action);
+  if (idCheck !== null) return idCheck;
+
   // Membership check: actor must be a member of the party they claim.
   // Skipped when state is null (the bootstrap `create-character` action
   // mints the membership rows; there is no party to be a member of yet).

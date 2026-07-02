@@ -9,6 +9,29 @@ import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 import { SEED_VERSION, loadPhbSeed } from '@app/seeds';
 import { bootstrap, bootstrapWithHomebrew } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -43,7 +66,7 @@ describe('CatalogBrowser', () => {
   it('renders the full PHB list when the catalog is seeded', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
     });
     useStore.getState().dispatch({
       type: 'seed-catalog',
@@ -125,7 +148,7 @@ describe('CatalogBrowser', () => {
         definitionId: homebrewDefId,
         quantity: 2,
         source: 'custom-create',
-      },
+        ...acquireIds(), },
     });
     renderBrowser();
 

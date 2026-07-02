@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { PrismaPg } from '@prisma/adapter-pg';
-import { exportEnvelopeSchema } from '@app/shared';
+import { newUuidV7, exportEnvelopeSchema } from '@app/shared';
 
 import { PrismaClient } from '../../prisma/generated/prisma/client.js';
 import { sessionCookieName } from '../auth/config.js';
@@ -22,6 +22,25 @@ import type { Env } from '../config/env.js';
 import { buildServer } from '../server.js';
 
 import { runSnapshotTick } from './scheduler.js';
+
+/**
+ * RH1.2 — id-injection helpers for direct action-payload fixtures.
+ * Fresh UUID v7 per call keeps the server's guard clock-skew window
+ * happy and every id unique across calls.
+ */
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 const TEST_DB_URL =
   process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
@@ -93,7 +112,7 @@ async function bootstrapParty(): Promise<{ userId: string; partyId: string }> {
               class: 'Fighter',
               level: 1,
               str: 16,
-            },
+              ...createCharacterIds(), },
           },
         ],
       },

@@ -15,6 +15,26 @@ import type { Env } from '../config/env.js';
 import { sessionCookieName } from '../auth/config.js';
 import { createSessionForUser } from '../auth/session.js';
 import { buildServer } from '../server.js';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct action-payload fixtures.
+ * Fresh UUID v7 per call keeps the server's guard clock-skew window
+ * happy and every id unique across calls.
+ */
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 const TEST_DB_URL =
   process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
@@ -94,7 +114,7 @@ async function bootstrapParty(
             class: 'Wizard',
             level: 1,
             str: 10,
-          },
+            ...createCharacterIds(), },
         },
       ],
     },
@@ -343,7 +363,7 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
                 class: 'Rogue',
                 level: 2,
                 str: 12,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -414,7 +434,7 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
           actions: [
             {
               type: 'create-character',
-              payload: { dmOnly: true, partyName: 'DM Sandbox' },
+              payload: { dmOnly: true, partyName: 'DM Sandbox' , ...createCharacterIds() },
             },
           ],
         },
@@ -446,7 +466,7 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
                 class: 'Bard',
                 level: 1,
                 str: 10,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -521,7 +541,7 @@ describe('BUG-001 — character cascade on departure (kick + leave)', () => {
                 class: 'Rogue',
                 level: 1,
                 str: 10,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -588,7 +608,7 @@ describe('BUG-001 — character cascade on departure (kick + leave)', () => {
                 class: 'Rogue',
                 level: 1,
                 str: 10,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -962,7 +982,7 @@ describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
               class: 'Rogue',
               level: 1,
               str: 10,
-            },
+              ...createCharacterIds(), },
           },
         ],
       },
@@ -1232,7 +1252,7 @@ describe('R4.2.d — split-evenly on /sync/actions', () => {
               class: 'Rogue',
               level: 1,
               str: 10,
-            },
+              ...createCharacterIds(), },
           },
         ],
       },
@@ -1400,7 +1420,7 @@ describe('R4.2.d — split-evenly on /sync/actions', () => {
                 class: 'Cleric',
                 level: 1,
                 str: 10,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },

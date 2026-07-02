@@ -14,7 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useStore } from '@/store';
+import { useStore, dispatchMintingAction } from '@/store';
 import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
 import { attunement } from '@app/rules';
@@ -198,6 +198,23 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
     }
   }
 
+  /**
+   * RH1.2 variant of `dispatchOrToast` for the 6 minting actions —
+   * routes through `dispatchMintingAction` so the helper mints the
+   * `new<EntityName>Id` fields client-side. Same toast-on-reject
+   * boundary as the non-minting sibling above.
+   */
+  function dispatchMintingOrToast(
+    action: Parameters<typeof dispatchMintingAction>[0],
+    fallback: string,
+  ): void {
+    try {
+      dispatchMintingAction(action);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : fallback);
+    }
+  }
+
   return (
     <>
       <table className="w-full text-left text-sm">
@@ -317,7 +334,7 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
                         // hard-mode encumbrance can reject this dispatch
                         // (and uncaught reducer throws would surface as a
                         // console error instead of user-visible feedback).
-                        dispatchOrToast(
+                        dispatchMintingOrToast(
                           {
                             type: 'acquire',
                             payload: {
@@ -459,7 +476,7 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
                           // unsets the container parent. Wrapped via
                           // `dispatchOrToast` for the (rare) race where
                           // the reducer rejects.
-                          dispatchOrToast(
+                          dispatchMintingOrToast(
                             {
                               type: 'transfer',
                               payload: {

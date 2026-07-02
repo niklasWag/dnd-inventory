@@ -24,7 +24,7 @@ import type {
   ExportEnvelope,
   TransactionLogEntry,
 } from '@app/shared';
-import { checkGuard, exportEnvelopeSchema, newUuidV7 } from '@app/shared';
+import { checkGuard, exportEnvelopeSchema } from '@app/shared';
 import {
   generateInviteCode,
   reduce,
@@ -276,10 +276,9 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
       actor = resolved.actor;
     }
 
-    // Server-side reducer context — same shape as the web's; RH1 makes
-    // UUID v7 authoritative on both sides.
+    // Server-side reducer context — same shape as the web's. RH1.2:
+    // no `newId`; every id comes from the action payload.
     const ctx: ReducerContext = {
-      newId: () => newUuidV7(),
       now: () => new Date().toISOString(),
       newInviteCode: generateInviteCode,
     };
@@ -322,10 +321,32 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
             // The persistor MUST run before the log writes so the
             // TransactionLog.partyId / actorUserId FKs resolve. The
             // log entry's payload describes the post-mutation state.
-            if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
-              await applyBootstrapDelta(tx, reduced.state, su.user.id, schemaAction.payload);
-            } else {
-              await applyDelta(tx, action, actor, ctx);
+            //
+            // RH1.2 — Prisma unique-constraint violations (`P2002`) on
+            // the persistor path mean a client-minted id collided with
+            // an existing row's primary key. Map to a `BatchRejected`
+            // with the `id_already_exists` guard code so the client
+            // sees a 422 with a diagnostic RH1 code rather than a raw
+            // 500.
+            try {
+              if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
+                await applyBootstrapDelta(tx, reduced.state, su.user.id, schemaAction.payload);
+              } else {
+                await applyDelta(tx, action, actor, ctx);
+              }
+            } catch (err) {
+              if (
+                typeof err === 'object' &&
+                err !== null &&
+                (err as { code?: unknown }).code === 'P2002'
+              ) {
+                throw new BatchRejected(
+                  i,
+                  'id_already_exists',
+                  `Client-minted id collides with an existing row (Prisma P2002 on ${schemaAction.type}).`,
+                );
+              }
+              throw err;
             }
 
             for (const slice of reduced.logEntries) {

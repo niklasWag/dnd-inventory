@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useStore, dispatchMintingAction } from '@/store';
 import type { ItemDefinition, ItemInstance } from '@app/shared';
 
 interface PackItemModalProps {
@@ -59,7 +59,6 @@ export function PackItemModal({
   onOpenChange,
   itemInstanceId,
 }: PackItemModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Source row snapshot — primitives only, so `useShallow` short-circuits.
@@ -117,7 +116,7 @@ export function PackItemModal({
     if (source === null || selected === '') return;
     try {
       setSubmitError(null);
-      dispatch({
+      dispatchMintingAction({
         type: 'transfer',
         payload: {
           itemInstanceId,

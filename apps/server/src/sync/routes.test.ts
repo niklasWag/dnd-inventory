@@ -22,6 +22,26 @@ import type { Env } from '../config/env.js';
 import { sessionCookieName } from '../auth/config.js';
 import { createSessionForUser } from '../auth/session.js';
 import { buildServer } from '../server.js';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct action-payload fixtures.
+ * Fresh UUID v7 per call keeps the server's guard clock-skew window
+ * happy and every id unique across calls.
+ */
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 const TEST_DB_URL =
   process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
@@ -166,7 +186,7 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -198,7 +218,7 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -241,7 +261,7 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
           class: 'Fighter',
           level: 1,
           str: 16,
-        },
+          ...createCharacterIds(), },
       }));
       const res = await app.inject({
         method: 'POST',
@@ -278,7 +298,7 @@ describe('POST /sync/actions — bootstrap create-character (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -336,7 +356,7 @@ describe('GET + POST /sync round trip (R3.4.a)', () => {
                 class: 'Wizard',
                 level: 3,
                 str: 8,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -368,6 +388,200 @@ describe('GET + POST /sync round trip (R3.4.a)', () => {
       expect(state.stashes).toHaveLength(3);
       expect(state.log).toHaveLength(1);
       expect(state.log[0]!.type).toBe('create-character');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // RH1.2 — client-minted-id round trip. The client generates a UUID v7
+  // for the new ItemInstance, sends it in the `acquire` payload, and the
+  // server persists that exact id (no server-side mint). A subsequent
+  // GET /sync/state returns the same id back.
+  //
+  // Locks in: (a) the persistor consumes `payload.newItemInstanceId`
+  // rather than calling `ctx.newId`; (b) the guard's UUID v7 + clock-
+  // skew validators accept a within-window id; (c) `TransactionLog`
+  // records the same id.
+  it('RH1.2 — acquire uses the client-minted newItemInstanceId end-to-end', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap a party first — carries all 9 create-character ids.
+      const bootstrapIds = createCharacterIds();
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+
+      // Client mints the id for the new ItemInstance.
+      const clientMintedItemId = newUuidV7();
+
+      const acquireRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 2,
+                source: 'catalog-add',
+                newItemInstanceId: clientMintedItemId,
+              },
+            },
+          ],
+        },
+      });
+      expect(acquireRes.statusCode).toBe(200);
+
+      // Direct DB check — the row's id matches the client-minted id.
+      const dbRow = await prisma.itemInstance.findUnique({
+        where: { id: clientMintedItemId },
+      });
+      expect(dbRow).not.toBeNull();
+      expect(dbRow!.definitionId).toBe('phb-2024:torch');
+      expect(dbRow!.quantity).toBe(2);
+
+      // Round-trip via GET /sync/state — the same id surfaces.
+      const stateRes = await app.inject({
+        method: 'GET',
+        url: `/sync/state?partyId=${partyId}`,
+        headers: { cookie: cookieHeader(env, token) },
+      });
+      expect(stateRes.statusCode).toBe(200);
+      const { state } = stateRes.json<{
+        state: { items: { id: string; definitionId: string; quantity: number }[] };
+      }>();
+      const match = state.items.find((i) => i.id === clientMintedItemId);
+      expect(match).toBeDefined();
+      expect(match!.definitionId).toBe('phb-2024:torch');
+      expect(match!.quantity).toBe(2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  // RH1.2 — collision path. A client-minted id that reuses an existing
+  // primary key should surface as a 422 with `id_already_exists`
+  // (Prisma P2002 → BatchRejected mapping in routes.ts).
+  it('RH1.2 — duplicate client-minted id → 422 id_already_exists', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap.
+      const bootstrapIds = createCharacterIds();
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+
+      // First acquire — id is unused; succeeds.
+      const dupeId = newUuidV7();
+      const first = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 1,
+                // Note: distinct from `dupeId` so the collision test is
+                // deterministic (the second acquire is the one that
+                // reuses `dupeId`).
+                notes: 'first-slot',
+                source: 'catalog-add',
+                newItemInstanceId: dupeId,
+              },
+            },
+          ],
+        },
+      });
+      expect(first.statusCode).toBe(200);
+
+      // Second acquire — reuses `dupeId`. Distinct notes so the reducer
+      // doesn't stack-merge into the existing row (which would discard
+      // the incoming id at the reducer boundary). Distinct notes force
+      // the persistor's insert path, where Prisma throws P2002.
+      const second = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 1,
+                notes: 'second-slot',
+                source: 'catalog-add',
+                newItemInstanceId: dupeId,
+              },
+            },
+          ],
+        },
+      });
+      expect(second.statusCode).toBe(422);
+      const body = second.json<{
+        rejected: { index: number; code: string; message: string };
+      }>();
+      expect(body.rejected.code).toBe('id_already_exists');
+      expect(body.rejected.index).toBe(0);
     } finally {
       await app.close();
     }

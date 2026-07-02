@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { dispatchMintingAction } from '@/store';
 
 interface CreateStashModalProps {
   open: boolean;
@@ -43,7 +43,6 @@ export function CreateStashModal({
   onOpenChange,
   ownerCharacterId,
 }: CreateStashModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -69,7 +68,7 @@ export function CreateStashModal({
   function onSubmit(values: FormOutput): void {
     try {
       setSubmitError(null);
-      dispatch({
+      dispatchMintingAction({
         type: 'create-stash',
         payload: { ownerCharacterId, name: values.name },
       });
