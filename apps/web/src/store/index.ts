@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
+import { newUuidV7 } from '@app/shared';
+
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
 import { enqueue, captureRollbackSnapshot } from '@/sync/queue';
@@ -31,14 +33,13 @@ export interface StoreState {
 const saver = createDebouncedSaver();
 
 /**
- * The web's `ReducerContext` — passes real `crypto.randomUUID()`,
- * `new Date().toISOString()`, and the shared `generateInviteCode` (R4
- * 128-bit base32 with `INV-` prefix) into the reducer. Tests inject a
+ * The web's `ReducerContext` — passes UUID v7 (RH1 client-authoritative
+ * id mint), `new Date().toISOString()`, and the shared `generateInviteCode`
+ * (R4 128-bit base32 with `INV-` prefix) into the reducer. Tests inject a
  * deterministic context at the `@app/rules` boundary instead of using
  * this constant.
  */
 const webReducerCtx: ReducerContext = {
-  newId: () => crypto.randomUUID(),
   now: () => new Date().toISOString(),
   newInviteCode: generateInviteCode,
 };
@@ -314,4 +315,154 @@ export const useStore = create<StoreState>()(
  */
 export async function flushPendingPersist(): Promise<void> {
   await saver.flush();
+}
+
+/**
+ * RH1.2 — Dispatch an action, minting UUID v7 ids client-side for any
+ * `new<EntityName>Id` fields the payload requires. Call sites for the
+ * 6 minting actions (`acquire`, `create-stash`, `split`,
+ * `create-homebrew`, `transfer`, `create-character`) switch from
+ * `useStore.getState().dispatch(action)` to
+ * `dispatchMintingAction(action)` so they don't have to know which id
+ * fields the action carries. Non-minting actions pass through.
+ *
+ * The ids injected here are the same ids the server persists — the
+ * guard layer validates UUID v7 structure + clock-skew upstream, and
+ * Prisma's unique constraint catches collisions. See
+ * `packages/shared/src/guards/map.ts::checkMintedIds` for validation
+ * and `apps/server/src/sync/routes.ts` for the P2002 → `id_already_exists`
+ * mapping.
+ *
+ * The function takes an action whose payload lacks the `new*Id` fields
+ * (`Action` narrowed with those keys omitted) and returns after minting.
+ * TypeScript ergonomics: callers pass the action they'd otherwise
+ * dispatch; TS accepts it because omitting a keyed prop is structurally
+ * assignable to the un-widened original type.
+ */
+export function dispatchMintingAction(
+  action: MintingActionInput | Exclude<Action, MintingActionInput>,
+): void {
+  useStore.getState().dispatch(injectMintedIds(action));
+}
+
+/**
+ * Input to `dispatchMintingAction` for the 6 minting action variants,
+ * with the `new<EntityName>Id` fields stripped from each payload. The
+ * helper mints those fields; callers pass the "user-supplied" bits only.
+ *
+ * For `create-character` we distinguish bootstrap (no state) from
+ * in-existing-party (state !== null) at the call site — both accepted
+ * as a single input shape; the helper mints the appropriate id set.
+ */
+type MintingActionInput =
+  | (Omit<Extract<Action, { type: 'acquire' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'acquire' }>['payload'], 'newItemInstanceId'>;
+    })
+  | (Omit<Extract<Action, { type: 'create-stash' }>, 'payload'> & {
+      payload: Omit<
+        Extract<Action, { type: 'create-stash' }>['payload'],
+        'newStashId' | 'newCurrencyHoldingId'
+      >;
+    })
+  | (Omit<Extract<Action, { type: 'split' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'split' }>['payload'], 'newItemInstanceId'>;
+    })
+  | (Omit<Extract<Action, { type: 'create-homebrew' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'create-homebrew' }>['payload'], 'newDefinitionId'>;
+    })
+  | (Omit<Extract<Action, { type: 'transfer' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'transfer' }>['payload'], 'newItemInstanceId'>;
+    })
+  | (Omit<Extract<Action, { type: 'create-character' }>, 'payload'> & {
+      payload:
+        | Omit<
+            Extract<
+              Extract<Action, { type: 'create-character' }>['payload'],
+              { dmOnly?: false }
+            >,
+            | 'newCharacterId'
+            | 'newInventoryStashId'
+            | 'newCurrencyHoldingId'
+            | 'newUserId'
+            | 'newPartyId'
+            | 'newPartyStashId'
+            | 'newRecoveredLootStashId'
+            | 'newPartyStashCurrencyId'
+            | 'newRecoveredLootCurrencyId'
+          >
+        | Omit<
+            Extract<
+              Extract<Action, { type: 'create-character' }>['payload'],
+              { dmOnly: true }
+            >,
+            | 'newUserId'
+            | 'newPartyId'
+            | 'newPartyStashId'
+            | 'newRecoveredLootStashId'
+            | 'newPartyStashCurrencyId'
+            | 'newRecoveredLootCurrencyId'
+          >;
+    });
+
+function injectMintedIds(action: MintingActionInput | Exclude<Action, MintingActionInput>): Action {
+  switch (action.type) {
+    case 'acquire':
+      return {
+        ...action,
+        payload: { ...action.payload, newItemInstanceId: newUuidV7() },
+      };
+    case 'create-stash':
+      return {
+        ...action,
+        payload: {
+          ...action.payload,
+          newStashId: newUuidV7(),
+          newCurrencyHoldingId: newUuidV7(),
+        },
+      };
+    case 'split':
+      return {
+        ...action,
+        payload: { ...action.payload, newItemInstanceId: newUuidV7() },
+      };
+    case 'create-homebrew':
+      return {
+        ...action,
+        payload: { ...action.payload, newDefinitionId: newUuidV7() },
+      };
+    case 'transfer':
+      return {
+        ...action,
+        payload: { ...action.payload, newItemInstanceId: newUuidV7() },
+      };
+    case 'create-character': {
+      // Whether we're at bootstrap or in-existing-party is a runtime
+      // question (state-dependent). Mint the FULL id set every call —
+      // the reducer discards ids it doesn't need. Cheap, deterministic,
+      // avoids leaking store state into this helper.
+      const partyScope = {
+        newUserId: newUuidV7(),
+        newPartyId: newUuidV7(),
+        newPartyStashId: newUuidV7(),
+        newRecoveredLootStashId: newUuidV7(),
+        newPartyStashCurrencyId: newUuidV7(),
+        newRecoveredLootCurrencyId: newUuidV7(),
+      };
+      if (action.payload.dmOnly === true) {
+        return { ...action, payload: { ...action.payload, ...partyScope } };
+      }
+      return {
+        ...action,
+        payload: {
+          ...action.payload,
+          newCharacterId: newUuidV7(),
+          newInventoryStashId: newUuidV7(),
+          newCurrencyHoldingId: newUuidV7(),
+          ...partyScope,
+        },
+      };
+    }
+    default:
+      return action;
+  }
 }

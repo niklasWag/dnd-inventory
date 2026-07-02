@@ -69,7 +69,22 @@ export type GuardRejectionCode =
   | 'character_not_found'
   | 'equip_only_in_inventory'
   | 'attune_only_in_inventory'
-  | 'use_charge_only_in_inventory';
+  | 'use_charge_only_in_inventory'
+  // RH1 — client-authoritative UUID v7 ids (§4 "Entity IDs")
+  /** Client-supplied id is not a valid UUID v7 (wrong shape, wrong
+   * version nibble, wrong variant). Structural validation via
+   * `isValidUuidV7`. */
+  | 'id_malformed'
+  /** Client-supplied id's embedded timestamp is outside the server's
+   * tolerance window (±5 min default per `CLOCK_SKEW_TOLERANCE_MS`).
+   * Rejects backdated forgeries and clock-far-future ids. */
+  | 'id_clock_skew'
+  /** Client-supplied id collides with an existing row. UUID v7 has 74
+   * bits of random entropy per millisecond, so this is effectively
+   * impossible by accident — a collision means a buggy or malicious
+   * client. Prisma's unique constraint catches it at the persistor; the
+   * route layer maps `P2002` to this code. */
+  | 'id_already_exists';
 
 export { deriveActorRole, isSolo, isMember } from './actor';
 export { guards, checkGuard } from './map';

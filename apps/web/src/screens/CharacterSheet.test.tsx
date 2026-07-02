@@ -5,12 +5,38 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { CharacterSheet } from './CharacterSheet';
 import { ItemDetail } from './ItemDetail';
+import { newUuidV7 } from '@app/shared';
 import type { Character, PartyMembership, Stash } from '@app/shared';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 
 import { bootstrap } from '@/test/fixtures';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function createStashIds() {
+  return { newStashId: newUuidV7(), newCurrencyHoldingId: newUuidV7() };
+}
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -48,7 +74,7 @@ describe('CharacterSheet (M1)', () => {
         class: 'Fighter',
         level: 3,
         str: 16,
-      },
+        ...createCharacterIds(), },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
 
@@ -62,7 +88,7 @@ describe('CharacterSheet (M1)', () => {
   it('renders all four tabs', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
 
@@ -100,7 +126,7 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     renderAt(`/character/${id}`);
@@ -121,7 +147,7 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -130,7 +156,7 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     renderAt(`/character/${id}`);
@@ -152,7 +178,7 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     renderAt(`/character/${id}`);
@@ -179,7 +205,7 @@ describe('CharacterSheet (M2)', () => {
     const { characterId: id } = bootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: id, name: 'Vault of Waterdeep' },
+      payload: { ownerCharacterId: id, name: 'Vault of Waterdeep' , ...createStashIds() , ...createStashIds() , ...createStashIds() },
     });
     renderAt(`/character/${id}`);
 
@@ -199,7 +225,7 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     renderAt(`/character/${id}`);
@@ -216,7 +242,7 @@ describe('CharacterSheet (M4)', () => {
   it('renders a CurrencyRow on the Inventory tab', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
     renderAt(`/character/${id}`);
@@ -231,7 +257,7 @@ describe('CharacterSheet (M4)', () => {
     const user = userEvent.setup();
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 },
+      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
     renderAt(`/character/${id}`);
@@ -289,7 +315,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     return { characterId: base.characterId };
   }
@@ -374,7 +400,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
         definitionId: decanter.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const decanterId = useStore
       .getState()

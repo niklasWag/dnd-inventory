@@ -12,7 +12,7 @@
  * `resolveActor`.
  */
 import type { Actor, TransactionLogEntry } from '@app/shared';
-import { transactionLogEntrySchema } from '@app/shared';
+import { newUuidV7, transactionLogEntrySchema } from '@app/shared';
 import type { LogEntrySlice, ReducerContext } from '@app/rules';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
@@ -24,7 +24,12 @@ export function buildLogEntryServer(
   ctx: ReducerContext,
 ): TransactionLogEntry {
   return transactionLogEntrySchema.parse({
-    id: ctx.newId(),
+    // RH1.2 — `TransactionLog.id` is server-minted (each log entry is a
+    // server-composed record, not a client-carried entity id per RH1's
+    // client-authoritative rule). We mint it inline rather than via
+    // `ctx.newId` because that field was removed from `ReducerContext`
+    // when entity-id minting moved to the action payload.
+    id: newUuidV7(),
     partyId: actor.partyId,
     sessionId: null,
     timestamp: ctx.now(),

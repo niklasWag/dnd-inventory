@@ -22,6 +22,26 @@ import type { Env } from '../config/env.js';
 import { sessionCookieName } from '../auth/config.js';
 import { createSessionForUser } from '../auth/session.js';
 import { buildServer } from '../server.js';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct action-payload fixtures.
+ * Fresh UUID v7 per call keeps the server's guard clock-skew window
+ * happy and every id unique across calls.
+ */
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 const TEST_DB_URL =
   process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
@@ -166,7 +186,7 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -198,7 +218,7 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -241,7 +261,7 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
           class: 'Fighter',
           level: 1,
           str: 16,
-        },
+          ...createCharacterIds(), },
       }));
       const res = await app.inject({
         method: 'POST',
@@ -262,12 +282,16 @@ describe('POST /sync/actions — bootstrap create-character (R3.4.a)', () => {
     const token = await seedSession(userId);
     const app = await buildServer({ env, prisma });
     try {
+      // RH1.3 — the client mints its own partyId (`newPartyId`) and
+      // sends it as the URL partyId. No more `'will-be-minted'`
+      // placeholder.
+      const ids = createCharacterIds();
       const res = await app.inject({
         method: 'POST',
         url: '/sync/actions',
         headers: { cookie: cookieHeader(env, token) },
         payload: {
-          partyId: 'will-be-minted', // server mints its own id; not used in bootstrap
+          partyId: ids.newPartyId,
           actions: [
             {
               type: 'create-character',
@@ -278,6 +302,7 @@ describe('POST /sync/actions — bootstrap create-character (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
+                ...ids,
               },
             },
           ],
@@ -336,7 +361,7 @@ describe('GET + POST /sync round trip (R3.4.a)', () => {
                 class: 'Wizard',
                 level: 3,
                 str: 8,
-              },
+                ...createCharacterIds(), },
             },
           ],
         },
@@ -368,6 +393,200 @@ describe('GET + POST /sync round trip (R3.4.a)', () => {
       expect(state.stashes).toHaveLength(3);
       expect(state.log).toHaveLength(1);
       expect(state.log[0]!.type).toBe('create-character');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // RH1.2 — client-minted-id round trip. The client generates a UUID v7
+  // for the new ItemInstance, sends it in the `acquire` payload, and the
+  // server persists that exact id (no server-side mint). A subsequent
+  // GET /sync/state returns the same id back.
+  //
+  // Locks in: (a) the persistor consumes `payload.newItemInstanceId`
+  // rather than calling `ctx.newId`; (b) the guard's UUID v7 + clock-
+  // skew validators accept a within-window id; (c) `TransactionLog`
+  // records the same id.
+  it('RH1.2 — acquire uses the client-minted newItemInstanceId end-to-end', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap a party first — carries all 9 create-character ids.
+      const bootstrapIds = createCharacterIds();
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+
+      // Client mints the id for the new ItemInstance.
+      const clientMintedItemId = newUuidV7();
+
+      const acquireRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 2,
+                source: 'catalog-add',
+                newItemInstanceId: clientMintedItemId,
+              },
+            },
+          ],
+        },
+      });
+      expect(acquireRes.statusCode).toBe(200);
+
+      // Direct DB check — the row's id matches the client-minted id.
+      const dbRow = await prisma.itemInstance.findUnique({
+        where: { id: clientMintedItemId },
+      });
+      expect(dbRow).not.toBeNull();
+      expect(dbRow!.definitionId).toBe('phb-2024:torch');
+      expect(dbRow!.quantity).toBe(2);
+
+      // Round-trip via GET /sync/state — the same id surfaces.
+      const stateRes = await app.inject({
+        method: 'GET',
+        url: `/sync/state?partyId=${partyId}`,
+        headers: { cookie: cookieHeader(env, token) },
+      });
+      expect(stateRes.statusCode).toBe(200);
+      const { state } = stateRes.json<{
+        state: { items: { id: string; definitionId: string; quantity: number }[] };
+      }>();
+      const match = state.items.find((i) => i.id === clientMintedItemId);
+      expect(match).toBeDefined();
+      expect(match!.definitionId).toBe('phb-2024:torch');
+      expect(match!.quantity).toBe(2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  // RH1.2 — collision path. A client-minted id that reuses an existing
+  // primary key should surface as a 422 with `id_already_exists`
+  // (Prisma P2002 → BatchRejected mapping in routes.ts).
+  it('RH1.2 — duplicate client-minted id → 422 id_already_exists', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap.
+      const bootstrapIds = createCharacterIds();
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+
+      // First acquire — id is unused; succeeds.
+      const dupeId = newUuidV7();
+      const first = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 1,
+                // Note: distinct from `dupeId` so the collision test is
+                // deterministic (the second acquire is the one that
+                // reuses `dupeId`).
+                notes: 'first-slot',
+                source: 'catalog-add',
+                newItemInstanceId: dupeId,
+              },
+            },
+          ],
+        },
+      });
+      expect(first.statusCode).toBe(200);
+
+      // Second acquire — reuses `dupeId`. Distinct notes so the reducer
+      // doesn't stack-merge into the existing row (which would discard
+      // the incoming id at the reducer boundary). Distinct notes force
+      // the persistor's insert path, where Prisma throws P2002.
+      const second = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 1,
+                notes: 'second-slot',
+                source: 'catalog-add',
+                newItemInstanceId: dupeId,
+              },
+            },
+          ],
+        },
+      });
+      expect(second.statusCode).toBe(422);
+      const body = second.json<{
+        rejected: { index: number; code: string; message: string };
+      }>();
+      expect(body.rejected.code).toBe('id_already_exists');
+      expect(body.rejected.index).toBe(0);
     } finally {
       await app.close();
     }
@@ -557,6 +776,97 @@ describe('R4.4.b — homebrew party-scope filter', () => {
       expect(res.statusCode).toBe(200);
       const { state } = res.json<{ state: { catalog: { id: string }[] } }>();
       expect(state.catalog.some((d) => d.id === 'hb-shared-item')).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+// ------------------------------------------------------------------ //
+// RH1.3 — Bootstrap collision behaviour.
+//
+// The roadmap's stated intent: "server rejects POST /sync/actions with
+// a partyId that's already used by a different user (collision-on-
+// bootstrap). Should surface as id_already_exists at the 422 layer."
+//
+// Actual architectural outcome (verified by this test): user B
+// replaying user A's already-persisted `newPartyId` hits the resolve
+// path FIRST — `partyExists` is non-null (A committed the row), so
+// `isBootstrap = false` and `resolveActor` runs. B has no membership
+// in the party → 403 `not_a_member`. The auth check is the more
+// informative error and it fires before the persistor's P2002 could.
+//
+// The P2002 `id_already_exists` mapping only surfaces if two clients
+// race to POST /sync/actions with the same `newPartyId` before either
+// party row commits — hard to reproduce deterministically in a
+// single-process test. The RH1.2 P2002 → BatchRejected route mapping
+// itself is already covered by the existing acquire-collision test
+// above (the create-stash / acquire / etc. paths share one persistor
+// catch block).
+// ------------------------------------------------------------------ //
+
+describe('POST /sync/actions — RH1.3 bootstrap collision behaviour', () => {
+  it('rejects a bootstrap replay of another user’s partyId with 403 not_a_member', async () => {
+    const { userId: userA } = await seedUser({ displayName: 'A' });
+    const tokenA = await seedSession(userA);
+    const { userId: userB } = await seedUser({ displayName: 'B' });
+    const tokenB = await seedSession(userB);
+    const app = await buildServer({ env, prisma });
+    try {
+      // User A boots first — takes the partyId.
+      const idsA = createCharacterIds();
+      const resA = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenA) },
+        payload: {
+          partyId: idsA.newPartyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...idsA,
+              },
+            },
+          ],
+        },
+      });
+      expect(resA.statusCode).toBe(200);
+
+      // User B replays the SAME newPartyId. Route resolves partyExists
+      // to A's row, falls into the non-bootstrap resolve branch, B
+      // has no membership → 403 not_a_member.
+      const idsB = { ...createCharacterIds(), newPartyId: idsA.newPartyId };
+      const resB = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenB) },
+        payload: {
+          partyId: idsB.newPartyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Bob',
+                species: 'Elf',
+                size: 'medium',
+                class: 'Rogue',
+                level: 2,
+                str: 10,
+                ...idsB,
+              },
+            },
+          ],
+        },
+      });
+      expect(resB.statusCode).toBe(403);
+      expect(resB.json()).toEqual({ error: 'not_a_member' });
     } finally {
       await app.close();
     }

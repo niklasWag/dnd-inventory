@@ -18,8 +18,6 @@
  * Both routes return `409 { error: 'display_name_required' }` until
  * `POST /auth/email/set-display-name` flips the flag.
  */
-import { randomUUID } from 'node:crypto';
-
 import type {
   Actor,
   Action as SchemaAction,
@@ -246,9 +244,12 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     // create-character has TWO valid shapes:
     //
     //   1. Bootstrap — single create-character action against a party that
-    //      doesn't exist yet (partyId arrives as a placeholder). The
-    //      reducer mints user + party + memberships + character + stashes
-    //      atomically, and `applyBootstrapDelta` writes the new rows.
+    //      doesn't exist yet. RH1.2 introduced client-minted UUID v7 ids
+    //      in the payload (`newUserId`, `newPartyId`, etc.), so the client
+    //      sends the REAL partyId every time (no more `'will-be-minted'`
+    //      placeholder). The reducer applies user + party + memberships +
+    //      character + stashes atomically, and `applyBootstrapDelta`
+    //      writes the new rows keyed on those client-minted ids.
     //
     //   2. Post-bootstrap (R4.1.f) — create-character against a party that
     //      ALREADY exists. The actor is an active member (player with
@@ -257,15 +258,16 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     //      the new character + inventory stash + currency holding + the
     //      membership update.
     //
-    // Distinguish by looking up the party row. If it exists, we're in
-    // case (2) and the actor must resolve against the existing membership
-    // graph. If not, we're in case (1) and the actor is synthetic.
+    // RH1.3: dispatch on `party.findUnique === null` alone. The
+    // `actions.every === 'create-character'` conjunct is gone — a non-
+    // create-character action against an unknown party will fall through
+    // to `applyDelta` and be rejected by the guards with
+    // `state_not_initialized` (state stays null on the isBootstrap path).
     const partyExists = await prisma.party.findUnique({
       where: { id: partyId },
       select: { id: true },
     });
-    const isBootstrap =
-      partyExists === null && actions.every((a) => a.type === 'create-character');
+    const isBootstrap = partyExists === null;
     let actor: Actor;
     if (isBootstrap) {
       actor = { userId: su.user.id, partyId, role: 'dm' };
@@ -278,9 +280,9 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
       actor = resolved.actor;
     }
 
-    // Server-side reducer context — same shape as the web's.
+    // Server-side reducer context — same shape as the web's. RH1.2:
+    // no `newId`; every id comes from the action payload.
     const ctx: ReducerContext = {
-      newId: () => randomUUID(),
       now: () => new Date().toISOString(),
       newInviteCode: generateInviteCode,
     };
@@ -306,16 +308,13 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
             // and rolls back the batch.
             const reduced = reduce(state, action, ctx);
 
-            // Bootstrap seam: create-character mints a fresh party in
-            // the reducer's result.state. The actor's partyId arrived
-            // as a placeholder ('will-be-minted'); promote it to the
-            // freshly-minted id BEFORE building the log entry so the
-            // TransactionLog row's partyId FK resolves correctly.
-            //
-            // R4.1.f: only fires for true bootstrap (state was null at
-            // the start of the batch). Post-bootstrap create-character
-            // runs against an existing party — the actor.partyId is
-            // already correct and applyDelta handles the writes.
+            // Bootstrap seam: the reducer's result.state.party.id is
+            // the client-minted `newPartyId` (RH1.2). Post-RH1.3 the
+            // client SHOULD also send that same id as the URL
+            // partyId, so actor.partyId already equals it — but tests
+            // and defensive clients may send a placeholder. Promote
+            // actor.partyId to the reducer's canonical value so the
+            // log entry's `TransactionLog.partyId` FK resolves.
             if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
               actor = { ...actor, partyId: reduced.state.party.id };
             }
@@ -323,10 +322,32 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
             // The persistor MUST run before the log writes so the
             // TransactionLog.partyId / actorUserId FKs resolve. The
             // log entry's payload describes the post-mutation state.
-            if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
-              await applyBootstrapDelta(tx, reduced.state, su.user.id, schemaAction.payload);
-            } else {
-              await applyDelta(tx, action, actor, ctx);
+            //
+            // RH1.2 — Prisma unique-constraint violations (`P2002`) on
+            // the persistor path mean a client-minted id collided with
+            // an existing row's primary key. Map to a `BatchRejected`
+            // with the `id_already_exists` guard code so the client
+            // sees a 422 with a diagnostic RH1 code rather than a raw
+            // 500.
+            try {
+              if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
+                await applyBootstrapDelta(tx, reduced.state, su.user.id, schemaAction.payload);
+              } else {
+                await applyDelta(tx, action, actor, ctx);
+              }
+            } catch (err) {
+              if (
+                typeof err === 'object' &&
+                err !== null &&
+                (err as { code?: unknown }).code === 'P2002'
+              ) {
+                throw new BatchRejected(
+                  i,
+                  'id_already_exists',
+                  `Client-minted id collides with an existing row (Prisma P2002 on ${schemaAction.type}).`,
+                );
+              }
+              throw err;
             }
 
             for (const slice of reduced.logEntries) {

@@ -7,6 +7,16 @@ import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 import { bootstrap } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -30,7 +40,7 @@ function setupTorchAndBackpack(): Fixture {
       definitionId: backpack.id,
       quantity: 1,
       source: 'catalog-add',
-    },
+      ...acquireIds(), },
   });
   useStore.getState().dispatch({
     type: 'acquire',
@@ -39,7 +49,7 @@ function setupTorchAndBackpack(): Fixture {
       definitionId: torch.id,
       quantity: 1,
       source: 'catalog-add',
-    },
+      ...acquireIds(), },
   });
   const backpackId = useStore
     .getState()
@@ -77,7 +87,7 @@ describe('PackItemModal', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'acquire',
@@ -86,7 +96,7 @@ describe('PackItemModal', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const backpacks = useStore
       .getState()
@@ -119,7 +129,7 @@ describe('PackItemModal', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore.getState().appState!.items[0]!.id;
 

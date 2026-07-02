@@ -6,6 +6,16 @@ import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 
 import { bootstrap } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -25,7 +35,7 @@ function bootstrapWithTorches(count: number): { characterId: string; rowIds: str
         quantity: 1,
         source: 'catalog-add',
         notes: `slot-${i}`,
-      },
+        ...acquireIds(), },
     });
   }
   const rowIds: string[] = [];
@@ -52,7 +62,7 @@ function bootstrapWithMagicItems(count: number): { characterId: string; rowIds: 
         quantity: 1,
         source: 'catalog-add',
         notes: `slot-${i}`,
-      },
+        ...acquireIds(), },
     });
   }
   const rowIds: string[] = [];
@@ -111,7 +121,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
         definitionId: cloak.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const cloakId = useStore
       .getState()
@@ -139,7 +149,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
         definitionId: cloak.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const cloakId = useStore
       .getState()

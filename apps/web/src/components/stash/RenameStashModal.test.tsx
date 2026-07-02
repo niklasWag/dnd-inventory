@@ -8,6 +8,16 @@ import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 
 import { bootstrap } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function createStashIds() {
+  return { newStashId: newUuidV7(), newCurrencyHoldingId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -18,7 +28,7 @@ function setup(initialName: string): { stashId: string; rerender: () => void } {
   const { characterId } = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: characterId, name: initialName },
+    payload: { ownerCharacterId: characterId, name: initialName , ...createStashIds() , ...createStashIds() },
   });
   const stashId = useStore.getState().appState!.stashes.at(-1)!.id;
   const view = render(

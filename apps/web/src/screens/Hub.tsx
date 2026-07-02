@@ -21,7 +21,7 @@ import { setCurrentPartyId } from '@/db/meta';
 import { ApiError, joinParty, listParties } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
 import { getOwnCharacter } from '@/lib/ownCharacter';
-import { useStore, flushPendingPersist } from '@/store';
+import { useStore, flushPendingPersist, dispatchMintingAction } from '@/store';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { pullState } from '@/sync/client';
 import { flush as flushSyncQueue } from '@/sync/queue';
@@ -56,7 +56,6 @@ export function Hub(): ReactElement {
       return { id: s.appState.party.id, name: s.appState.party.name };
     }),
   );
-  const dispatch = useStore((s) => s.dispatch);
 
   /**
    * Local-mode parties list. Built by enumerating every keyed Dexie
@@ -284,7 +283,7 @@ export function Hub(): ReactElement {
     }
 
     try {
-      dispatch({
+      dispatchMintingAction({
         type: 'create-character',
         payload: partyName !== undefined ? { ...values, partyName } : values,
       });
@@ -339,7 +338,7 @@ export function Hub(): ReactElement {
     }
 
     try {
-      dispatch({
+      dispatchMintingAction({
         type: 'create-character',
         payload: { dmOnly: true, partyName },
       });

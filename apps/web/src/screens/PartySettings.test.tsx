@@ -9,6 +9,23 @@ import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 
 import { bootstrap } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function createCharacterDmOnlyIds() {
+  return {
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -108,7 +125,7 @@ describe('PartySettings — Character & Party rename (R4.1-followup)', () => {
     // DM-only bootstrap: dispatch directly so we end with a party + no character.
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() },
     });
 
     renderPartySettings();
@@ -130,7 +147,7 @@ describe('PartySettings — Create your character CTA (R4.1.f)', () => {
     // DM-only bootstrap leaves the actor in a party without a character.
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() },
     });
 
     renderPartySettings();
@@ -160,7 +177,7 @@ describe('PartySettings — Create your character CTA (R4.1.f)', () => {
     const user = userEvent.setup();
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() },
     });
     const partyIdBefore = useStore.getState().appState!.party.id;
     expect(useStore.getState().appState!.characters).toHaveLength(0);

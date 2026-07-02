@@ -7,13 +7,32 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { PrismaPg } from '@prisma/adapter-pg';
-import { exportEnvelopeSchema, type ExportEnvelope } from '@app/shared';
+import { newUuidV7, exportEnvelopeSchema, type ExportEnvelope } from '@app/shared';
 
 import { PrismaClient } from '../../prisma/generated/prisma/client.js';
 import type { Env } from '../config/env.js';
 import { sessionCookieName } from '../auth/config.js';
 import { createSessionForUser } from '../auth/session.js';
 import { buildServer } from '../server.js';
+
+/**
+ * RH1.2 — id-injection helpers for direct action-payload fixtures.
+ * Fresh UUID v7 per call keeps the server's guard clock-skew window
+ * happy and every id unique across calls.
+ */
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 const TEST_DB_URL =
   process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
@@ -120,12 +139,13 @@ describe('GET /sync/export — auth + envelope (R3.4.b)', () => {
     const app = await buildServer({ env, prisma });
     try {
       // Bootstrap a party.
+      const ids = createCharacterIds();
       const createRes = await app.inject({
         method: 'POST',
         url: '/sync/actions',
         headers: { cookie: cookieHeader(token) },
         payload: {
-          partyId: 'will-be-minted',
+          partyId: ids.newPartyId,
           actions: [
             {
               type: 'create-character',
@@ -136,6 +156,7 @@ describe('GET /sync/export — auth + envelope (R3.4.b)', () => {
                 class: 'Wizard',
                 level: 3,
                 str: 8,
+                ...ids,
               },
             },
           ],

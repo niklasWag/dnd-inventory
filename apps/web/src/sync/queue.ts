@@ -9,9 +9,11 @@
  *   2. Debounces 200ms so quick consecutive clicks (acquire → equip)
  *      ride together.
  *   3. POSTs to `/sync/actions` with up to 100 actions per request.
- *   4. On 200: drops the snapshot, continues. For bootstrap batches
- *      (first action is `create-character`), re-pulls `/sync/state`
- *      to canonicalize ids before the Hub navigates to /character/:id.
+ *   4. On 200: drops the snapshot, continues. RH1.3 removed the
+ *      post-flush re-pull — the client mints all entity ids ahead of
+ *      time (RH1.2), so the server's `applied[]` echo carries the
+ *      SAME ids the local reducer already produced. No canonicalize
+ *      step is required.
  *   5. On 422 `BatchRejectedError`: restores the pre-batch snapshot
  *      (rolls back optimistic state) and surfaces a toast.
  *   6. On 401: clears the session — `ProtectedRoute` will redirect
@@ -28,38 +30,14 @@
 import { toast } from 'sonner';
 
 import { ApiError } from '@/lib/api';
-import { getCurrentPartyId, setCurrentPartyId } from '@/db/meta';
+import { getCurrentPartyId } from '@/db/meta';
 import { useSession } from '@/store/session';
 import type { Action, AppState, TransactionLogEntry } from '@/store/types';
 
-import { BatchRejectedError, pullState, pushActions } from './client';
+import { BatchRejectedError, pushActions } from './client';
 
 const DEBOUNCE_MS = 200;
 const MAX_BATCH = 100;
-
-/**
- * Action types whose reducer mints fresh server-canonical entity ids
- * (`ctx.newId()` server-side). The server's UUIDs differ from the
- * client's optimistic ones, so after such an action lands we re-pull
- * `/sync/state` to canonicalize local ids — otherwise the NEXT action
- * that references the new id (e.g. `transfer` after `acquire`) sends
- * the client's stale local id and the server rejects with
- * `item_not_found` / `stash_not_found` / etc.
- *
- * Auto-stacking acquires don't mint a new id (they bump the existing
- * row's quantity), but conservatively re-pulling on every acquire is
- * cheaper than parsing the response to detect "stacked vs. new."
- *
- * Keep this list in sync with `apps/server/src/sync/persistor.ts`
- * `ctx.newId()` call sites + `applyBootstrapDelta`.
- */
-const ID_MINTING_ACTION_TYPES: ReadonlySet<Action['type']> = new Set([
-  'create-character',
-  'acquire',
-  'create-stash',
-  'split',
-  'create-homebrew',
-]);
 
 interface PendingFlushSnapshot {
   appState: AppState | null;
@@ -80,8 +58,11 @@ export interface QueueDeps {
   restoreSnapshot: (snapshot: PendingFlushSnapshot) => void;
   /**
    * After a server response, get the active party id (or `null` if
-   * not yet known — bootstrap case). The queue persists the canonical
-   * id via `setCurrentPartyId`.
+   * not yet known — bootstrap case). Post-RH1.3 the client mints the
+   * partyId itself (`newPartyId` in the create-character payload) and
+   * the caller stamps it via `setCurrentPartyId` BEFORE flushing, so
+   * every batch — including bootstrap — sends a real, client-minted
+   * party id.
    */
   getActivePartyId: () => Promise<string | null>;
 }
@@ -148,9 +129,10 @@ export function enqueue(action: Action): void {
   // items to show immediately after `create-character`. The server
   // already has the canonical PHB+DMG catalog (seed-runner writes it
   // at boot; `/sync/state` returns it). Pushing seed-catalog here would
-  // (a) duplicate the data and (b) violate the bootstrap batch invariant
-  // in `apps/server/src/sync/routes.ts:244` which requires every action
-  // in a bootstrap batch to be `create-character`.
+  // (a) duplicate the data and (b) confuse the server's bootstrap
+  // path in `apps/server/src/sync/routes.ts` (bootstrap dispatch keys
+  // on `party.findUnique === null` — a seed-catalog against a not-yet-
+  // existing party would slip past the router with no useful semantics).
   if (action.type === 'seed-catalog') return;
   if (queue.length === 0 && preBatchSnapshot === null) {
     // Fallback for callers that didn't call captureRollbackSnapshot
@@ -192,56 +174,27 @@ export async function flush(): Promise<void> {
 
   inflight = (async () => {
     try {
-      // R4.1.f: `create-character` has TWO shapes — bootstrap (state was
-      // null pre-dispatch, mints the whole party) and post-bootstrap
-      // (state existed, only adds a Character + Inventory + Holding +
-      // membership patch). The snapshot captured by enqueue() is the
-      // PRE-batch state; bootstrap iff that was null.
-      const isCreateCharacter = batch[0]?.type === 'create-character';
-      const isBootstrap = isCreateCharacter && snapshot?.appState == null;
-      // Resolve the partyId for the push. Bootstrap: send a synthetic
-      // marker — the server's bootstrap branch mints the real one.
-      // Post-bootstrap (including post-bootstrap create-character):
-      // read from the active-party pointer (Dexie meta).
-      const partyId = isBootstrap ? 'will-be-minted' : await deps.getActivePartyId();
+      // RH1.3 — the client mints all entity ids (including `newPartyId`
+      // for bootstrap) via `injectMintedIds` in the store; the caller
+      // (Hub.tsx) stamps it into Dexie meta via `setCurrentPartyId`
+      // BEFORE calling `flush()`. So `getActivePartyId()` always
+      // returns a real, client-minted partyId — bootstrap and post-
+      // bootstrap look identical to the queue.
+      const partyId = await deps.getActivePartyId();
       if (partyId === null) {
         toast.error('No active party — refresh and try again.');
         if (snapshot !== null) deps.restoreSnapshot(snapshot);
         return;
       }
 
-      const response = await pushActions(partyId, batch);
+      await pushActions(partyId, batch);
 
-      // R4.1.f post-ship: re-pull canonical state after ANY id-minting
-      // action lands. The server's reducer runs with its own
-      // `randomUUID()` ctx, so entity ids it mints DIFFER from the
-      // client's optimistic ids. Without a re-pull, a subsequent action
-      // referencing the freshly-minted id (e.g. `transfer` after
-      // `acquire`) hits the server with the client's stale id and gets
-      // `item_not_found`. See `ID_MINTING_ACTION_TYPES` below.
-      const mintsIds = batch.some((a) => ID_MINTING_ACTION_TYPES.has(a.type));
-      if (mintsIds) {
-        // For `create-character` (bootstrap or post-bootstrap), the
-        // server's `applied[]` response carries the canonical partyId
-        // on the log entry payload. For other id-minting actions the
-        // partyId is unchanged across the dispatch; we read it from
-        // post-flush local state.
-        const firstApplied = response.applied[0];
-        const post = deps.getSnapshot();
-        if (post.appState === null) {
-          // Reducer must have produced a party for any id-minting
-          // action; if not, something is structurally wrong — bail.
-          toast.error('Action failed to apply locally.');
-          return;
-        }
-        const serverPartyId =
-          firstApplied !== undefined && firstApplied.type === 'create-character'
-            ? firstApplied.payload.partyId
-            : post.appState.party.id;
-        const pulled = await pullState(serverPartyId);
-        deps.restoreSnapshot({ appState: pulled.state, log: pulled.state.log });
-        await setCurrentPartyId(pulled.state.party.id);
-      }
+      // RH1.3 — no post-flush re-pull. The server's reducer runs with
+      // NO id-minting authority (the RH1.2 contract removed `ctx.newId`
+      // server-side); every id in the server's `applied[]` echo is the
+      // same client-minted UUID v7 that's already in local state. The
+      // pre-RH1.3 re-pull was necessary because the server's reducer
+      // used to mint its own randomUUIDs — that divergence is gone.
     } catch (err) {
       if (err instanceof BatchRejectedError) {
         if (snapshot !== null) deps.restoreSnapshot(snapshot);

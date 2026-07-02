@@ -39,6 +39,12 @@ export type Action =
             // Legacy bootstrap: mints User + Party + dm + player
             // memberships + Character + 3 stashes + 3 currency rows.
             // `partyName` optional; falls back to 'My Campaign'.
+            //
+            // RH1.2 — client-minted ids on the wire. `newCharacterId` +
+            // `newInventoryStashId` + `newCurrencyHoldingId` are always
+            // required (both bootstrap + in-existing-party paths). The
+            // six bootstrap-only ids are optional at the type level and
+            // required at the reducer boundary when state === null.
             dmOnly?: false;
             name: string;
             species: string;
@@ -47,14 +53,30 @@ export type Action =
             level: number;
             str: number;
             partyName?: string;
+            newCharacterId: string;
+            newInventoryStashId: string;
+            newCurrencyHoldingId: string;
+            newUserId?: string;
+            newPartyId?: string;
+            newPartyStashId?: string;
+            newRecoveredLootStashId?: string;
+            newPartyStashCurrencyId?: string;
+            newRecoveredLootCurrencyId?: string;
           }
         | {
             // R4.1-followup: DM-only bootstrap. No Character, no
             // Inventory stash, no player membership. Used by the
             // Hub's Create-party "I don't want to play a character"
-            // branch (OUTLINE §3.1).
+            // branch (OUTLINE §3.1). RH1.2 — mints the 6 bootstrap-scope
+            // ids (no character/inventory).
             dmOnly: true;
             partyName: string;
+            newUserId: string;
+            newPartyId: string;
+            newPartyStashId: string;
+            newRecoveredLootStashId: string;
+            newPartyStashCurrencyId: string;
+            newRecoveredLootCurrencyId: string;
           };
     }
   | {
@@ -69,6 +91,9 @@ export type Action =
         // homebrew authorship.
         source: 'hoard' | 'purchase' | 'custom-create' | 'duplicate' | 'catalog-add';
         notes?: string;
+        // RH1.2 — client-minted id for the new ItemInstance row. Ignored
+        // on stack-merge paths (existing row's id wins).
+        newItemInstanceId: string;
       };
     }
   | {
@@ -109,6 +134,10 @@ export type Action =
       payload: {
         ownerCharacterId: string;
         name: string;
+        // RH1.2 — client-minted ids for the Stash row and its
+        // auto-provisioned CurrencyHolding (OUTLINE §3.5).
+        newStashId: string;
+        newCurrencyHoldingId: string;
       };
     }
   | {
@@ -168,6 +197,10 @@ export type Action =
         toStashId: string;
         quantity: number;
         toContainerInstanceId?: string | null;
+        // RH1.2 — client-minted id for the new row on the partial-move-
+        // no-autostack branch. Ignored on full-move + partial-with-
+        // autostack (existing row's id wins).
+        newItemInstanceId: string;
       };
     }
   | {
@@ -180,6 +213,8 @@ export type Action =
       payload: {
         itemInstanceId: string;
         quantity: number;
+        // RH1.2 — client-minted id for the new split-off ItemInstance.
+        newItemInstanceId: string;
       };
     }
   | {
@@ -205,7 +240,11 @@ export type Action =
       // row (the user's homebrew clone-with-edits). Reducer requires
       // post-bootstrap state (party + user already provisioned).
       type: 'create-homebrew';
-      payload: HomebrewDefinitionInput & { duplicatedFromId?: string };
+      payload: HomebrewDefinitionInput & {
+        duplicatedFromId?: string;
+        // RH1.2 — client-minted id for the new homebrew ItemDefinition.
+        newDefinitionId: string;
+      };
     }
   | {
       // M6: edit a homebrew `ItemDefinition`. PHB rows are immutable

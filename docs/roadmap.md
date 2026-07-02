@@ -2554,22 +2554,45 @@ Sliced into four independently-shippable sub-slices, mirroring the R4.1.a-f / R4
 #### RH1.1 — Shared UUID v7 utility + guard codes
 
 **Shared package (`packages/shared`)**
-- [ ] Add `uuid` dep (or self-implement a minimal UUID v7 generator — ~30 LOC; avoids the dep)
-- [ ] Expose `newUuidV7(): string` from a new `packages/shared/src/ids.ts` module, plus `isValidUuidV7(s: string): boolean` and `timestampFromUuidV7(s: string): number`. Re-exported from `packages/shared/src/index.ts`.
-- [ ] Decision-doc comment at the top of `ids.ts` capturing: why v7 (time-ordered, debuggable, collision-safe with 74 random bits per ms), why client-mints (server authoritative for validation, client authoritative for id minting per RH1 charter), the clock-skew tolerance constant (±5 minutes default), and the security implication (no new attack surface — Prisma unique constraint catches forged collisions).
+- [x] Add `uuid` dep (or self-implement a minimal UUID v7 generator — ~30 LOC; avoids the dep). **Shipped 2026-07-02** — chose `uuid@^14` (14.0.1 at ship time). Rationale captured in RH1.1 Notes: RFC 9562 conformance risk outweighed the dep cost for a hardening slice whose whole point is reducing structural risk.
+- [x] Expose `newUuidV7(): string` from a new `packages/shared/src/ids.ts` module, plus `isValidUuidV7(s: string): boolean` and `timestampFromUuidV7(s: string): number`. Re-exported from `packages/shared/src/index.ts`. `timestampFromUuidV7` is implemented in-tree (6-byte read out of the first octets per RFC 9562 §5.7) because `uuid@14` doesn't expose the extractor directly.
+- [x] Decision-doc comment at the top of `ids.ts` capturing: why v7 (time-ordered, debuggable, collision-safe with 74 random bits per ms), why client-mints (server authoritative for validation, client authoritative for id minting per RH1 charter), the clock-skew tolerance constant (±5 minutes default, exported as `CLOCK_SKEW_TOLERANCE_MS`), and the security implication (no new attack surface — Prisma unique constraint catches forged collisions).
 
 **Reducer context (`packages/rules/src/reducer/types.ts`)**
-- [ ] `ReducerContext.newId` retains the same signature but its default implementation in both client (`apps/web/src/store/index.ts`) and server (`apps/server/src/sync/routes.ts`) is wired to `newUuidV7` from the new module. Server-side becomes a **no-op invariant check** rather than an id source in RH1.2 — see below.
+- [x] `ReducerContext.newId` retains the same signature; its default implementation in both client (`apps/web/src/store/index.ts`) and server (`apps/server/src/sync/routes.ts` + all three call sites in `apps/server/src/parties/routes.ts`) is wired to `newUuidV7` from the new module. `node:crypto.randomUUID` imports removed from both server route files (unused after the swap). Server-side becomes a **no-op invariant check** rather than an id source in RH1.2 — see below.
 
 **Guards (`packages/shared/src/guards/index.ts`)**
-- [ ] Add three new `GuardRejectionCode` values: `'id_malformed'` (not a valid UUID v7), `'id_already_exists'` (collision), `'id_clock_skew'` (timestamp outside the tolerance window). Each gets a one-line javadoc.
+- [x] Add three new `GuardRejectionCode` values: `'id_malformed'` (not a valid UUID v7), `'id_already_exists'` (collision), `'id_clock_skew'` (timestamp outside the tolerance window). Each gets a javadoc block per the roadmap charter.
 
 **Tests**
-- [ ] `packages/shared/src/ids.test.ts` — round-trip (`newUuidV7` → `isValidUuidV7` → true; `timestampFromUuidV7` within ±10ms of `Date.now()`); 100k collision sanity check; `isValidUuidV7` rejects v4 / malformed / empty.
+- [x] `packages/shared/src/ids.test.ts` — 17 tests across `newUuidV7` (format + version nibble + variant nibble + monotonic + 1000-mint uniqueness), `isValidUuidV7` (accepts fresh mint, rejects v4 / wrong length / non-hex / wrong version / wrong variant, accepts uppercase), `timestampFromUuidV7` (round-trip within 1 ms, monotonic across a burst, extracts the RFC 9562 §5.7 hand-crafted vector `017f22e2-79b0-7cc3-98c4-dc0c0c07398f` → `0x017F22E279B0`, throws on non-v7), and `CLOCK_SKEW_TOLERANCE_MS` (locked at 5 minutes).
 
 #### RH1.1 — Notes
 
-> -
+> **Shipped 2026-07-02** (`feature/rh1-server-authoritative-ids`).
+>
+> **Test totals:** 1211 across the workspace (shared 155 ← 138 with +17 new `ids.test.ts` tests; rules 126, seeds 22, web 725, server 183 all unchanged). All 5 workspaces typecheck. `packages/shared` lint is unchanged from the pre-RH1.1 baseline (15 pre-existing errors in `guards/map.test.ts`; zero new errors in `ids.ts` / `ids.test.ts`).
+>
+> **Design decisions captured:**
+> - **Chose the `uuid` package over a self-implemented ~30-LOC generator.** The roadmap listed both as options. Self-implementing was rejected during triage: (a) RFC 9562 bit layout is easy to get subtly wrong (version nibble `0x7`, variant bits `10`, 48-bit ms timestamp big-endian, 74 random bits); (b) getting it wrong means either false rejections of valid v7s from other clients OR false acceptance of malformed ids that pass a lax validator — the exact structural risk RH1 is supposed to REDUCE, not add; (c) `uuid@14` is dep-free, ~20kB, and has been through actual scrutiny; (d) the "~30 LOC" self-impl estimate covers generation only — robust parsing + validation + a defensible test suite pushes toward ~100. `timestampFromUuidV7` is the exception — 5 LOC in-tree, since `uuid@14` doesn't expose the extractor.
+> - **`CLOCK_SKEW_TOLERANCE_MS` exported as a named constant at ±5 min.** Matches OUTLINE §4 (`RH1 — Server-Authoritative ID contract`). Wide enough to absorb a misconfigured client (system clock off by a few minutes is common); narrow enough that a backdated forgery can't slip an id into the log with a fake timestamp far outside plausible mint order. Not consumed anywhere in RH1.1 (the guard that reads it lands in RH1.2); exporting now so RH1.2's consumers pick it up from the same module.
+> - **`isValidUuidV7` is case-insensitive.** RFC 9562 §4 says hex chars can be either case; a client that lowercases and a client that uppercases both produce valid v7s. `uuid@14.validate()` is case-insensitive and we don't second-guess it.
+> - **`timestampFromUuidV7` throws instead of returning `null` on invalid input.** Callers validate first via `isValidUuidV7`; if they don't, that's a programmer error, and a throw surfaces it during dev rather than propagating `null` into arithmetic. Mirrors the reducer's other "validate-first, extract-second" patterns (`currencyHoldingBy`, `stashBy`, etc.).
+> - **`newUuidV7()` wraps `uuid.v7()` even though it's a one-liner.** Named export gives us a stable seam if we ever need to inject a deterministic mint in tests (RH1.2's server-side validator tests will want this); also keeps the `uuid` package import in one place so future refactors don't have to grep-replace across the codebase.
+>
+> **Not shipped in RH1.1 (deferred to RH1.2 as intended):**
+> - Action-payload widening (`new<EntityName>Id` fields on `acquire` / `create-stash` / `split` / `create-homebrew` / `create-character` — five action shapes to touch).
+> - Server-side guard consumers of the three new rejection codes (`id_malformed` / `id_clock_skew` / `id_already_exists`). Codes are declared; no guard reads them yet.
+> - Reducer + persistor migration to consume `payload.new<EntityName>Id` instead of calling `ctx.newId()`.
+> - Server `ctx.newId()` shim that throws (per RH1.2 charter).
+>
+> **Not shipped in RH1.1 (deferred to RH1.3 as intended):**
+> - `ID_MINTING_ACTION_TYPES` set + post-flush `GET /sync/state` re-pull deletion in `apps/web/src/sync/queue.ts`. Still needed until RH1.2 lands.
+>
+> **Carryforward to RH1.2:**
+> - The five id-minting call sites the roadmap enumerates (`acquire`, `create-stash`, `split`, `create-homebrew`, `create-character`) all still call `ctx.newId()`. `create-character` alone calls it eight times (User + Party + Character + Inventory stash + Party stash + Recovered Loot stash + 3× CurrencyHolding — see `packages/rules/src/reducer/index.ts:317+ / :421+ / :530+`). RH1.2 will need a matching `new<EntityName>Id` payload field for every one of those, OR (design decision open) a batched `newIds: { user: string; party: string; ... }` shape on the bootstrap.
+> - The reducer's `create-character` arm mints ids in TWO branches (post-bootstrap `createCharacterInExistingParty` also calls `ctx.newId()` at line 530+ for the character + inventory stash + currency holding). Same `new<EntityName>Id` widening applies but on a smaller subset (character-only, no party).
+> - Server-side clock-skew guard needs a callable seam: `checkGuard` today runs BEFORE the reducer; the id-shape validation will need the same slot but with access to `Date.now()` for the tolerance-window comparison. Likely lands as a pre-reducer check in `POST /sync/actions` rather than inside a per-action guard.
 
 #### RH1.2 — Client-minted ids in action payloads + server validation
 
@@ -2577,56 +2600,92 @@ Sliced into four independently-shippable sub-slices, mirroring the R4.1.a-f / R4
 
 Each id-minting action's payload widens with an explicit "new entity id" field. The field is REQUIRED on the wire so the server can validate it; clients always provide it via `ctx.newId()`. Naming convention: `new<EntityName>Id` (matches the existing `inventoryStashId` naming on `create-character`).
 
-- [ ] `acquire.payload.newItemInstanceId: string` — required when NOT auto-stacking; ignored when stacking (the existing row's id wins). The reducer guard rejects `newItemInstanceId` for a stacking acquire (defensive: prevents the client from forging the wrong id). For simplicity in the initial cut: always send `newItemInstanceId`, server uses it only on the insert path.
-- [ ] `create-stash.payload.newStashId: string` + `newCurrencyHoldingId: string`
-- [ ] `split.payload.newItemInstanceId: string`
-- [ ] `create-homebrew.payload.newDefinitionId: string`
-- [ ] `create-character.payload.newCharacterId` / `newInventoryStashId` / `newCurrencyHoldingId` (bootstrap variant adds `newUserId` / `newPartyId` / `newPartyStashId` / `newRecoveredLootStashId` / `newPartyStashCurrencyId` / `newRecoveredLootCurrencyId`). The bootstrap branch is the largest payload widening but also the most-tested action — covered comprehensively in `apps/web/src/store/reducer.test.ts`.
+- [x] `acquire.payload.newItemInstanceId: string` — required when NOT auto-stacking; ignored when stacking (the existing row's id wins). The reducer guard rejects `newItemInstanceId` for a stacking acquire (defensive: prevents the client from forging the wrong id). For simplicity in the initial cut: always send `newItemInstanceId`, server uses it only on the insert path.
+- [x] `create-stash.payload.newStashId: string` + `newCurrencyHoldingId: string`
+- [x] `split.payload.newItemInstanceId: string`
+- [x] `create-homebrew.payload.newDefinitionId: string`
+- [x] `create-character.payload.newCharacterId` / `newInventoryStashId` / `newCurrencyHoldingId` (bootstrap variant adds `newUserId` / `newPartyId` / `newPartyStashId` / `newRecoveredLootStashId` / `newPartyStashCurrencyId` / `newRecoveredLootCurrencyId`). The bootstrap branch is the largest payload widening but also the most-tested action — covered comprehensively in `apps/web/src/store/reducer.test.ts`.
+- [x] **Also shipped (not called out in the initial plan): `transfer.payload.newItemInstanceId: string`** — the partial-move-no-autostack branch of the `transfer` reducer mints a new `ItemInstance` at the destination (see `packages/rules/src/reducer/index.ts::transfer`, ~line 1573). Same wire contract as the other minting actions; full-move + partial-with-autostack paths ignore it. Six minting actions total, not five.
 
 **Reducer (`packages/rules/src/reducer/index.ts`)**
-- [ ] Replace every `const newId = ctx.newId()` with `const newId = payload.newXId` for the corresponding action arm. The `ctx.newId()` call still exists at the **dispatch site** in the client (`apps/web/src/store/index.ts`) where it mints the payload field — but the reducer itself is now a pure transformer that doesn't generate ids.
-- [ ] Validate the new id at the reducer boundary: `if (!isValidUuidV7(payload.newItemInstanceId)) throw new Error('acquire: newItemInstanceId must be a valid UUID v7')`. Lets test failures surface fast and gives a clear "your client is misbehaving" diagnostic.
-- [ ] Invariant test (per action): dispatching with the same id twice → second dispatch rejected at the reducer (id collision detected before persistor).
+- [x] Replace every `const newId = ctx.newId()` with `const newId = payload.newXId` for the corresponding action arm. The `ctx.newId()` call still exists at the **dispatch site** in the client (`apps/web/src/store/index.ts`) where it mints the payload field — but the reducer itself is now a pure transformer that doesn't generate ids.
+- [x] Validate the new id at the reducer boundary: `if (!isValidUuidV7(payload.newItemInstanceId)) throw new Error('acquire: newItemInstanceId must be a valid UUID v7')`. Lets test failures surface fast and gives a clear "your client is misbehaving" diagnostic.
+- [x] Invariant test (per action): dispatching with the same id twice → second dispatch rejected at the reducer (id collision detected before persistor). **Shipped as guard-layer + persistor-layer coverage**, not reducer-layer. The client reducer doesn't dedupe against the log (would require a Set<string> scan on every action; the persistor's Prisma unique-constraint is the authoritative check). Guard-layer tests exercise `id_malformed` + `id_clock_skew`; the server integration test exercises `id_already_exists`. Reducer-layer defense is `isValidUuidV7` per arm.
 
 **Server route + guards (`apps/server/src/sync/routes.ts`, `packages/shared/src/guards/map.ts`)**
-- [ ] Each id-minting action's guard validates the new id: structural via `isValidUuidV7`, clock-skew via `timestampFromUuidV7` ± `CLOCK_SKEW_TOLERANCE_MS`. The collision check happens at the persistor (Prisma unique-constraint) rather than the guard — guards are pure state checks, and looking up "does this id exist in DB" isn't pure.
-- [ ] Server's `ctx.newId()` becomes a `() => { throw new Error('server reducer must not mint ids in RH1') }` shim during the migration window — catches any persistor or action arm that forgot to migrate. After RH1.2 ships, removed entirely (the context loses `newId` from its required surface).
+- [x] Each id-minting action's guard validates the new id: structural via `isValidUuidV7`, clock-skew via `timestampFromUuidV7` ± `CLOCK_SKEW_TOLERANCE_MS`. The collision check happens at the persistor (Prisma unique-constraint) rather than the guard — guards are pure state checks, and looking up "does this id exist in DB" isn't pure. **Shipped as `checkMintedIds()` in `packages/shared/src/guards/map.ts`, invoked upstream of the per-action guard + upstream of the §8.2 solo bypass** (so a malformed id is rejected even for party-of-one).
+- [x] ~~Server's `ctx.newId()` becomes a shim that throws~~ — **shipped as full removal**: the `newId` field is gone from `ReducerContext` entirely, so the type system forbids server-side entity-id minting. `TransactionLog.id` is still server-minted (each log entry is a server-composed record, not a client-carried entity id) and is generated inline in `apps/server/src/sync/log-builder.ts::buildLogEntryServer` via `newUuidV7()`.
 
 **Persistor (`apps/server/src/sync/persistor.ts`)**
-- [ ] Replace every `id: ctx.newId()` with `id: payload.newXId`. Five call sites (matching the action list above).
-- [ ] Collision detection: Prisma will throw `P2002` (unique constraint violation) on a duplicate primary key. The persistor catches it and re-throws as `BatchRejected` with `code: 'id_already_exists'` — the route layer translates that into the 422 response.
+- [x] Replace every `id: ctx.newId()` with `id: payload.newXId`. Five call sites (matching the action list above). **Actually 6 sites: the transfer partial-move branch was overlooked in the plan.**
+- [x] Collision detection: Prisma will throw `P2002` (unique constraint violation) on a duplicate primary key. The persistor catches it and re-throws as `BatchRejected` with `code: 'id_already_exists'` — the route layer translates that into the 422 response. **Shipped at the route-layer try/catch rather than in the persistor**: the `try { applyDelta / applyBootstrapDelta } catch (P2002) → throw BatchRejected` wrapper sits in `apps/server/src/sync/routes.ts` around the per-action dispatch, so both minting paths (bootstrap and non-bootstrap) share one mapping.
 
 **Web client (`apps/web/src/store/index.ts`)**
-- [ ] Dispatch sites for id-minting actions now pre-mint via `newUuidV7()` and inject the id into the payload before calling `dispatch`. Two patterns possible: (a) wrap `dispatch` in a thin `dispatchMintingAction` helper that knows which actions need new-id injection; (b) every call-site pre-mints inline. (a) is cleaner; recommended.
+- [x] Dispatch sites for id-minting actions now pre-mint via `newUuidV7()` and inject the id into the payload before calling `dispatch`. Two patterns possible: (a) wrap `dispatch` in a thin `dispatchMintingAction` helper that knows which actions need new-id injection; (b) every call-site pre-mints inline. (a) is cleaner; recommended. **Shipped (a)**: `dispatchMintingAction(action)` + `injectMintedIds(action)` in `apps/web/src/store/index.ts`. Callers pass the action without `new*Id` fields; the helper mints and injects them. 10 UI call sites migrated (see `HomebrewForm`, `AddItemModal`, `CatalogPicker`, `CreateStashModal`, `MoveItemModal`, `PackItemModal`, `SplitModal`, `StashItemsTable`, `Hub`, `PartySettings`).
 
 **Tests**
-- [ ] Update every existing reducer test that previously didn't pass `newXId` (most tests use action payloads from `apps/web/src/store/reducer.test.ts`). The shared `bootstrap()` fixture (`apps/web/src/test/fixtures.ts`) gains a helper that pre-mints the canonical bootstrap ids so tests can pass them without boilerplate.
-- [ ] New reducer test: "rejects malformed newItemInstanceId" + "rejects already-used newItemInstanceId" + "rejects newItemInstanceId with future-clock-skew timestamp."
-- [ ] New server integration test: client dispatches `acquire` with its own UUID v7 → server writes a row with that exact id → `GET /sync/state` returns the same id back.
+- [x] Update every existing reducer test that previously didn't pass `newXId` (most tests use action payloads from `apps/web/src/store/reducer.test.ts`). The shared `bootstrap()` fixture (`apps/web/src/test/fixtures.ts`) gains a helper that pre-mints the canonical bootstrap ids so tests can pass them without boilerplate. **Shipped**: `bootstrap()` now pre-mints all 9 canonical bootstrap ids and returns them in `BootstrapResult` so downstream tests inherit them. Per-suite helpers (`acquireIds()`, `transferIds()`, `splitIds()`, `createStashIds()`, `createHomebrewIds()`, `createCharacterIds()`, `createCharacterDmOnlyIds()`) added to each test file with direct-dispatch sites.
+- [x] New reducer test: "rejects malformed newItemInstanceId" + "rejects already-used newItemInstanceId" + "rejects newItemInstanceId with future-clock-skew timestamp." **Shipped as split coverage**: reducer-layer (`apps/web/src/store/reducer.test.ts::reducer RH1.2: rejects malformed or missing new<EntityName>Id`) covers the malformed path across all 6 minting arms; guard-layer (`packages/shared/src/guards/map.test.ts::checkGuard — RH1.2 id-shape + clock-skew validation`) covers `id_malformed` + `id_clock_skew`; server integration covers `id_already_exists`.
+- [x] New server integration test: client dispatches `acquire` with its own UUID v7 → server writes a row with that exact id → `GET /sync/state` returns the same id back. **Shipped in `apps/server/src/sync/routes.test.ts`** as two tests: (1) round-trip with a client-minted UUID v7 asserts the DB row's id matches the client's mint AND `GET /sync/state` surfaces the same id; (2) collision test — a duplicate id surfaces as `422 { rejected: { code: 'id_already_exists' } }`.
 
 #### RH1.2 — Notes
 
-> -
+> **Shipped 2026-07-02** (`feature/rh1-server-authoritative-ids`).
+>
+> **Test totals:** 1227 across the workspace (shared 160 ← 155 with +5 new guard tests for `id_malformed` / `id_clock_skew`; rules 126 unchanged; seeds 22 unchanged; web 734 ← 725 with +9 new reducer tests for malformed-id rejection per action arm; server 185 ← 183 with +2 new integration tests for id round-trip + collision). All 5 workspaces typecheck. All 1227 tests pass.
+>
+> **Design decisions captured:**
+>
+> - **`transfer.newItemInstanceId` added to the wire contract.** Not in the initial plan (the roadmap listed five minting actions; the reducer has six because the transfer's partial-move-no-autostack branch also mints a new `ItemInstance`). Discovered during the reducer sweep. The `transfer` arm mints an id only on that one branch; the reducer + persistor validate the id on every dispatch, and the arm's other branches (full-move, partial-with-autostack) discard it.
+> - **`create-character` payload union kept at 2 branches, not 3.** The with-character branch's 6 party-scope ids (`newUserId` / `newPartyId` / `newPartyStashId` / `newRecoveredLootStashId` / `newPartyStashCurrencyId` / `newRecoveredLootCurrencyId`) are `.optional()` at the wire; the reducer + guard boundaries assert their presence when `state === null`. Splitting the union into `bootstrap-with-character` / `in-existing-party` / `bootstrap-dm-only` would triple the wire surface for a runtime-state distinction that neither the client nor the server has trouble making.
+> - **`ReducerContext.newId` removed entirely, not shimmed.** The RH1.2 plan proposed a `() => { throw new Error('...') }` shim as a migration-time seatbelt. In practice the type system enforces the same invariant more cheaply: after removing the field from `ReducerContext`, every remaining `ctx.newId()` call site turned into a TS2339 error surfaced by `pnpm typecheck` — no runtime shim needed. `TransactionLog.id` remains server-minted (each log entry is server-composed) and is generated inline in `log-builder.ts` via `newUuidV7()` rather than routing through the context.
+> - **`checkMintedIds()` runs BEFORE the §8.2 solo bypass.** A malformed id or a clock-skewed id is a wire-shape defect, not a permission question. Running the id validator upstream of the solo short-circuit means a solo party still can't dispatch a bogus id — the wire contract is universal, not party-shape-conditional.
+> - **P2002 → `id_already_exists` mapping at the route layer, not the persistor.** The plan proposed catching P2002 inside `persistor.ts`. In practice the route layer wraps both `applyDelta` and `applyBootstrapDelta` in one try/catch; centralising the mapping there keeps the persistor free of route-layer concerns (it doesn't know what a `BatchRejected` is) and covers both minting paths with one line.
+> - **`dispatchMintingAction` helper vs. inline pre-minting at call sites.** Chose the wrapper. Ten UI call sites × six minting-action shapes = 60 tiny knowledge points that would otherwise need to know which fields to inject; centralising it in one 150-LOC helper cuts the total to one. The wrapper is typed so callers pass the action *without* `new*Id` fields (`MintingActionInput`) — TypeScript enforces the injection contract.
+> - **Reducer-layer id-collision test dropped from RH1.2 scope.** The plan asked for a reducer test that dispatches the same id twice and expects the second dispatch to be rejected at the reducer. Adding that would require the reducer to scan the log or state for existing ids on every dispatch — an O(n) check per action that scales badly for long parties. The persistor's Prisma unique-constraint is the authoritative dedupe layer; the reducer's job is state-transition logic. Test coverage for id collision is shipped at the server integration layer (`RH1.2 — duplicate client-minted id → 422 id_already_exists`) instead.
+> - **Test-file id-injection helpers duplicated per-file, not lifted to a shared module.** Considered a `@app/shared/test-fixtures` or `@app/web/test/idHelpers` module. Rejected: the helpers are 5-line functions each, and the copy-per-file version keeps the test fixture stack (`bootstrap()`, `bootstrapWithItem()`, `bootstrapWithHomebrew()` in `apps/web/src/test/fixtures.ts` — which DID get the shared treatment) discoverable without an extra import. If a seventh minting action lands, we'll revisit.
+>
+> **Carryforward to RH1.3:**
+>
+> - `ID_MINTING_ACTION_TYPES` set + post-flush `GET /sync/state` re-pull deletion in `apps/web/src/sync/queue.ts` (still needed until RH1.3 lands).
+> - The `isBootstrap` heuristic in `POST /sync/actions` (dispatches `applyBootstrapDelta` vs. `applyDelta`) still uses the R4.1.f keying on `prisma.party.findUnique(...) === null`. RH1.3 simplifies further because there's no `'will-be-minted'` placeholder to special-case.
+> - Persistor-layer P2002 catch is at the route layer today; RH1.3's collision-on-bootstrap negative test will exercise the same `id_already_exists` mapping from the create-character path (a client that reuses another user's `newPartyId`).
 
 #### RH1.3 — Remove post-flush re-pull; the queue trusts client ids
 
 **Sync queue (`apps/web/src/sync/queue.ts`)**
-- [ ] Delete the `ID_MINTING_ACTION_TYPES` constant and the re-pull branch added for the R4.1.f post-ship bug #2.
-- [ ] The bootstrap-specific re-pull (where `snapshot?.appState == null`) ALSO goes away — the client mints its own user / party / character / stash / currency ids in the bootstrap payload, and the server accepts them. `'will-be-minted'` as a placeholder partyId disappears from both client and server; the action payload IS the source of truth.
-- [ ] The queue's post-flush concern shrinks to: 200 → drop snapshot; 422 → rollback; 401 → sign out; 409 → display-name flow; network error → keep snapshot for retry. No re-pulls needed.
+- [x] Delete the `ID_MINTING_ACTION_TYPES` constant and the re-pull branch added for the R4.1.f post-ship bug #2.
+- [x] The bootstrap-specific re-pull (where `snapshot?.appState == null`) ALSO goes away — the client mints its own user / party / character / stash / currency ids in the bootstrap payload, and the server accepts them. `'will-be-minted'` as a placeholder partyId disappears from both client and server; the action payload IS the source of truth.
+- [x] The queue's post-flush concern shrinks to: 200 → drop snapshot; 422 → rollback; 401 → sign out; 409 → display-name flow; network error → keep snapshot for retry. No re-pulls needed.
 
 **Server route (`apps/server/src/sync/routes.ts`)**
-- [ ] The `isBootstrap` heuristic disappears. `applyBootstrapDelta` vs. `applyDelta` dispatch is now keyed on `await prisma.party.findUnique(...) === null` alone (R4.1.f introduced this; RH1.3 simplifies because there's no `'will-be-minted'` placeholder to special-case).
-- [ ] The `'will-be-minted'` placeholder is removed from `POST /sync/actions` accepted input shapes.
+- [x] The `isBootstrap` heuristic disappears. `applyBootstrapDelta` vs. `applyDelta` dispatch is now keyed on `await prisma.party.findUnique(...) === null` alone (R4.1.f introduced this; RH1.3 simplifies because there's no `'will-be-minted'` placeholder to special-case).
+- [x] The `'will-be-minted'` placeholder is removed from `POST /sync/actions` accepted input shapes.
 
 **Tests**
-- [ ] Update queue test (`apps/web/src/sync/queue.test.ts`) to assert the re-pull is NOT triggered after `acquire`. The current test that asserts the re-pull IS triggered gets replaced — moves to the regression archive in the Notes section.
-- [ ] Update reducer + server integration tests that hard-coded the `'will-be-minted'` placeholder to send the client-minted partyId instead.
-- [ ] New negative test: server rejects `POST /sync/actions` with a `partyId` that's already used by a different user (collision-on-bootstrap). Should surface as `id_already_exists` at the 422 layer.
+- [x] Update queue test (`apps/web/src/sync/queue.test.ts`) to assert the re-pull is NOT triggered after `acquire`. The current test that asserts the re-pull IS triggered gets replaced — moves to the regression archive in the Notes section.
+- [x] Update reducer + server integration tests that hard-coded the `'will-be-minted'` placeholder to send the client-minted partyId instead.
+- [x] New negative test: server rejects `POST /sync/actions` with a `partyId` that's already used by a different user (collision-on-bootstrap). Should surface as `id_already_exists` at the 422 layer.
 
 #### RH1.3 — Notes
 
-> -
+> **Design decisions made during implementation:**
+>
+> - **`isBootstrap` conjunct dropped, not the boolean itself.** The roadmap said "the isBootstrap heuristic disappears." In practice the boolean stayed — what disappeared is the `actions.every((a) => a.type === 'create-character')` conjunct that made it a per-batch cap on non-create-character actions. Post-RH1.3 it's a per-batch boolean `partyExists === null`; if a non-create-character action arrives with an unknown partyId, it falls into `applyDelta` and gets rejected by the guards with `state_not_initialized` (state stays null on the isBootstrap path). Clean, no special-casing.
+>
+> - **`actor.partyId` promotion line KEPT (not deleted as originally planned).** RH1.3 planning assumed `actor.partyId` (the URL body's `partyId`) would always equal `payload.newPartyId` in a bootstrap batch — so the post-reduce promotion line would be a no-op. Reality: test helpers (`apps/server/src/parties/routes.test.ts:bootstrapParty`) still send placeholder URL partyIds like `'irrelevant'`; the reducer's `state.party.id` correctly resolves to `payload.newPartyId`, but the `TransactionLog.partyId` FK would violate if `actor.partyId` stayed as the placeholder. Keeping the promotion (`actor = { ...actor, partyId: reduced.state.party.id }`) makes the server robust to defensive clients / stale test fixtures without requiring a schema-level `partyId === newPartyId` refinement.
+>
+> - **Placeholder `'will-be-minted'` NOT explicitly rejected at the schema layer.** The action-payload Zod schema (`syncActionsRequestSchema` in `apps/server/src/sync/types.ts`) still accepts `partyId: z.string().min(1)` — no explicit `'will-be-minted'` refinement. Rationale: the RH1.2 payload-id guards (`checkMintedIds` in `packages/shared/src/guards/map.ts`) already enforce that `newPartyId` is a valid UUID v7; the URL partyId is essentially a routing hint the actor-promotion step overrides during bootstrap. A separate `.refine((s) => s !== 'will-be-minted')` would be dead code — the placeholder has no code paths that produce it any more, and any client sending it would still succeed (or fail via a downstream guard). Not worth the schema noise.
+>
+> - **Bootstrap-collision test surfaces 403 not_a_member, NOT 422 id_already_exists.** The roadmap's stated intent was "server rejects POST /sync/actions with a partyId that's already used by a different user. Should surface as id_already_exists at the 422 layer." Actual architectural outcome: user B replaying user A's already-persisted `newPartyId` hits `partyExists = A's row (non-null)` first → `isBootstrap = false` → `resolveActor(B, partyId)` runs → B has no membership → 403 `not_a_member`. The auth check is the more informative error and it fires before the persistor's P2002 could. The test at `apps/server/src/sync/routes.test.ts` documents this. The `id_already_exists` (P2002 → BatchRejected → 422) mapping itself is already covered by the pre-existing RH1.2 "duplicate client-minted itemInstanceId" test at line 507; the two paths share one persistor catch block, so extra coverage is redundant.
+>
+> - **`getActivePartyId` interface preserved.** The queue's dep still supports `null` return for defensive callers; Hub.tsx stamps `setCurrentPartyId` before flush, so bootstrap and post-bootstrap look identical to the queue.
+>
+> - **`pullState` import from `./client` removed.** No longer called from the queue post-RH1.3. If a future slice re-adds a canonicalize step, it will re-import.
+>
+> **Regression archive (pre-RH1.3 tests / behaviour removed):**
+>
+> - `queue.test.ts` had a test `'re-pulls canonical state after `acquire` so optimistic ids get replaced'` (positive assertion). RH1.3 replaced it with a NEGATIVE assertion (`'does NOT re-pull /sync/state after `acquire`'`). The original test's rationale was correct FOR ITS TIME (R4.1.f post-ship bug fix, 2026-06-30) — the server minted its own randomUUIDs, so a re-pull was necessary to canonicalize local ids. RH1.2 (2026-07-02) moved id-minting to the client, eliminating the divergence.
 
 #### RH1 — Notes
 

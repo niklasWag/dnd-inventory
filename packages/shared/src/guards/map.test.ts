@@ -1,10 +1,47 @@
 import { describe, expect, it } from 'vitest';
 
+import { newUuidV7 } from '../ids';
 import type { Action, AppState, Party, PartyMembership } from '../schemas';
 
 import { deriveActorRole, isMember, isSolo } from './actor';
 import { checkGuard, guards } from './map';
 import type { Actor, GuardResult } from './index';
+
+/**
+ * RH1.2 — helpers that stamp the required `new<EntityName>Id` fields
+ * onto minting-action payloads with a fresh UUID v7 per call. Guards
+ * don't care about the specific id value (only its shape + clock-skew
+ * window), so a fresh mint per invocation is safe and keeps tests
+ * hermetic. Callers that need to assert against the id can capture it
+ * post-construction.
+ */
+const acquireIds = () => ({ newItemInstanceId: newUuidV7() });
+const createStashIds = () => ({
+  newStashId: newUuidV7(),
+  newCurrencyHoldingId: newUuidV7(),
+});
+const transferIds = () => ({ newItemInstanceId: newUuidV7() });
+const splitIds = () => ({ newItemInstanceId: newUuidV7() });
+const createHomebrewIds = () => ({ newDefinitionId: newUuidV7() });
+const createCharacterWithCharIds = () => ({
+  newCharacterId: newUuidV7(),
+  newInventoryStashId: newUuidV7(),
+  newCurrencyHoldingId: newUuidV7(),
+  newUserId: newUuidV7(),
+  newPartyId: newUuidV7(),
+  newPartyStashId: newUuidV7(),
+  newRecoveredLootStashId: newUuidV7(),
+  newPartyStashCurrencyId: newUuidV7(),
+  newRecoveredLootCurrencyId: newUuidV7(),
+});
+const createCharacterDmOnlyIds = () => ({
+  newUserId: newUuidV7(),
+  newPartyId: newUuidV7(),
+  newPartyStashId: newUuidV7(),
+  newRecoveredLootStashId: newUuidV7(),
+  newPartyStashCurrencyId: newUuidV7(),
+  newRecoveredLootCurrencyId: newUuidV7(),
+});
 
 /**
  * R3.4.a — §8.1 guard layer test suite.
@@ -187,7 +224,10 @@ describe('checkGuard — §8.2 solo bypass', () => {
     const soloMemberships = [makeMembership('u1', 'dm'), makeMembership('u1', 'player')];
     // create-homebrew is DM-only in 2+-member parties; solo bypass
     // returns ok for a player actor.
-    const action: Action = { type: 'create-homebrew', payload: { name: 'X', category: 'magic' } };
+    const action: Action = {
+      type: 'create-homebrew',
+      payload: { name: 'X', category: 'magic', ...createHomebrewIds() },
+    };
     expect(checkGuard(state, action, actor, soloMemberships)).toEqual({ ok: true });
   });
 
@@ -202,6 +242,7 @@ describe('checkGuard — §8.2 solo bypass', () => {
         definitionId: 'phb-2024:rope',
         quantity: 1,
         source: 'catalog-add',
+        ...acquireIds(),
       },
     };
     const result = checkGuard(state, action, otherActor, memberships);
@@ -212,7 +253,15 @@ describe('checkGuard — §8.2 solo bypass', () => {
   it('skips membership check when state is null (bootstrap create-character)', () => {
     const action: Action = {
       type: 'create-character',
-      payload: { name: 'X', species: 'Human', size: 'medium', class: 'Fighter', level: 1, str: 16 },
+      payload: {
+        name: 'X',
+        species: 'Human',
+        size: 'medium',
+        class: 'Fighter',
+        level: 1,
+        str: 16,
+        ...createCharacterWithCharIds(),
+      },
     };
     // No memberships exist yet because state is null; the guard is the
     // structural check (state must BE null) — and there are no party
@@ -251,7 +300,10 @@ describe('guards — DM-only actions', () => {
   it('create-homebrew rejects a player', () => {
     expect(
       runGuard(
-        { type: 'create-homebrew', payload: { name: 'X', category: 'magic' } },
+        {
+          type: 'create-homebrew',
+          payload: { name: 'X', category: 'magic', ...createHomebrewIds() },
+        },
         makeActor('u1', 'player'),
       ),
     ).toMatchObject({ ok: false, code: 'dm_only' });
@@ -259,7 +311,10 @@ describe('guards — DM-only actions', () => {
   it('create-homebrew accepts a DM', () => {
     expect(
       runGuard(
-        { type: 'create-homebrew', payload: { name: 'X', category: 'magic' } },
+        {
+          type: 'create-homebrew',
+          payload: { name: 'X', category: 'magic', ...createHomebrewIds() },
+        },
         makeActor('u1', 'dm'),
       ),
     ).toEqual({ ok: true });
@@ -330,6 +385,7 @@ describe('guards — ownership checks', () => {
             definitionId: 'phb-2024:rope',
             quantity: 1,
             source: 'catalog-add',
+            ...acquireIds(),
           },
         },
         makeActor('u2', 'player'),
@@ -347,6 +403,7 @@ describe('guards — ownership checks', () => {
             definitionId: 'phb-2024:rope',
             quantity: 1,
             source: 'catalog-add',
+            ...acquireIds(),
           },
         },
         makeActor('u1', 'player'),
@@ -364,6 +421,7 @@ describe('guards — ownership checks', () => {
             definitionId: 'phb-2024:rope',
             quantity: 1,
             source: 'catalog-add',
+            ...acquireIds(),
           },
         },
         makeActor('u2', 'player'),
@@ -447,7 +505,10 @@ describe('guards — ownership checks', () => {
   it("create-stash rejects another player's character", () => {
     expect(
       runGuard(
-        { type: 'create-stash', payload: { ownerCharacterId: 'char-u1', name: 'Backpack' } },
+        {
+          type: 'create-stash',
+          payload: { ownerCharacterId: 'char-u1', name: 'Backpack', ...createStashIds() },
+        },
         makeActor('u2', 'player'),
         state,
       ),
@@ -952,7 +1013,7 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
       const state = makeBankerState();
       const result = guards['transfer'](
         state,
-        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1 },
+        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1, ...transferIds() },
         makeActor('u2', 'player'),
       );
       expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
@@ -962,7 +1023,7 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
       const state = makeBankerState();
       const result = guards['transfer'](
         state,
-        { itemInstanceId: 'i-rl', toStashId: 'inv', quantity: 1 },
+        { itemInstanceId: 'i-rl', toStashId: 'inv', quantity: 1, ...transferIds() },
         makeActor('u2', 'player'),
       );
       expect(result).toMatchObject({ ok: false, code: 'banker_required_for_claim' });
@@ -972,7 +1033,7 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
       const state = makeBankerState();
       const result = guards['transfer'](
         state,
-        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1 },
+        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1, ...transferIds() },
         makeActor('banker-user', 'banker'),
       );
       expect(result).toEqual({ ok: true });
@@ -982,7 +1043,7 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
       const state = makeBankerState();
       const result = guards['transfer'](
         state,
-        { itemInstanceId: 'i1', toStashId: 'ps', quantity: 1 },
+        { itemInstanceId: 'i1', toStashId: 'ps', quantity: 1, ...transferIds() },
         makeActor('u2', 'player'),
       );
       expect(result).toEqual({ ok: true });
@@ -992,7 +1053,7 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
       const state = makeBankerState(null);
       const result = guards['transfer'](
         state,
-        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1 },
+        { itemInstanceId: 'i-ps', toStashId: 'inv', quantity: 1, ...transferIds() },
         makeActor('u2', 'player'),
       );
       expect(result).toEqual({ ok: true });
@@ -1006,7 +1067,7 @@ describe('guards — R4.2.c Banker-mediated shared-pool gate', () => {
       const state = makeBankerState();
       const result = guards['split'](
         state,
-        { itemInstanceId: 'i-ps', quantity: 1 },
+        { itemInstanceId: 'i-ps', quantity: 1, ...splitIds() },
         makeActor('u2', 'player'),
       );
       expect(result).toEqual({ ok: true });
@@ -1234,9 +1295,9 @@ describe('guards — R4.3.a dm-transfer', () => {
     // Widen state.memberships to include a soft-deleted player row.
     const base = makeBankerState(null);
     const state: AppState = {
-      ...base!,
+      ...base,
       memberships: [
-        ...base!.memberships,
+        ...base.memberships,
         {
           userId: 'former-player',
           partyId: 'p1',
@@ -1285,7 +1346,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     const state = makeBankerState(null);
     const result = guards.acquire(
       state,
-      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add' },
+      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add', ...acquireIds() },
       makeActor('dm-user', 'dm'),
     );
     expect(result).toEqual({ ok: true });
@@ -1306,7 +1367,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     const state = makeBankerState(null);
     const result = guards.transfer(
       state,
-      { itemInstanceId: 'i1', toStashId: 'ps', quantity: 1 },
+      { itemInstanceId: 'i1', toStashId: 'ps', quantity: 1, ...transferIds() },
       makeActor('dm-user', 'dm'),
     );
     expect(result).toEqual({ ok: true });
@@ -1316,9 +1377,9 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     const state = makeBankerState(null);
     // Add an item to Party Stash for the transfer OUT.
     const s = {
-      ...state!,
+      ...state,
       items: [
-        ...state!.items,
+        ...state.items,
         {
           id: 'i-ps-item',
           definitionId: 'phb-2024:rope',
@@ -1335,7 +1396,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     };
     const result = guards.transfer(
       s,
-      { itemInstanceId: 'i-ps-item', toStashId: 'inv-b', quantity: 1 },
+      { itemInstanceId: 'i-ps-item', toStashId: 'inv-b', quantity: 1, ...transferIds() },
       makeActor('dm-user', 'dm'),
     );
     expect(result).toEqual({ ok: true });
@@ -1345,7 +1406,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     const state = makeBankerState(null);
     const result = guards.acquire(
       state,
-      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add' },
+      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add', ...acquireIds() },
       // u2 acting as player, targeting their own inventory is allowed;
       // banker-user acting as player, targeting u2's inventory is NOT.
       makeActor('banker-user', 'player'),
@@ -1368,11 +1429,11 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     // Simulate a foreign character whose inventory stash is in a
     // different party (partyId mismatch on the character).
     const s = {
-      ...state!,
+      ...state,
       characters: [
-        ...state!.characters,
+        ...state.characters,
         {
-          ...state!.characters[0]!,
+          ...state.characters[0]!,
           id: 'char-foreign',
           partyId: 'p2', // different party
           ownerUserId: 'other-user',
@@ -1380,7 +1441,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
         },
       ],
       stashes: [
-        ...state!.stashes,
+        ...state.stashes,
         {
           id: 'inv-foreign',
           scope: 'character' as const,
@@ -1394,7 +1455,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     };
     const result = guards.acquire(
       s,
-      { stashId: 'inv-foreign', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add' },
+      { stashId: 'inv-foreign', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add', ...acquireIds() },
       makeActor('dm-user', 'dm'),
     );
     expect(result).toMatchObject({ ok: false, code: 'not_own_stash' });
@@ -1465,8 +1526,8 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     // the item is not in char-u2's Inventory stash.
     const state = makeBankerState(null);
     const s = {
-      ...state!,
-      items: state!.items.map((i) => (i.id === 'i1' ? { ...i, ownerId: 'ps' } : i)),
+      ...state,
+      items: state.items.map((i) => (i.id === 'i1' ? { ...i, ownerId: 'ps' } : i)),
     };
     const result = guards['use-charge'](
       s,
@@ -1529,11 +1590,11 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
   it('DM cannot equip on a character outside their party (partyId mismatch)', () => {
     const state = makeBankerState(null);
     const s = {
-      ...state!,
+      ...state,
       characters: [
-        ...state!.characters,
+        ...state.characters,
         {
-          ...state!.characters[0]!,
+          ...state.characters[0]!,
           id: 'char-foreign',
           partyId: 'p2',
           ownerUserId: 'other-user',
@@ -1541,7 +1602,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
         },
       ],
       stashes: [
-        ...state!.stashes,
+        ...state.stashes,
         {
           id: 'inv-foreign',
           scope: 'character' as const,
@@ -1553,7 +1614,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
         },
       ],
       items: [
-        ...state!.items,
+        ...state.items,
         {
           id: 'i-foreign',
           definitionId: 'phb-2024:rope',
@@ -1660,14 +1721,23 @@ describe('guards — every action has an entry', () => {
 // -------------------------------------------------------------------- //
 
 describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
-  const newCharacterPayload = {
+  // RH1.2 — fresh ids per call so guard-under-test always sees a within-
+  // tolerance UUID v7 timestamp. Payload-only (guards receive payload,
+  // not the wrapping action).
+  const newCharacterPayload = () => ({
     name: 'Lyra',
     species: 'Elf',
     size: 'medium' as const,
     class: 'Rogue',
     level: 2,
     str: 12,
-  };
+    ...createCharacterWithCharIds(),
+  });
+  const newCharacterDmOnlyPayload = () => ({
+    dmOnly: true as const,
+    partyName: 'X',
+    ...createCharacterDmOnlyIds(),
+  });
 
   function makePostBootstrapState(actorUserId: string, characterId: string | null): AppState {
     // Build a populated AppState where the actor has a player row whose
@@ -1698,7 +1768,7 @@ describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
     const state = makePostBootstrapState('u1', null);
     const result = guards['create-character'](
       state,
-      newCharacterPayload,
+      newCharacterPayload(),
       makeActor('u1', 'player'),
     );
     expect(result).toEqual({ ok: true });
@@ -1714,7 +1784,7 @@ describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
     };
     const result = guards['create-character'](
       state,
-      newCharacterPayload,
+      newCharacterPayload(),
       makeActor('dm-user', 'dm'),
     );
     expect(result).toEqual({ ok: true });
@@ -1724,7 +1794,7 @@ describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
     const state = makePostBootstrapState('u1', 'char-u1');
     const result = guards['create-character'](
       state,
-      newCharacterPayload,
+      newCharacterPayload(),
       makeActor('u1', 'player'),
     );
     expect(result).toMatchObject({ ok: false, code: 'character_already_exists' });
@@ -1734,7 +1804,7 @@ describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
     const state = makePostBootstrapState('u1', null);
     const result = guards['create-character'](
       state,
-      { dmOnly: true, partyName: 'X' },
+      newCharacterDmOnlyPayload(),
       makeActor('u1', 'player'),
     );
     expect(result).toMatchObject({ ok: false, code: 'state_already_initialized' });
@@ -1750,9 +1820,131 @@ describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
     };
     const result = guards['create-character'](
       state,
-      newCharacterPayload,
+      newCharacterPayload(),
       makeActor('outsider', 'player'),
     );
     expect(result).toMatchObject({ ok: false, code: 'not_a_member' });
+  });
+});
+
+// -------------------------------------------------------------------- //
+// RH1.2 — client-minted id validation (`id_malformed`, `id_clock_skew`)
+// runs upstream of every per-action guard. Rejects payloads carrying
+// a non-UUID-v7 id or an id whose embedded timestamp lies outside
+// `CLOCK_SKEW_TOLERANCE_MS` (±5 min). The `id_already_exists` code is
+// not tested here — it's persistor-layer (Prisma unique-constraint).
+// -------------------------------------------------------------------- //
+
+describe('checkGuard — RH1.2 id-shape + clock-skew validation', () => {
+  const state = makeState({ ownerUserId: 'u1', ownerCharacterId: 'char-u1' });
+  const memberships = [
+    makeMembership('dm-user', 'dm'),
+    makeMembership('u1', 'player'),
+    makeMembership('u2', 'player'),
+  ];
+  const actor = makeActor('u1', 'player');
+
+  it('rejects an acquire with a malformed newItemInstanceId', () => {
+    const action: Action = {
+      type: 'acquire',
+      payload: {
+        stashId: 'inv',
+        definitionId: 'phb-2024:rope',
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: 'not-a-uuid',
+      },
+    };
+    expect(checkGuard(state, action, actor, memberships)).toMatchObject({
+      ok: false,
+      code: 'id_malformed',
+    });
+  });
+
+  it('rejects an acquire with a UUID v7 id whose timestamp is far in the future (clock skew)', () => {
+    // Construct a UUID v7 whose embedded 48-bit ms timestamp is 10
+    // minutes in the future — well outside the ±5-min tolerance. The
+    // remaining 80 bits are the version nibble (7), the variant, and
+    // random. We reuse `newUuidV7()` and then rewrite the leading 12
+    // hex chars with the future timestamp.
+    const futureMs = Date.now() + 10 * 60 * 1000; // +10 minutes
+    const template = newUuidV7();
+    const futureHex = futureMs.toString(16).padStart(12, '0');
+    const futureId =
+      futureHex.slice(0, 8) + '-' + futureHex.slice(8, 12) + '-' + template.slice(14);
+    // Sanity: still a structurally valid v7 (version nibble '7' at pos 14).
+    expect(futureId[14]).toBe('7');
+
+    const action: Action = {
+      type: 'acquire',
+      payload: {
+        stashId: 'inv',
+        definitionId: 'phb-2024:rope',
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: futureId,
+      },
+    };
+    expect(checkGuard(state, action, actor, memberships)).toMatchObject({
+      ok: false,
+      code: 'id_clock_skew',
+    });
+  });
+
+  it('rejects a create-stash with a malformed newCurrencyHoldingId', () => {
+    const action: Action = {
+      type: 'create-stash',
+      payload: {
+        ownerCharacterId: 'char-u1',
+        name: 'Backpack',
+        newStashId: newUuidV7(),
+        newCurrencyHoldingId: 'malformed-cur-id',
+      },
+    };
+    expect(checkGuard(state, action, actor, memberships)).toMatchObject({
+      ok: false,
+      code: 'id_malformed',
+    });
+  });
+
+  it('rejects create-character (bootstrap) with a malformed newPartyId', () => {
+    const action: Action = {
+      type: 'create-character',
+      payload: {
+        name: 'Lyra',
+        species: 'Elf',
+        size: 'medium' as const,
+        class: 'Rogue',
+        level: 2,
+        str: 12,
+        newCharacterId: newUuidV7(),
+        newInventoryStashId: newUuidV7(),
+        newCurrencyHoldingId: newUuidV7(),
+        newUserId: newUuidV7(),
+        newPartyId: 'not-v7',
+        newPartyStashId: newUuidV7(),
+        newRecoveredLootStashId: newUuidV7(),
+        newPartyStashCurrencyId: newUuidV7(),
+        newRecoveredLootCurrencyId: newUuidV7(),
+      },
+    };
+    expect(checkGuard(null, action, makeActor(), [])).toMatchObject({
+      ok: false,
+      code: 'id_malformed',
+    });
+  });
+
+  it('accepts a well-formed minting action (positive control)', () => {
+    const action: Action = {
+      type: 'acquire',
+      payload: {
+        stashId: 'inv',
+        definitionId: 'phb-2024:rope',
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    };
+    expect(checkGuard(state, action, actor, memberships)).toEqual({ ok: true });
   });
 });

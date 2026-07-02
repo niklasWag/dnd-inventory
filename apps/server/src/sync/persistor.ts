@@ -239,7 +239,7 @@ export async function applyBootstrapDelta(
 async function persistAcquire(
   tx: Prisma.TransactionClient,
   payload: Extract<Action, { type: 'acquire' }>['payload'],
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): Promise<void> {
   // Auto-stack: if a row exists with matching (stashId, definitionId,
   // notes ?? ''), bump its quantity; otherwise insert a new row.
@@ -261,7 +261,7 @@ async function persistAcquire(
   }
   await tx.itemInstance.create({
     data: {
-      id: ctx.newId(),
+      id: payload.newItemInstanceId,
       definitionId: payload.definitionId,
       ownerType: 'stash',
       ownerId: payload.stashId,
@@ -326,7 +326,7 @@ async function persistCreateStash(
   payload: Extract<Action, { type: 'create-stash' }>['payload'],
   ctx: ReducerContext,
 ): Promise<void> {
-  const stashId = ctx.newId();
+  const stashId = payload.newStashId;
   await tx.stash.create({
     data: {
       id: stashId,
@@ -339,7 +339,7 @@ async function persistCreateStash(
     },
   });
   await tx.currencyHolding.create({
-    data: { id: ctx.newId(), stashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+    data: { id: payload.newCurrencyHoldingId, stashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
   });
 }
 
@@ -360,9 +360,8 @@ async function persistCreateStash(
  * pointing at a real Character with its own Inventory stash + zero-
  * balance CurrencyHolding.
  *
- * Server-side ids are minted via `ctx.newId()` (server-canonical),
- * which differ from the client's optimistic ids — the sync queue's
- * post-flush re-pull surfaces canonical ids back to the client.
+ * Ids come from the action payload (client-canonical per RH1.2), which
+ * the guard layer has already validated as UUID v7 upstream.
  */
 async function persistAddCharacterToExistingParty(
   tx: Prisma.TransactionClient,
@@ -379,8 +378,8 @@ async function persistAddCharacterToExistingParty(
   }
 
   const now = new Date(ctx.now());
-  const characterId = ctx.newId();
-  const inventoryStashId = ctx.newId();
+  const characterId = payload.newCharacterId;
+  const inventoryStashId = payload.newInventoryStashId;
 
   // Order matters because of the deferred Character.inventoryStashId FK:
   // the FK to Stash is `INITIALLY DEFERRED`, so within this transaction
@@ -417,7 +416,7 @@ async function persistAddCharacterToExistingParty(
   });
 
   await tx.currencyHolding.create({
-    data: { id: ctx.newId(), stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+    data: { id: payload.newCurrencyHoldingId, stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
   });
 
   // Patch the existing role='player' row (joiner / post-delete case) or
@@ -543,7 +542,7 @@ async function persistCurrencyChange(
 async function persistTransfer(
   tx: Prisma.TransactionClient,
   payload: Extract<Action, { type: 'transfer' }>['payload'],
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): Promise<void> {
   const source = await tx.itemInstance.findUniqueOrThrow({
     where: { id: payload.itemInstanceId },
@@ -588,7 +587,7 @@ async function persistTransfer(
     });
     await tx.itemInstance.create({
       data: {
-        id: ctx.newId(),
+        id: payload.newItemInstanceId,
         definitionId: source.definitionId,
         ownerType: 'stash',
         ownerId: payload.toStashId,
@@ -613,7 +612,7 @@ async function persistTransfer(
 async function persistSplit(
   tx: Prisma.TransactionClient,
   payload: Extract<Action, { type: 'split' }>['payload'],
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): Promise<void> {
   const source = await tx.itemInstance.findUniqueOrThrow({
     where: { id: payload.itemInstanceId },
@@ -624,7 +623,7 @@ async function persistSplit(
   });
   await tx.itemInstance.create({
     data: {
-      id: ctx.newId(),
+      id: payload.newItemInstanceId,
       definitionId: source.definitionId,
       ownerType: source.ownerType,
       ownerId: source.ownerId,
@@ -674,10 +673,10 @@ async function persistCreateHomebrew(
   tx: Prisma.TransactionClient,
   payload: Extract<Action, { type: 'create-homebrew' }>['payload'],
   actor: Actor,
-  ctx: ReducerContext,
+  _ctx: ReducerContext,
 ): Promise<void> {
   const data: Prisma.ItemDefinitionUncheckedCreateInput = {
-    id: ctx.newId(),
+    id: payload.newDefinitionId,
     name: payload.name,
     source: 'homebrew',
     category: payload.category,

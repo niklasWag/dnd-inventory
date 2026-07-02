@@ -12,6 +12,19 @@ import { useShallow } from 'zustand/react/shallow';
 import { wipeAll } from '@/db/wipe';
 
 import { bootstrap } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function createStashIds() {
+  return { newStashId: newUuidV7(), newCurrencyHoldingId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -60,7 +73,7 @@ function bootstrapWithStorage(name = 'Chest at home'): {
   const base = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: base.characterId, name },
+    payload: { ownerCharacterId: base.characterId, name , ...createStashIds() , ...createStashIds() },
   });
   const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
   return { ...base, storageStashId };
@@ -142,7 +155,7 @@ describe('StorageDetail (M3)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     renderAt(`/storage/${storageStashId}`);
 

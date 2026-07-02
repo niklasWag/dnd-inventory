@@ -96,21 +96,23 @@ describe('queue — 401 clears session', () => {
   });
 });
 
-describe('queue — id canonicalization after id-minting actions', () => {
+describe('queue — no post-flush re-pull after id-minting actions (RH1.3)', () => {
   /**
-   * R4.1.f post-ship bug fix (2026-06-30): the queue's post-flush
-   * re-pull was wired only for `create-character`. Every other action
-   * that mints server-canonical entity ids (`acquire`, `create-stash`,
-   * `split`, `create-homebrew`) suffered the same divergence: the
-   * client's reducer minted a local UUID that the server's reducer
-   * never agreed with. Subsequent actions referencing the new id (e.g.
-   * `transfer` after `acquire`) then failed with `item_not_found`
-   * because the client was holding stale optimistic ids.
+   * R4.1.f post-ship bug fix (2026-06-30) initially wired a post-flush
+   * `GET /sync/state` re-pull after any id-minting action to
+   * canonicalize local ids the server had re-minted. RH1.2 (2026-07-02)
+   * moved id-minting authority to the client — every entity id is now
+   * a client-minted UUID v7 sent in the action payload, and the server
+   * echoes it back verbatim in `applied[]`. That eliminated the
+   * divergence that made the re-pull necessary in the first place.
    *
-   * The fix is to re-pull canonical state after ANY id-minting action
-   * lands, mirroring the create-character pattern.
+   * RH1.3 removes the re-pull entirely. This test asserts the negative:
+   * after an `acquire` (or any other formerly-id-minting action), the
+   * queue MUST NOT call `/sync/state`. The old positive assertion (that
+   * the re-pull IS triggered) is kept below in the "regression archive"
+   * comment as documentation of the pre-RH1.3 behaviour.
    */
-  it('re-pulls canonical state after `acquire` so optimistic ids get replaced', async () => {
+  it('does NOT re-pull /sync/state after `acquire`', async () => {
     const queue = await loadQueue();
     const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
     queue.configureQueue(deps);
@@ -125,30 +127,29 @@ describe('queue — id canonicalization after id-minting actions', () => {
               id: 'log-server-1',
               partyId: 'party-1',
               sessionId: null,
-              timestamp: '2026-06-30T00:00:00.000Z',
+              timestamp: '2026-07-02T00:00:00.000Z',
               actorUserId: 'u1',
               actorRole: 'player',
               type: 'acquire',
               payload: {
                 stashId: 'inv-1',
-                // Server-canonical itemInstanceId differs from any id
-                // the client minted locally.
-                itemInstanceId: 'server-minted-item-id',
+                // The itemInstanceId in the applied echo matches the
+                // client-minted id (RH1.2) — no divergence, so no
+                // canonicalize step is needed.
+                itemInstanceId: 'client-minted-item-id',
                 definitionId: 'phb-2024:torch',
                 quantity: 1,
                 source: 'catalog-add',
               },
             },
           ],
-          serverTime: '2026-06-30T00:00:00.000Z',
+          serverTime: '2026-07-02T00:00:00.000Z',
         });
       }),
-      // The bug: this handler isn't called today. The fix: it must be.
+      // This handler MUST NOT fire post-RH1.3. If it does, the test
+      // will observe `calls.pulls > 0`.
       http.get(`${TEST_SERVER_ORIGIN}/sync/state`, () => {
         calls.pulls = (calls.pulls ?? 0) + 1;
-        // Return a structurally-empty response — the queue's restore
-        // path will fail Zod-parse but the assertion we care about is
-        // "the pull was triggered." We catch the resulting toast / log.
         return HttpResponse.json({}, { status: 500 });
       }),
     );
@@ -157,7 +158,7 @@ describe('queue — id canonicalization after id-minting actions', () => {
     await queue.flush();
 
     expect(calls.actions).toBe(1);
-    expect(calls.pulls).toBe(1);
+    expect(calls.pulls).toBe(0);
     queue.resetQueue();
   });
 });

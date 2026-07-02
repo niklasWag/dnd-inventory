@@ -3,10 +3,54 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { useStore, flushPendingPersist } from './index';
 import { loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
-import { appStateSchema, transactionLogEntrySchema } from '@app/shared';
+import { newUuidV7, appStateSchema, transactionLogEntrySchema } from '@app/shared';
 import { SEED_VERSION, loadPhbSeed } from '@app/seeds';
 
 import { bootstrap } from '@/test/fixtures';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function transferIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function splitIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
+function createStashIds() {
+  return { newStashId: newUuidV7(), newCurrencyHoldingId: newUuidV7() };
+}
+function createHomebrewIds() {
+  return { newDefinitionId: newUuidV7() };
+}
+function createCharacterIds() {
+  return {
+    newCharacterId: newUuidV7(),
+    newInventoryStashId: newUuidV7(),
+    newCurrencyHoldingId: newUuidV7(),
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
+function createCharacterDmOnlyIds() {
+  return {
+    newUserId: newUuidV7(),
+    newPartyId: newUuidV7(),
+    newPartyStashId: newUuidV7(),
+    newRecoveredLootStashId: newUuidV7(),
+    newPartyStashCurrencyId: newUuidV7(),
+    newRecoveredLootCurrencyId: newUuidV7(),
+  };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -35,7 +79,7 @@ describe('store plumbing', () => {
 
 describe('reducer: create-character (M1)', () => {
   it('provisions user + party + 2 memberships + character + 3 stashes + 3 currencies', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const s = useStore.getState().appState;
 
     expect(s).not.toBeNull();
@@ -56,7 +100,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('character.inventoryStashId references the isCarried stash', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const s = useStore.getState().appState;
     if (s === null) throw new Error('appState should be populated');
 
@@ -67,7 +111,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('party.recoveredLootStashId references the recovered-loot scope stash', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const s = useStore.getState().appState;
     if (s === null) throw new Error('appState should be populated');
 
@@ -77,7 +121,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('player membership references the new character; dm membership has null characterId', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const s = useStore.getState().appState;
     if (s === null) throw new Error('appState should be populated');
 
@@ -89,7 +133,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('one CurrencyHolding row per stash with all denominations zero', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const s = useStore.getState().appState;
     if (s === null) throw new Error('appState should be populated');
 
@@ -101,7 +145,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('appends a typed create-character log entry with actorRole=dm', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const { log, appState } = useStore.getState();
 
     expect(log).toHaveLength(1);
@@ -118,21 +162,21 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('produces an AppState that validates against the shared Zod schema', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const s = useStore.getState().appState;
     expect(() => appStateSchema.parse(s)).not.toThrow();
   });
 
   it('rejects a second create-character once one exists', () => {
     const { dispatch } = useStore.getState();
-    dispatch({ type: 'create-character', payload: validPayload });
+    dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     expect(() =>
-      dispatch({ type: 'create-character', payload: { ...validPayload, name: 'Other' } }),
+      dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), name: 'Other' } }),
     ).toThrow(/already has an active player character/);
   });
 
   it('debounced persist round-trips the new state + log through Dexie', async () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     // Nothing written yet (debounce window still open).
     expect(await loadAppState()).toBeNull();
 
@@ -172,7 +216,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
       .getState()
       .dispatch({
         type: 'create-character',
-        payload: { ...validPayload, partyName: 'The Misfits' },
+        payload: { ...validPayload, ...createCharacterIds(), partyName: 'The Misfits' , ...createCharacterIds() },
       });
     const s = useStore.getState().appState!;
     expect(s.party.name).toBe('The Misfits');
@@ -187,7 +231,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
       .getState()
       .dispatch({
         type: 'create-character',
-        payload: { dmOnly: true, partyName: 'DM Sandbox' },
+        payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() , ...createCharacterIds() },
       });
     const s = useStore.getState().appState!;
     // Party + DM membership only.
@@ -205,7 +249,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
   it('emits a `create-character` log entry with dmOnly: true on the DM-only branch', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() , ...createCharacterIds() },
     });
     const log = useStore.getState().log;
     expect(log).toHaveLength(1);
@@ -221,7 +265,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
   it('persisted state with dmOnly bootstrap round-trips through the shared schema', async () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() , ...createCharacterIds() },
     });
     await flushPendingPersist();
     const persisted = (await loadAppState()) as {
@@ -242,7 +286,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
         .getState()
         .dispatch({
           type: 'create-character',
-          payload: { dmOnly: true, partyName: 'X' },
+          payload: { dmOnly: true, partyName: 'X', ...createCharacterDmOnlyIds() , ...createCharacterIds() },
         }),
     ).toThrow(/dmOnly is only valid on the bootstrap/);
   });
@@ -250,7 +294,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
 
 describe('reducer: seed-catalog (M2)', () => {
   it('populates the catalog from an empty state and bumps seedVersion', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const before = useStore.getState().appState!;
     expect(before.catalog).toHaveLength(0);
     expect(before.seedVersion).toBe(0);
@@ -315,7 +359,7 @@ describe('reducer: seed-catalog (M2)', () => {
   });
 
   it('logs a seed-catalog entry with the right add/update split', () => {
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
     const phb = loadPhbSeed();
 
     useStore.getState().dispatch({
@@ -355,7 +399,7 @@ describe('reducer: acquire (M2)', () => {
         definitionId: rope.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     const items = useStore.getState().appState!.items;
@@ -377,7 +421,7 @@ describe('reducer: acquire (M2)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -386,7 +430,7 @@ describe('reducer: acquire (M2)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     const items = useStore.getState().appState!.items;
@@ -414,7 +458,7 @@ describe('reducer: acquire (M2)', () => {
         quantity: 1,
         source: 'catalog-add',
         notes: 'given by Volo',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -424,7 +468,7 @@ describe('reducer: acquire (M2)', () => {
         quantity: 1,
         source: 'catalog-add',
         notes: 'looted',
-      },
+        ...acquireIds(), },
     });
 
     const items = useStore.getState().appState!.items;
@@ -442,7 +486,7 @@ describe('reducer: acquire (M2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const last = useStore.getState().log.at(-1);
     expect(last?.type).toBe('acquire');
@@ -462,7 +506,7 @@ describe('reducer: acquire (M2)', () => {
           definitionId: torch.id,
           quantity: 1,
           source: 'catalog-add',
-        },
+          ...acquireIds(), },
       }),
     ).toThrow(/unknown stashId/);
 
@@ -474,7 +518,7 @@ describe('reducer: acquire (M2)', () => {
           definitionId: 'nope',
           quantity: 1,
           source: 'catalog-add',
-        },
+          ...acquireIds(), },
       }),
     ).toThrow(/unknown definitionId/);
 
@@ -486,7 +530,7 @@ describe('reducer: acquire (M2)', () => {
           definitionId: torch.id,
           quantity: 0,
           source: 'catalog-add',
-        },
+          ...acquireIds(), },
       }),
     ).toThrow(/quantity must be positive/);
   });
@@ -501,7 +545,7 @@ describe('reducer: acquire (M2)', () => {
         definitionId: torch.id,
         quantity: 4,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
   });
@@ -518,7 +562,7 @@ describe('reducer: consume (M2)', () => {
         definitionId: torch.id,
         quantity,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const row = useStore.getState().appState!.items[0]!;
     return { itemInstanceId: row.id, stashId: inventoryStashId };
@@ -593,7 +637,7 @@ function bootstrapWithItem(initial: { customName?: string; notes?: string } = {}
       quantity: 1,
       source: 'catalog-add',
       ...(initial.notes !== undefined ? { notes: initial.notes } : {}),
-    },
+      ...acquireIds(), },
   });
   // customName isn't an acquire field — patch it directly into state for
   // tests that need a pre-existing customName baseline.
@@ -764,7 +808,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
         quantity: 1,
         source: 'catalog-add',
         notes: 'A',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -774,7 +818,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
         quantity: 1,
         source: 'catalog-add',
         notes: 'B',
-      },
+        ...acquireIds(), },
     });
 
     const rowB = useStore.getState().appState!.items.find((i) => i.notes === 'B')!;
@@ -838,7 +882,7 @@ describe('schema back-compat: source = custom-create still validates (M2.5)', ()
         definitionId: 'phb-2024:torch',
         quantity: 1,
         source: 'custom-create' as const,
-      },
+        ...acquireIds(), },
     };
     expect(() => transactionLogEntrySchema.parse(legacy)).not.toThrow();
   });
@@ -858,7 +902,7 @@ describe('schema back-compat: source = custom-create still validates (M2.5)', ()
         definitionId: 'phb-2024:torch',
         quantity: 1,
         source: 'catalog-add' as const,
-      },
+        ...acquireIds(), },
     };
     expect(() => transactionLogEntrySchema.parse(fresh)).not.toThrow();
   });
@@ -875,7 +919,7 @@ describe('reducer: create-stash (M3)', () => {
 
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
     });
 
     const s = useStore.getState().appState!;
@@ -896,7 +940,7 @@ describe('reducer: create-stash (M3)', () => {
 
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Vault' },
+      payload: { ownerCharacterId: characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
 
     const s = useStore.getState().appState!;
@@ -911,7 +955,7 @@ describe('reducer: create-stash (M3)', () => {
 
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Wagon' },
+      payload: { ownerCharacterId: characterId, name: 'Wagon' , ...createStashIds() , ...createStashIds() },
     });
 
     const last = useStore.getState().log.at(-1);
@@ -933,7 +977,7 @@ describe('reducer: create-stash (M3)', () => {
 
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: '  Tower of Mystra  ' },
+      payload: { ownerCharacterId: characterId, name: '  Tower of Mystra  ' , ...createStashIds() , ...createStashIds() },
     });
 
     const newStash = useStore.getState().appState!.stashes.at(-1)!;
@@ -945,7 +989,7 @@ describe('reducer: create-stash (M3)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'create-stash',
-        payload: { ownerCharacterId: 'does-not-exist', name: 'Ghost vault' },
+        payload: { ownerCharacterId: 'does-not-exist', name: 'Ghost vault' , ...createStashIds() , ...createStashIds() },
       }),
     ).toThrow(/unknown ownerCharacterId/);
   });
@@ -955,7 +999,7 @@ describe('reducer: create-stash (M3)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'create-stash',
-        payload: { ownerCharacterId: characterId, name: '' },
+        payload: { ownerCharacterId: characterId, name: '' , ...createStashIds() , ...createStashIds() },
       }),
     ).toThrow(/name is empty/);
   });
@@ -965,7 +1009,7 @@ describe('reducer: create-stash (M3)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'create-stash',
-        payload: { ownerCharacterId: characterId, name: '    ' },
+        payload: { ownerCharacterId: characterId, name: '    ' , ...createStashIds() , ...createStashIds() },
       }),
     ).toThrow(/name is empty/);
   });
@@ -974,7 +1018,7 @@ describe('reducer: create-stash (M3)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'create-stash',
-        payload: { ownerCharacterId: 'foo', name: 'bar' },
+        payload: { ownerCharacterId: 'foo', name: 'bar' , ...createStashIds() , ...createStashIds() },
       }),
     ).toThrow(/no AppState/);
   });
@@ -983,7 +1027,7 @@ describe('reducer: create-stash (M3)', () => {
     const { characterId } = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'A' },
+      payload: { ownerCharacterId: characterId, name: 'A' , ...createStashIds() , ...createStashIds() },
     });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
   });
@@ -995,7 +1039,7 @@ describe('reducer: create-stash (M3)', () => {
     const { characterId } = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Second pack?' },
+      payload: { ownerCharacterId: characterId, name: 'Second pack?' , ...createStashIds() , ...createStashIds() },
     });
     const carriedStashes = useStore
       .getState()
@@ -1020,7 +1064,7 @@ describe('reducer: rename-stash (M3)', () => {
     const base = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: initialName },
+      payload: { ownerCharacterId: base.characterId, name: initialName , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     return { ...base, storageStashId };
@@ -1176,7 +1220,7 @@ describe('reducer: delete-stash (M3)', () => {
     const base = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' },
+      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     return { ...base, storageStashId };
@@ -1226,7 +1270,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -1235,7 +1279,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: rope.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore
       .getState()
@@ -1263,7 +1307,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -1272,7 +1316,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: rope.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore
       .getState()
@@ -1314,7 +1358,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: torch.id,
         quantity: 5,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const beforeLogLen = useStore.getState().log.length;
 
@@ -1346,7 +1390,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     // Now a Torch in the Storage stash (will be transferred on delete).
     dispatch({
@@ -1356,7 +1400,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
@@ -1470,7 +1514,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
@@ -1486,7 +1530,7 @@ describe('reducer: delete-stash (M3)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const beforeLogLen = useStore.getState().log.length;
 
@@ -1731,7 +1775,7 @@ describe('reducer: currency-change (M4)', () => {
     const { characterId } = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     useStore.getState().dispatch({
@@ -1771,7 +1815,7 @@ describe('reducer: transfer (M5)', () => {
     const base = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' },
+      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     return { ...base, storageStashId };
@@ -1787,13 +1831,13 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 , ...transferIds() , ...transferIds() },
     });
 
     const items = useStore.getState().appState!.items;
@@ -1813,13 +1857,13 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 5,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 , ...transferIds() , ...transferIds() },
     });
 
     const items = useStore.getState().appState!.items;
@@ -1843,7 +1887,7 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const destId = useStore.getState().appState!.items[0]!.id;
     // Seed inventory with 3 torches.
@@ -1854,7 +1898,7 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore
       .getState()
@@ -1862,7 +1906,7 @@ describe('reducer: transfer (M5)', () => {
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 , ...transferIds() , ...transferIds() },
     });
 
     const items = useStore.getState().appState!.items;
@@ -1882,7 +1926,7 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const destId = useStore.getState().appState!.items[0]!.id;
     useStore.getState().dispatch({
@@ -1892,7 +1936,7 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 5,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore
       .getState()
@@ -1900,7 +1944,7 @@ describe('reducer: transfer (M5)', () => {
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 , ...transferIds() , ...transferIds() },
     });
 
     const items = useStore.getState().appState!.items;
@@ -1922,7 +1966,7 @@ describe('reducer: transfer (M5)', () => {
         quantity: 1,
         source: 'catalog-add',
         notes: 'lit',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'acquire',
@@ -1932,13 +1976,13 @@ describe('reducer: transfer (M5)', () => {
         quantity: 1,
         source: 'catalog-add',
         notes: 'unlit',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items.find((i) => i.notes === 'unlit')!.id;
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 1 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const inStorage = useStore
@@ -1957,7 +2001,7 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const destId = useStore.getState().appState!.items[0]!.id;
     useStore.getState().dispatch({
@@ -1967,7 +2011,7 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore
       .getState()
@@ -1976,7 +2020,7 @@ describe('reducer: transfer (M5)', () => {
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 , ...transferIds() , ...transferIds() },
     });
 
     const newEntries = useStore.getState().log.slice(beforeLogLen);
@@ -2001,13 +2045,13 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
     expect(() =>
       useStore.getState().dispatch({
         type: 'transfer',
-        payload: { itemInstanceId: sourceId, toStashId: inventoryStashId, quantity: 1 },
+        payload: { itemInstanceId: sourceId, toStashId: inventoryStashId, quantity: 1 , ...transferIds() , ...transferIds() },
       }),
     ).toThrow(/same stash|no-op/i);
   });
@@ -2017,7 +2061,7 @@ describe('reducer: transfer (M5)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'transfer',
-        payload: { itemInstanceId: 'nope', toStashId: storageStashId, quantity: 1 },
+        payload: { itemInstanceId: 'nope', toStashId: storageStashId, quantity: 1 , ...transferIds() , ...transferIds() },
       }),
     ).toThrow(/unknown itemInstanceId/i);
   });
@@ -2032,13 +2076,13 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
     expect(() =>
       useStore.getState().dispatch({
         type: 'transfer',
-        payload: { itemInstanceId: sourceId, toStashId: 'nope', quantity: 1 },
+        payload: { itemInstanceId: sourceId, toStashId: 'nope', quantity: 1 , ...transferIds() , ...transferIds() },
       }),
     ).toThrow(/unknown.*stash/i);
   });
@@ -2053,13 +2097,13 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
     expect(() =>
       useStore.getState().dispatch({
         type: 'transfer',
-        payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 },
+        payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 , ...transferIds() , ...transferIds() },
       }),
     ).toThrow(/exceeds/i);
   });
@@ -2074,13 +2118,13 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
     expect(() =>
       useStore.getState().dispatch({
         type: 'transfer',
-        payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 0 },
+        payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 0 , ...transferIds() , ...transferIds() },
       }),
     ).toThrow(/positive/i);
   });
@@ -2095,12 +2139,12 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 2 , ...transferIds() , ...transferIds() },
     });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
   });
@@ -2115,12 +2159,12 @@ describe('reducer: transfer (M5)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 },
+      payload: { itemInstanceId: sourceId, toStashId: storageStashId, quantity: 3 , ...transferIds() , ...transferIds() },
     });
     await flushPendingPersist();
     const loaded = await loadAppState();
@@ -2153,7 +2197,7 @@ describe('reducer: split (M5)', () => {
         definitionId: torch.id,
         quantity,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const row = useStore.getState().appState!.items[0]!;
     return { itemInstanceId: row.id, stashId: inventoryStashId };
@@ -2163,7 +2207,7 @@ describe('reducer: split (M5)', () => {
     const { itemInstanceId, stashId } = bootstrapWithStack(5);
     useStore.getState().dispatch({
       type: 'split',
-      payload: { itemInstanceId, quantity: 2 },
+      payload: { itemInstanceId, quantity: 2 , ...splitIds() , ...splitIds() },
     });
 
     const items = useStore.getState().appState!.items;
@@ -2188,13 +2232,13 @@ describe('reducer: split (M5)', () => {
         quantity: 4,
         source: 'catalog-add',
         notes: 'given by Volo',
-      },
+        ...acquireIds(), },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
 
     useStore.getState().dispatch({
       type: 'split',
-      payload: { itemInstanceId: sourceId, quantity: 1 },
+      payload: { itemInstanceId: sourceId, quantity: 1 , ...splitIds() , ...splitIds() },
     });
 
     const newRow = useStore.getState().appState!.items.find((i) => i.id !== sourceId)!;
@@ -2219,7 +2263,7 @@ describe('reducer: split (M5)', () => {
 
     useStore.getState().dispatch({
       type: 'split',
-      payload: { itemInstanceId, quantity: 1 },
+      payload: { itemInstanceId, quantity: 1 , ...splitIds() , ...splitIds() },
     });
 
     const newRow = useStore.getState().appState!.items.find((i) => i.id !== itemInstanceId)!;
@@ -2232,7 +2276,7 @@ describe('reducer: split (M5)', () => {
 
     useStore.getState().dispatch({
       type: 'split',
-      payload: { itemInstanceId, quantity: 2 },
+      payload: { itemInstanceId, quantity: 2 , ...splitIds() , ...splitIds() },
     });
 
     const newEntries = useStore.getState().log.slice(beforeLogLen);
@@ -2255,7 +2299,7 @@ describe('reducer: split (M5)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'split',
-        payload: { itemInstanceId, quantity: 3 },
+        payload: { itemInstanceId, quantity: 3 , ...splitIds() , ...splitIds() },
       }),
     ).toThrow();
   });
@@ -2265,7 +2309,7 @@ describe('reducer: split (M5)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'split',
-        payload: { itemInstanceId, quantity: 4 },
+        payload: { itemInstanceId, quantity: 4 , ...splitIds() , ...splitIds() },
       }),
     ).toThrow();
   });
@@ -2275,7 +2319,7 @@ describe('reducer: split (M5)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'split',
-        payload: { itemInstanceId, quantity: 0 },
+        payload: { itemInstanceId, quantity: 0 , ...splitIds() , ...splitIds() },
       }),
     ).toThrow(/positive/i);
   });
@@ -2285,7 +2329,7 @@ describe('reducer: split (M5)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'split',
-        payload: { itemInstanceId, quantity: 1 },
+        payload: { itemInstanceId, quantity: 1 , ...splitIds() , ...splitIds() },
       }),
     ).toThrow();
   });
@@ -2295,7 +2339,7 @@ describe('reducer: split (M5)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'split',
-        payload: { itemInstanceId: 'nope', quantity: 1 },
+        payload: { itemInstanceId: 'nope', quantity: 1 , ...splitIds() , ...splitIds() },
       }),
     ).toThrow(/unknown/i);
   });
@@ -2304,7 +2348,7 @@ describe('reducer: split (M5)', () => {
     const { itemInstanceId } = bootstrapWithStack(5);
     useStore.getState().dispatch({
       type: 'split',
-      payload: { itemInstanceId, quantity: 2 },
+      payload: { itemInstanceId, quantity: 2 , ...splitIds() , ...splitIds() },
     });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
   });
@@ -2359,7 +2403,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
     const base = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' },
+      payload: { ownerCharacterId: base.characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     seedHolding(base.inventoryStashId, { gp: 10 });
@@ -2608,7 +2652,7 @@ describe('reducer: create-homebrew (M6)', () => {
         cost: { amount: 5, currency: 'gp' },
         description: 'A small mushroom that glows in the dark.',
         tags: ['light', 'underdark'],
-      },
+        ...createHomebrewIds(), },
     });
 
     const catalog = useStore.getState().appState!.catalog;
@@ -2633,7 +2677,7 @@ describe('reducer: create-homebrew (M6)', () => {
 
     useStore.getState().dispatch({
       type: 'create-homebrew',
-      payload: { name: 'Foobar', category: 'gear' },
+      payload: { name: 'Foobar', category: 'gear' , ...createHomebrewIds() , ...createHomebrewIds() },
     });
 
     const log = useStore.getState().log;
@@ -2657,7 +2701,7 @@ describe('reducer: create-homebrew (M6)', () => {
         name: 'Glowing Torch',
         category: 'gear',
         duplicatedFromId: torch.id,
-      },
+        ...createHomebrewIds(), },
     });
 
     const created = useStore.getState().appState!.catalog.at(-1)!;
@@ -2669,10 +2713,10 @@ describe('reducer: create-homebrew (M6)', () => {
     localBootstrap();
     const { dispatch } = useStore.getState();
     expect(() =>
-      dispatch({ type: 'create-homebrew', payload: { name: '', category: 'gear' } }),
+      dispatch({ type: 'create-homebrew', payload: { name: '', category: 'gear', ...createHomebrewIds() } }),
     ).toThrow(/name/i);
     expect(() =>
-      dispatch({ type: 'create-homebrew', payload: { name: '   ', category: 'gear' } }),
+      dispatch({ type: 'create-homebrew', payload: { name: '   ', category: 'gear', ...createHomebrewIds() } }),
     ).toThrow(/name/i);
   });
 
@@ -2680,7 +2724,7 @@ describe('reducer: create-homebrew (M6)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'create-homebrew',
-        payload: { name: 'Foo', category: 'gear' },
+        payload: { name: 'Foo', category: 'gear' , ...createHomebrewIds() , ...createHomebrewIds() },
       }),
     ).toThrow(/create-character must run first/);
   });
@@ -2689,7 +2733,7 @@ describe('reducer: create-homebrew (M6)', () => {
     localBootstrap();
     useStore.getState().dispatch({
       type: 'create-homebrew',
-      payload: { name: '  Trimmed  ', category: 'gear' },
+      payload: { name: '  Trimmed  ', category: 'gear' , ...createHomebrewIds() , ...createHomebrewIds() },
     });
     expect(useStore.getState().appState!.catalog.at(-1)!.name).toBe('Trimmed');
   });
@@ -2698,7 +2742,7 @@ describe('reducer: create-homebrew (M6)', () => {
     localBootstrap();
     useStore.getState().dispatch({
       type: 'create-homebrew',
-      payload: { name: 'Foo', category: 'gear' },
+      payload: { name: 'Foo', category: 'gear' , ...createHomebrewIds() , ...createHomebrewIds() },
     });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
   });
@@ -2716,7 +2760,7 @@ describe('reducer: edit-homebrew (M6)', () => {
     const base = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-homebrew',
-      payload: { name: 'Glowing Mushroom', category: 'consumable' },
+      payload: { name: 'Glowing Mushroom', category: 'consumable' , ...createHomebrewIds() , ...createHomebrewIds() },
     });
     const homebrewDefId = useStore.getState().appState!.catalog.at(-1)!.id;
     return { ...base, homebrewDefId };
@@ -2809,7 +2853,7 @@ describe('reducer: edit-homebrew (M6)', () => {
     localBootstrap();
     useStore.getState().dispatch({
       type: 'create-homebrew',
-      payload: { name: 'X', category: 'gear', cost: { amount: 5, currency: 'gp' } },
+      payload: { name: 'X', category: 'gear', cost: { amount: 5, currency: 'gp' , ...createHomebrewIds() } , ...createHomebrewIds() },
     });
     const defId = useStore.getState().appState!.catalog.at(-1)!.id;
     useStore.getState().dispatch({
@@ -2833,7 +2877,7 @@ describe('reducer: edit-homebrew (M6)', () => {
         definitionId: homebrewDefId,
         quantity: 1,
         source: 'custom-create',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'edit-homebrew',
@@ -2858,7 +2902,7 @@ describe('reducer: delete-homebrew (M6)', () => {
     const base = localBootstrap();
     useStore.getState().dispatch({
       type: 'create-homebrew',
-      payload: { name: 'Glowing Mushroom', category: 'consumable' },
+      payload: { name: 'Glowing Mushroom', category: 'consumable' , ...createHomebrewIds() , ...createHomebrewIds() },
     });
     const homebrewDefId = useStore.getState().appState!.catalog.at(-1)!.id;
     return { ...base, homebrewDefId };
@@ -2895,7 +2939,7 @@ describe('reducer: delete-homebrew (M6)', () => {
         definitionId: homebrewDefId,
         quantity: 2,
         source: 'custom-create',
-      },
+        ...acquireIds(), },
     });
     expect(() =>
       useStore.getState().dispatch({
@@ -3394,7 +3438,7 @@ describe('reducer: equip / unequip (R1.2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     return { characterId, inventoryStashId, partyStashId, itemInstanceId };
@@ -3443,7 +3487,7 @@ describe('reducer: equip / unequip (R1.2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     const logLenBefore = useStore.getState().log.length;
@@ -3514,7 +3558,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
           quantity: 1,
           source: 'catalog-add',
           notes: `slot-${i}`,
-        },
+          ...acquireIds(), },
       });
     }
     const ids: string[] = [];
@@ -3580,7 +3624,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     expect(() =>
@@ -3654,7 +3698,7 @@ describe('reducer: attune cap-override (R4.3.d)', () => {
           quantity: 1,
           source: 'catalog-add',
           notes: `slot-${i}`,
-        },
+          ...acquireIds(), },
       });
     }
     const ids: string[] = [];
@@ -3755,7 +3799,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -3782,7 +3826,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
         definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -3808,7 +3852,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -3848,7 +3892,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
 
@@ -4005,7 +4049,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
@@ -4018,7 +4062,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const moved = useStore.getState().appState!.items.find((i) => i.ownerId === partyStashId);
@@ -4052,14 +4096,14 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
         definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId } });
     // Create a Storage stash to transfer into.
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Vault' },
+      payload: { ownerCharacterId: characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore
       .getState()
@@ -4067,7 +4111,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: storageStashId, quantity: 1 },
+      payload: { itemInstanceId, toStashId: storageStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const moved = useStore.getState().appState!.items.find((i) => i.ownerId === storageStashId);
@@ -4082,7 +4126,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
         quantity: 1,
         source: 'catalog-add',
         notes: 'fresh-row',
-      },
+        ...acquireIds(), },
     });
     const freshId = useStore.getState().appState!.items.find((i) => i.notes === 'fresh-row')!.id;
     expect(() =>
@@ -4105,14 +4149,14 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     const logLenBefore = useStore.getState().log.length;
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const added = useStore.getState().log.slice(logLenBefore);
@@ -4134,14 +4178,14 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     const logLenBefore = useStore.getState().log.length;
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: recoveredLootStashId, quantity: 1 },
+      payload: { itemInstanceId, toStashId: recoveredLootStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const added = useStore.getState().log.slice(logLenBefore);
@@ -4161,7 +4205,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
         definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
@@ -4170,7 +4214,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     const logLenBefore = useStore.getState().log.length;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const added = useStore.getState().log.slice(logLenBefore);
@@ -4219,7 +4263,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const backpackId = useStore
       .getState()
@@ -4236,7 +4280,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
           quantity: 1,
           source: 'catalog-add',
           notes: `day-${i}`,
-        },
+          ...acquireIds(), },
       });
     }
     // Patch the three rows to point at the backpack as their container.
@@ -4259,7 +4303,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     // All 4 rows (backpack + 3 rations) now live in the Party Stash.
@@ -4279,7 +4323,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const added = useStore.getState().log.slice(logLenBefore);
@@ -4306,12 +4350,12 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
         definitionId: rope.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     // Rope stays in Inventory.
@@ -4333,7 +4377,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
     const logLenBefore = useStore.getState().log.length;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId: backpackId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const moved = useStore.getState().appState!.items.find((i) => i.id === backpackId);
@@ -4382,7 +4426,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
         definitionId: greatclub.id,
         quantity: 16,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     const itemsBefore = useStore.getState().appState!.items.slice();
@@ -4397,7 +4441,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
           definitionId: greatclub.id,
           quantity: 1,
           source: 'catalog-add',
-        },
+          ...acquireIds(), },
       });
     }).toThrow(/carrying capacity/i);
 
@@ -4419,7 +4463,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
         definitionId: greatclub.id,
         quantity: 24,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     // Pre-load Inventory to 230 lb so any incoming over 10 lb rejects.
     useStore.getState().dispatch({
@@ -4432,7 +4476,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
         notes: 'pre-loaded',
         quantity: 23,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     // Find the row in the party stash; transfer 2 (= 20 lb) into Inventory.
@@ -4446,7 +4490,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     expect(() => {
       useStore.getState().dispatch({
         type: 'transfer',
-        payload: { itemInstanceId: partyRow.id, toStashId: inventoryStashId, quantity: 2 },
+        payload: { itemInstanceId: partyRow.id, toStashId: inventoryStashId, quantity: 2 , ...transferIds() , ...transferIds() },
       });
     }).toThrow(/carrying capacity/i);
 
@@ -4482,7 +4526,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
           definitionId: greatclub.id,
           quantity: 100, // 1000 lb
           source: 'catalog-add',
-        },
+          ...acquireIds(), },
       });
     }).not.toThrow();
   });
@@ -4504,7 +4548,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
           definitionId: greatclub.id,
           quantity: 20, // 200 lb > 160 variant ceiling
           source: 'catalog-add',
-        },
+          ...acquireIds(), },
       });
     }).not.toThrow();
     const row = useStore.getState().appState!.items.find((i) => i.ownerId === inventoryStashId);
@@ -4532,7 +4576,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
         definitionId: greatclub.id,
         quantity: 7,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     // 8th greatclub = 80 lb > 75 ceiling → reject.
     expect(() => {
@@ -4543,7 +4587,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
           definitionId: greatclub.id,
           quantity: 1,
           source: 'catalog-add',
-        },
+          ...acquireIds(), },
       });
     }).toThrow(/carrying capacity/i);
   });
@@ -4563,7 +4607,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
         definitionId: greatclub.id,
         quantity: 23,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     enableEnforce(characterId, 'phb'); // ceiling = 240 — fine, but a future
     // hypothetical "edit-character to lower STR" path could leave the row
@@ -4573,7 +4617,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     expect(() => {
       useStore.getState().dispatch({
         type: 'transfer',
-        payload: { itemInstanceId: row.id, toStashId: partyStashId, quantity: 23 },
+        payload: { itemInstanceId: row.id, toStashId: partyStashId, quantity: 23 , ...transferIds() , ...transferIds() },
       });
     }).not.toThrow();
   });
@@ -4608,7 +4652,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         quantity,
         source: 'catalog-add',
         ...(notes !== undefined ? { notes } : {}),
-      },
+        ...acquireIds(), },
     });
     const fresh = useStore.getState().appState!.items.find((i) => !before.has(i.id));
     return fresh!.id;
@@ -4635,7 +4679,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         toStashId: inventoryStashId,
         quantity: 1,
         toContainerInstanceId: backpackId,
-      },
+        ...transferIds(), },
     });
 
     const torchRow = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
@@ -4667,7 +4711,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
           toStashId: inventoryStashId,
           quantity: 1,
           toContainerInstanceId: backpackBId, // already nested inside A
-        },
+          ...transferIds(), },
       });
     }).toThrow(/one level|two-level|nested|already in a container/i);
   });
@@ -4685,7 +4729,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
           toStashId: inventoryStashId,
           quantity: 1,
           toContainerInstanceId: backpackId, // pack into self
-        },
+          ...transferIds(), },
       });
     }).toThrow(/self|itself|same row/i);
   });
@@ -4706,7 +4750,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
           toStashId: inventoryStashId, // moving to inventory
           quantity: 1,
           toContainerInstanceId: partyBackpackId, // ... but container is in party stash
-        },
+          ...transferIds(), },
       });
     }).toThrow(/same stash|different stash/i);
   });
@@ -4724,7 +4768,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
           toStashId: inventoryStashId,
           quantity: 1,
           toContainerInstanceId: 'bogus-container-id',
-        },
+          ...transferIds(), },
       });
     }).toThrow(/unknown|not found/i);
   });
@@ -4743,7 +4787,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         toStashId: inventoryStashId,
         quantity: 1,
         toContainerInstanceId: backpackId,
-      },
+        ...transferIds(), },
     });
     // Take out.
     useStore.getState().dispatch({
@@ -4753,7 +4797,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         toStashId: inventoryStashId,
         quantity: 1,
         toContainerInstanceId: null,
-      },
+        ...transferIds(), },
     });
 
     const torchRow = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
@@ -4778,7 +4822,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         cost: { amount: 1, currency: 'gp' },
         description: 'A magical sack that ignores its contents weight.',
         tags: [],
-      },
+        ...createHomebrewIds(), },
     });
     useStore.setState((curr) => {
       const nextCatalog = curr.appState!.catalog.map((d) =>
@@ -4797,7 +4841,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         definitionId: greatclub.id,
         quantity: 23,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     enableEnforce(characterId, 'phb'); // ceiling = 240 lb
     const greatclubRow = useStore
@@ -4814,7 +4858,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
           toStashId: inventoryStashId,
           quantity: greatclubRow.quantity,
           toContainerInstanceId: sackId,
-        },
+          ...transferIds(), },
       });
     }).not.toThrow();
   });
@@ -4830,7 +4874,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'acquire',
@@ -4839,7 +4883,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     const backpackRows = useStore
@@ -4867,7 +4911,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         quantity: 1,
         source: 'catalog-add',
         notes: "Volo's backpack",
-      },
+        ...acquireIds(), },
     });
 
     const row = useStore.getState().appState!.items.find((i) => i.definitionId === backpack.id)!;
@@ -4881,11 +4925,11 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
 
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' , ...acquireIds() , ...acquireIds() },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' , ...acquireIds() , ...acquireIds() },
     });
     // Consume #1 fully.
     const row1 = useStore
@@ -4898,7 +4942,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     // Next acquire must synth '#3', not recycle '#1'.
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' },
+      payload: { stashId: inventoryStashId, definitionId: def, quantity: 1, source: 'catalog-add' , ...acquireIds() , ...acquireIds() },
     });
 
     const liveRows = useStore.getState().appState!.items.filter((i) => i.definitionId === def);
@@ -4917,7 +4961,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'acquire',
@@ -4926,7 +4970,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     const invBackpack = useStore
@@ -4952,7 +4996,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'acquire',
@@ -4961,7 +5005,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
 
     // Should auto-stack on `(definitionId, notes ?? "")` per the M2 contract.
@@ -4999,7 +5043,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         toStashId: inventoryStashId,
         quantity: 1,
         toContainerInstanceId: backpackId,
-      },
+        ...transferIds(), },
     });
     expect(
       useStore.getState().appState!.items.find((i) => i.id === torchId)!.containerInstanceId,
@@ -5012,7 +5056,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         itemInstanceId: torchId,
         toStashId: partyStashId,
         quantity: 1,
-      },
+        ...transferIds(), },
     });
 
     const torchAfter = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
@@ -5048,7 +5092,7 @@ describe('reducer: use-charge (R2.2)', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -5078,7 +5122,7 @@ describe('reducer: use-charge (R2.2)', () => {
         definitionId: potion.id,
         quantity,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -5148,7 +5192,7 @@ describe('reducer: use-charge (R2.2)', () => {
     const wandRow = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: wandRow.id, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId: wandRow.id, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
     // The wand is now in Party Stash. Try to use-charge — must reject.
     const movedId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
@@ -5169,7 +5213,7 @@ describe('reducer: use-charge (R2.2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore.getState().appState!.items[0]!.id;
     expect(() =>
@@ -5276,7 +5320,7 @@ describe('reducer: use-charge (R2.2)', () => {
         definitionId: necklace.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -5312,7 +5356,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -5387,7 +5431,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore.getState().appState!.items[0]!.id;
     expect(() =>
@@ -5410,7 +5454,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     useStore.getState().dispatch({
       type: 'acquire',
@@ -5419,7 +5463,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: pearl.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     const pearlId = useStore
@@ -5464,7 +5508,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: pearl.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const pearlId = useStore
       .getState()
@@ -5507,7 +5551,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     // Wand acquired = full charges immediately. No spend.
     const logLenBefore = useStore.getState().log.length;
@@ -5580,7 +5624,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     // Spend down to 0.
@@ -5614,7 +5658,7 @@ describe('reducer: recharge (R2.2)', () => {
         definitionId: decanter.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const decanterId = useStore
       .getState()
@@ -5668,7 +5712,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     // Verify the entering-Inventory init worked (the row has currentCharges = max).
@@ -5687,7 +5731,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     // Create a Storage stash.
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore
       .getState()
@@ -5696,7 +5740,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     const logLenBefore = useStore.getState().log.length;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: wandId, toStashId: storageStashId, quantity: 1 },
+      payload: { itemInstanceId: wandId, toStashId: storageStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const moved = useStore.getState().appState!.items.find((i) => i.ownerId === storageStashId);
@@ -5717,7 +5761,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     // Acquire DIRECTLY into Storage (not Inventory) so currentCharges starts null.
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore
       .getState()
@@ -5729,7 +5773,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     expect(
@@ -5740,7 +5784,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     // (first time the row is meaningfully tracked).
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: wandId, toStashId: base.inventoryStashId, quantity: 1 },
+      payload: { itemInstanceId: wandId, toStashId: base.inventoryStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     const moved = useStore
@@ -5759,7 +5803,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     // Spend 4 charges → 3/7 left.
@@ -5776,14 +5820,14 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     // Move to Storage.
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore
       .getState()
       .appState!.stashes.find((st) => st.name === 'Vault')!.id;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: wandId, toStashId: storageStashId, quantity: 1 },
+      payload: { itemInstanceId: wandId, toStashId: storageStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
     expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBe(
       3,
@@ -5792,7 +5836,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     // Move back to Inventory — charges still 3/7, not refilled.
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: wandId, toStashId: base.inventoryStashId, quantity: 1 },
+      payload: { itemInstanceId: wandId, toStashId: base.inventoryStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
     expect(useStore.getState().appState!.items.find((i) => i.id === wandId)!.currentCharges).toBe(
       3,
@@ -5809,14 +5853,14 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore.getState().appState!.items[0]!.id;
     expect(useStore.getState().appState!.items[0]!.currentCharges).toBeNull(); // torch has no charges
 
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: base.characterId, name: 'Vault' },
+      payload: { ownerCharacterId: base.characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore
       .getState()
@@ -5825,7 +5869,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     const logLenBefore = useStore.getState().log.length;
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId: torchId, toStashId: storageStashId, quantity: 1 },
+      payload: { itemInstanceId: torchId, toStashId: storageStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
 
     // No paired edit-item-instance because nothing changed (no equipped, no attuned, no charges).
@@ -5858,7 +5902,7 @@ describe('reducer: identify (R2.3)', () => {
         definitionId: cloak.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const itemInstanceId = useStore
       .getState()
@@ -5975,7 +6019,7 @@ describe('reducer: identify (R2.3)', () => {
     // Move the cloak to the Party Stash.
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 },
+      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
     });
     expect(useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.ownerId).toBe(
       partyStashId,
@@ -6133,7 +6177,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     // Provision a second Storage stash so the cascade has to find both.
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
     });
     const before = useStore.getState().appState!;
     expect(before.stashes.filter((st) => st.ownerCharacterId === characterId)).toHaveLength(2);
@@ -6155,7 +6199,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     // Provision a Storage stash with items + items in Inventory.
     dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Vault' },
+      payload: { ownerCharacterId: characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -6167,7 +6211,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -6176,7 +6220,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         definitionId: rope.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore
       .getState()
@@ -6203,7 +6247,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const torchId = useStore
       .getState()
@@ -6226,7 +6270,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     // Add a Storage stash and fund both.
     dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Vault' },
+      payload: { ownerCharacterId: characterId, name: 'Vault' , ...createStashIds() , ...createStashIds() },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     dispatch({
@@ -6291,7 +6335,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'acquire',
@@ -6300,7 +6344,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         definitionId: rope.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'currency-change',
@@ -6454,7 +6498,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     dispatch({
       type: 'currency-change',
@@ -6494,7 +6538,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-      },
+        ...acquireIds(), },
     });
     const logLenBefore = useStore.getState().log.length;
 
@@ -6895,14 +6939,16 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
    * membership (DM-only DM adding their character later).
    */
 
-  const newCharacterPayload = {
+  // RH1.2 — fresh ids per call so the guard's clock-skew window is
+  // always in range and no id collides between suite runs.
+  const newCharacterPayload = () => ({
     name: 'Lyra',
     species: 'Elf',
-    size: 'medium',
+    size: 'medium' as const,
     class: 'Rogue',
     level: 2,
     str: 12,
-  } as const;
+    ...createCharacterIds(), });
 
   it('joiner with characterId: null player row — mints Character + Inventory + Holding and patches the membership', () => {
     localBootstrap();
@@ -6930,7 +6976,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
       };
     });
 
-    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
 
     const s = useStore.getState().appState!;
     expect(s.characters).toHaveLength(1);
@@ -6990,7 +7036,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     });
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     expect(cascade.length).toBe(1);
@@ -7013,13 +7059,13 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     // Bootstrap via dmOnly so there's a DM membership only, no player row.
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() , ...createCharacterIds() },
     });
     const before = useStore.getState().appState!;
     expect(before.memberships.filter((m) => m.role === 'player')).toHaveLength(0);
     expect(before.characters).toHaveLength(0);
 
-    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
 
     const s = useStore.getState().appState!;
     expect(s.characters).toHaveLength(1);
@@ -7043,7 +7089,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     // localBootstrap leaves the actor with an active player membership +
     // characterId set; dispatching create-character again must reject.
     expect(() =>
-      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload }),
+      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() }),
     ).toThrow(/character/i);
   });
 
@@ -7052,7 +7098,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     expect(() =>
       useStore
         .getState()
-        .dispatch({ type: 'create-character', payload: { dmOnly: true, partyName: 'X' } }),
+        .dispatch({ type: 'create-character', payload: { dmOnly: true, partyName: 'X', ...createCharacterDmOnlyIds() } }),
     ).toThrow();
   });
 
@@ -7071,14 +7117,14 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
       };
     });
     expect(() =>
-      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload }),
+      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() }),
     ).toThrow(/not.*member|member/i);
   });
 
   it('bootstrap path (state === null) still mints the full party with a character', () => {
     // Regression check: the existing legacy bootstrap behavior is unchanged.
     expect(useStore.getState().appState).toBeNull();
-    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+    useStore.getState().dispatch({ type: 'create-character', payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() } });
 
     const s = useStore.getState().appState!;
     expect(s.characters).toHaveLength(1);
@@ -8266,5 +8312,241 @@ describe('reducer: join-party (BUG-002 regression — soft-deleted rejoin)', () 
     expect(() =>
       useStore.getState().dispatch({ type: 'join-party', payload: {} }),
     ).toThrow(/already.*active|already has an active player/i);
+  });
+});
+
+// -------------------------------------------------------------------- //
+// RH1.2 — client-minted-id negative paths (reducer boundary)
+// -------------------------------------------------------------------- //
+//
+// The reducer arms validate every `payload.new<EntityName>Id` field via
+// `isValidUuidV7` before mutating state. This is defense-in-depth —
+// the guard layer runs upstream and rejects malformed ids with
+// `id_malformed`, and the persistor catches collisions via Prisma's
+// P2002 unique-constraint. Reducer-level validation surfaces
+// programmer errors during dev (a call site that forgot to mint an id,
+// or a helper that returns a non-v7 string) with a clear diagnostic
+// instead of silently persisting corrupt data.
+
+describe('reducer RH1.2: rejects malformed or missing new<EntityName>Id', () => {
+  it('acquire rejects a malformed newItemInstanceId', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    const { dispatch } = useStore.getState();
+
+    expect(() =>
+      dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: rope.id,
+          quantity: 1,
+          source: 'catalog-add',
+          // Non-UUID string — bypasses the Zod schema by casting, so we
+          // land at the reducer's `isValidUuidV7` check specifically.
+          newItemInstanceId: 'not-a-uuid',
+        },
+      }),
+    ).toThrow(/newItemInstanceId must be a valid UUID v7/);
+  });
+
+  it('create-stash rejects a malformed newStashId', () => {
+    const { characterId } = localBootstrap();
+    const { dispatch } = useStore.getState();
+
+    expect(() =>
+      dispatch({
+        type: 'create-stash',
+        payload: {
+          ownerCharacterId: characterId,
+          name: 'Test',
+          newStashId: 'not-a-uuid',
+          newCurrencyHoldingId: newUuidV7(),
+        },
+      }),
+    ).toThrow(/newStashId must be a valid UUID v7/);
+  });
+
+  it('create-stash rejects a malformed newCurrencyHoldingId', () => {
+    const { characterId } = localBootstrap();
+    const { dispatch } = useStore.getState();
+
+    expect(() =>
+      dispatch({
+        type: 'create-stash',
+        payload: {
+          ownerCharacterId: characterId,
+          name: 'Test',
+          newStashId: newUuidV7(),
+          newCurrencyHoldingId: 'nope',
+        },
+      }),
+    ).toThrow(/newCurrencyHoldingId must be a valid UUID v7/);
+  });
+
+  it('split rejects a malformed newItemInstanceId', () => {
+    const { inventoryStashId, catalog } = localBootstrap();
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    const { dispatch } = useStore.getState();
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rope.id,
+        quantity: 3,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const ropeItemId = useStore.getState().appState!.items[0]!.id;
+
+    expect(() =>
+      dispatch({
+        type: 'split',
+        payload: {
+          itemInstanceId: ropeItemId,
+          quantity: 1,
+          newItemInstanceId: 'not-v7',
+        },
+      }),
+    ).toThrow(/newItemInstanceId must be a valid UUID v7/);
+  });
+
+  it('create-homebrew rejects a malformed newDefinitionId', () => {
+    localBootstrap();
+    const { dispatch } = useStore.getState();
+
+    expect(() =>
+      dispatch({
+        type: 'create-homebrew',
+        payload: {
+          name: 'Cursed Blade',
+          category: 'magic',
+          newDefinitionId: 'v4-shaped-but-not',
+        },
+      }),
+    ).toThrow(/newDefinitionId must be a valid UUID v7/);
+  });
+
+  it('create-character (bootstrap) rejects a malformed newCharacterId', () => {
+    // Fresh store, no state yet — hits the bootstrap arm which
+    // validates the with-character-branch character/inventory ids.
+    const { dispatch } = useStore.getState();
+
+    expect(() =>
+      dispatch({
+        type: 'create-character',
+        payload: {
+          ...validPayload,
+          newCharacterId: 'malformed',
+          newInventoryStashId: newUuidV7(),
+          newCurrencyHoldingId: newUuidV7(),
+          newUserId: newUuidV7(),
+          newPartyId: newUuidV7(),
+          newPartyStashId: newUuidV7(),
+          newRecoveredLootStashId: newUuidV7(),
+          newPartyStashCurrencyId: newUuidV7(),
+          newRecoveredLootCurrencyId: newUuidV7(),
+        },
+      }),
+    ).toThrow(/newCharacterId must be a valid UUID v7/);
+  });
+
+  it('create-character (bootstrap) rejects a malformed bootstrap-scope id', () => {
+    const { dispatch } = useStore.getState();
+
+    expect(() =>
+      dispatch({
+        type: 'create-character',
+        payload: {
+          ...validPayload,
+          newCharacterId: newUuidV7(),
+          newInventoryStashId: newUuidV7(),
+          newCurrencyHoldingId: newUuidV7(),
+          newUserId: newUuidV7(),
+          newPartyId: 'not-a-v7',
+          newPartyStashId: newUuidV7(),
+          newRecoveredLootStashId: newUuidV7(),
+          newPartyStashCurrencyId: newUuidV7(),
+          newRecoveredLootCurrencyId: newUuidV7(),
+        },
+      }),
+    ).toThrow(/newPartyId must be a valid UUID v7/);
+  });
+
+  it('transfer (partial move, no autostack) rejects a malformed newItemInstanceId', () => {
+    const { inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    const { dispatch } = useStore.getState();
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rope.id,
+        quantity: 3,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const ropeItemId = useStore.getState().appState!.items[0]!.id;
+
+    // Partial move of 1 of 3 to a stash with no matching row = new
+    // ItemInstance minted at the destination. Reducer validates the
+    // new id before creating the row.
+    expect(() =>
+      dispatch({
+        type: 'transfer',
+        payload: {
+          itemInstanceId: ropeItemId,
+          toStashId: partyStashId,
+          quantity: 1,
+          newItemInstanceId: 'bogus',
+        },
+      }),
+    ).toThrow(/newItemInstanceId must be a valid UUID v7/);
+  });
+});
+
+// -------------------------------------------------------------------- //
+// RH1.2 — repeated-id-across-actions (persistor collision is server-
+// only; the client reducer doesn't dedupe against the log, so a
+// duplicate reducer dispatch will succeed at the reducer boundary and
+// only be caught server-side via Prisma P2002). We still assert the
+// reducer's per-action id-shape check to keep the contract explicit.
+// -------------------------------------------------------------------- //
+
+describe('reducer RH1.2: id-shape check runs on every minting arm', () => {
+  it('acquire on a stackable existing row still validates the client-minted id (defensive)', () => {
+    // Even on the stack-merge path (which discards the minted id — the
+    // existing row's id wins), the reducer validates the incoming id.
+    // This catches "the client forgot to mint" earlier than the persistor.
+    const { inventoryStashId, catalog } = localBootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const { dispatch } = useStore.getState();
+    // First acquire: creates the row.
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    // Second acquire with malformed id: reducer still rejects (validated
+    // before the stack-merge branch decides).
+    expect(() =>
+      dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: torch.id,
+          quantity: 1,
+          source: 'catalog-add',
+          newItemInstanceId: 'not-uuid',
+        },
+      }),
+    ).toThrow(/newItemInstanceId must be a valid UUID v7/);
   });
 });

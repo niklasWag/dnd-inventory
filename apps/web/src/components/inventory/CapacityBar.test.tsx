@@ -6,6 +6,16 @@ import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 
 import { bootstrap, bootstrapWithHomebrew } from '@/test/fixtures';
+import { newUuidV7 } from '@app/shared';
+
+/**
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
+ * v7 per call keeps the fixture within the guard's clock-skew window
+ * and hermetic per-test.
+ */
+function acquireIds() {
+  return { newItemInstanceId: newUuidV7() };
+}
 
 beforeEach(async () => {
   useStore.setState({ appState: null, log: [] });
@@ -46,7 +56,7 @@ function loadInventoryWith(weightLbsEach: number, quantity: number): string {
       definitionId: homebrewDefId,
       quantity,
       source: 'custom-create',
-    },
+      ...acquireIds(), },
   });
   return homebrewDefId;
 }

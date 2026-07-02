@@ -92,6 +92,25 @@ const createCharacterAction = z.object({
    * common-case dispatch ergonomic (`dispatch({ type: 'create-character',
    * payload: { name, species, ... } })`) without forcing an explicit
    * `dmOnly: false`.
+   *
+   * RH1.2 — client-minted ids on the wire. The with-character branch
+   * mints one of two id sets depending on reducer state:
+   *   - **Bootstrap** (state === null): mints the full User + Party +
+   *     party-scope stashes + currencies + Character + Inventory stash +
+   *     inventory currency = 9 ids.
+   *   - **In-existing-party** (state !== null): mints only Character +
+   *     Inventory stash + inventory currency = 3 ids.
+   *
+   * Wire-shape decision: keep the union at 2 branches (not 3). The six
+   * bootstrap-only ids (`newUserId`, `newPartyId`, `newPartyStashId`,
+   * `newRecoveredLootStashId`, `newPartyStashCurrencyId`,
+   * `newRecoveredLootCurrencyId`) are optional on the with-character
+   * branch; the reducer boundary asserts they're present when state is
+   * null. This avoids introducing a 3rd discriminant purely for id
+   * validation.
+   *
+   * The dmOnly branch always mints the 6 bootstrap ids (no character,
+   * no inventory).
    */
   payload: z.union([
     z.object({
@@ -103,10 +122,27 @@ const createCharacterAction = z.object({
       level: z.number().int().positive(),
       str: z.number().int().positive(),
       partyName: z.string().min(1).optional(),
+      // Always required (both bootstrap + in-existing-party):
+      newCharacterId: z.string().min(1),
+      newInventoryStashId: z.string().min(1),
+      newCurrencyHoldingId: z.string().min(1),
+      // Bootstrap-only ids (required when state === null, optional at wire):
+      newUserId: z.string().min(1).optional(),
+      newPartyId: z.string().min(1).optional(),
+      newPartyStashId: z.string().min(1).optional(),
+      newRecoveredLootStashId: z.string().min(1).optional(),
+      newPartyStashCurrencyId: z.string().min(1).optional(),
+      newRecoveredLootCurrencyId: z.string().min(1).optional(),
     }),
     z.object({
       dmOnly: z.literal(true),
       partyName: z.string().min(1),
+      newUserId: z.string().min(1),
+      newPartyId: z.string().min(1),
+      newPartyStashId: z.string().min(1),
+      newRecoveredLootStashId: z.string().min(1),
+      newPartyStashCurrencyId: z.string().min(1),
+      newRecoveredLootCurrencyId: z.string().min(1),
     }),
   ]),
 });
@@ -119,6 +155,10 @@ const acquireAction = z.object({
     quantity: z.number().int().positive(),
     source: z.enum(['hoard', 'purchase', 'custom-create', 'duplicate', 'catalog-add']),
     notes: z.string().optional(),
+    // RH1.2 — client-minted id for the new ItemInstance row. Required on
+    // the wire. If the acquire lands on a stack-eligible row the id is
+    // discarded (existing row's id wins); reducer + persistor decide.
+    newItemInstanceId: z.string().min(1),
   }),
 });
 
@@ -154,6 +194,11 @@ const createStashAction = z.object({
   payload: z.object({
     ownerCharacterId: z.string().min(1),
     name: z.string().min(1),
+    // RH1.2 — client-minted ids. `newStashId` for the Stash row,
+    // `newCurrencyHoldingId` for the CurrencyHolding auto-provisioned
+    // per OUTLINE §3.5 (every stash has a CP-integer currency row).
+    newStashId: z.string().min(1),
+    newCurrencyHoldingId: z.string().min(1),
   }),
 });
 
@@ -197,6 +242,11 @@ const transferAction = z.object({
     //   - null: take-out (clear containerInstanceId)
     //   - string: pack-into (set containerInstanceId)
     toContainerInstanceId: z.string().min(1).nullable().optional(),
+    // RH1.2 — client-minted id for the partial-move-no-autostack branch
+    // (reducer/index.ts `transfer` arm, ~line 1573). Required on the
+    // wire. Full-move + partial-with-autostack paths ignore it (existing
+    // row's id wins).
+    newItemInstanceId: z.string().min(1),
   }),
 });
 
@@ -205,6 +255,8 @@ const splitAction = z.object({
   payload: z.object({
     itemInstanceId: z.string().min(1),
     quantity: z.number().int().positive(),
+    // RH1.2 — client-minted id for the new split-off ItemInstance row.
+    newItemInstanceId: z.string().min(1),
   }),
 });
 
@@ -221,6 +273,8 @@ const createHomebrewAction = z.object({
   type: z.literal('create-homebrew'),
   payload: homebrewDefinitionInputSchema.extend({
     duplicatedFromId: z.string().min(1).optional(),
+    // RH1.2 — client-minted id for the new ItemDefinition (homebrew) row.
+    newDefinitionId: z.string().min(1),
   }),
 });
 
