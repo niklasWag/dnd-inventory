@@ -1295,9 +1295,9 @@ describe('guards — R4.3.a dm-transfer', () => {
     // Widen state.memberships to include a soft-deleted player row.
     const base = makeBankerState(null);
     const state: AppState = {
-      ...base!,
+      ...base,
       memberships: [
-        ...base!.memberships,
+        ...base.memberships,
         {
           userId: 'former-player',
           partyId: 'p1',
@@ -1377,9 +1377,9 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     const state = makeBankerState(null);
     // Add an item to Party Stash for the transfer OUT.
     const s = {
-      ...state!,
+      ...state,
       items: [
-        ...state!.items,
+        ...state.items,
         {
           id: 'i-ps-item',
           definitionId: 'phb-2024:rope',
@@ -1429,11 +1429,11 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     // Simulate a foreign character whose inventory stash is in a
     // different party (partyId mismatch on the character).
     const s = {
-      ...state!,
+      ...state,
       characters: [
-        ...state!.characters,
+        ...state.characters,
         {
-          ...state!.characters[0]!,
+          ...state.characters[0]!,
           id: 'char-foreign',
           partyId: 'p2', // different party
           ownerUserId: 'other-user',
@@ -1441,7 +1441,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
         },
       ],
       stashes: [
-        ...state!.stashes,
+        ...state.stashes,
         {
           id: 'inv-foreign',
           scope: 'character' as const,
@@ -1526,8 +1526,8 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     // the item is not in char-u2's Inventory stash.
     const state = makeBankerState(null);
     const s = {
-      ...state!,
-      items: state!.items.map((i) => (i.id === 'i1' ? { ...i, ownerId: 'ps' } : i)),
+      ...state,
+      items: state.items.map((i) => (i.id === 'i1' ? { ...i, ownerId: 'ps' } : i)),
     };
     const result = guards['use-charge'](
       s,
@@ -1590,11 +1590,11 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
   it('DM cannot equip on a character outside their party (partyId mismatch)', () => {
     const state = makeBankerState(null);
     const s = {
-      ...state!,
+      ...state,
       characters: [
-        ...state!.characters,
+        ...state.characters,
         {
-          ...state!.characters[0]!,
+          ...state.characters[0]!,
           id: 'char-foreign',
           partyId: 'p2',
           ownerUserId: 'other-user',
@@ -1602,7 +1602,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
         },
       ],
       stashes: [
-        ...state!.stashes,
+        ...state.stashes,
         {
           id: 'inv-foreign',
           scope: 'character' as const,
@@ -1614,7 +1614,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
         },
       ],
       items: [
-        ...state!.items,
+        ...state.items,
         {
           id: 'i-foreign',
           definitionId: 'phb-2024:rope',
