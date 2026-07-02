@@ -2724,16 +2724,34 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 **Why grouped:** Both are the same RH1 shape — two sides computing the same value, the system relying on them agreeing. Same fix shape: server is authoritative for the value, client uses an optimistic placeholder that gets replaced from the `applied[]` echo.
 
 **Timestamp (`packages/rules/src/reducer/types.ts` + the two reducers)**
-- [ ] `ReducerContext.now` becomes server-only. Client-side reducer dispatches use a sentinel placeholder (e.g. `'PENDING'`) on log slices; the queue's post-flush hook overwrites it with `applied[].timestamp` once the server echoes it. Equivalent to the RH1 id treatment, applied to timestamp.
-- [ ] Add a Zod refinement: `transactionLogEntry.timestamp` must be a valid ISO datetime when persisted — `'PENDING'` is forbidden once an entry is server-canonical. The wire schema doesn't see `'PENDING'`; it's a client-internal sentinel.
-- [ ] Update `apps/web/src/store/index.ts` dispatch site to do the placeholder-then-patch dance.
-- [ ] Update `apps/web/src/sync/queue.ts` post-flush patch logic: for each entry in `applied[]`, locate the matching local log row by id and overwrite timestamp.
-- [ ] Tests: reducer unit test that a freshly-dispatched action's local log entry has `'PENDING'` timestamp; integration test that after queue flush, every local entry has the server-canonical timestamp.
+- [x] `ReducerContext.now` becomes server-only for LOG-ENTRY timestamps. Client-side reducer dispatches use a sentinel placeholder `'PENDING'` on log entries; the queue's post-flush hook overwrites it with `applied[].timestamp` once the server echoes it. **Shipped 2026-07-02 (Option 2 scope)** — the seam that flips is `apps/web/src/store/index.ts::buildLogEntry` (line ~120), which now branches on `isServerMode`. `ReducerContext.now` itself stays on the interface because entity `createdAt` / `joinedAt` / `leftAt` fields still need it in optimistic UI; retiring `ctx.now` entirely is deferred to **RH2.6** which retires client-side log emission in server mode.
+- [-] Add a Zod refinement: `transactionLogEntry.timestamp` must be a valid ISO datetime when persisted — `'PENDING'` is forbidden once an entry is server-canonical. The wire schema doesn't see `'PENDING'`; it's a client-internal sentinel. **Skipped** — nothing on the wire accepts a client-composed log entry (only actions), so a wire-side refinement has no target. The Dexie-persistence boundary is guarded instead: `apps/web/src/store/index.ts::dispatch` filters PENDING entries out of the debounced saver's payload in server mode, so `.datetime()` on the hydrate path never sees `'PENDING'`.
+- [x] Update `apps/web/src/store/index.ts` dispatch site to do the placeholder-then-patch dance. New `patchLogEntries(applied)` store method matches entries by `(type, canonical-payload)` content and overwrites `timestamp` — id-matching isn't available because client and server mint log-entry ids independently (`crypto.randomUUID()` vs `newUuidV7()`).
+- [x] Update `apps/web/src/sync/queue.ts` post-flush patch logic: for each entry in `applied[]`, locate the matching local log row and overwrite timestamp. Wired via a new optional `QueueDeps.patchLogEntries` hook; `main.tsx` supplies the real dep, tests may omit.
+- [x] Tests: reducer unit test that a freshly-dispatched action's local log entry has `'PENDING'` timestamp; integration test that after queue flush, every local entry has the server-canonical timestamp. **Shipped as `apps/web/src/store/timestamp-authority.test.ts`** — 3 tests covering server-mode PENDING emission, local-mode unchanged behaviour, and post-flush timestamp patch.
 
 **`actorRole` shared derivation (`packages/shared/src/guards/actor.ts` — `deriveActorRole` exists)**
-- [ ] Today both `apps/web/src/store/index.ts:resolveActor` and `apps/server/src/sync/log-builder.ts` independently derive `actorRole` from `(actor, membership, party)`. Move the logic to a single shared function `deriveActorRole(state, action, actorUserId)` and call it from both sites.
-- [ ] Banker derivation: when `Party.bankerUserId === actorUserId`, return `'banker'`. Today both sites partially handle this; some action arms hard-code `'player'`. After RH2.1 there's one definition that handles all cases.
-- [ ] Guard test asserting the contract: given the same `(state, action, actorUserId)`, both sites return identical results.
+- [x] Today both `apps/web/src/store/index.ts:resolveActor` and `apps/server/src/sync/log-builder.ts` independently derive `actorRole` from `(actor, membership, party)`. Move the logic to a single shared function called from both sites. **Shipped 2026-07-02** as `deriveActorRoleForSlice(state, slice)` in `packages/shared/src/guards/actor.ts` — action-aware; consumed by web's `resolveActor` (now ~15 LOC, was ~165) and by `buildLogEntryServer` (which previously used `actor.role` verbatim). The pre-existing 2-arg `deriveActorRole(party, membership)` stays for the guard-layer identity resolution.
+- [x] Banker derivation: when `Party.bankerUserId === actorUserId`, return `'banker'`. Today both sites partially handle this; some action arms hard-code `'player'`. After RH2.1 there's one definition that handles all cases. **Shipped** — the shared function's default arm returns `banker iff state.party.bankerUserId === state.user.id`; DM-only and Banker-only arms (`identify`, `kick-player`, `appoint-banker`, `revoke-banker`, `dm-transfer`, `split-evenly`) hard-code their canonical role.
+- [x] Guard test asserting the contract: given the same `(state, action, actorUserId)`, both sites return identical results. **Shipped** — new `describe('deriveActorRoleForSlice — RH2.1a')` block in `packages/shared/src/guards/map.test.ts` covers the full action-type × (banker, non-banker, DM) matrix (~35 assertions via `it.each` fan-out) plus bootstrap null-state and server-synthesised join-party null-state carve-outs.
+
+#### RH2.1 — Notes
+
+> **2026-07-02 — RH2.1 shipped (Option 2 scope).**
+>
+> **Option 2 chosen.** Two options were considered:
+> - **Option 1 (full RH2.1):** `TransactionLog.timestamp` + entity `createdAt`/`joinedAt`/`leftAt` both become server-authoritative via placeholder-then-patch.
+> - **Option 2 (log-timestamp only, chosen):** only `TransactionLog.timestamp` flips to PENDING in server mode. Entity timestamps deferred to RH2.6.
+>
+> Option 2 preserves the RH chain's "one axis per slice" discipline: RH2.1 handles the log-entry axis; RH2.6's mode-aware log-authority split naturally picks up entity timestamps as part of the same "server owns state in server mode" cutover. Splitting keeps each PR bisectable.
+>
+> **`ReducerContext.now` stays on the interface** contrary to the roadmap sketch's summary sentence. The reducer still calls `ctx.now()` for entity `createdAt`/`joinedAt`/`leftAt` fields, which are asserted by 30+ `appStateSchema.parse` tests. Only the log-entry timestamp seam (`buildLogEntry` in the web store) flips to PENDING. RH2.6 will complete the retirement.
+>
+> **Correlation strategy: content-matching.** Client log-entry ids and server log-entry ids diverge today (client: `crypto.randomUUID()`, server: `newUuidV7()`). Rather than adding a `newLogEntryId` field to every action payload (RH1-shape extension, large surface), the patch matches on `(type, canonical-JSON-payload)`. Robust because the reducer never emits two structurally-identical slices in one batch. RH2.6 retires client-side log emission entirely, making the correlation problem moot.
+>
+> **Dexie persistence:** PENDING entries are stripped from the debounced saver's payload in server mode. If the tab closes with PENDING entries in memory, Dexie has state without the corresponding log entries — but the server pull on next boot replaces both, so no user-visible inconsistency.
+>
+> **BUG-004 partial-fix.** RH2.1a's shared `deriveActorRoleForSlice` fixes the DM-vs-player role stamp on Item Detail history; RH2.1b's server timestamp patch fixes the "why does my newest acquire show yesterday's date" symptom class. The **full** BUG-004 closure still needs RH2.6 (client stops emitting log slices in server mode, server-emitted slices with server-canonical ids arrive via applied[]).
 
 #### RH2.2 — Reducer determinism: stable iteration in cascades
 

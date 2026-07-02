@@ -65,6 +65,11 @@ async function boot(): Promise<void> {
       useStore.getState().restoreSnapshot(snap);
     },
     getActivePartyId: () => getCurrentPartyId(),
+    // RH2.1b — queue passes the server's applied[] echo to the store
+    // so it can patch local PENDING-timestamp entries.
+    patchLogEntries: (applied) => {
+      useStore.getState().patchLogEntries(applied);
+    },
   });
   attachUnloadFlush();
 
