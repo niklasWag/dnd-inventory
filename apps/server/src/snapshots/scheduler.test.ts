@@ -96,12 +96,13 @@ async function bootstrapParty(): Promise<{ userId: string; partyId: string }> {
   const { sessionToken } = await createSessionForUser(prisma, userId);
   const app = await buildServer({ env, prisma });
   try {
+    const ids = createCharacterIds();
     const res = await app.inject({
       method: 'POST',
       url: '/sync/actions',
       headers: { cookie: `${sessionCookieName(env)}=${sessionToken}` },
       payload: {
-        partyId: 'will-be-minted',
+        partyId: ids.newPartyId,
         actions: [
           {
             type: 'create-character',
@@ -112,7 +113,8 @@ async function bootstrapParty(): Promise<{ userId: string; partyId: string }> {
               class: 'Fighter',
               level: 1,
               str: 16,
-              ...createCharacterIds(), },
+              ...ids,
+            },
           },
         ],
       },

@@ -2654,22 +2654,38 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 #### RH1.3 — Remove post-flush re-pull; the queue trusts client ids
 
 **Sync queue (`apps/web/src/sync/queue.ts`)**
-- [ ] Delete the `ID_MINTING_ACTION_TYPES` constant and the re-pull branch added for the R4.1.f post-ship bug #2.
-- [ ] The bootstrap-specific re-pull (where `snapshot?.appState == null`) ALSO goes away — the client mints its own user / party / character / stash / currency ids in the bootstrap payload, and the server accepts them. `'will-be-minted'` as a placeholder partyId disappears from both client and server; the action payload IS the source of truth.
-- [ ] The queue's post-flush concern shrinks to: 200 → drop snapshot; 422 → rollback; 401 → sign out; 409 → display-name flow; network error → keep snapshot for retry. No re-pulls needed.
+- [x] Delete the `ID_MINTING_ACTION_TYPES` constant and the re-pull branch added for the R4.1.f post-ship bug #2.
+- [x] The bootstrap-specific re-pull (where `snapshot?.appState == null`) ALSO goes away — the client mints its own user / party / character / stash / currency ids in the bootstrap payload, and the server accepts them. `'will-be-minted'` as a placeholder partyId disappears from both client and server; the action payload IS the source of truth.
+- [x] The queue's post-flush concern shrinks to: 200 → drop snapshot; 422 → rollback; 401 → sign out; 409 → display-name flow; network error → keep snapshot for retry. No re-pulls needed.
 
 **Server route (`apps/server/src/sync/routes.ts`)**
-- [ ] The `isBootstrap` heuristic disappears. `applyBootstrapDelta` vs. `applyDelta` dispatch is now keyed on `await prisma.party.findUnique(...) === null` alone (R4.1.f introduced this; RH1.3 simplifies because there's no `'will-be-minted'` placeholder to special-case).
-- [ ] The `'will-be-minted'` placeholder is removed from `POST /sync/actions` accepted input shapes.
+- [x] The `isBootstrap` heuristic disappears. `applyBootstrapDelta` vs. `applyDelta` dispatch is now keyed on `await prisma.party.findUnique(...) === null` alone (R4.1.f introduced this; RH1.3 simplifies because there's no `'will-be-minted'` placeholder to special-case).
+- [x] The `'will-be-minted'` placeholder is removed from `POST /sync/actions` accepted input shapes.
 
 **Tests**
-- [ ] Update queue test (`apps/web/src/sync/queue.test.ts`) to assert the re-pull is NOT triggered after `acquire`. The current test that asserts the re-pull IS triggered gets replaced — moves to the regression archive in the Notes section.
-- [ ] Update reducer + server integration tests that hard-coded the `'will-be-minted'` placeholder to send the client-minted partyId instead.
-- [ ] New negative test: server rejects `POST /sync/actions` with a `partyId` that's already used by a different user (collision-on-bootstrap). Should surface as `id_already_exists` at the 422 layer.
+- [x] Update queue test (`apps/web/src/sync/queue.test.ts`) to assert the re-pull is NOT triggered after `acquire`. The current test that asserts the re-pull IS triggered gets replaced — moves to the regression archive in the Notes section.
+- [x] Update reducer + server integration tests that hard-coded the `'will-be-minted'` placeholder to send the client-minted partyId instead.
+- [x] New negative test: server rejects `POST /sync/actions` with a `partyId` that's already used by a different user (collision-on-bootstrap). Should surface as `id_already_exists` at the 422 layer.
 
 #### RH1.3 — Notes
 
-> -
+> **Design decisions made during implementation:**
+>
+> - **`isBootstrap` conjunct dropped, not the boolean itself.** The roadmap said "the isBootstrap heuristic disappears." In practice the boolean stayed — what disappeared is the `actions.every((a) => a.type === 'create-character')` conjunct that made it a per-batch cap on non-create-character actions. Post-RH1.3 it's a per-batch boolean `partyExists === null`; if a non-create-character action arrives with an unknown partyId, it falls into `applyDelta` and gets rejected by the guards with `state_not_initialized` (state stays null on the isBootstrap path). Clean, no special-casing.
+>
+> - **`actor.partyId` promotion line KEPT (not deleted as originally planned).** RH1.3 planning assumed `actor.partyId` (the URL body's `partyId`) would always equal `payload.newPartyId` in a bootstrap batch — so the post-reduce promotion line would be a no-op. Reality: test helpers (`apps/server/src/parties/routes.test.ts:bootstrapParty`) still send placeholder URL partyIds like `'irrelevant'`; the reducer's `state.party.id` correctly resolves to `payload.newPartyId`, but the `TransactionLog.partyId` FK would violate if `actor.partyId` stayed as the placeholder. Keeping the promotion (`actor = { ...actor, partyId: reduced.state.party.id }`) makes the server robust to defensive clients / stale test fixtures without requiring a schema-level `partyId === newPartyId` refinement.
+>
+> - **Placeholder `'will-be-minted'` NOT explicitly rejected at the schema layer.** The action-payload Zod schema (`syncActionsRequestSchema` in `apps/server/src/sync/types.ts`) still accepts `partyId: z.string().min(1)` — no explicit `'will-be-minted'` refinement. Rationale: the RH1.2 payload-id guards (`checkMintedIds` in `packages/shared/src/guards/map.ts`) already enforce that `newPartyId` is a valid UUID v7; the URL partyId is essentially a routing hint the actor-promotion step overrides during bootstrap. A separate `.refine((s) => s !== 'will-be-minted')` would be dead code — the placeholder has no code paths that produce it any more, and any client sending it would still succeed (or fail via a downstream guard). Not worth the schema noise.
+>
+> - **Bootstrap-collision test surfaces 403 not_a_member, NOT 422 id_already_exists.** The roadmap's stated intent was "server rejects POST /sync/actions with a partyId that's already used by a different user. Should surface as id_already_exists at the 422 layer." Actual architectural outcome: user B replaying user A's already-persisted `newPartyId` hits `partyExists = A's row (non-null)` first → `isBootstrap = false` → `resolveActor(B, partyId)` runs → B has no membership → 403 `not_a_member`. The auth check is the more informative error and it fires before the persistor's P2002 could. The test at `apps/server/src/sync/routes.test.ts` documents this. The `id_already_exists` (P2002 → BatchRejected → 422) mapping itself is already covered by the pre-existing RH1.2 "duplicate client-minted itemInstanceId" test at line 507; the two paths share one persistor catch block, so extra coverage is redundant.
+>
+> - **`getActivePartyId` interface preserved.** The queue's dep still supports `null` return for defensive callers; Hub.tsx stamps `setCurrentPartyId` before flush, so bootstrap and post-bootstrap look identical to the queue.
+>
+> - **`pullState` import from `./client` removed.** No longer called from the queue post-RH1.3. If a future slice re-adds a canonicalize step, it will re-import.
+>
+> **Regression archive (pre-RH1.3 tests / behaviour removed):**
+>
+> - `queue.test.ts` had a test `'re-pulls canonical state after `acquire` so optimistic ids get replaced'` (positive assertion). RH1.3 replaced it with a NEGATIVE assertion (`'does NOT re-pull /sync/state after `acquire`'`). The original test's rationale was correct FOR ITS TIME (R4.1.f post-ship bug fix, 2026-06-30) — the server minted its own randomUUIDs, so a re-pull was necessary to canonicalize local ids. RH1.2 (2026-07-02) moved id-minting to the client, eliminating the divergence.
 
 #### RH1 — Notes
 

@@ -139,12 +139,13 @@ describe('GET /sync/export — auth + envelope (R3.4.b)', () => {
     const app = await buildServer({ env, prisma });
     try {
       // Bootstrap a party.
+      const ids = createCharacterIds();
       const createRes = await app.inject({
         method: 'POST',
         url: '/sync/actions',
         headers: { cookie: cookieHeader(token) },
         payload: {
-          partyId: 'will-be-minted',
+          partyId: ids.newPartyId,
           actions: [
             {
               type: 'create-character',
@@ -155,7 +156,8 @@ describe('GET /sync/export — auth + envelope (R3.4.b)', () => {
                 class: 'Wizard',
                 level: 3,
                 str: 8,
-                ...createCharacterIds(), },
+                ...ids,
+              },
             },
           ],
         },

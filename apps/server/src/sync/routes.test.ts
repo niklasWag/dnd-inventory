@@ -282,12 +282,16 @@ describe('POST /sync/actions — bootstrap create-character (R3.4.a)', () => {
     const token = await seedSession(userId);
     const app = await buildServer({ env, prisma });
     try {
+      // RH1.3 — the client mints its own partyId (`newPartyId`) and
+      // sends it as the URL partyId. No more `'will-be-minted'`
+      // placeholder.
+      const ids = createCharacterIds();
       const res = await app.inject({
         method: 'POST',
         url: '/sync/actions',
         headers: { cookie: cookieHeader(env, token) },
         payload: {
-          partyId: 'will-be-minted', // server mints its own id; not used in bootstrap
+          partyId: ids.newPartyId,
           actions: [
             {
               type: 'create-character',
@@ -298,7 +302,8 @@ describe('POST /sync/actions — bootstrap create-character (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-                ...createCharacterIds(), },
+                ...ids,
+              },
             },
           ],
         },
@@ -771,6 +776,97 @@ describe('R4.4.b — homebrew party-scope filter', () => {
       expect(res.statusCode).toBe(200);
       const { state } = res.json<{ state: { catalog: { id: string }[] } }>();
       expect(state.catalog.some((d) => d.id === 'hb-shared-item')).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+// ------------------------------------------------------------------ //
+// RH1.3 — Bootstrap collision behaviour.
+//
+// The roadmap's stated intent: "server rejects POST /sync/actions with
+// a partyId that's already used by a different user (collision-on-
+// bootstrap). Should surface as id_already_exists at the 422 layer."
+//
+// Actual architectural outcome (verified by this test): user B
+// replaying user A's already-persisted `newPartyId` hits the resolve
+// path FIRST — `partyExists` is non-null (A committed the row), so
+// `isBootstrap = false` and `resolveActor` runs. B has no membership
+// in the party → 403 `not_a_member`. The auth check is the more
+// informative error and it fires before the persistor's P2002 could.
+//
+// The P2002 `id_already_exists` mapping only surfaces if two clients
+// race to POST /sync/actions with the same `newPartyId` before either
+// party row commits — hard to reproduce deterministically in a
+// single-process test. The RH1.2 P2002 → BatchRejected route mapping
+// itself is already covered by the existing acquire-collision test
+// above (the create-stash / acquire / etc. paths share one persistor
+// catch block).
+// ------------------------------------------------------------------ //
+
+describe('POST /sync/actions — RH1.3 bootstrap collision behaviour', () => {
+  it('rejects a bootstrap replay of another user’s partyId with 403 not_a_member', async () => {
+    const { userId: userA } = await seedUser({ displayName: 'A' });
+    const tokenA = await seedSession(userA);
+    const { userId: userB } = await seedUser({ displayName: 'B' });
+    const tokenB = await seedSession(userB);
+    const app = await buildServer({ env, prisma });
+    try {
+      // User A boots first — takes the partyId.
+      const idsA = createCharacterIds();
+      const resA = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenA) },
+        payload: {
+          partyId: idsA.newPartyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...idsA,
+              },
+            },
+          ],
+        },
+      });
+      expect(resA.statusCode).toBe(200);
+
+      // User B replays the SAME newPartyId. Route resolves partyExists
+      // to A's row, falls into the non-bootstrap resolve branch, B
+      // has no membership → 403 not_a_member.
+      const idsB = { ...createCharacterIds(), newPartyId: idsA.newPartyId };
+      const resB = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenB) },
+        payload: {
+          partyId: idsB.newPartyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Bob',
+                species: 'Elf',
+                size: 'medium',
+                class: 'Rogue',
+                level: 2,
+                str: 10,
+                ...idsB,
+              },
+            },
+          ],
+        },
+      });
+      expect(resB.statusCode).toBe(403);
+      expect(resB.json()).toEqual({ error: 'not_a_member' });
     } finally {
       await app.close();
     }
