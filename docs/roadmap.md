@@ -2554,22 +2554,45 @@ Sliced into four independently-shippable sub-slices, mirroring the R4.1.a-f / R4
 #### RH1.1 — Shared UUID v7 utility + guard codes
 
 **Shared package (`packages/shared`)**
-- [ ] Add `uuid` dep (or self-implement a minimal UUID v7 generator — ~30 LOC; avoids the dep)
-- [ ] Expose `newUuidV7(): string` from a new `packages/shared/src/ids.ts` module, plus `isValidUuidV7(s: string): boolean` and `timestampFromUuidV7(s: string): number`. Re-exported from `packages/shared/src/index.ts`.
-- [ ] Decision-doc comment at the top of `ids.ts` capturing: why v7 (time-ordered, debuggable, collision-safe with 74 random bits per ms), why client-mints (server authoritative for validation, client authoritative for id minting per RH1 charter), the clock-skew tolerance constant (±5 minutes default), and the security implication (no new attack surface — Prisma unique constraint catches forged collisions).
+- [x] Add `uuid` dep (or self-implement a minimal UUID v7 generator — ~30 LOC; avoids the dep). **Shipped 2026-07-02** — chose `uuid@^14` (14.0.1 at ship time). Rationale captured in RH1.1 Notes: RFC 9562 conformance risk outweighed the dep cost for a hardening slice whose whole point is reducing structural risk.
+- [x] Expose `newUuidV7(): string` from a new `packages/shared/src/ids.ts` module, plus `isValidUuidV7(s: string): boolean` and `timestampFromUuidV7(s: string): number`. Re-exported from `packages/shared/src/index.ts`. `timestampFromUuidV7` is implemented in-tree (6-byte read out of the first octets per RFC 9562 §5.7) because `uuid@14` doesn't expose the extractor directly.
+- [x] Decision-doc comment at the top of `ids.ts` capturing: why v7 (time-ordered, debuggable, collision-safe with 74 random bits per ms), why client-mints (server authoritative for validation, client authoritative for id minting per RH1 charter), the clock-skew tolerance constant (±5 minutes default, exported as `CLOCK_SKEW_TOLERANCE_MS`), and the security implication (no new attack surface — Prisma unique constraint catches forged collisions).
 
 **Reducer context (`packages/rules/src/reducer/types.ts`)**
-- [ ] `ReducerContext.newId` retains the same signature but its default implementation in both client (`apps/web/src/store/index.ts`) and server (`apps/server/src/sync/routes.ts`) is wired to `newUuidV7` from the new module. Server-side becomes a **no-op invariant check** rather than an id source in RH1.2 — see below.
+- [x] `ReducerContext.newId` retains the same signature; its default implementation in both client (`apps/web/src/store/index.ts`) and server (`apps/server/src/sync/routes.ts` + all three call sites in `apps/server/src/parties/routes.ts`) is wired to `newUuidV7` from the new module. `node:crypto.randomUUID` imports removed from both server route files (unused after the swap). Server-side becomes a **no-op invariant check** rather than an id source in RH1.2 — see below.
 
 **Guards (`packages/shared/src/guards/index.ts`)**
-- [ ] Add three new `GuardRejectionCode` values: `'id_malformed'` (not a valid UUID v7), `'id_already_exists'` (collision), `'id_clock_skew'` (timestamp outside the tolerance window). Each gets a one-line javadoc.
+- [x] Add three new `GuardRejectionCode` values: `'id_malformed'` (not a valid UUID v7), `'id_already_exists'` (collision), `'id_clock_skew'` (timestamp outside the tolerance window). Each gets a javadoc block per the roadmap charter.
 
 **Tests**
-- [ ] `packages/shared/src/ids.test.ts` — round-trip (`newUuidV7` → `isValidUuidV7` → true; `timestampFromUuidV7` within ±10ms of `Date.now()`); 100k collision sanity check; `isValidUuidV7` rejects v4 / malformed / empty.
+- [x] `packages/shared/src/ids.test.ts` — 17 tests across `newUuidV7` (format + version nibble + variant nibble + monotonic + 1000-mint uniqueness), `isValidUuidV7` (accepts fresh mint, rejects v4 / wrong length / non-hex / wrong version / wrong variant, accepts uppercase), `timestampFromUuidV7` (round-trip within 1 ms, monotonic across a burst, extracts the RFC 9562 §5.7 hand-crafted vector `017f22e2-79b0-7cc3-98c4-dc0c0c07398f` → `0x017F22E279B0`, throws on non-v7), and `CLOCK_SKEW_TOLERANCE_MS` (locked at 5 minutes).
 
 #### RH1.1 — Notes
 
-> -
+> **Shipped 2026-07-02** (`feature/rh1-server-authoritative-ids`).
+>
+> **Test totals:** 1211 across the workspace (shared 155 ← 138 with +17 new `ids.test.ts` tests; rules 126, seeds 22, web 725, server 183 all unchanged). All 5 workspaces typecheck. `packages/shared` lint is unchanged from the pre-RH1.1 baseline (15 pre-existing errors in `guards/map.test.ts`; zero new errors in `ids.ts` / `ids.test.ts`).
+>
+> **Design decisions captured:**
+> - **Chose the `uuid` package over a self-implemented ~30-LOC generator.** The roadmap listed both as options. Self-implementing was rejected during triage: (a) RFC 9562 bit layout is easy to get subtly wrong (version nibble `0x7`, variant bits `10`, 48-bit ms timestamp big-endian, 74 random bits); (b) getting it wrong means either false rejections of valid v7s from other clients OR false acceptance of malformed ids that pass a lax validator — the exact structural risk RH1 is supposed to REDUCE, not add; (c) `uuid@14` is dep-free, ~20kB, and has been through actual scrutiny; (d) the "~30 LOC" self-impl estimate covers generation only — robust parsing + validation + a defensible test suite pushes toward ~100. `timestampFromUuidV7` is the exception — 5 LOC in-tree, since `uuid@14` doesn't expose the extractor.
+> - **`CLOCK_SKEW_TOLERANCE_MS` exported as a named constant at ±5 min.** Matches OUTLINE §4 (`RH1 — Server-Authoritative ID contract`). Wide enough to absorb a misconfigured client (system clock off by a few minutes is common); narrow enough that a backdated forgery can't slip an id into the log with a fake timestamp far outside plausible mint order. Not consumed anywhere in RH1.1 (the guard that reads it lands in RH1.2); exporting now so RH1.2's consumers pick it up from the same module.
+> - **`isValidUuidV7` is case-insensitive.** RFC 9562 §4 says hex chars can be either case; a client that lowercases and a client that uppercases both produce valid v7s. `uuid@14.validate()` is case-insensitive and we don't second-guess it.
+> - **`timestampFromUuidV7` throws instead of returning `null` on invalid input.** Callers validate first via `isValidUuidV7`; if they don't, that's a programmer error, and a throw surfaces it during dev rather than propagating `null` into arithmetic. Mirrors the reducer's other "validate-first, extract-second" patterns (`currencyHoldingBy`, `stashBy`, etc.).
+> - **`newUuidV7()` wraps `uuid.v7()` even though it's a one-liner.** Named export gives us a stable seam if we ever need to inject a deterministic mint in tests (RH1.2's server-side validator tests will want this); also keeps the `uuid` package import in one place so future refactors don't have to grep-replace across the codebase.
+>
+> **Not shipped in RH1.1 (deferred to RH1.2 as intended):**
+> - Action-payload widening (`new<EntityName>Id` fields on `acquire` / `create-stash` / `split` / `create-homebrew` / `create-character` — five action shapes to touch).
+> - Server-side guard consumers of the three new rejection codes (`id_malformed` / `id_clock_skew` / `id_already_exists`). Codes are declared; no guard reads them yet.
+> - Reducer + persistor migration to consume `payload.new<EntityName>Id` instead of calling `ctx.newId()`.
+> - Server `ctx.newId()` shim that throws (per RH1.2 charter).
+>
+> **Not shipped in RH1.1 (deferred to RH1.3 as intended):**
+> - `ID_MINTING_ACTION_TYPES` set + post-flush `GET /sync/state` re-pull deletion in `apps/web/src/sync/queue.ts`. Still needed until RH1.2 lands.
+>
+> **Carryforward to RH1.2:**
+> - The five id-minting call sites the roadmap enumerates (`acquire`, `create-stash`, `split`, `create-homebrew`, `create-character`) all still call `ctx.newId()`. `create-character` alone calls it eight times (User + Party + Character + Inventory stash + Party stash + Recovered Loot stash + 3× CurrencyHolding — see `packages/rules/src/reducer/index.ts:317+ / :421+ / :530+`). RH1.2 will need a matching `new<EntityName>Id` payload field for every one of those, OR (design decision open) a batched `newIds: { user: string; party: string; ... }` shape on the bootstrap.
+> - The reducer's `create-character` arm mints ids in TWO branches (post-bootstrap `createCharacterInExistingParty` also calls `ctx.newId()` at line 530+ for the character + inventory stash + currency holding). Same `new<EntityName>Id` widening applies but on a smaller subset (character-only, no party).
+> - Server-side clock-skew guard needs a callable seam: `checkGuard` today runs BEFORE the reducer; the id-shape validation will need the same slot but with access to `Date.now()` for the tolerance-window comparison. Likely lands as a pre-reducer check in `POST /sync/actions` rather than inside a per-action guard.
 
 #### RH1.2 — Client-minted ids in action payloads + server validation
 

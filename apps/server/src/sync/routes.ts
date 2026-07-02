@@ -18,15 +18,13 @@
  * Both routes return `409 { error: 'display_name_required' }` until
  * `POST /auth/email/set-display-name` flips the flag.
  */
-import { randomUUID } from 'node:crypto';
-
 import type {
   Actor,
   Action as SchemaAction,
   ExportEnvelope,
   TransactionLogEntry,
 } from '@app/shared';
-import { checkGuard, exportEnvelopeSchema } from '@app/shared';
+import { checkGuard, exportEnvelopeSchema, newUuidV7 } from '@app/shared';
 import {
   generateInviteCode,
   reduce,
@@ -278,9 +276,10 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
       actor = resolved.actor;
     }
 
-    // Server-side reducer context — same shape as the web's.
+    // Server-side reducer context — same shape as the web's; RH1 makes
+    // UUID v7 authoritative on both sides.
     const ctx: ReducerContext = {
-      newId: () => randomUUID(),
+      newId: () => newUuidV7(),
       now: () => new Date().toISOString(),
       newInviteCode: generateInviteCode,
     };

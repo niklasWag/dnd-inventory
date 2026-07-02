@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
+import { newUuidV7 } from '@app/shared';
+
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
 import { enqueue, captureRollbackSnapshot } from '@/sync/queue';
@@ -31,14 +33,14 @@ export interface StoreState {
 const saver = createDebouncedSaver();
 
 /**
- * The web's `ReducerContext` — passes real `crypto.randomUUID()`,
- * `new Date().toISOString()`, and the shared `generateInviteCode` (R4
- * 128-bit base32 with `INV-` prefix) into the reducer. Tests inject a
+ * The web's `ReducerContext` — passes UUID v7 (RH1 client-authoritative
+ * id mint), `new Date().toISOString()`, and the shared `generateInviteCode`
+ * (R4 128-bit base32 with `INV-` prefix) into the reducer. Tests inject a
  * deterministic context at the `@app/rules` boundary instead of using
  * this constant.
  */
 const webReducerCtx: ReducerContext = {
-  newId: () => crypto.randomUUID(),
+  newId: () => newUuidV7(),
   now: () => new Date().toISOString(),
   newInviteCode: generateInviteCode,
 };

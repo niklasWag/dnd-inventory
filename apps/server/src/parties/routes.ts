@@ -20,12 +20,11 @@
  * surface. The session cookie is the sole identity source per
  * SECURITY §2.1; the request body never carries `actorUserId`.
  */
-import { randomUUID } from 'node:crypto';
-
 import type { Actor, JoinPartyResponse } from '@app/shared';
 import {
   joinPartyRequestSchema,
   kickPlayerRequestSchema,
+  newUuidV7,
   partyMembersResponseSchema,
 } from '@app/shared';
 import { generateInviteCode, reduce } from '@app/rules';
@@ -85,7 +84,7 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
     // them. We mint the membership + log entry directly.
     const actor: Actor = { userId: su.user.id, partyId: party.id, role: 'player' };
     const ctx = {
-      newId: () => randomUUID(),
+      newId: () => newUuidV7(),
       now: () => new Date().toISOString(),
       newInviteCode: generateInviteCode,
     };
@@ -186,7 +185,7 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
     try {
       const state = await loadAppStateForUser(prisma, actor.userId, partyId);
       const ctx = {
-        newId: () => randomUUID(),
+        newId: () => newUuidV7(),
         now: () => new Date().toISOString(),
         newInviteCode: generateInviteCode,
       };
@@ -246,7 +245,7 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
     try {
       const state = await loadAppStateForUser(prisma, actor.userId, partyId);
       const ctx = {
-        newId: () => randomUUID(),
+        newId: () => newUuidV7(),
         now: () => new Date().toISOString(),
         newInviteCode: generateInviteCode,
       };
