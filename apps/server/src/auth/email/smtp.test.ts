@@ -48,7 +48,7 @@ const env: Env = {
   PORT: 0,
   HOST: '127.0.0.1',
   LOG_LEVEL: 'silent',
-  DATABASE_URL: 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test',
+  DATABASE_URL: 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test',
   WEB_ORIGIN: 'http://localhost:5173',
   AUTH_SECRET: 'test-secret-padding-to-meet-32-char-min-XXXXX',
   SESSION_COOKIE_INSECURE: false,

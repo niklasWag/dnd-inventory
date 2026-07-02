@@ -39,7 +39,7 @@ describe('Hub — local mode invariants', () => {
     expect(screen.getByRole('button', { name: /^Create party/i })).toBeInTheDocument();
   });
 
-  it('disables the Join party card (R4 placeholder)', async () => {
+  it('disables the Join party card in local mode (R4.1.e server-mode-only)', async () => {
     await wipeAll();
     const { Hub, useStore } = await loadHub(false);
     useStore.setState({ appState: null, log: [] });

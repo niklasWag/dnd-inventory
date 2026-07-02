@@ -34,14 +34,28 @@ export type AppState = AppStateShape | null;
 export type Action =
   | {
       type: 'create-character';
-      payload: {
-        name: string;
-        species: string;
-        size: CreatureSize;
-        class: string;
-        level: number;
-        str: number;
-      };
+      payload:
+        | {
+            // Legacy bootstrap: mints User + Party + dm + player
+            // memberships + Character + 3 stashes + 3 currency rows.
+            // `partyName` optional; falls back to 'My Campaign'.
+            dmOnly?: false;
+            name: string;
+            species: string;
+            size: CreatureSize;
+            class: string;
+            level: number;
+            str: number;
+            partyName?: string;
+          }
+        | {
+            // R4.1-followup: DM-only bootstrap. No Character, no
+            // Inventory stash, no player membership. Used by the
+            // Hub's Create-party "I don't want to play a character"
+            // branch (OUTLINE §3.1).
+            dmOnly: true;
+            partyName: string;
+          };
     }
   | {
       type: 'acquire';
@@ -132,7 +146,7 @@ export type Action =
       payload: {
         stashId: string;
         delta: { cp: number; sp: number; ep: number; gp: number; pp: number };
-        reason: 'deposit' | 'withdraw' | 'convert';
+        reason: 'deposit' | 'withdraw' | 'convert' | 'gameplay-drain';
       };
     }
   | {
@@ -297,6 +311,10 @@ export type Action =
       payload: {
         itemInstanceId: string;
         characterId: string;
+        // R4.3.d — DM cap-override per OUTLINE §3.8. When true, reducer
+        // skips the maxAttunement slot-cap check. Guard rejects non-DM
+        // actors setting this flag.
+        overrideCap?: boolean;
       };
     }
   | {
@@ -433,6 +451,175 @@ export type Action =
           str?: number;
           maxAttunement?: number;
         };
+      };
+    }
+  | {
+      // R4.1.b: detach a Character from their party with full cascade
+      // per OUTLINE §8.3 (same shape as `leave-party` / `kick-player`):
+      //   - every ItemInstance in any of the character's stashes
+      //     (Inventory + Storage) is transferred to Recovered Loot
+      //     (one synthetic `transfer` slice per row)
+      //   - aggregated currency across the character's stashes rolls
+      //     into Recovered Loot via one `currency-change` slice with
+      //     `reason: 'character-deleted'` (omitted when zero)
+      //   - the character's stash rows + CurrencyHolding rows are
+      //     dropped from state
+      //   - the owning user's `PartyMembership` row with
+      //     `role='player'` retains its slot but with
+      //     `characterId: null` — the user keeps their seat and may
+      //     create a new character later (roadmap R4.1 line 1750)
+      //   - one terminal `delete-character` slice carries the snapshot
+      //     `{ characterId, name, itemCount, currencyTotalCp }`
+      //
+      // Reducer guards: unknown characterId rejects; missing CurrencyHolding
+      // surfaces as an invariant violation. The OUTLINE §8.1 permission
+      // gate (actor must be the character's owner OR DM in 2+-member
+      // parties) lives in the server-side guard map; in MVP party-of-one
+      // the sole user wears both hats so the reducer doesn't re-check.
+      type: 'delete-character';
+      payload: {
+        characterId: string;
+      };
+    }
+  | {
+      // R4.1.c: actor self-removes from `state.party` per OUTLINE §8.3.
+      // No payload on the wire — the reducer reads `state.user.id` for
+      // the actor and `state.party.id` for the party (R4.1 web client
+      // only holds one party at a time; SECURITY §2 forbids trusting
+      // partyId from the request body server-side).
+      //
+      // Cascade:
+      //   - if the actor has a player membership with `characterId !==
+      //     null`, run the `delete-character` cascade first (items +
+      //     currency → Recovered Loot, drop character + stashes).
+      //   - soft-delete every active `PartyMembership` row for actor.userId
+      //     in this party (a party-of-one creator's `dm` + `player` rows
+      //     both flip).
+      //   - if `state.party.bankerUserId === actor.userId`, also clear
+      //     it + emit a synthetic `revoke-banker` entry (R4.2 stub; in
+      //     R4.1 the field is always `null` so this branch is unreachable).
+      //   - emit one terminal `leave-party` slice with `{ partyId,
+      //     characterId? }` (characterId set IFF the leaver had one).
+      //
+      // Reducer guards:
+      //   - sole-member party (party-of-one): rejects with the message
+      //     "use archive flow". The server route handles archival via
+      //     `Party.archivedAt`; in local mode this means "deleting your
+      //     last party" is currently UI-unreachable. R4.1.e adds the
+      //     server-side archive path.
+      //   - sole DM of a 2+-member party: rejects with "transfer DM
+      //     first". R4.3 ships the `dm-transfer` action.
+      type: 'leave-party';
+      payload: Record<string, never>;
+    }
+  | {
+      // R4.1.d: DM removes another member from the party per OUTLINE
+      // §8.3 (same Recovered Loot cascade as leave-party). Reducer
+      // payload mirrors the log: { kickedUserId }. The reducer reads
+      // the actor (DM) from `state.user.id` because the web client
+      // only holds one party in memory; the server route resolves the
+      // actor from the session cookie per SECURITY §2.
+      //
+      // Cascade:
+      //   - if the kicked user has a player membership with
+      //     `characterId !== null`, run the shared character-delete
+      //     cascade (items + currency → Recovered Loot, drop character
+      //     + stashes + holdings).
+      //   - soft-delete every active membership row for the kicked
+      //     user in this party.
+      //   - if `state.party.bankerUserId === kickedUserId`, clear it
+      //     + emit a synthetic `revoke-banker` slice with
+      //     `reason: 'kicked'` (R4.2 stub; unreachable in R4.1).
+      //   - terminal `kick-player` slice with `{ kickedUserId }`.
+      //
+      // Reducer guards:
+      //   - kicked user must be an active member of this party.
+      //   - actor must NOT be the kicked user (self-kick uses
+      //     `leave-party` instead).
+      //   - kicked user must NOT also be a DM (multi-DM out of scope
+      //     in v1; DMs leave via `dm-transfer` + `leave-party`).
+      //
+      // OUTLINE §8.1 permission ("Kick player") is DM-only. The
+      // server-side guard enforces this; the reducer treats the
+      // actor's role as authoritative.
+      type: 'kick-player';
+      payload: {
+        kickedUserId: string;
+      };
+    }
+  | {
+      // R4.1.e: a new player joins an existing party (after redeeming
+      // an invite code server-side). Membership-only join — no
+      // character is minted. Reducer:
+      //   - reject if actor already has an active membership in
+      //     `state.party.id` (idempotency).
+      //   - append a `role='player'` membership row (characterId: null).
+      //   - emit one `join-party` slice with `{ partyId }`.
+      // The user's subsequent `create-character` dispatch mints the
+      // character + 3 stashes, and updates the player membership row's
+      // characterId pointer.
+      //
+      // Wire payload deliberately empty: actor = `state.user.id`,
+      // party = `state.party.id`. The server route already authenticated
+      // the user and resolved the party from the invite code before
+      // dispatching this action.
+      type: 'join-party';
+      payload: Record<string, never>;
+    }
+  | {
+      // R4.2.a: DM appoints an active player as the party's Banker per
+      // OUTLINE §3.14. Reducer rejects self-appointment, already-set
+      // Banker (forces a two-step revoke-then-appoint), and parties
+      // with memberCount < 2. The §3.14 invariant `bankerUserId !==
+      // ownerUserId` is enforced both here AND by the server guard
+      // layer per SECURITY §2 (server is authoritative).
+      type: 'appoint-banker';
+      payload: {
+        bankerUserId: string;
+      };
+    }
+  | {
+      // R4.2.a / R4.3.a: DM clears `Party.bankerUserId`. `reason`
+      // distinguishes direct dispatches (`'manual'`, `'reassigned'`)
+      // from cascade-emitted entries (`'left-party'`, `'kicked'`,
+      // `'dm-transfer'`) — only the first two reach this action via
+      // `POST /sync/actions`; the cascade entries are emitted directly
+      // from the kick/leave/dm-transfer reducer arms and don't
+      // round-trip through dispatch.
+      type: 'revoke-banker';
+      payload: {
+        reason: 'manual' | 'reassigned' | 'left-party' | 'kicked' | 'dm-transfer';
+      };
+    }
+  | {
+      // R4.3.a: DM hands the DM role to another active player per
+      // OUTLINE §3.14 + §8.3. Atomic swap: outgoing DM's `role='dm'`
+      // row soft-deleted; incoming DM's `role='dm'` row upserted to
+      // active (reactivates historical soft-deleted row per BUG-002
+      // lesson, or creates fresh); outgoing DM's `role='player'` row
+      // auto-minted if missing (DM-only outgoing DM case);
+      // `Party.ownerUserId` updated. If the incoming DM is the current
+      // Banker, `bankerUserId` is cleared and a synthetic
+      // `revoke-banker` slice with `reason: 'dm-transfer'` is emitted
+      // (preserves §4 invariant `bankerUserId !== ownerUserId`).
+      type: 'dm-transfer';
+      payload: {
+        newDmUserId: string;
+      };
+    }
+  | {
+      // R4.2.d — Banker-only "split the pot" action. Splits Party Stash
+      // currency evenly across the supplied recipients using the
+      // cascade-down-denominations algorithm (packages/rules `splitEvenly`).
+      // Emits one terminal `split-evenly` log entry + N `currency-transfer`
+      // entries (one per recipient). Guards enforce: Banker-only,
+      // fromStashId must be Party Stash, recipients must be active
+      // players' characters in this party. The Banker's own character
+      // is a valid recipient per OUTLINE §8.1.
+      type: 'split-evenly';
+      payload: {
+        fromStashId: string;
+        recipientCharacterIds: string[];
       };
     };
 

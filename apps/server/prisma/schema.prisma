@@ -149,9 +149,15 @@ model Party {
   recoveredLootStashId String
   // MVP writes null (no Banker until 2+ members per OUTLINE §3.14).
   bankerUserId         String?
-  // MVP writes true (party-of-one). Deprecated post-R4 per OUTLINE §4 amendment 2026-06-24.
-  isSoloShortcut       Boolean
+  // R4.1 — `isSoloShortcut` column dropped (migration `r41_drop_party_isSoloShortcut`).
+  // Hub UI derives the "solo" badge from `memberCount === 1` per OUTLINE §4 amendment 2026-06-24.
   createdAt            DateTime @default(now())
+  // R4.1.e — when set, the party is archived: it disappears from
+  // `GET /sync/parties` and `POST /sync/actions` rejects further
+  // mutations. Set by the sole-member-leave server route per OUTLINE §8.3
+  // ("If no other members exist, the party is archived (no destructive
+  // delete; data preserved for the DM's records)").
+  archivedAt           DateTime?
 
   owner       User              @relation("PartyOwner", fields: [ownerUserId], references: [id])
   memberships PartyMembership[]
@@ -200,15 +206,24 @@ model Character {
   encumbranceRule    EncumbranceRule
   enforceEncumbrance Boolean
   // FK to Stash; made DEFERRABLE INITIALLY DEFERRED in migration tail to
-  // break the Character ↔ Stash cycle inside a single transaction.
+  // break the Character ↔ Stash cycle inside a single transaction. Also
+  // hand-tailed to use the default `NO ACTION` on delete instead of
+  // Prisma's implicit `ON DELETE RESTRICT` (see BUG-001): the cascade in
+  // `cascadeCharacterToRecoveredLootDb` drops the Inventory stash inside
+  // the same txn that drops the Character, and RESTRICT rejects at the
+  // row-write level regardless of DEFERRABLE.
   //
   // ⚠️  DRIFT WARNING: Prisma's DSL cannot express DEFERRABLE (prisma#8807,
-  // open). Every `prisma migrate dev` run that touches Character OR Stash
-  // diffs the DB's DEFERRABLE FK against the schema's "plain" FK and emits a
-  // drop+add pair that reverts the deferral. ANY new migration touching
-  // either table MUST append the R3.1/R3.2-style re-DEFERRABLE block to its
-  // migration.sql tail. See apps/server/prisma/migrations/*/migration.sql
-  // for the canonical pattern.
+  // open) and emits `ON DELETE RESTRICT` for non-cascaded relations. Every
+  // `prisma migrate dev` run that touches Character OR Stash diffs the DB's
+  // hand-tailed FK against the schema's "plain" FK and emits a drop+add pair
+  // that reverts BOTH the deferral AND the no-action delete behavior. ANY
+  // new migration touching either table MUST append the canonical tail
+  // (drop + re-add as `NO ACTION ... DEFERRABLE INITIALLY DEFERRED`) to its
+  // migration.sql. See apps/server/prisma/migrations/*/migration.sql for
+  // the pattern. The invariant is enforced in CI by
+  // src/db/schema-invariants.test.ts (confdeferrable + confdeferred +
+  // confdeltype = 'a').
   inventoryStashId   String          @unique
 
   party        Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)

@@ -22,24 +22,38 @@ import { z, type ZodType } from 'zod';
 import {
   apiErrorSchema,
   authMethodsResponseSchema,
+  joinPartyRequestSchema,
+  joinPartyResponseSchema,
+  kickPlayerRequestSchema,
+  kickPlayerResponseSchema,
+  leavePartyResponseSchema,
+  linkEmailResponseSchema,
   partiesListResponseSchema,
+  partyMembersResponseSchema,
   pullStateResponseSchema,
   pushActionsResponseSchema,
   requestOtpResponseSchema,
+  rotateInviteResponseSchema,
   sessionResponseSchema,
   setDisplayNameResponseSchema,
   verifyOtpResponseSchema,
-  linkEmailResponseSchema,
   batchRejectedResponseSchema,
   type AuthMethodsResponse,
+  type JoinPartyRequest,
+  type JoinPartyResponse,
+  type KickPlayerRequest,
+  type KickPlayerResponse,
+  type LeavePartyResponse,
+  type LinkEmailResponse,
   type PartiesListResponse,
+  type PartyMembersResponse,
   type PullStateResponse,
   type PushActionsResponse,
   type RequestOtpResponse,
+  type RotateInviteResponse,
   type SessionResponse,
   type SetDisplayNameResponse,
   type VerifyOtpResponse,
-  type LinkEmailResponse,
   type BatchRejectedResponse,
 } from '@app/shared';
 
@@ -279,5 +293,79 @@ export function pushActions(partyId: string, actions: unknown[]): Promise<PushAc
     body: { partyId, actions },
     schema: pushActionsResponseSchema,
     on422: batchRejectedResponseSchema,
+  });
+}
+
+// ----- R4.1.e — party management ---------------------------------------
+
+/**
+ * Redeem an invite code and join a party as a `role='player'` member.
+ * The server mints the membership row + appends a `join-party` log
+ * entry. Returns the joined party id + name so callers can navigate.
+ */
+export function joinParty(req: JoinPartyRequest): Promise<JoinPartyResponse> {
+  // Belt-and-braces — validate request shape locally so a typo on the
+  // call site fails before reaching the wire.
+  joinPartyRequestSchema.parse(req);
+  return apiFetch('/parties/join', {
+    method: 'POST',
+    body: req,
+    schema: joinPartyResponseSchema,
+  });
+}
+
+/**
+ * DM-only. Rotates the party's invite code; the old code becomes
+ * invalid immediately. Returns the new code so the UI can display it.
+ */
+export function rotateInvite(partyId: string): Promise<RotateInviteResponse> {
+  return apiFetch(`/parties/${encodeURIComponent(partyId)}/invite/rotate`, {
+    method: 'POST',
+    body: {},
+    schema: rotateInviteResponseSchema,
+  });
+}
+
+/**
+ * The actor self-leaves the party. Cascade (per OUTLINE §8.3): items +
+ * currency to Recovered Loot, soft-delete memberships, banker
+ * auto-clear stub. Sole-member case archives the party.
+ *
+ * `archived: true` in the response means the party was archived as a
+ * side effect — callers should redirect to the Hub since the party
+ * will no longer appear in `/sync/parties`.
+ */
+export function leavePartyApi(partyId: string): Promise<LeavePartyResponse> {
+  return apiFetch(`/parties/${encodeURIComponent(partyId)}/leave`, {
+    method: 'POST',
+    body: {},
+    schema: leavePartyResponseSchema,
+  });
+}
+
+/**
+ * DM-only. Kicks `kickedUserId` from the party. Same cascade shape as
+ * `leavePartyApi` but parameterised on the target.
+ */
+export function kickPlayerApi(
+  partyId: string,
+  req: KickPlayerRequest,
+): Promise<KickPlayerResponse> {
+  kickPlayerRequestSchema.parse(req);
+  return apiFetch(`/parties/${encodeURIComponent(partyId)}/kick`, {
+    method: 'POST',
+    body: req,
+    schema: kickPlayerResponseSchema,
+  });
+}
+
+/**
+ * List active members of a party + the current invite code. Used by
+ * the PartySettings screen. Open to any active member (visibility on
+ * member list is universal per OUTLINE §5.15).
+ */
+export function listPartyMembers(partyId: string): Promise<PartyMembersResponse> {
+  return apiFetch(`/parties/${encodeURIComponent(partyId)}/members`, {
+    schema: partyMembersResponseSchema,
   });
 }

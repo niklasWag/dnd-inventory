@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { useStore } from '@/store';
 import { buildStashLabels, shortStashId } from '@/lib/stashLabels';
+import { RoleBadge } from '@/components/RoleBadge';
 import type { ItemDefinition, ItemInstance, TransactionLogEntry } from '@app/shared';
 
 interface ItemHistoryProps {
@@ -215,9 +216,7 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
               <span className="font-mono text-xs text-muted-foreground">
                 {new Date(e.timestamp).toLocaleString()}
               </span>
-              <span className="rounded bg-muted px-1.5 py-0.5 text-xs uppercase text-muted-foreground">
-                {e.actorRole}
-              </span>
+              <RoleBadge role={e.actorRole} />
               <span>{summarize(e, itemInstanceId, stashLabelById, containerLabelById)}</span>
             </li>
           ))}

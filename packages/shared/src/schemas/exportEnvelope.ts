@@ -27,15 +27,19 @@ import { transactionLogEntrySchema } from './transactionLog';
  *  - `payload`: the persisted blob shape; `appState` may be `null` for
  *    pre-character-creation exports (the MVP wipe-then-export edge case).
  */
-export const exportEnvelopeSchema = z.object({
-  schemaVersion: z.literal(1),
-  exportedAt: z.string(),
-  appVersion: z.string(),
-  seedVersion: z.number().int().nonnegative(),
-  payload: z.object({
-    appState: z.union([appStateSchema, z.null()]),
-    log: z.array(transactionLogEntrySchema),
-  }),
-});
+export const exportEnvelopeSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    exportedAt: z.string(),
+    appVersion: z.string(),
+    seedVersion: z.number().int().nonnegative(),
+    payload: z
+      .object({
+        appState: z.union([appStateSchema, z.null()]),
+        log: z.array(transactionLogEntrySchema),
+      })
+      .strict(),
+  })
+  .strict();
 
 export type ExportEnvelope = z.infer<typeof exportEnvelopeSchema>;

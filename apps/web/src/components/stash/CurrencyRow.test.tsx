@@ -112,3 +112,96 @@ describe('CurrencyRow (M4)', () => {
     expect(screen.getByText(/transfer currency/i)).toBeInTheDocument();
   });
 });
+
+// -------------------- R4.2.e — banker context visibility --------------------
+
+describe('CurrencyRow — bankerContext visibility (R4.2.e)', () => {
+  it('when userIsBanker + isPartyStash, shows Split evenly + keeps Transfer/Convert', () => {
+    const { partyStashId } = bootstrap();
+    render(
+      <CurrencyRow
+        stashId={partyStashId}
+        bankerContext={{
+          userIsBanker: true,
+          userIsDmWithBankerActive: false,
+          userIsGatedFromPool: false,
+          isPartyStash: true,
+        }}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^split evenly$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^transfer$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^convert$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^drain$/i })).not.toBeInTheDocument();
+  });
+
+  it('when userIsBanker but isPartyStash=false (Recovered Loot), no Split evenly button', () => {
+    const { recoveredLootStashId } = bootstrap();
+    render(
+      <CurrencyRow
+        stashId={recoveredLootStashId}
+        bankerContext={{
+          userIsBanker: true,
+          userIsDmWithBankerActive: false,
+          userIsGatedFromPool: false,
+          isPartyStash: false,
+        }}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /^split evenly$/i })).not.toBeInTheDocument();
+  });
+
+  it('when userIsDmWithBankerActive, shows Drain + hides withdraw −, Transfer, Convert', () => {
+    const { partyStashId } = bootstrap();
+    render(
+      <CurrencyRow
+        stashId={partyStashId}
+        bankerContext={{
+          userIsBanker: false,
+          userIsDmWithBankerActive: true,
+          userIsGatedFromPool: false,
+          isPartyStash: true,
+        }}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^drain$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^transfer$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^convert$/i })).not.toBeInTheDocument();
+    // Withdraw (−) is hidden but Deposit (+) stays visible for the DM.
+    expect(screen.queryByLabelText(/decrement gp/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/increment gp/i)).toBeInTheDocument();
+  });
+
+  it('when userIsGatedFromPool, hides withdraw, deposit, transfer, convert, split, drain', () => {
+    const { partyStashId } = bootstrap();
+    render(
+      <CurrencyRow
+        stashId={partyStashId}
+        bankerContext={{
+          userIsBanker: false,
+          userIsDmWithBankerActive: false,
+          userIsGatedFromPool: true,
+          isPartyStash: true,
+        }}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /^split evenly$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^drain$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^transfer$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^convert$/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/decrement gp/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/increment gp/i)).not.toBeInTheDocument();
+    // Balance itself still shown (read-only view).
+    expect(screen.getByLabelText(/^gp$/i)).toBeInTheDocument();
+  });
+
+  it('when bankerContext is undefined (Inventory), renders the full default control set', () => {
+    const { inventoryStashId } = bootstrap();
+    render(<CurrencyRow stashId={inventoryStashId} />);
+    expect(screen.getByRole('button', { name: /^transfer$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^convert$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^split evenly$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^drain$/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/increment gp/i)).toBeInTheDocument();
+  });
+});

@@ -37,6 +37,30 @@ import { BatchRejectedError, pullState, pushActions } from './client';
 const DEBOUNCE_MS = 200;
 const MAX_BATCH = 100;
 
+/**
+ * Action types whose reducer mints fresh server-canonical entity ids
+ * (`ctx.newId()` server-side). The server's UUIDs differ from the
+ * client's optimistic ones, so after such an action lands we re-pull
+ * `/sync/state` to canonicalize local ids — otherwise the NEXT action
+ * that references the new id (e.g. `transfer` after `acquire`) sends
+ * the client's stale local id and the server rejects with
+ * `item_not_found` / `stash_not_found` / etc.
+ *
+ * Auto-stacking acquires don't mint a new id (they bump the existing
+ * row's quantity), but conservatively re-pulling on every acquire is
+ * cheaper than parsing the response to detect "stacked vs. new."
+ *
+ * Keep this list in sync with `apps/server/src/sync/persistor.ts`
+ * `ctx.newId()` call sites + `applyBootstrapDelta`.
+ */
+const ID_MINTING_ACTION_TYPES: ReadonlySet<Action['type']> = new Set([
+  'create-character',
+  'acquire',
+  'create-stash',
+  'split',
+  'create-homebrew',
+]);
+
 interface PendingFlushSnapshot {
   appState: AppState | null;
   log: TransactionLogEntry[];
@@ -87,8 +111,33 @@ export function resetQueue(): void {
 }
 
 /**
- * Append an action to the pending batch. The first call captures the
- * snapshot; subsequent calls (within the debounce window) ride along.
+ * BUG-003 (2026-07-01) — capture the pre-batch snapshot from the
+ * caller BEFORE the reducer applies its mutation to the store. Prior
+ * to this fix, `enqueue()` captured the snapshot via
+ * `deps.getSnapshot()` at first-in-batch time — but by that point the
+ * dispatcher had already applied the mutation, so the snapshot was
+ * post-mutation and 422 rollbacks were no-ops.
+ *
+ * The store's `dispatch` MUST call this BEFORE calling `reduce()`.
+ * Subsequent calls within the same debounce window are no-ops (the
+ * first snapshot in the batch is the one we want to restore to).
+ * `resetQueue()` clears the snapshot; a successful push also clears
+ * it via the normal `preBatchSnapshot = null` step in `flush()`.
+ */
+export function captureRollbackSnapshot(): void {
+  if (deps === null) return;
+  if (preBatchSnapshot !== null) return;
+  preBatchSnapshot = deps.getSnapshot();
+}
+
+/**
+ * Append an action to the pending batch. The pre-batch snapshot is
+ * expected to have been captured by `captureRollbackSnapshot()` before
+ * the caller applied the mutation to the store (see BUG-003). If it
+ * wasn't (tests that don't call the capture step, or a caller that
+ * forgets), fall back to the post-mutation snapshot from
+ * `deps.getSnapshot()` — same behaviour as pre-fix but with the caveat
+ * that rollback restores the mutated state.
  */
 export function enqueue(action: Action): void {
   if (deps === null) {
@@ -103,7 +152,11 @@ export function enqueue(action: Action): void {
   // in `apps/server/src/sync/routes.ts:244` which requires every action
   // in a bootstrap batch to be `create-character`.
   if (action.type === 'seed-catalog') return;
-  if (queue.length === 0) {
+  if (queue.length === 0 && preBatchSnapshot === null) {
+    // Fallback for callers that didn't call captureRollbackSnapshot
+    // first. This is the pre-BUG-003 behaviour; log-only paths and
+    // tests may end up here. Real dispatch flows call the capture
+    // helper.
     preBatchSnapshot = deps.getSnapshot();
   }
   queue.push(action);
@@ -139,10 +192,17 @@ export async function flush(): Promise<void> {
 
   inflight = (async () => {
     try {
-      const isBootstrap = batch[0]?.type === 'create-character';
+      // R4.1.f: `create-character` has TWO shapes — bootstrap (state was
+      // null pre-dispatch, mints the whole party) and post-bootstrap
+      // (state existed, only adds a Character + Inventory + Holding +
+      // membership patch). The snapshot captured by enqueue() is the
+      // PRE-batch state; bootstrap iff that was null.
+      const isCreateCharacter = batch[0]?.type === 'create-character';
+      const isBootstrap = isCreateCharacter && snapshot?.appState == null;
       // Resolve the partyId for the push. Bootstrap: send a synthetic
       // marker — the server's bootstrap branch mints the real one.
-      // Post-bootstrap: read from the active-party pointer (Dexie meta).
+      // Post-bootstrap (including post-bootstrap create-character):
+      // read from the active-party pointer (Dexie meta).
       const partyId = isBootstrap ? 'will-be-minted' : await deps.getActivePartyId();
       if (partyId === null) {
         toast.error('No active party — refresh and try again.');
@@ -150,23 +210,35 @@ export async function flush(): Promise<void> {
         return;
       }
 
-      await pushActions(partyId, batch);
+      const response = await pushActions(partyId, batch);
 
-      // Bootstrap success: re-pull canonical state so the new party's
-      // server-minted ids land in the store before the Hub navigates.
-      if (isBootstrap) {
-        // Without a known partyId we have to read it back from the
-        // store's just-applied optimistic state (the reducer minted a
-        // local id; the server kept it).
+      // R4.1.f post-ship: re-pull canonical state after ANY id-minting
+      // action lands. The server's reducer runs with its own
+      // `randomUUID()` ctx, so entity ids it mints DIFFER from the
+      // client's optimistic ids. Without a re-pull, a subsequent action
+      // referencing the freshly-minted id (e.g. `transfer` after
+      // `acquire`) hits the server with the client's stale id and gets
+      // `item_not_found`. See `ID_MINTING_ACTION_TYPES` below.
+      const mintsIds = batch.some((a) => ID_MINTING_ACTION_TYPES.has(a.type));
+      if (mintsIds) {
+        // For `create-character` (bootstrap or post-bootstrap), the
+        // server's `applied[]` response carries the canonical partyId
+        // on the log entry payload. For other id-minting actions the
+        // partyId is unchanged across the dispatch; we read it from
+        // post-flush local state.
+        const firstApplied = response.applied[0];
         const post = deps.getSnapshot();
         if (post.appState === null) {
-          // Reducer must have produced a party for a bootstrap action;
-          // if not, something is structurally wrong — bail.
-          toast.error('Bootstrap failed to apply locally.');
+          // Reducer must have produced a party for any id-minting
+          // action; if not, something is structurally wrong — bail.
+          toast.error('Action failed to apply locally.');
           return;
         }
-        const localId = post.appState.party.id;
-        const pulled = await pullState(localId);
+        const serverPartyId =
+          firstApplied !== undefined && firstApplied.type === 'create-character'
+            ? firstApplied.payload.partyId
+            : post.appState.party.id;
+        const pulled = await pullState(serverPartyId);
         deps.restoreSnapshot({ appState: pulled.state, log: pulled.state.log });
         await setCurrentPartyId(pulled.state.party.id);
       }

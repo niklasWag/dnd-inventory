@@ -4,7 +4,7 @@ import { useStore, flushPendingPersist } from './index';
 import { loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
 import { appStateSchema, transactionLogEntrySchema } from '@app/shared';
-import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
+import { SEED_VERSION, loadPhbSeed } from '@app/seeds';
 
 import { bootstrap } from '@/test/fixtures';
 
@@ -42,7 +42,6 @@ describe('reducer: create-character (M1)', () => {
     if (s === null) return; // narrow for TS
 
     expect(s.user.displayName).toBe('You');
-    expect(s.party.isSoloShortcut).toBe(true);
     expect(s.party.bankerUserId).toBeNull();
     expect(s.memberships).toHaveLength(2);
     expect(s.memberships.map((m) => m.role).sort()).toEqual(['dm', 'player']);
@@ -129,7 +128,7 @@ describe('reducer: create-character (M1)', () => {
     dispatch({ type: 'create-character', payload: validPayload });
     expect(() =>
       dispatch({ type: 'create-character', payload: { ...validPayload, name: 'Other' } }),
-    ).toThrow(/already exists/);
+    ).toThrow(/already has an active player character/);
   });
 
   it('debounced persist round-trips the new state + log through Dexie', async () => {
@@ -163,6 +162,92 @@ function localBootstrap(): ReturnType<typeof bootstrap> {
   return bootstrap(validPayload);
 }
 
+// -------------------------------------------------------------------- //
+// R4.1-followup: create-character DM-only branch + partyName override
+// -------------------------------------------------------------------- //
+
+describe('reducer: create-character (R4.1-followup)', () => {
+  it('honors `partyName` override on the legacy (with-character) branch', () => {
+    useStore
+      .getState()
+      .dispatch({
+        type: 'create-character',
+        payload: { ...validPayload, partyName: 'The Misfits' },
+      });
+    const s = useStore.getState().appState!;
+    expect(s.party.name).toBe('The Misfits');
+    // Character + Inventory + 2 memberships still minted.
+    expect(s.characters).toHaveLength(1);
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(1);
+    expect(s.memberships).toHaveLength(2);
+  });
+
+  it('omits character + Inventory + player membership on dmOnly=true', () => {
+    useStore
+      .getState()
+      .dispatch({
+        type: 'create-character',
+        payload: { dmOnly: true, partyName: 'DM Sandbox' },
+      });
+    const s = useStore.getState().appState!;
+    // Party + DM membership only.
+    expect(s.party.name).toBe('DM Sandbox');
+    expect(s.memberships).toHaveLength(1);
+    expect(s.memberships[0]!.role).toBe('dm');
+    expect(s.memberships[0]!.characterId).toBeNull();
+    // No Character row, no Inventory stash, no Inventory currency.
+    expect(s.characters).toHaveLength(0);
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(0);
+    expect(s.stashes.map((st) => st.scope).sort()).toEqual(['party', 'recovered-loot']);
+    expect(s.currencies).toHaveLength(2);
+  });
+
+  it('emits a `create-character` log entry with dmOnly: true on the DM-only branch', () => {
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+    });
+    const log = useStore.getState().log;
+    expect(log).toHaveLength(1);
+    const entry = log[0]!;
+    if (entry.type !== 'create-character') throw new Error('expected create-character');
+    expect(entry.payload.dmOnly).toBe(true);
+    // No character-related fields on the DM-only payload.
+    expect(entry.payload.characterId).toBeUndefined();
+    expect(entry.payload.inventoryStashId).toBeUndefined();
+    expect(entry.payload.name).toBeUndefined();
+  });
+
+  it('persisted state with dmOnly bootstrap round-trips through the shared schema', async () => {
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+    });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+
+  it('rejects dmOnly bootstrap when state is already populated', () => {
+    localBootstrap();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({
+          type: 'create-character',
+          payload: { dmOnly: true, partyName: 'X' },
+        }),
+    ).toThrow(/dmOnly is only valid on the bootstrap/);
+  });
+});
+
 describe('reducer: seed-catalog (M2)', () => {
   it('populates the catalog from an empty state and bumps seedVersion', () => {
     useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
@@ -173,12 +258,12 @@ describe('reducer: seed-catalog (M2)', () => {
     const phb = loadPhbSeed();
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION, entries: phb },
+      payload: { seedVersion: SEED_VERSION, entries: phb },
     });
 
     const after = useStore.getState().appState!;
     expect(after.catalog).toHaveLength(phb.length);
-    expect(after.seedVersion).toBe(PHB_SEED_VERSION);
+    expect(after.seedVersion).toBe(SEED_VERSION);
     expect(() => appStateSchema.parse(after)).not.toThrow();
   });
 
@@ -187,7 +272,7 @@ describe('reducer: seed-catalog (M2)', () => {
     const sizeAfterFirst = useStore.getState().appState!.catalog.length;
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
+      payload: { seedVersion: SEED_VERSION, entries: loadPhbSeed() },
     });
     expect(useStore.getState().appState!.catalog).toHaveLength(sizeAfterFirst);
   });
@@ -219,14 +304,14 @@ describe('reducer: seed-catalog (M2)', () => {
     // Re-seed: PHB entries get upserted, homebrew should survive untouched.
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION + 1, entries: loadPhbSeed() },
+      payload: { seedVersion: SEED_VERSION + 1, entries: loadPhbSeed() },
     });
 
     const after = useStore.getState().appState!;
     const homebrew = after.catalog.find((d) => d.id === homebrewId);
     expect(homebrew).toBeDefined();
     expect(homebrew!.source).toBe('homebrew');
-    expect(after.seedVersion).toBe(PHB_SEED_VERSION + 1);
+    expect(after.seedVersion).toBe(SEED_VERSION + 1);
   });
 
   it('logs a seed-catalog entry with the right add/update split', () => {
@@ -235,7 +320,7 @@ describe('reducer: seed-catalog (M2)', () => {
 
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION, entries: phb },
+      payload: { seedVersion: SEED_VERSION, entries: phb },
     });
 
     const log = useStore.getState().log;
@@ -244,7 +329,7 @@ describe('reducer: seed-catalog (M2)', () => {
     if (seedEntry?.type === 'seed-catalog') {
       expect(seedEntry.payload.addedDefinitionIds).toHaveLength(phb.length);
       expect(seedEntry.payload.updatedDefinitionIds).toHaveLength(0);
-      expect(seedEntry.payload.seedVersion).toBe(PHB_SEED_VERSION);
+      expect(seedEntry.payload.seedVersion).toBe(SEED_VERSION);
     }
   });
 
@@ -252,7 +337,7 @@ describe('reducer: seed-catalog (M2)', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'seed-catalog',
-        payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
+        payload: { seedVersion: SEED_VERSION, entries: loadPhbSeed() },
       }),
     ).toThrow(/no AppState/);
   });
@@ -3542,6 +3627,116 @@ describe('reducer: attune / unattune (R1.2)', () => {
   });
 });
 
+// -------------------------------------------------------------------- //
+// R4.3.d — attune cap-override (DM force-attune bypassing slot cap)
+// -------------------------------------------------------------------- //
+//
+// OUTLINE §3.8: "DM can attune with explicit confirm bypassing the cap;
+// cap-override still logs." Payload gains an optional `overrideCap`
+// boolean. When true, the reducer's slot-cap check is skipped. Guard
+// (packages/shared/src/guards/map.ts) rejects non-DM actors setting
+// `overrideCap: true`. In MVP-solo (party-of-one) the solo bypass in
+// checkGuard means the sole user (DM+player) can always set the flag.
+
+describe('reducer: attune cap-override (R4.3.d)', () => {
+  function bootstrapWithAttunables(count: number): {
+    characterId: string;
+    ids: string[];
+  } {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    for (let i = 0; i < count; i += 1) {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: inventoryStashId,
+          definitionId: magic.id,
+          quantity: 1,
+          source: 'catalog-add',
+          notes: `slot-${i}`,
+        },
+      });
+    }
+    const ids: string[] = [];
+    for (const it of useStore.getState().appState!.items) {
+      if (it.ownerId === inventoryStashId) ids.push(it.id);
+    }
+    return { characterId, ids };
+  }
+
+  it('attune with overrideCap: true bypasses the slot cap', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    // Fill 3 slots normally.
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    // 4th normally would fail (default cap 3).
+    // With overrideCap: true, it succeeds.
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[3]!, overrideCap: true },
+    });
+    expect(useStore.getState().appState!.items.find((i) => i.id === ids[3])!.attuned).toBe(true);
+  });
+
+  it('attune without overrideCap still respects the slot cap', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    // Without overrideCap, still rejects.
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[3]! },
+      }),
+    ).toThrow(/no free attunement slot/);
+  });
+
+  it('attune with overrideCap: false still respects the slot cap', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    // overrideCap: false is equivalent to the field being absent.
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[3]!, overrideCap: false },
+      }),
+    ).toThrow(/no free attunement slot/);
+  });
+
+  it('overrideCap: true is preserved on the log entry (audit trail)', () => {
+    const { characterId, ids } = bootstrapWithAttunables(4);
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'attune',
+        payload: { characterId, itemInstanceId: ids[i]! },
+      });
+    }
+    useStore.getState().dispatch({
+      type: 'attune',
+      payload: { characterId, itemInstanceId: ids[3]!, overrideCap: true },
+    });
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('attune');
+    if (last.type !== 'attune') throw new Error('expected attune');
+    expect(last.payload.overrideCap).toBe(true);
+    // Schema round-trip.
+    expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
+  });
+});
+
 describe('reducer: attune magic-item gate (R2.1)', () => {
   /**
    * R2.1 — `attune` rejects mundane rows (`def.requiresAttunement !== true`).
@@ -5905,5 +6100,2171 @@ describe('reducer: identify (R2.3)', () => {
     });
     const entry = useStore.getState().log.slice(logLenBefore)[0]!;
     expect(entry.actorRole).toBe('dm');
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.b: delete-character
+// -------------------------------------------------------------------- //
+
+describe('reducer: delete-character (R4.1.b)', () => {
+  it('drops the character row and clears PartyMembership.characterId on the player row', () => {
+    const { characterId } = localBootstrap();
+    const ownerUserId = useStore.getState().appState!.user.id;
+    expect(useStore.getState().appState!.characters).toHaveLength(1);
+
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(0);
+    // DM membership row survives untouched; player row's characterId is cleared.
+    const dmRow = s.memberships.find((m) => m.role === 'dm');
+    const playerRow = s.memberships.find((m) => m.role === 'player');
+    expect(dmRow).toBeDefined();
+    expect(dmRow!.characterId).toBeNull();
+    expect(playerRow).toBeDefined();
+    expect(playerRow!.userId).toBe(ownerUserId);
+    expect(playerRow!.characterId).toBeNull();
+    expect(playerRow!.leftAt).toBeNull();
+  });
+
+  it('drops the character\'s Inventory + Storage stashes and their CurrencyHolding rows', () => {
+    const { characterId } = localBootstrap();
+    // Provision a second Storage stash so the cascade has to find both.
+    useStore.getState().dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Chest at home' },
+    });
+    const before = useStore.getState().appState!;
+    expect(before.stashes.filter((st) => st.ownerCharacterId === characterId)).toHaveLength(2);
+
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const s = useStore.getState().appState!;
+    // No character-scope stashes survive. Party Stash + Recovered Loot remain.
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(0);
+    expect(s.stashes.map((st) => st.scope).sort()).toEqual(['party', 'recovered-loot']);
+    expect(s.currencies.filter((c) => !s.stashes.some((st) => st.id === c.stashId))).toHaveLength(
+      0,
+    );
+  });
+
+  it('moves all items across owned stashes to Recovered Loot (no auto-stack)', () => {
+    const { characterId, inventoryStashId, recoveredLootStashId, catalog } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    // Provision a Storage stash with items + items in Inventory.
+    dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 2,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: storageStashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    const ropeId = useStore.getState().appState!.items.find((i) => i.definitionId === rope.id)!.id;
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.items.find((i) => i.id === torchId)?.ownerId).toBe(recoveredLootStashId);
+    expect(s.items.find((i) => i.id === torchId)?.quantity).toBe(2);
+    expect(s.items.find((i) => i.id === ropeId)?.ownerId).toBe(recoveredLootStashId);
+    expect(s.items.find((i) => i.id === ropeId)?.quantity).toBe(1);
+  });
+
+  it('clears equipped/attuned/containerInstanceId on transferred items', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
+    // Equip it before deletion so the cascade has to clear the flag.
+    dispatch({ type: 'equip', payload: { itemInstanceId: torchId, characterId } });
+    expect(useStore.getState().appState!.items.find((i) => i.id === torchId)!.equipped).toBe(true);
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const moved = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
+    expect(moved.equipped).toBe(false);
+    expect(moved.attuned).toBe(false);
+    expect(moved.containerInstanceId).toBeNull();
+  });
+
+  it('aggregates currency across all owned stashes into Recovered Loot with reason character-deleted', () => {
+    const { characterId, inventoryStashId, recoveredLootStashId } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    // Add a Storage stash and fund both.
+    dispatch({
+      type: 'create-stash',
+      payload: { ownerCharacterId: characterId, name: 'Vault' },
+    });
+    const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: storageStashId,
+        delta: { cp: 12, sp: 0, ep: 0, gp: 3, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const beforeLootGp = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp;
+    const logLenBefore = useStore.getState().log.length;
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const lootCurrency = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!;
+    expect(lootCurrency.gp).toBe(beforeLootGp + 8);
+    expect(lootCurrency.cp).toBe(12);
+
+    // Find the synthetic currency-change in the cascade.
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    const currencyEntry = cascade.find((e) => e.type === 'currency-change');
+    expect(currencyEntry).toBeDefined();
+    if (currencyEntry?.type !== 'currency-change') throw new Error('expected currency-change');
+    expect(currencyEntry.payload.stashId).toBe(recoveredLootStashId);
+    expect(currencyEntry.payload.reason).toBe('character-deleted');
+    expect(currencyEntry.payload.delta.gp).toBe(8);
+    expect(currencyEntry.payload.delta.cp).toBe(12);
+  });
+
+  it('does NOT emit a currency-change when all owned stashes are at zero', () => {
+    const { characterId } = localBootstrap();
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    expect(cascade.find((e) => e.type === 'currency-change')).toBeUndefined();
+  });
+
+  it('emits per-item transfer entries + optional currency-change + terminal delete-character', () => {
+    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { dispatch } = useStore.getState();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 7, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    dispatch({ type: 'delete-character', payload: { characterId } });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    // 2 transfers + 1 currency-change + 1 delete-character = 4 entries
+    expect(cascade.length).toBe(4);
+    expect(cascade[0]!.type).toBe('transfer');
+    expect(cascade[1]!.type).toBe('transfer');
+    expect(cascade[2]!.type).toBe('currency-change');
+    expect(cascade[3]!.type).toBe('delete-character');
+
+    const last = cascade.at(-1)!;
+    if (last.type !== 'delete-character') throw new Error('expected delete-character');
+    expect(last.payload.characterId).toBe(characterId);
+    expect(last.payload.name).toBe(validPayload.name);
+    expect(last.payload.itemCount).toBe(2);
+    // 7 gp == 700 cp in the GP-equivalent ladder.
+    expect(last.payload.currencyTotalCp).toBe(700);
+  });
+
+  it('rejects unknown characterId', () => {
+    localBootstrap();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'delete-character', payload: { characterId: 'no-such-id' } }),
+    ).toThrow(/unknown characterId/);
+  });
+
+  it('persisted state round-trips through the shared schema', async () => {
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    // Every emitted log entry round-trips through the discriminated union too.
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.c: leave-party
+// -------------------------------------------------------------------- //
+
+describe('reducer: leave-party (R4.1.c)', () => {
+  /**
+   * Helper: bootstrap and graft a second active member onto the party
+   * so leave-party's sole-member guard doesn't reject. In real life R4.1.e
+   * `POST /parties/join` mints the second membership; here we inject it
+   * directly so the reducer suite stays independent of the server.
+   * `otherRole` lets the test choose whether the other member is a
+   * second player (default) or a DM.
+   */
+  function bootstrapWithSecondMember(otherRole: 'player' | 'dm' = 'player'): {
+    characterId: string;
+    otherUserId: string;
+  } {
+    const base = localBootstrap();
+    const otherUserId = `other-${otherRole}`;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherUserId,
+              partyId: s.appState.party.id,
+              role: otherRole,
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    return { characterId: base.characterId, otherUserId };
+  }
+
+  it('rejects when the actor is the sole member (party-of-one archive path)', () => {
+    localBootstrap();
+    expect(() => useStore.getState().dispatch({ type: 'leave-party', payload: {} })).toThrow(
+      /sole member must use archive flow/,
+    );
+  });
+
+  it('rejects when the actor is the sole DM of a 2+-member party', () => {
+    // Add a second player so the sole-member guard passes; actor stays the only DM.
+    bootstrapWithSecondMember('player');
+    expect(() => useStore.getState().dispatch({ type: 'leave-party', payload: {} })).toThrow(
+      /sole DM must transfer DM role first/,
+    );
+  });
+
+  it('soft-deletes both dm + player rows for the leaver in one dispatch', () => {
+    // Other member is a DM, so the actor leaving is fine.
+    bootstrapWithSecondMember('dm');
+    const beforeUserId = useStore.getState().appState!.user.id;
+    const beforeRows = useStore
+      .getState()
+      .appState!.memberships.filter((m) => m.userId === beforeUserId);
+    expect(beforeRows).toHaveLength(2);
+    expect(beforeRows.every((m) => m.leftAt === null)).toBe(true);
+
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const after = useStore.getState().appState!;
+    const actorRows = after.memberships.filter((m) => m.userId === beforeUserId);
+    expect(actorRows).toHaveLength(2);
+    expect(actorRows.every((m) => m.leftAt !== null)).toBe(true);
+    // Each leftAt is a parseable ISO datetime.
+    for (const row of actorRows) {
+      expect(typeof row.leftAt).toBe('string');
+      expect(Number.isFinite(Date.parse(row.leftAt!))).toBe(true);
+    }
+    // The other member's DM row is untouched.
+    const others = after.memberships.filter((m) => m.userId !== beforeUserId);
+    expect(others.every((m) => m.leftAt === null)).toBe(true);
+  });
+
+  it('runs the character cascade when the leaver had a player membership with a character', () => {
+    const { characterId } = bootstrapWithSecondMember('dm');
+    const inventoryStashId = useStore.getState().appState!.characters[0]!.inventoryStashId;
+    const recoveredLootStashId = useStore.getState().appState!.party.recoveredLootStashId;
+    const catalog = useStore.getState().appState!.catalog;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const { dispatch } = useStore.getState();
+    dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 2,
+        source: 'catalog-add',
+      },
+    });
+    dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 3, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const torchId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === torch.id)!.id;
+
+    dispatch({ type: 'leave-party', payload: {} });
+
+    const s = useStore.getState().appState!;
+    // Character + their stashes are gone.
+    expect(s.characters.find((c) => c.id === characterId)).toBeUndefined();
+    expect(s.stashes.filter((st) => st.scope === 'character')).toHaveLength(0);
+    // Items moved to Recovered Loot.
+    expect(s.items.find((i) => i.id === torchId)?.ownerId).toBe(recoveredLootStashId);
+    // Currency rolled into Recovered Loot.
+    expect(
+      s.currencies.find((c) => c.stashId === recoveredLootStashId)?.gp,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it('emits cascade + terminal leave-party slice (with characterId when present)', () => {
+    const { characterId } = bootstrapWithSecondMember('dm');
+    const inventoryStashId = useStore.getState().appState!.characters[0]!.inventoryStashId;
+    const catalog = useStore.getState().appState!.catalog;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+      },
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    const types = cascade.map((e) => e.type);
+    // transfer (×1 for the torch) + leave-party (no currency-change since balance is zero)
+    expect(types).toEqual(['transfer', 'leave-party']);
+
+    const terminal = cascade.at(-1)!;
+    if (terminal.type !== 'leave-party') throw new Error('expected leave-party');
+    expect(terminal.payload.partyId).toBe(useStore.getState().appState!.party.id);
+    expect(terminal.payload.characterId).toBe(characterId);
+  });
+
+  it("emits a leave-party slice without characterId when the leaver has no player row", () => {
+    // Promote actor to dm-only by deleting their character first, then add a
+    // second member so the sole-DM guard doesn't reject. Order matters: drop
+    // the player character, then graft the second DM, then leave.
+    const { characterId } = localBootstrap();
+    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    // After delete-character, actor's player row has characterId: null (alive).
+    // Add a second DM so the sole-DM check passes when actor leaves.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'other-dm',
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    // Only the terminal leave-party slice — no character to cascade.
+    expect(cascade.length).toBe(1);
+    const terminal = cascade[0]!;
+    if (terminal.type !== 'leave-party') throw new Error('expected leave-party');
+    expect(terminal.payload.partyId).toBe(useStore.getState().appState!.party.id);
+    // characterId is undefined when the leaver had no player row OR a null
+    // characterId on their player row.
+    expect(terminal.payload.characterId).toBeUndefined();
+  });
+
+  it('persisted state round-trips through the shared schema', async () => {
+    bootstrapWithSecondMember('dm');
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.d: kick-player
+// -------------------------------------------------------------------- //
+
+describe('reducer: kick-player (R4.1.d)', () => {
+  /**
+   * Helper: bootstrap, then graft a second active player member (with
+   * their own character + inventory stash + currency holding) so kick
+   * has a real target with a cascade-ready footprint. The second player
+   * is `kicked-u`. Returns the kicked user id + a couple of useful ids.
+   */
+  function bootstrapWithKickTarget(): {
+    kickedUserId: string;
+    kickedCharacterId: string;
+    kickedInventoryStashId: string;
+    recoveredLootStashId: string;
+  } {
+    localBootstrap();
+    const kickedUserId = 'kicked-u';
+    const kickedCharacterId = 'kicked-char';
+    const kickedInventoryStashId = 'kicked-inv';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: kickedUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: kickedCharacterId,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          characters: [
+            ...s.appState.characters,
+            {
+              id: kickedCharacterId,
+              partyId: s.appState.party.id,
+              ownerUserId: kickedUserId,
+              name: 'Kicked Hero',
+              species: 'Human',
+              size: 'medium',
+              class: 'Rogue',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: kickedInventoryStashId,
+            },
+          ],
+          stashes: [
+            ...s.appState.stashes,
+            {
+              id: kickedInventoryStashId,
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: kickedCharacterId,
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...s.appState.currencies,
+            {
+              id: 'kicked-cur',
+              stashId: kickedInventoryStashId,
+              cp: 0,
+              sp: 0,
+              ep: 0,
+              gp: 0,
+              pp: 0,
+            },
+          ],
+        },
+      };
+    });
+    return {
+      kickedUserId,
+      kickedCharacterId,
+      kickedInventoryStashId,
+      recoveredLootStashId: useStore.getState().appState!.party.recoveredLootStashId,
+    };
+  }
+
+  it('rejects when actor tries to kick themselves', () => {
+    bootstrapWithKickTarget();
+    const actorUserId = useStore.getState().appState!.user.id;
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'kick-player', payload: { kickedUserId: actorUserId } }),
+    ).toThrow(/cannot kick themselves/);
+  });
+
+  it('rejects when target is not an active member of this party', () => {
+    bootstrapWithKickTarget();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'kick-player', payload: { kickedUserId: 'no-such-user' } }),
+    ).toThrow(/not an active member/);
+  });
+
+  it('rejects when target also has a DM membership row', () => {
+    bootstrapWithKickTarget();
+    // Promote `kicked-u` to also be a DM.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'kicked-u',
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'kick-player', payload: { kickedUserId: 'kicked-u' } }),
+    ).toThrow(/cannot kick a DM/);
+  });
+
+  it('soft-deletes the kicked user\'s membership and drops their character', () => {
+    const { kickedUserId, kickedCharacterId } = bootstrapWithKickTarget();
+
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+
+    const s = useStore.getState().appState!;
+    // Membership soft-deleted.
+    const kickedRows = s.memberships.filter((m) => m.userId === kickedUserId);
+    expect(kickedRows).toHaveLength(1);
+    expect(kickedRows[0]!.leftAt).not.toBeNull();
+    // Character row dropped.
+    expect(s.characters.find((c) => c.id === kickedCharacterId)).toBeUndefined();
+    // Actor's rows untouched.
+    const actorRows = s.memberships.filter((m) => m.userId === s.user.id);
+    expect(actorRows.every((m) => m.leftAt === null)).toBe(true);
+  });
+
+  it('cascades the kicked character\'s items + currency to Recovered Loot', () => {
+    const { kickedUserId, kickedInventoryStashId, recoveredLootStashId } =
+      bootstrapWithKickTarget();
+    // Acquire an item directly into the kicked player's inventory + fund their stash.
+    const catalog = useStore.getState().appState!.catalog;
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      const itemId = 'kicked-item-torch';
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          items: [
+            ...s.appState.items,
+            {
+              id: itemId,
+              definitionId: torch.id,
+              ownerType: 'stash',
+              ownerId: kickedInventoryStashId,
+              containerInstanceId: null,
+              quantity: 4,
+              equipped: false,
+              attuned: false,
+              identified: true,
+              currentCharges: null,
+            },
+          ],
+          currencies: s.appState.currencies.map((c) =>
+            c.stashId === kickedInventoryStashId ? { ...c, gp: 12 } : c,
+          ),
+        },
+      };
+    });
+    const beforeLootGp = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp;
+
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+
+    const s = useStore.getState().appState!;
+    // Item moved to Recovered Loot with quantity preserved.
+    const moved = s.items.find((i) => i.id === 'kicked-item-torch')!;
+    expect(moved.ownerId).toBe(recoveredLootStashId);
+    expect(moved.quantity).toBe(4);
+    // Currency rolled into Recovered Loot.
+    expect(
+      s.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp - beforeLootGp,
+    ).toBe(12);
+  });
+
+  it('emits cascade + terminal kick-player slice with actorRole=dm', () => {
+    const { kickedUserId } = bootstrapWithKickTarget();
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    const terminal = cascade.at(-1)!;
+    if (terminal.type !== 'kick-player') throw new Error('expected kick-player');
+    expect(terminal.payload.kickedUserId).toBe(kickedUserId);
+    expect(terminal.actorRole).toBe('dm');
+  });
+
+  it('persisted state round-trips through the shared schema', async () => {
+    const { kickedUserId } = bootstrapWithKickTarget();
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+    await flushPendingPersist();
+    const persisted = (await loadAppState()) as {
+      appState: unknown;
+      log: unknown[];
+    } | null;
+    expect(persisted).not.toBeNull();
+    expect(() => appStateSchema.parse(persisted!.appState)).not.toThrow();
+    for (const entry of persisted!.log) {
+      expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.e: join-party
+// -------------------------------------------------------------------- //
+
+describe('reducer: join-party (R4.1.e)', () => {
+  /**
+   * The reducer-side `join-party` action is only ever dispatched in
+   * server-mode-via-the-`/parties/join`-route pipeline; in local mode
+   * it can be exercised directly. The local test helper grafts a
+   * fresh AppState whose user.id matches a synthetic "new joiner" so
+   * the resulting membership row reflects an honest add.
+   */
+  it("appends a new player membership row when the actor isn't yet a member", () => {
+    localBootstrap();
+    // Wipe the local memberships so the actor (state.user.id) is not yet
+    // a member — mimicking the "joining a party I'm not in" scenario.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter((m) => m.userId !== s.appState!.user.id),
+        },
+      };
+    });
+    const before = useStore.getState().appState!.memberships.length;
+
+    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+
+    const after = useStore.getState().appState!;
+    expect(after.memberships.length).toBe(before + 1);
+    const newRow = after.memberships.find(
+      (m) => m.userId === after.user.id && m.role === 'player',
+    );
+    expect(newRow).toBeDefined();
+    expect(newRow!.characterId).toBeNull();
+    expect(newRow!.leftAt).toBeNull();
+  });
+
+  it('emits one terminal join-party log slice with the party id', () => {
+    localBootstrap();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter((m) => m.userId !== s.appState!.user.id),
+        },
+      };
+    });
+    const logLenBefore = useStore.getState().log.length;
+    const partyId = useStore.getState().appState!.party.id;
+
+    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    expect(cascade.length).toBe(1);
+    const terminal = cascade[0]!;
+    if (terminal.type !== 'join-party') throw new Error('expected join-party');
+    expect(terminal.payload.partyId).toBe(partyId);
+  });
+
+  it('rejects when the actor is already an active player member', () => {
+    localBootstrap();
+    expect(() => useStore.getState().dispatch({ type: 'join-party', payload: {} })).toThrow(
+      /already has an active player membership/,
+    );
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.1.f: create-character post-bootstrap (joiner / DM-only DM / post-delete)
+// -------------------------------------------------------------------- //
+
+describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
+  /**
+   * Post-bootstrap shape: a populated AppState already has a Party, a Party
+   * Stash, a Recovered Loot stash, and at least one membership row for the
+   * actor (player with characterId: null OR dm-only). Dispatching
+   * `create-character` on that state mints a Character + Inventory Stash +
+   * CurrencyHolding and either patches the existing player row's
+   * characterId (joiner / post-delete case) or appends a new player
+   * membership (DM-only DM adding their character later).
+   */
+
+  const newCharacterPayload = {
+    name: 'Lyra',
+    species: 'Elf',
+    size: 'medium',
+    class: 'Rogue',
+    level: 2,
+    str: 12,
+  } as const;
+
+  it('joiner with characterId: null player row — mints Character + Inventory + Holding and patches the membership', () => {
+    localBootstrap();
+    // Simulate the post-join state: clear the player row's characterId and
+    // drop the existing character + its stash + its currency holding so the
+    // actor is in the "joined a party, no character yet" state.
+    const charactersBefore = useStore.getState().appState!.characters;
+    const charIdBefore = charactersBefore[0]!.id;
+    const invStashIdBefore = charactersBefore[0]!.inventoryStashId;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: [],
+          stashes: s.appState.stashes.filter((st) => st.id !== invStashIdBefore),
+          currencies: s.appState.currencies.filter((c) => c.stashId !== invStashIdBefore),
+          memberships: s.appState.memberships.map((m) =>
+            m.role === 'player' && m.characterId === charIdBefore
+              ? { ...m, characterId: null }
+              : m,
+          ),
+        },
+      };
+    });
+
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(1);
+    const ch = s.characters[0]!;
+    expect(ch.name).toBe('Lyra');
+    expect(ch.species).toBe('Elf');
+    expect(ch.class).toBe('Rogue');
+    expect(ch.level).toBe(2);
+    expect(ch.abilityScores.STR).toBe(12);
+    expect(ch.maxAttunement).toBe(3);
+    expect(ch.encumbranceRule).toBe('off');
+    expect(ch.enforceEncumbrance).toBe(false);
+
+    // New Inventory stash carried, owned by new character
+    const inv = s.stashes.find((st) => st.id === ch.inventoryStashId)!;
+    expect(inv).toBeDefined();
+    expect(inv.scope).toBe('character');
+    expect(inv.isCarried).toBe(true);
+    expect(inv.ownerCharacterId).toBe(ch.id);
+
+    // CurrencyHolding for the new Inventory exists, zeros
+    const holding = s.currencies.find((c) => c.stashId === inv.id)!;
+    expect(holding).toBeDefined();
+    expect(holding.cp).toBe(0);
+    expect(holding.sp).toBe(0);
+    expect(holding.ep).toBe(0);
+    expect(holding.gp).toBe(0);
+    expect(holding.pp).toBe(0);
+
+    // Player membership row patched in place — characterId now non-null
+    const playerRow = s.memberships.find((m) => m.role === 'player' && m.userId === s.user.id)!;
+    expect(playerRow).toBeDefined();
+    expect(playerRow.characterId).toBe(ch.id);
+  });
+
+  it('joiner case emits one create-character log slice carrying the new ids', () => {
+    localBootstrap();
+    const charactersBefore = useStore.getState().appState!.characters;
+    const charIdBefore = charactersBefore[0]!.id;
+    const invStashIdBefore = charactersBefore[0]!.inventoryStashId;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: [],
+          stashes: s.appState.stashes.filter((st) => st.id !== invStashIdBefore),
+          currencies: s.appState.currencies.filter((c) => c.stashId !== invStashIdBefore),
+          memberships: s.appState.memberships.map((m) =>
+            m.role === 'player' && m.characterId === charIdBefore
+              ? { ...m, characterId: null }
+              : m,
+          ),
+        },
+      };
+    });
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+
+    const cascade = useStore.getState().log.slice(logLenBefore);
+    expect(cascade.length).toBe(1);
+    const entry = cascade[0]!;
+    if (entry.type !== 'create-character') throw new Error('expected create-character');
+    expect(entry.payload.characterId).toBeDefined();
+    expect(entry.payload.inventoryStashId).toBeDefined();
+    expect(entry.payload.name).toBe('Lyra');
+    expect(entry.payload.dmOnly).toBeUndefined();
+    // The post-bootstrap branch must also echo the existing party-scope ids
+    // (Party Stash + Recovered Loot) so log readers reconstruct the same
+    // payload shape for both bootstrap variants.
+    const s = useStore.getState().appState!;
+    expect(entry.payload.partyId).toBe(s.party.id);
+    expect(entry.payload.partyStashId).toBe(s.stashes.find((st) => st.scope === 'party')!.id);
+    expect(entry.payload.recoveredLootStashId).toBe(s.party.recoveredLootStashId);
+  });
+
+  it('DM-only DM (no player row) — appends a fresh player membership pointing at the new character', () => {
+    // Bootstrap via dmOnly so there's a DM membership only, no player row.
+    useStore.getState().dispatch({
+      type: 'create-character',
+      payload: { dmOnly: true, partyName: 'DM Sandbox' },
+    });
+    const before = useStore.getState().appState!;
+    expect(before.memberships.filter((m) => m.role === 'player')).toHaveLength(0);
+    expect(before.characters).toHaveLength(0);
+
+    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(1);
+    const ch = s.characters[0]!;
+    expect(ch.name).toBe('Lyra');
+
+    // A fresh player row was appended, pointing at the new character.
+    const playerRows = s.memberships.filter((m) => m.role === 'player');
+    expect(playerRows).toHaveLength(1);
+    expect(playerRows[0]!.userId).toBe(s.user.id);
+    expect(playerRows[0]!.characterId).toBe(ch.id);
+    expect(playerRows[0]!.leftAt).toBeNull();
+
+    // DM row still present and untouched.
+    const dmRows = s.memberships.filter((m) => m.role === 'dm');
+    expect(dmRows).toHaveLength(1);
+  });
+
+  it('rejects when the actor already has an active player row with a non-null characterId', () => {
+    localBootstrap();
+    // localBootstrap leaves the actor with an active player membership +
+    // characterId set; dispatching create-character again must reject.
+    expect(() =>
+      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload }),
+    ).toThrow(/character/i);
+  });
+
+  it('rejects dmOnly: true on the post-bootstrap branch', () => {
+    localBootstrap();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'create-character', payload: { dmOnly: true, partyName: 'X' } }),
+    ).toThrow();
+  });
+
+  it('rejects when the actor is not an active member of the party', () => {
+    localBootstrap();
+    // Wipe the actor's memberships so they're not in the party.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: [],
+          memberships: s.appState.memberships.filter((m) => m.userId !== s.appState!.user.id),
+        },
+      };
+    });
+    expect(() =>
+      useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload }),
+    ).toThrow(/not.*member|member/i);
+  });
+
+  it('bootstrap path (state === null) still mints the full party with a character', () => {
+    // Regression check: the existing legacy bootstrap behavior is unchanged.
+    expect(useStore.getState().appState).toBeNull();
+    useStore.getState().dispatch({ type: 'create-character', payload: validPayload });
+
+    const s = useStore.getState().appState!;
+    expect(s.characters).toHaveLength(1);
+    expect(s.characters[0]!.name).toBe('Thorin');
+    expect(s.memberships).toHaveLength(2);
+    expect(s.memberships.some((m) => m.role === 'dm')).toBe(true);
+    expect(s.memberships.some((m) => m.role === 'player')).toBe(true);
+    // Party-scope stashes + Inventory all present.
+    expect(s.stashes.some((st) => st.scope === 'party')).toBe(true);
+    expect(s.stashes.some((st) => st.scope === 'recovered-loot')).toBe(true);
+    expect(s.stashes.some((st) => st.scope === 'character' && st.isCarried)).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.2.a: appoint-banker / revoke-banker + kick/leave cascade
+// -------------------------------------------------------------------- //
+//
+// OUTLINE §3.14 rules exercised here:
+//   - DM appoints zero or one Banker from active players (memberCount ≥ 2).
+//   - DM cannot self-appoint.
+//   - Reassignment is two-step (revoke first, then appoint) — appoint
+//     against an already-set Banker is rejected.
+//   - kick / leave auto-clear the Banker when the departing user IS the
+//     Banker. The cascade emits a synthetic `revoke-banker` entry with
+//     `reason: 'kicked'` / `'left-party'`, between the existing cascade
+//     slices and the terminal kick-player / leave-party slice.
+//   - All Banker-emitted log entries (and any action a Banker takes once
+//     appointed) get `actorRole: 'banker'` via deriveActorRole.
+
+describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
+  /**
+   * Bootstrap + graft a second active player (`player-b`) so the
+   * `memberCount ≥ 2` rule passes and appoint has a real target. The
+   * grafted player has no character — the Banker doesn't require a
+   * character in R4.2.a (OUTLINE §3.14 says "active player membership"
+   * only); character ownership is orthogonal.
+   */
+  function bootstrapWithSecondPlayer(): { dmUserId: string; otherPlayerUserId: string } {
+    localBootstrap();
+    const dmUserId = useStore.getState().appState!.user.id;
+    const otherPlayerUserId = 'player-b';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherPlayerUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    return { dmUserId, otherPlayerUserId };
+  }
+
+  // ---------- appoint-banker ---------- //
+
+  it('DM can appoint an active player as Banker', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBe(otherPlayerUserId);
+
+    const entries = useStore.getState().log;
+    const appointEntry = entries[entries.length - 1]!;
+    expect(appointEntry.type).toBe('appoint-banker');
+    expect(appointEntry.actorRole).toBe('dm');
+    if (appointEntry.type !== 'appoint-banker') throw new Error('expected appoint-banker');
+    expect(appointEntry.payload.bankerUserId).toBe(otherPlayerUserId);
+  });
+
+  it('rejects when actor is a player (only DM may appoint)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    // Demote actor to player only by removing their dm row.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === s.appState!.user.id && m.role === 'dm'),
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } }),
+    ).toThrow(/dm/i);
+  });
+
+  it('rejects when DM tries to appoint themselves (no self-banker)', () => {
+    bootstrapWithSecondPlayer();
+    const dmUserId = useStore.getState().appState!.user.id;
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: dmUserId } }),
+    ).toThrow(/dm cannot.*banker|banker_membership_forbidden|self/i);
+  });
+
+  it('rejects when target has no active player membership in this party', () => {
+    bootstrapWithSecondPlayer();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: 'stranger-not-in-party' } }),
+    ).toThrow(/banker_membership_forbidden|not.*member|player/i);
+  });
+
+  it('rejects in a party-of-one (memberCount must be ≥ 2)', () => {
+    localBootstrap();
+    // Single-member party — no second player grafted.
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: 'whoever' } }),
+    ).toThrow(/memberCount|2\+|banker_membership_forbidden|two members/i);
+  });
+
+  it('rejects when a Banker is already set (reassign must revoke first)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    // Graft a third player to attempt reassignment.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'player-c',
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'appoint-banker', payload: { bankerUserId: 'player-c' } }),
+    ).toThrow(/already|banker_membership_forbidden|revoke/i);
+    // Banker unchanged.
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+  });
+
+  // ---------- revoke-banker ---------- //
+
+  it('DM can revoke an appointed Banker with reason="manual"', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+
+    useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBeNull();
+    const log = useStore.getState().log;
+    const last = log[log.length - 1]!;
+    expect(last.type).toBe('revoke-banker');
+    expect(last.actorRole).toBe('dm');
+    if (last.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(last.payload.reason).toBe('manual');
+  });
+
+  it('rejects when no Banker is currently set', () => {
+    bootstrapWithSecondPlayer();
+    expect(() =>
+      useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } }),
+    ).toThrow(/no banker|banker_membership_forbidden|not.*set/i);
+  });
+
+  it('rejects when actor is a player (only DM may revoke)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    // Demote actor to player only.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === s.appState!.user.id && m.role === 'dm'),
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } }),
+    ).toThrow(/dm/i);
+  });
+
+  // ---------- kick cascade ---------- //
+
+  it('kick-player auto-clears Banker and emits revoke-banker { reason: "kicked" }', () => {
+    // Set up: bootstrap + second player; appoint the second player as Banker.
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+
+    // Snapshot log length so we only inspect the entries emitted by the kick.
+    const beforeLogLength = useStore.getState().log.length;
+
+    useStore
+      .getState()
+      .dispatch({ type: 'kick-player', payload: { kickedUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBeNull();
+
+    const emitted = useStore.getState().log.slice(beforeLogLength);
+    const types = emitted.map((e) => e.type);
+    // Must contain both a revoke-banker AND a kick-player slice.
+    expect(types).toContain('revoke-banker');
+    expect(types).toContain('kick-player');
+    // revoke-banker comes BEFORE the terminal kick-player slice.
+    expect(types.indexOf('revoke-banker')).toBeLessThan(types.indexOf('kick-player'));
+
+    const revoke = emitted.find((e) => e.type === 'revoke-banker')!;
+    if (revoke.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(revoke.payload.reason).toBe('kicked');
+  });
+
+  it("kick-player of a non-Banker does NOT emit revoke-banker", () => {
+    // Banker is player-b; we'll kick a different player (player-c).
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'player-c',
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    const beforeLogLength = useStore.getState().log.length;
+    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId: 'player-c' } });
+
+    const s = useStore.getState().appState!;
+    // Banker untouched.
+    expect(s.party.bankerUserId).toBe(otherPlayerUserId);
+    const emitted = useStore.getState().log.slice(beforeLogLength);
+    expect(emitted.some((e) => e.type === 'revoke-banker')).toBe(false);
+  });
+
+  // ---------- leave cascade ---------- //
+
+  it('leave-party auto-clears Banker when the leaver was the Banker', () => {
+    // Bootstrap with a SECOND DM (so the actor can leave) AND a banker
+    // appointed on the actor. Trick: bootstrap actor is DM+player; we
+    // graft a second DM (other-dm) so the sole-DM guard passes, then
+    // appoint the actor's PLAYER membership as Banker via direct state
+    // patch (since OUTLINE §3.14 bars self-appointment via action).
+    // This isolates the cascade behavior from appoint-banker's guard.
+    localBootstrap();
+    const actorUserId = useStore.getState().appState!.user.id;
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: 'other-dm',
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          // Set actor as banker directly — bypasses appoint-banker's
+          // self-banker guard, which is exactly the point: this test
+          // covers the AUTO-CLEAR CASCADE, not appoint's validation.
+          party: { ...s.appState.party, bankerUserId: actorUserId },
+        },
+      };
+    });
+
+    const beforeLogLength = useStore.getState().log.length;
+    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBeNull();
+
+    const emitted = useStore.getState().log.slice(beforeLogLength);
+    const types = emitted.map((e) => e.type);
+    expect(types).toContain('revoke-banker');
+    expect(types).toContain('leave-party');
+    expect(types.indexOf('revoke-banker')).toBeLessThan(types.indexOf('leave-party'));
+
+    const revoke = emitted.find((e) => e.type === 'revoke-banker')!;
+    if (revoke.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(revoke.payload.reason).toBe('left-party');
+  });
+
+  // ---------- actorRole derivation ---------- //
+
+  it("a Banker's subsequent action logs with actorRole='banker'", () => {
+    // Banker = player-b. They must have a character + inventory to dispatch
+    // an action through the reducer.
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    const partyId = useStore.getState().appState!.party.id;
+    const bankerCharId = 'banker-char';
+    const bankerInvStashId = 'banker-inv';
+
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.map((m) =>
+            m.userId === otherPlayerUserId && m.role === 'player'
+              ? { ...m, characterId: bankerCharId }
+              : m,
+          ),
+          characters: [
+            ...s.appState.characters,
+            {
+              id: bankerCharId,
+              partyId,
+              ownerUserId: otherPlayerUserId,
+              name: 'Bank Manager',
+              species: 'Human',
+              size: 'medium',
+              class: 'Cleric',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: bankerInvStashId,
+            },
+          ],
+          stashes: [
+            ...s.appState.stashes,
+            {
+              id: bankerInvStashId,
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: bankerCharId,
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...s.appState.currencies,
+            { id: 'banker-cur', stashId: bankerInvStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          ],
+        },
+      };
+    });
+
+    // DM appoints the Banker.
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+
+    // Now SWITCH the acting user to the Banker (the test reducer reads
+    // state.user.id as the actor; production code uses session/cookie).
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: { ...s.appState, user: { ...s.appState.user, id: otherPlayerUserId } },
+      };
+    });
+
+    // Banker does any allowed action — e.g. currency-change on own inv.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: bankerInvStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    expect(s.party.bankerUserId).toBe(otherPlayerUserId);
+    const log = useStore.getState().log;
+    const last = log[log.length - 1]!;
+    expect(last.type).toBe('currency-change');
+    expect(last.actorRole).toBe('banker');
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.3.a: dm-transfer (DM role transfer + Banker auto-clear cascade)
+// -------------------------------------------------------------------- //
+//
+// OUTLINE §3.14 + §8.3 rules exercised here:
+//   - Only an active DM may dispatch. Non-DM actor → dm_only.
+//   - Self-transfer is rejected (dm_transfer_self).
+//   - Target must be an active player in this party.
+//   - Atomic swap: outgoing DM's dm row soft-deletes; incoming DM's dm
+//     row upserts to active; outgoing DM's player row is auto-minted
+//     if missing (DM-only outgoing DM case).
+//   - `Party.ownerUserId` updates to newDmUserId.
+//   - If incoming DM is the current Banker → clear + emit synthetic
+//     `revoke-banker { reason: 'dm-transfer' }` BEFORE the terminal
+//     `dm-transfer` slice. Preserves §4 invariant
+//     `bankerUserId !== ownerUserId`.
+
+describe('reducer: dm-transfer (R4.3.a)', () => {
+  /**
+   * Bootstrap + graft `player-b` as an active player. Mirrors the
+   * appoint-banker fixture — the outgoing DM (actor) keeps a player
+   * row from the bootstrap; the incoming DM (`player-b`) has only a
+   * player row. This is the common case.
+   */
+  function bootstrapWithSecondPlayer(): { dmUserId: string; otherPlayerUserId: string } {
+    localBootstrap();
+    const dmUserId = useStore.getState().appState!.user.id;
+    const otherPlayerUserId = 'player-b';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherPlayerUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    return { dmUserId, otherPlayerUserId };
+  }
+
+  it('DM can transfer the DM role to another active player', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+    const partyId = useStore.getState().appState!.party.id;
+
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+
+    // Party ownership swapped.
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+
+    // Outgoing DM's dm row soft-deleted.
+    const oldDmRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'dm' && m.partyId === partyId,
+    )!;
+    expect(oldDmRow).toBeDefined();
+    expect(oldDmRow.leftAt).not.toBeNull();
+
+    // Outgoing DM's player row still active.
+    const oldDmPlayerRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'player' && m.partyId === partyId,
+    )!;
+    expect(oldDmPlayerRow).toBeDefined();
+    expect(oldDmPlayerRow.leftAt).toBeNull();
+
+    // Incoming DM's dm row active.
+    const newDmRow = s.memberships.find(
+      (m) => m.userId === otherPlayerUserId && m.role === 'dm' && m.partyId === partyId,
+    )!;
+    expect(newDmRow).toBeDefined();
+    expect(newDmRow.leftAt).toBeNull();
+
+    // Incoming DM's player row still active.
+    const newDmPlayerRow = s.memberships.find(
+      (m) => m.userId === otherPlayerUserId && m.role === 'player' && m.partyId === partyId,
+    )!;
+    expect(newDmPlayerRow).toBeDefined();
+    expect(newDmPlayerRow.leftAt).toBeNull();
+
+    // Terminal log entry.
+    const entries = useStore.getState().log;
+    const last = entries[entries.length - 1]!;
+    expect(last.type).toBe('dm-transfer');
+    expect(last.actorRole).toBe('dm');
+    if (last.type !== 'dm-transfer') throw new Error('expected dm-transfer');
+    expect(last.payload.oldDmUserId).toBe(dmUserId);
+    expect(last.payload.newDmUserId).toBe(otherPlayerUserId);
+  });
+
+  it('rejects when actor is a player (only DM may transfer)', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+    // Demote actor to player only by removing their dm row.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === s.appState!.user.id && m.role === 'dm'),
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } }),
+    ).toThrow(/dm_only|active DM/i);
+  });
+
+  it('rejects when DM tries to transfer to themselves', () => {
+    bootstrapWithSecondPlayer();
+    const dmUserId = useStore.getState().appState!.user.id;
+    expect(() =>
+      useStore.getState().dispatch({ type: 'dm-transfer', payload: { newDmUserId: dmUserId } }),
+    ).toThrow(/dm_transfer_self|self/i);
+  });
+
+  it('rejects when target lacks an active player membership', () => {
+    bootstrapWithSecondPlayer();
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'dm-transfer', payload: { newDmUserId: 'stranger-not-in-party' } }),
+    ).toThrow(/dm_transfer_target_not_member|active player/i);
+  });
+
+  it('auto-clears Banker and emits revoke-banker { reason: "dm-transfer" } when new DM is current Banker', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Appoint player-b as Banker first.
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
+
+    // Log length BEFORE dm-transfer.
+    const logBefore = useStore.getState().log.length;
+
+    // Transfer DM to the current Banker.
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+
+    // Banker auto-cleared (§4 invariant: bankerUserId !== ownerUserId).
+    expect(s.party.bankerUserId).toBeNull();
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+
+    // Log slices in order: revoke-banker (dm-transfer), then dm-transfer.
+    const emitted = useStore.getState().log.slice(logBefore);
+    const types = emitted.map((e) => e.type);
+    expect(types).toContain('revoke-banker');
+    expect(types).toContain('dm-transfer');
+    // revoke-banker comes BEFORE the terminal dm-transfer slice.
+    expect(types.indexOf('revoke-banker')).toBeLessThan(types.indexOf('dm-transfer'));
+
+    const revoke = emitted.find((e) => e.type === 'revoke-banker')!;
+    if (revoke.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(revoke.payload.reason).toBe('dm-transfer');
+    // actorRole on the synthetic slice inherits from the dm-transfer
+    // dispatch — actor is the outgoing DM.
+    expect(revoke.actorRole).toBe('dm');
+    expect(revoke.actorUserId).toBe(dmUserId);
+  });
+
+  it('does NOT emit revoke-banker when new DM is not the Banker', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Graft a third player and appoint them Banker, so transferring
+    // DM to player-b (who is NOT the Banker) leaves the Banker in role.
+    const bankerUserId = 'player-c';
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: bankerUserId,
+              partyId: s.appState.party.id,
+              role: 'player',
+              characterId: null,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+    useStore.getState().dispatch({ type: 'appoint-banker', payload: { bankerUserId } });
+    expect(useStore.getState().appState!.party.bankerUserId).toBe(bankerUserId);
+
+    const logBefore = useStore.getState().log.length;
+
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+    // Banker stays; ownerUserId still != bankerUserId so §4 invariant holds.
+    expect(s.party.bankerUserId).toBe(bankerUserId);
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+
+    const emitted = useStore.getState().log.slice(logBefore);
+    expect(emitted.some((e) => e.type === 'revoke-banker')).toBe(false);
+    expect(emitted[emitted.length - 1]!.type).toBe('dm-transfer');
+  });
+
+  it('auto-mints a player row for a DM-only outgoing DM', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+    const partyId = useStore.getState().appState!.party.id;
+
+    // Simulate a DM-only outgoing DM: drop the bootstrap-minted player
+    // row for the DM (leaves them with only the dm row).
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.filter(
+            (m) => !(m.userId === dmUserId && m.role === 'player'),
+          ),
+        },
+      };
+    });
+
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const s = useStore.getState().appState!;
+
+    // Outgoing DM now has an active player row (auto-minted with
+    // characterId: null).
+    const oldDmPlayerRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'player' && m.partyId === partyId,
+    )!;
+    expect(oldDmPlayerRow).toBeDefined();
+    expect(oldDmPlayerRow.leftAt).toBeNull();
+    expect(oldDmPlayerRow.characterId).toBeNull();
+
+    // Outgoing DM's dm row soft-deleted.
+    const oldDmDmRow = s.memberships.find(
+      (m) => m.userId === dmUserId && m.role === 'dm' && m.partyId === partyId,
+    )!;
+    expect(oldDmDmRow.leftAt).not.toBeNull();
+  });
+
+  it('reactivates a historical soft-deleted dm row for the incoming DM (BUG-002 lesson)', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Simulate a historical dm row for the incoming DM (previously DM,
+    // was transferred out, soft-deleted). BUG-002 lesson: composite
+    // PK (userId, partyId, role) means we must upsert, not create.
+    const historicalLeftAt = new Date(Date.now() - 60_000).toISOString();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            ...s.appState.memberships,
+            {
+              userId: otherPlayerUserId,
+              partyId: s.appState.party.id,
+              role: 'dm',
+              characterId: null,
+              joinedAt: historicalLeftAt,
+              leftAt: historicalLeftAt,
+            },
+          ],
+        },
+      };
+    });
+
+    // Transfer should not throw (would P2002 without upsert semantics).
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } }),
+    ).not.toThrow();
+
+    const s = useStore.getState().appState!;
+
+    // Incoming DM has EXACTLY ONE `role='dm'` row and it is active.
+    const dmRows = s.memberships.filter((m) => m.userId === otherPlayerUserId && m.role === 'dm');
+    expect(dmRows.length).toBe(1);
+    expect(dmRows[0]!.leftAt).toBeNull();
+
+    // Outgoing DM's row is soft-deleted (unchanged expectation).
+    const oldDmRow = s.memberships.find((m) => m.userId === dmUserId && m.role === 'dm')!;
+    expect(oldDmRow.leftAt).not.toBeNull();
+  });
+
+  it('preserves the §4 invariant bankerUserId !== ownerUserId after any transfer', () => {
+    const { otherPlayerUserId } = bootstrapWithSecondPlayer();
+
+    // Banker is the incoming DM → cleared (§4 invariant enforced).
+    useStore
+      .getState()
+      .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+    const s = useStore.getState().appState!;
+    expect(s.party.ownerUserId).toBe(otherPlayerUserId);
+    expect(s.party.bankerUserId).toBeNull();
+    // Post-transfer: either bankerUserId is null or differs from ownerUserId.
+    if (s.party.bankerUserId !== null) {
+      expect(s.party.bankerUserId).not.toBe(s.party.ownerUserId);
+    }
+  });
+
+  it('appends the schema-validated dm-transfer entry to the log', () => {
+    const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
+    useStore
+      .getState()
+      .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
+
+    const last = useStore.getState().log.slice(-1)[0]!;
+    // Zod round-trip. If the schema and reducer disagree, this throws.
+    const parsed = transactionLogEntrySchema.parse(last);
+    expect(parsed.type).toBe('dm-transfer');
+    if (parsed.type !== 'dm-transfer') throw new Error('expected dm-transfer');
+    expect(parsed.payload.oldDmUserId).toBe(dmUserId);
+    expect(parsed.payload.newDmUserId).toBe(otherPlayerUserId);
+  });
+
+  it('accepts a revoke-banker log entry with reason: "dm-transfer" (schema round-trip)', () => {
+    // Direct schema round-trip — the widened enum must accept the new
+    // reason value. If R4.3.b later needs the wire-level round-trip
+    // (POST /sync/actions), that test lives in the server workspace.
+    const entry = {
+      id: 'log-1',
+      partyId: 'party-1',
+      sessionId: null,
+      timestamp: new Date().toISOString(),
+      actorUserId: 'user-1',
+      actorRole: 'dm' as const,
+      type: 'revoke-banker' as const,
+      payload: { reason: 'dm-transfer' as const },
+    };
+    const parsed = transactionLogEntrySchema.parse(entry);
+    if (parsed.type !== 'revoke-banker') throw new Error('expected revoke-banker');
+    expect(parsed.payload.reason).toBe('dm-transfer');
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.2.d — split-evenly (Banker distribution toolkit)
+// -------------------------------------------------------------------- //
+
+describe('reducer: split-evenly (R4.2.d)', () => {
+  /**
+   * Bootstrap DM+character, graft `player-b` with their own character
+   * `char-b` + Inventory `inv-b` + zeroed CurrencyHolding, appoint B as
+   * Banker. Seed the Party Stash with the supplied pool balance.
+   *
+   * Returns the ids the tests need to dispatch + assert.
+   */
+  function bootstrapForSplit(pool: {
+    cp?: number;
+    sp?: number;
+    ep?: number;
+    gp?: number;
+    pp?: number;
+  }): {
+    dmUserId: string;
+    dmCharacterId: string;
+    dmInventoryStashId: string;
+    bankerUserId: string;
+    bankerCharacterId: string;
+    bankerInventoryStashId: string;
+    partyStashId: string;
+  } {
+    localBootstrap();
+    const s0 = useStore.getState().appState!;
+    const dmUserId = s0.user.id;
+    const dmCharacterId = s0.characters[0]!.id;
+    const dmInventoryStashId = s0.characters[0]!.inventoryStashId;
+    const partyStashId = s0.stashes.find((st) => st.scope === 'party')!.id;
+
+    const bankerUserId = 'player-b';
+    const bankerCharacterId = 'char-b';
+    const bankerInventoryStashId = 'inv-b';
+
+    useStore.setState((prev) => {
+      if (prev.appState === null) return prev;
+      return {
+        ...prev,
+        appState: {
+          ...prev.appState,
+          memberships: [
+            ...prev.appState.memberships,
+            {
+              userId: bankerUserId,
+              partyId: prev.appState.party.id,
+              role: 'player',
+              characterId: bankerCharacterId,
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          characters: [
+            ...prev.appState.characters,
+            {
+              id: bankerCharacterId,
+              partyId: prev.appState.party.id,
+              ownerUserId: bankerUserId,
+              name: 'Banker Character',
+              species: 'Human',
+              size: 'medium',
+              class: 'Rogue',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: bankerInventoryStashId,
+            },
+          ],
+          stashes: [
+            ...prev.appState.stashes,
+            {
+              id: bankerInventoryStashId,
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: bankerCharacterId,
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...prev.appState.currencies.map((c) =>
+              c.stashId === partyStashId
+                ? {
+                    ...c,
+                    cp: pool.cp ?? 0,
+                    sp: pool.sp ?? 0,
+                    ep: pool.ep ?? 0,
+                    gp: pool.gp ?? 0,
+                    pp: pool.pp ?? 0,
+                  }
+                : c,
+            ),
+            {
+              id: `hold-${bankerInventoryStashId}`,
+              stashId: bankerInventoryStashId,
+              cp: 0,
+              sp: 0,
+              ep: 0,
+              gp: 0,
+              pp: 0,
+            },
+          ],
+          party: { ...prev.appState.party, bankerUserId },
+        },
+      };
+    });
+
+    return {
+      dmUserId,
+      dmCharacterId,
+      dmInventoryStashId,
+      bankerUserId,
+      bankerCharacterId,
+      bankerInventoryStashId,
+      partyStashId,
+    };
+  }
+
+  it('splits 100 gp across DM + Banker character (2 recipients) — each gets 50 gp exactly', () => {
+    const { dmCharacterId, dmInventoryStashId, bankerCharacterId, bankerInventoryStashId, partyStashId } =
+      bootstrapForSplit({ gp: 100 });
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const s = useStore.getState().appState!;
+    const pool = s.currencies.find((c) => c.stashId === partyStashId)!;
+    const dmInv = s.currencies.find((c) => c.stashId === dmInventoryStashId)!;
+    const bankerInv = s.currencies.find((c) => c.stashId === bankerInventoryStashId)!;
+    expect({ cp: pool.cp, sp: pool.sp, ep: pool.ep, gp: pool.gp, pp: pool.pp }).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 0, pp: 0,
+    });
+    expect({ cp: dmInv.cp, sp: dmInv.sp, ep: dmInv.ep, gp: dmInv.gp, pp: dmInv.pp }).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 50, pp: 0,
+    });
+    expect({
+      cp: bankerInv.cp,
+      sp: bankerInv.sp,
+      ep: bankerInv.ep,
+      gp: bankerInv.gp,
+      pp: bankerInv.pp,
+    }).toEqual({ cp: 0, sp: 0, ep: 0, gp: 50, pp: 0 });
+  });
+
+  it('cascade split: 100 gp across 3 recipients → each 33 gp 3 sp 3 cp, pool retains 1 cp', () => {
+    const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({ gp: 100 });
+    // Graft a third player-c with character char-c + Inventory inv-c.
+    useStore.setState((prev) => {
+      if (prev.appState === null) return prev;
+      return {
+        ...prev,
+        appState: {
+          ...prev.appState,
+          memberships: [
+            ...prev.appState.memberships,
+            {
+              userId: 'player-c',
+              partyId: prev.appState.party.id,
+              role: 'player',
+              characterId: 'char-c',
+              joinedAt: new Date().toISOString(),
+              leftAt: null,
+            },
+          ],
+          characters: [
+            ...prev.appState.characters,
+            {
+              id: 'char-c',
+              partyId: prev.appState.party.id,
+              ownerUserId: 'player-c',
+              name: 'C',
+              species: 'Human',
+              size: 'medium',
+              class: 'Cleric',
+              level: 1,
+              abilityScores: { STR: 10 },
+              maxAttunement: 3,
+              encumbranceRule: 'off',
+              enforceEncumbrance: false,
+              inventoryStashId: 'inv-c',
+            },
+          ],
+          stashes: [
+            ...prev.appState.stashes,
+            {
+              id: 'inv-c',
+              scope: 'character',
+              name: 'Inventory',
+              ownerCharacterId: 'char-c',
+              partyId: null,
+              isCarried: true,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          currencies: [
+            ...prev.appState.currencies,
+            { id: 'hold-inv-c', stashId: 'inv-c', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          ],
+        },
+      };
+    });
+
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId, 'char-c'],
+      },
+    });
+
+    const s = useStore.getState().appState!;
+    const pool = s.currencies.find((c) => c.stashId === partyStashId)!;
+    expect({ cp: pool.cp, sp: pool.sp, ep: pool.ep, gp: pool.gp, pp: pool.pp }).toEqual({
+      cp: 1, sp: 0, ep: 0, gp: 0, pp: 0,
+    });
+    for (const invId of [s.characters[0]!.inventoryStashId, 'inv-b', 'inv-c']) {
+      const inv = s.currencies.find((c) => c.stashId === invId)!;
+      expect({ cp: inv.cp, sp: inv.sp, ep: inv.ep, gp: inv.gp, pp: inv.pp }).toEqual({
+        cp: 3, sp: 3, ep: 0, gp: 33, pp: 0,
+      });
+    }
+  });
+
+  it('emits 1 split-evenly terminal entry + N currency-transfer entries in recipient order', () => {
+    const { dmCharacterId, dmInventoryStashId, bankerCharacterId, bankerInventoryStashId, partyStashId } =
+      bootstrapForSplit({ gp: 100 });
+    const beforeLog = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const log = useStore.getState().log;
+    const newEntries = log.slice(beforeLog);
+    expect(newEntries).toHaveLength(3); // 1 terminal + 2 transfers
+
+    const terminal = newEntries[0]!;
+    expect(terminal.type).toBe('split-evenly');
+    if (terminal.type !== 'split-evenly') throw new Error('expected split-evenly');
+    expect(terminal.payload.fromStashId).toBe(partyStashId);
+    expect(terminal.payload.recipientCharacterIds).toEqual([dmCharacterId, bankerCharacterId]);
+    expect(terminal.payload.sharePerRecipient).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 50, pp: 0,
+    });
+    expect(terminal.payload.remainderInPool).toEqual({
+      cp: 0, sp: 0, ep: 0, gp: 0, pp: 0,
+    });
+    expect(terminal.actorRole).toBe('banker');
+
+    const second = newEntries[1]!;
+    expect(second.type).toBe('currency-transfer');
+    if (second.type !== 'currency-transfer') throw new Error('expected currency-transfer');
+    expect(second.payload.fromStashId).toBe(partyStashId);
+    expect(second.payload.toStashId).toBe(dmInventoryStashId);
+
+    const third = newEntries[2]!;
+    expect(third.type).toBe('currency-transfer');
+    if (third.type !== 'currency-transfer') throw new Error('expected currency-transfer');
+    expect(third.payload.toStashId).toBe(bankerInventoryStashId);
+  });
+
+  it('empty pool: emits only the terminal entry (share is all zeros, no transfers)', () => {
+    const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({});
+    const beforeLog = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const newEntries = useStore.getState().log.slice(beforeLog);
+    expect(newEntries).toHaveLength(1);
+    expect(newEntries[0]!.type).toBe('split-evenly');
+  });
+
+  it('terminal entry always includes remainderInPool even when zero', () => {
+    const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({ gp: 100 });
+    useStore.getState().dispatch({
+      type: 'split-evenly',
+      payload: {
+        fromStashId: partyStashId,
+        recipientCharacterIds: [dmCharacterId, bankerCharacterId],
+      },
+    });
+    const log = useStore.getState().log;
+    const terminal = log[log.length - 3]!;
+    if (terminal.type !== 'split-evenly') throw new Error('expected split-evenly');
+    expect(terminal.payload.remainderInPool).toEqual({ cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+});
+
+// -------------------------------------------------------------------- //
+// BUG-002 regression — join-party reactivates a soft-deleted membership
+// -------------------------------------------------------------------- //
+//
+// `PartyMembership` PK is the composite `(userId, partyId, role)` and the
+// R4.1.c/d departure cascades use soft delete (`leftAt: <timestamp>`).
+// Pre-fix, `joinParty` checked only for `leftAt === null` rows and then
+// appended a NEW row when the check passed — resulting in a duplicate
+// `(userId, partyId, role)` tuple in local state and a P2002 unique-
+// constraint violation server-side when persisted.
+
+describe('reducer: join-party (BUG-002 regression — soft-deleted rejoin)', () => {
+  it('reactivates a soft-deleted player row instead of appending a duplicate', () => {
+    localBootstrap();
+    const actorUserId = useStore.getState().appState!.user.id;
+    const partyId = useStore.getState().appState!.party.id;
+    const originalJoinedAt = new Date(Date.now() - 60_000).toISOString();
+    const originalCharacterId = 'old-character-since-removed';
+
+    // Replace the actor's player membership with a soft-deleted one
+    // (their character was cascaded to Recovered Loot on leave per
+    // BUG-001's path). The dm row stays active so localBootstrap's
+    // implicit "actor is in the party" assumption isn't broken for
+    // other state inspection — but `join-party` only cares about the
+    // player row.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: s.appState.memberships.map((m) =>
+            m.userId === actorUserId && m.role === 'player'
+              ? {
+                  ...m,
+                  characterId: originalCharacterId,
+                  joinedAt: originalJoinedAt,
+                  leftAt: new Date(Date.now() - 1000).toISOString(),
+                }
+              : m,
+          ),
+        },
+      };
+    });
+
+    const beforeCount = useStore.getState().appState!.memberships.filter(
+      (m) => m.userId === actorUserId && m.partyId === partyId && m.role === 'player',
+    ).length;
+    expect(beforeCount).toBe(1);
+
+    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+
+    const after = useStore.getState().appState!;
+    const playerRows = after.memberships.filter(
+      (m) => m.userId === actorUserId && m.partyId === partyId && m.role === 'player',
+    );
+    // Exactly one row — not a duplicate.
+    expect(playerRows).toHaveLength(1);
+    const row = playerRows[0]!;
+    expect(row.leftAt).toBeNull();
+    // joinedAt advanced; characterId reset.
+    expect(row.joinedAt).not.toBe(originalJoinedAt);
+    expect(Date.parse(row.joinedAt)).toBeGreaterThan(Date.parse(originalJoinedAt));
+    expect(row.characterId).toBeNull();
+    // One join-party log entry was emitted.
+    const log = useStore.getState().log;
+    expect(log[log.length - 1]!.type).toBe('join-party');
+  });
+
+  it('still rejects when an ACTIVE player membership already exists (idempotency)', () => {
+    localBootstrap();
+    // localBootstrap leaves the actor with an active player row, so this
+    // is the no-op-rejection case: dispatching join-party against an
+    // already-active membership should throw.
+    expect(() =>
+      useStore.getState().dispatch({ type: 'join-party', payload: {} }),
+    ).toThrow(/already.*active|already has an active player/i);
   });
 });

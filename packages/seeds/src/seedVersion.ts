@@ -17,10 +17,3 @@
  *   fields on PHB/DMG rows; homebrew rows are untouched.
  */
 export const SEED_VERSION = 3;
-
-/**
- * @deprecated Use `SEED_VERSION` (covers both PHB and DMG).
- * Retained as an alias for any out-of-tree consumer that imported the
- * M2-era name — safe to remove once verified unused.
- */
-export const PHB_SEED_VERSION = SEED_VERSION;

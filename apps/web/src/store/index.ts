@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer';
 
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
+import { enqueue, captureRollbackSnapshot } from '@/sync/queue';
 import { generateInviteCode, reduce, type LogEntrySlice, type ReducerContext } from './reducer';
 import type { Action, AppState, TransactionLogEntry } from './types';
 
@@ -52,7 +53,17 @@ const webReducerCtx: ReducerContext = {
 function resolveActor(
   state: AppState,
   slice: LogEntrySlice,
-): { actorUserId: string; actorRole: 'dm' | 'player'; partyId: string } {
+): { actorUserId: string; actorRole: 'dm' | 'player' | 'banker'; partyId: string } {
+  // R4.2.a — `'banker'` is the third actorRole. Derived per OUTLINE
+  // §3.14: actor === party.bankerUserId AND the slice is a player-
+  // dispatched action (not appoint-banker / revoke-banker / kick-player
+  // / identify — those are DM-only by §8.1 and stay 'dm' even if the DM
+  // were somehow the banker, which §3.14 prohibits). Implementation
+  // mirrors `@app/shared/guards/actor.ts::deriveActorRole` for the
+  // player-driven branches below.
+  const playerOrBanker = (s: NonNullable<AppState>) =>
+    s.party.bankerUserId === s.user.id ? ('banker' as const) : ('player' as const);
+
   // Single switch over the discriminant. When new TxType variants land in
   // M2+, add a `case` here AND the @app/shared union, both type-checked.
   switch (slice.type) {
@@ -67,15 +78,16 @@ function resolveActor(
     case 'acquire':
     case 'consume':
     case 'edit-item-instance':
-      // Player-initiated mutations. In MVP the sole user wears both hats;
-      // R4 (multi-member parties) introduces the DM/player split + the
-      // `'banker'` actorRole variant.
+      // Player-initiated mutations. R4.2.a — when the actor IS the
+      // party's Banker, the log entry surfaces as `'banker'` per §3.14
+      // (the Banker keeps their underlying player rights AND inherits
+      // the Banker badge for audit purposes).
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
       }
       return {
         actorUserId: state.user.id,
-        actorRole: 'player',
+        actorRole: playerOrBanker(state),
         partyId: state.party.id,
       };
     case 'seed-catalog':
@@ -111,6 +123,9 @@ function resolveActor(
     case 'use-charge':
     case 'recharge':
     case 'edit-character':
+    case 'delete-character':
+    case 'leave-party':
+    case 'join-party':
       // M3 player-initiated stash CRUD + the synthetic transfer +
       // currency-change emitted from the delete-stash cascade. M5
       // adds user-initiated `transfer` + `split` (always player-driven
@@ -137,13 +152,20 @@ function resolveActor(
       // route DM force-use-charge / force-recharge through the DM role
       // per OUTLINE §8.1 (force-actions on Inventory items + force-
       // recharge on any-location items).
+      // R4.1.b adds `delete-character` — player-role for owner-initiated
+      // self-deletion; R4.3 will widen to DM role when the DM deletes
+      // another player's character via explicit action per OUTLINE §8.1.
+      // The cascade also emits synthetic `transfer` + (optional)
+      // `currency-change` entries which share the same actor identity.
       // R4 (multi-member) will also let DM / Banker drive these.
+      // R4.2.a: actor surfaces as `'banker'` when state.user IS the
+      // Party's Banker, otherwise `'player'`.
       if (state === null) {
         throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
       }
       return {
         actorUserId: state.user.id,
-        actorRole: 'player',
+        actorRole: playerOrBanker(state),
         partyId: state.party.id,
       };
     case 'identify':
@@ -158,6 +180,36 @@ function resolveActor(
       return {
         actorUserId: state.user.id,
         actorRole: 'dm',
+        partyId: state.party.id,
+      };
+    case 'kick-player':
+    case 'appoint-banker':
+    case 'revoke-banker':
+    case 'dm-transfer':
+      // R4.1.d / R4.2.a / R4.3.a — all DM-only per OUTLINE §8.1.
+      // Reducer rejects non-DM dispatches before this resolver runs,
+      // so `'dm'` is the structurally-correct value (and §3.14 bars
+      // the DM from being the Banker, so even when bankerUserId is
+      // set, the actor of these actions is never the Banker).
+      if (state === null) {
+        throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'dm',
+        partyId: state.party.id,
+      };
+    case 'split-evenly':
+      // R4.2.d — Banker-only per OUTLINE §8.1. Reducer + guard both
+      // reject non-Banker dispatches, so the actor is always the Banker
+      // by the time this resolver runs. Emitted with `actorRole:
+      // 'banker'` for audit-trail clarity.
+      if (state === null) {
+        throw new Error('resolveActor: split-evenly requires populated AppState');
+      }
+      return {
+        actorUserId: state.user.id,
+        actorRole: 'banker',
         partyId: state.party.id,
       };
   }
@@ -187,6 +239,14 @@ export const useStore = create<StoreState>()(
     appState: null,
     log: [],
     dispatch: (action) => {
+      // BUG-003 — capture the pre-mutation snapshot NOW so the sync
+      // queue can roll back to it on 422 rejection. Must run before
+      // any `set()` mutation below; the queue module guarantees
+      // idempotence (subsequent captures within the same debounce
+      // window are no-ops).
+      if (isServerMode) {
+        captureRollbackSnapshot();
+      }
       // Reduce against the pre-mutation snapshot (Immer's draft would
       // re-trigger our pure reducer with a proxy, which we deliberately
       // avoid — the reducer is meant to be plain-value pure).
@@ -209,14 +269,22 @@ export const useStore = create<StoreState>()(
       const snapshot = get();
       saver.save({ appState: snapshot.appState, log: snapshot.log });
 
-      // R3.5 — in server mode, optimistically push the action to the
-      // sync queue. The queue debounces + handles 422 rollback +
-      // bootstrap pull-after-push. The dynamic import avoids a static
-      // cycle (queue → store → queue) at module load.
+      // R3.5 / R4.1-followup — in server mode, optimistically push the
+      // action to the sync queue. The queue debounces + handles 422
+      // rollback + bootstrap pull-after-push.
+      //
+      // The enqueue is synchronous: callers that subsequently `await
+      // flushSyncQueue()` (e.g. the Hub's Create-party handler) need
+      // the action to be on the queue BEFORE their `flush()` call
+      // checks `queue.length === 0` and bails. The pre-R4.1-followup
+      // code used `void import('@/sync/queue').then(({enqueue}) =>
+      // enqueue(action))` which deferred the enqueue across a
+      // microtask, causing flushes that fired immediately after
+      // dispatch to find an empty queue and the bootstrap pull to
+      // never run — surfacing as `/sync/state` 404s on the next
+      // screen.
       if (isServerMode) {
-        void import('@/sync/queue').then(({ enqueue }) => {
-          enqueue(action);
-        });
+        enqueue(action);
       }
     },
     hydrate: (snapshot) => {

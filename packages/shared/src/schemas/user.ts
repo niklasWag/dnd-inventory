@@ -50,6 +50,7 @@ export const userSchema = z
     needsDisplayName: z.boolean().optional(),
     createdAt: z.string().datetime(),
   })
+  .strict()
   .refine((u) => u.discordId !== undefined || u.emailVerified !== undefined, {
     message: 'User must have at least one of discordId or emailVerified',
   });

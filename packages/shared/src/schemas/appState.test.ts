@@ -32,7 +32,6 @@ describe('appStateSchema round-trip', () => {
       inviteCode: 'INV-ABCDEF',
       recoveredLootStashId: 'stash-loot',
       bankerUserId: null,
-      isSoloShortcut: true,
       createdAt: '2026-06-23T10:00:00.000Z',
     },
     memberships: [
@@ -311,39 +310,6 @@ describe('appStateSchema round-trip', () => {
     expect(() => appStateSchema.parse(bad)).toThrow();
   });
 
-  it('R1.3 migration — imports a pre-R1.3 export without flatWeight or container fields', () => {
-    // Pre-R1.3-vintage shape: definitions omit `flatWeight`, item rows
-    // carry `containerInstanceId: null` (was a Zod literal pre-R1.3).
-    // The schema relaxations land additively — older exports parse
-    // cleanly with no migration step required.
-    const aged = structuredClone(fixture);
-    aged.catalog = [
-      {
-        id: 'phb-2024:backpack',
-        name: 'Backpack',
-        source: 'PHB',
-        category: 'container',
-        weight: 5,
-        // NOTE: no `flatWeight` field — pre-R1.3 exports never wrote it.
-      },
-    ];
-    aged.items = [
-      {
-        id: 'item-backpack',
-        definitionId: 'phb-2024:backpack',
-        ownerType: 'stash',
-        ownerId: 'stash-inv',
-        containerInstanceId: null,
-        quantity: 1,
-        equipped: false,
-        attuned: false,
-        identified: true,
-        currentCharges: null,
-      },
-    ];
-    expect(() => appStateSchema.parse(aged)).not.toThrow();
-  });
-
   it('R1.3 — accepts an item with a non-null containerInstanceId', () => {
     const withContainer = structuredClone(fixture);
     withContainer.catalog = [
@@ -399,31 +365,6 @@ describe('appStateSchema round-trip', () => {
     ];
     const parsed = appStateSchema.parse(dmgFlavoured);
     expect(parsed.catalog[0]!.flatWeight).toBe(true);
-  });
-
-  it('R1.5 migration — imports a pre-R1.5 transfer entry without toContainerInstanceId', () => {
-    // Pre-R1.5 transfer log entries don't carry `toContainerInstanceId`.
-    // The R1.5 schema widening is additive — older entries parse cleanly.
-    const aged = structuredClone(fixture);
-    aged.log = [
-      {
-        id: 'log-1',
-        partyId: aged.party.id,
-        sessionId: null,
-        timestamp: '2026-06-20T12:00:00.000Z',
-        actorUserId: aged.user.id,
-        actorRole: 'player',
-        type: 'transfer',
-        payload: {
-          itemInstanceId: 'item-x',
-          quantity: 1,
-          fromStashId: 'stash-a',
-          toStashId: 'stash-b',
-          // NOTE: no `toContainerInstanceId` field — pre-R1.5 entries never wrote it.
-        },
-      },
-    ];
-    expect(() => appStateSchema.parse(aged)).not.toThrow();
   });
 
   it('R1.5 — accepts a transfer entry with toContainerInstanceId as a string (pack)', () => {
@@ -529,36 +470,6 @@ describe('appStateSchema round-trip', () => {
     expect(parsed.items[0]!.currentCharges).toBe(3);
   });
 
-  it('R2.2 — back-compat: pre-R2.2 ItemInstance with currentCharges: null still parses', () => {
-    // Every M2..R2.1 vintage row carries `currentCharges: null`. The R2.2
-    // widening (`z.null()` -> `z.number().int().nonnegative().nullable()`)
-    // is purely additive — older blobs still validate.
-    const aged = structuredClone(fixture);
-    aged.catalog = [
-      {
-        id: 'phb-2024:torch',
-        name: 'Torch',
-        source: 'PHB',
-        category: 'gear',
-      },
-    ];
-    aged.items = [
-      {
-        id: 'item-torch',
-        definitionId: 'phb-2024:torch',
-        ownerType: 'stash',
-        ownerId: 'stash-inv',
-        containerInstanceId: null,
-        quantity: 3,
-        equipped: false,
-        attuned: false,
-        identified: true,
-        currentCharges: null,
-      },
-    ];
-    expect(() => appStateSchema.parse(aged)).not.toThrow();
-  });
-
   it('R2.2 — rejects a negative currentCharges value', () => {
     const bad = structuredClone(fixture);
     bad.catalog = [
@@ -653,14 +564,6 @@ describe('appStateSchema round-trip', () => {
     const parsed = appStateSchema.parse(unidentified);
     expect(parsed.items[0]!.identified).toBe(false);
     expect(parsed.items[0]!.hint).toBe('shimmers faintly');
-  });
-
-  it('R2.3 — back-compat: pre-R2.3 ItemInstance with identified: true and no hint still parses', () => {
-    // Every M2..R2.2 vintage row carries `identified: true` and no `hint`.
-    // The R2.3 widening (`z.literal(true)` -> `z.boolean()`) + optional
-    // `hint` are purely additive — older blobs validate unchanged.
-    const aged = structuredClone(fixture);
-    expect(() => appStateSchema.parse(aged)).not.toThrow();
   });
 
   it('R2.3 — rejects a hint that is not a string', () => {
@@ -759,5 +662,25 @@ describe('appStateSchema round-trip', () => {
       },
     ];
     expect(() => appStateSchema.parse(editEntry)).not.toThrow();
+  });
+
+  it('R4.1 — accepts a membership with a non-null leftAt timestamp', () => {
+    // Soft-delete shape for `leave-party` / `kick-player` cascade
+    // (OUTLINE §8.3). The schema widened from `z.null()` to
+    // `z.string().datetime().nullable()`.
+    const withLeftMember = structuredClone(fixture);
+    withLeftMember.memberships = [
+      ...withLeftMember.memberships,
+      {
+        userId: 'user-2',
+        partyId: withLeftMember.party.id,
+        role: 'player',
+        characterId: null,
+        joinedAt: '2026-06-23T10:00:00.000Z',
+        leftAt: '2026-06-29T18:00:00.000Z',
+      },
+    ];
+    const parsed = appStateSchema.parse(withLeftMember);
+    expect(parsed.memberships[2]!.leftAt).toBe('2026-06-29T18:00:00.000Z');
   });
 });

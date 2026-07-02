@@ -15,6 +15,7 @@ import { useStore } from '@/store';
 import { rarityClasses, rarityLabel } from '@/lib/rarity';
 import { formatChargesLong } from '@/lib/charges';
 import { displayName as computeDisplayName } from '@/lib/identify';
+import { getOwnCharacter } from '@/lib/ownCharacter';
 
 /**
  * Item Detail screen (MVP §7 screen 4 / OUTLINE §5 screen 4).
@@ -66,7 +67,7 @@ export function ItemDetail(): ReactElement {
       const characterId =
         stash?.scope === 'character' && stash.ownerCharacterId !== null
           ? stash.ownerCharacterId
-          : (s.appState.characters[0]?.id ?? null);
+          : (getOwnCharacter(s.appState)?.id ?? null);
       return { row, def, stash, characterId };
     }),
   );

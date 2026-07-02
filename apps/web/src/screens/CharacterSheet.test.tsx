@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { CharacterSheet } from './CharacterSheet';
-import { Welcome } from './Welcome';
 import { ItemDetail } from './ItemDetail';
+import type { Character, PartyMembership, Stash } from '@app/shared';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
@@ -28,7 +28,7 @@ beforeEach(async () => {
 function renderAt(path: string): void {
   const router = createMemoryRouter(
     [
-      { path: '/', Component: Welcome },
+      { path: '/', element: null },
       { path: '/character/:id', Component: CharacterSheet },
       { path: '/item/:itemInstanceId', Component: ItemDetail },
     ],
@@ -76,8 +76,9 @@ describe('CharacterSheet (M1)', () => {
 
   it('redirects to / when the character id is unknown', () => {
     renderAt('/character/does-not-exist');
-    // Welcome renders an h1 with that text; CharacterSheet renders the character name.
-    expect(screen.getByRole('heading', { name: /welcome, adventurer/i })).toBeInTheDocument();
+    // CharacterSheet renders its own h1 from the character name; if the redirect fires,
+    // we land on "/" (the test stub renders nothing) and that heading isn't present.
+    expect(screen.queryByRole('tab', { name: 'Inventory' })).not.toBeInTheDocument();
   });
 });
 
@@ -264,7 +265,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
   function renderWithToaster(path: string): void {
     const router = createMemoryRouter(
       [
-        { path: '/', Component: Welcome },
+        { path: '/', element: null },
         { path: '/character/:id', Component: CharacterSheet },
         { path: '/item/:itemInstanceId', Component: ItemDetail },
       ],
@@ -394,5 +395,118 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
       useStore.getState().appState!.items.find((i) => i.id === decanterId)!.currentCharges,
     ).toBe(decanter.charges!.max);
     expect(await screen.findByText(/1 item recharged/i)).toBeInTheDocument();
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R4.5 — cross-character DM cue
+// -------------------------------------------------------------------- //
+
+describe('CharacterSheet — R4.5 cross-character DM cue', () => {
+  it('shows an editing-cue banner when a DM views another player\'s character', () => {
+    // Bootstrap gives a solo party with u1 as DM+player of char-me.
+    // Convert to a 2-member party where the DM (me) is viewing another
+    // player's character (Bob).
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    const bobCharId = 'char-bob';
+    const bobMembership: PartyMembership = {
+      userId: 'bob-user',
+      partyId: state.party.id,
+      role: 'player',
+      characterId: bobCharId,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    const bobCharacter: Character = {
+      id: bobCharId,
+      partyId: state.party.id,
+      ownerUserId: 'bob-user',
+      name: 'Bob',
+      species: 'Elf',
+      size: 'medium',
+      class: 'Rogue',
+      level: 3,
+      abilityScores: { STR: 8 },
+      maxAttunement: 3,
+      encumbranceRule: 'off',
+      enforceEncumbrance: false,
+      inventoryStashId: 's-inv-bob',
+    };
+    const bobStash: Stash = {
+      id: 's-inv-bob',
+      scope: 'character',
+      name: 'Inventory',
+      ownerCharacterId: bobCharId,
+      partyId: null,
+      isCarried: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: [...state.memberships, bobMembership],
+        characters: [...state.characters, bobCharacter],
+        stashes: [...state.stashes, bobStash],
+        currencies: [
+          ...state.currencies,
+          { id: 'c-bob', stashId: 's-inv-bob', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+        ],
+      },
+    });
+    void base;
+
+    renderAt(`/character/${bobCharId}`);
+
+    const cue = screen.getByRole('note');
+    expect(cue).toHaveTextContent(/editing/i);
+    expect(cue).toHaveTextContent(/bob/i);
+  });
+
+  it('does NOT show the cue on my own character', () => {
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+
+  it('does NOT show the cue for a non-DM viewer looking at another player\'s character', () => {
+    // Solo bootstrap, then flip actor to non-DM AND change owner of the
+    // current character to someone else. The cue should still not show
+    // because the viewer isn't the DM.
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...state,
+        // Drop the DM row so the viewer is a plain player.
+        memberships: state.memberships.filter((m) => m.role !== 'dm'),
+        // Retag character ownership to a stranger (so it looks
+        // cross-character) AND add a second membership so we're not solo.
+        characters: [
+          {
+            ...state.characters[0]!,
+            ownerUserId: 'stranger',
+          },
+        ],
+      },
+    });
+    // Add a second member so isSolo becomes false.
+    const s2 = useStore.getState().appState!;
+    const strangerMembership: PartyMembership = {
+      userId: 'stranger',
+      partyId: s2.party.id,
+      role: 'player',
+      characterId: s2.characters[0]!.id,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    useStore.setState({
+      appState: {
+        ...s2,
+        memberships: [...s2.memberships, strangerMembership],
+      },
+    });
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.queryByRole('note')).toBeNull();
   });
 });

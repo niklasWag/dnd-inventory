@@ -53,11 +53,38 @@ export function CharacterSheet(): ReactElement {
       if (c === undefined) return null;
       const partyStash = s.appState.stashes.find((st) => st.scope === 'party');
       if (partyStash === undefined) return null;
+      // R4.2.e — resolve Banker + DM context up-front so CurrencyRow /
+      // StashItemsTable can render conditional affordances without
+      // reaching back into the store themselves. `userIsBanker` uses
+      // OUTLINE §3.14: banker is derived from `Party.bankerUserId`,
+      // never from a membership row. `userIsDm` reads from the local
+      // DM membership; §3.14 also bars the DM from being the Banker so
+      // the two flags are mutually exclusive.
+      const myUserId = s.appState.user.id;
+      const bankerActive = s.appState.party.bankerUserId !== null;
+      const userIsBanker = bankerActive && s.appState.party.bankerUserId === myUserId;
+      const userIsDm = s.appState.memberships.some(
+        (m) => m.userId === myUserId && m.role === 'dm' && m.leftAt === null,
+      );
+      // R4.5 — cross-character cue. When a DM is viewing another
+      // player's character, surface a subtle "editing X's character"
+      // banner so the mutation surface is unambiguous. Suppressed in
+      // solo (§8.2 union-of-rights makes the DM/owner distinction
+      // irrelevant) and for own-character views. The owner's display
+      // name is resolved server-side via memberships → user rows; the
+      // client doesn't have a user map in AppState, so we fall back to
+      // the character name.
+      const isCrossCharacterDmView =
+        userIsDm && c.ownerUserId !== null && c.ownerUserId !== myUserId;
       return {
         character: c,
         inventoryStashId: c.inventoryStashId,
         partyStashId: partyStash.id,
         recoveredLootStashId: s.appState.party.recoveredLootStashId,
+        bankerActive,
+        userIsBanker,
+        userIsDm,
+        isCrossCharacterDmView,
       };
     }),
   );
@@ -68,12 +95,34 @@ export function CharacterSheet(): ReactElement {
     return <Navigate to="/" replace />;
   }
 
-  const { character, inventoryStashId, partyStashId, recoveredLootStashId } = sheet;
+  const {
+    character,
+    inventoryStashId,
+    partyStashId,
+    recoveredLootStashId,
+    bankerActive,
+    userIsBanker,
+    userIsDm,
+    isCrossCharacterDmView,
+  } = sheet;
   const targetStash = stashForTab(tab, {
     inventoryStashId,
     partyStashId,
     recoveredLootStashId,
   });
+
+  // R4.2.e — CurrencyRow banker context. Only meaningful for shared-
+  // pool tabs (party / recovered-loot); Inventory / Storage get
+  // `undefined` so the row renders the default control set.
+  const currencyRowBankerContext =
+    tab === 'party' || tab === 'recovered-loot'
+      ? {
+          userIsBanker,
+          userIsDmWithBankerActive: bankerActive && userIsDm && !userIsBanker,
+          userIsGatedFromPool: bankerActive && !userIsBanker && !userIsDm,
+          isPartyStash: tab === 'party',
+        }
+      : undefined;
 
   return (
     <div className="space-y-6">
@@ -88,6 +137,15 @@ export function CharacterSheet(): ReactElement {
         </div>
         <RestMenu characterId={character.id} />
       </header>
+
+      {isCrossCharacterDmView ? (
+        <div
+          role="note"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
+        >
+          Editing {character.name}'s character as DM.
+        </div>
+      ) : null}
 
       <div className="border-b border-border">
         <nav className="-mb-px flex gap-1" aria-label="Tabs">
@@ -119,7 +177,12 @@ export function CharacterSheet(): ReactElement {
           <StorageStashList characterId={character.id} />
         ) : (
           <div className="space-y-4">
-            <CurrencyRow stashId={targetStash} />
+            <CurrencyRow
+              stashId={targetStash}
+              {...(currencyRowBankerContext !== undefined
+                ? { bankerContext: currencyRowBankerContext }
+                : {})}
+            />
             {tab === 'inventory' ? <CapacityBar characterId={character.id} /> : null}
             {tab === 'inventory' ? <EquippedSlotsPanel characterId={character.id} /> : null}
             <div className="flex items-center justify-between">

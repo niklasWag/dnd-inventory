@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
 import { StashItemsTable } from './StashItemsTable';
+import type { PartyMembership } from '@app/shared';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
@@ -140,7 +141,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     );
   }
 
-  it('disables the Attune button when maxAttunement is met', () => {
+  it('disables the Attune button when maxAttunement is met (non-DM path)', () => {
     const { characterId, inventoryStashId } = bootstrapWithMagicItems(4);
     // Attune the first three (default cap = 3).
     const ids = useStore
@@ -152,9 +153,29 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
     }
+    // R4.5 — the disable-when-full behavior only applies to non-DM
+    // actors. Solo bootstrap grants DM rights via §8.2, so force a
+    // multi-member party where the current user is a plain player.
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: [
+          ...state.memberships.filter((m) => m.role !== 'dm'),
+          {
+            userId: 'other-dm',
+            partyId: state.party.id,
+            role: 'dm' as const,
+            characterId: null,
+            joinedAt: '2026-01-01T00:00:00.000Z',
+            leftAt: null,
+          } satisfies PartyMembership,
+        ],
+      },
+    });
     renderInventory(inventoryStashId, characterId);
 
-    // The fourth row's Attune button must be disabled (cap met).
+    // The fourth row's Attune button must be disabled (cap met + player).
     const attuneButtons = screen.getAllByRole('button', { name: /^attune cloak of protection/i });
     expect(attuneButtons).toHaveLength(1); // only the un-attuned row shows "Attune"
     expect(attuneButtons[0]).toBeDisabled();
@@ -171,7 +192,26 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     // (unlike userEvent) bypasses the `disabled` check so we can reach
     // the dispatch handler even though React has re-rendered with a
     // disabled button by the time the click lands.
+    // R4.5 — force a non-DM actor so the click routes through the
+    // reducer (not the cap-override dialog).
     const { characterId, inventoryStashId } = bootstrapWithMagicItems(1);
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: [
+          ...state.memberships.filter((m) => m.role !== 'dm'),
+          {
+            userId: 'other-dm',
+            partyId: state.party.id,
+            role: 'dm' as const,
+            characterId: null,
+            joinedAt: '2026-01-01T00:00:00.000Z',
+            leftAt: null,
+          } satisfies PartyMembership,
+        ],
+      },
+    });
     renderInventory(inventoryStashId, characterId);
 
     // Drop cap to 0 — re-render disables the Attune button.
@@ -193,6 +233,122 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     await user.click(screen.getByRole('button', { name: /^equip torch/i }));
     // Label flipped to "Unequip".
     expect(screen.getByRole('button', { name: /^unequip torch/i })).toBeInTheDocument();
+  });
+
+  // -------------------- R4.5 — attune cap-override for DMs --------------------
+
+  it('R4.5 — DM sees a confirm dialog (not a disabled button) when cap is full, and confirming dispatches with overrideCap', async () => {
+    // Solo bootstrap grants DM rights via §8.2. The Attune button on
+    // the fourth row must remain clickable for DMs; clicking opens a
+    // confirm dialog; confirming dispatches attune with overrideCap.
+    const user = userEvent.setup();
+    const { characterId, inventoryStashId } = bootstrapWithMagicItems(4);
+    const ids = useStore
+      .getState()
+      .appState!.items.filter((i) => i.ownerId === inventoryStashId)
+      .map((i) => i.id);
+    for (let i = 0; i < 3; i += 1) {
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
+    }
+    renderInventory(inventoryStashId, characterId);
+
+    const attuneButton = screen.getByRole('button', {
+      name: /^attune cloak of protection/i,
+    });
+    // R4.5 flip: no longer disabled for DMs.
+    expect(attuneButton).not.toBeDisabled();
+
+    await user.click(attuneButton);
+    // Confirm dialog appears.
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/attunement cap/i);
+    expect(dialog).toHaveTextContent(/override/i);
+
+    // Confirm.
+    await user.click(screen.getByRole('button', { name: /confirm override/i }));
+
+    // The fourth cloak is now attuned; log entry recorded overrideCap.
+    const attunedCount = useStore
+      .getState()
+      .appState!.items.filter((i) => i.ownerId === inventoryStashId && i.attuned).length;
+    expect(attunedCount).toBe(4);
+    const lastAttuneEntry = useStore
+      .getState()
+      .log.filter((e) => e.type === 'attune')
+      .slice(-1)[0];
+    expect(lastAttuneEntry).toBeDefined();
+    if (lastAttuneEntry?.type === 'attune') {
+      expect(lastAttuneEntry.payload.overrideCap).toBe(true);
+    }
+  });
+
+  it('R4.5 — cancelling the confirm dialog does NOT dispatch attune', async () => {
+    const user = userEvent.setup();
+    const { characterId, inventoryStashId } = bootstrapWithMagicItems(4);
+    const ids = useStore
+      .getState()
+      .appState!.items.filter((i) => i.ownerId === inventoryStashId)
+      .map((i) => i.id);
+    for (let i = 0; i < 3; i += 1) {
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
+    }
+    renderInventory(inventoryStashId, characterId);
+
+    await user.click(
+      screen.getByRole('button', { name: /^attune cloak of protection/i }),
+    );
+    await screen.findByRole('alertdialog');
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+    // Still 3 attuned (unchanged).
+    const attunedCount = useStore
+      .getState()
+      .appState!.items.filter((i) => i.ownerId === inventoryStashId && i.attuned).length;
+    expect(attunedCount).toBe(3);
+  });
+
+  it('R4.5 — non-DM player in a 2+-member party still sees a disabled Attune button (no dialog)', () => {
+    const { characterId, inventoryStashId } = bootstrapWithMagicItems(4);
+    const ids = useStore
+      .getState()
+      .appState!.items.filter((i) => i.ownerId === inventoryStashId)
+      .map((i) => i.id);
+    for (let i = 0; i < 3; i += 1) {
+      useStore
+        .getState()
+        .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
+    }
+    // Force a 2-member party where the current user is a plain player
+    // (drop their DM membership, add a second user's DM membership so
+    // there's a DM elsewhere and the party is no longer solo).
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: [
+          ...state.memberships.filter((m) => m.role !== 'dm'),
+          {
+            userId: 'other-dm',
+            partyId: state.party.id,
+            role: 'dm' as const,
+            characterId: null,
+            joinedAt: '2026-01-01T00:00:00.000Z',
+            leftAt: null,
+          } satisfies PartyMembership,
+        ],
+      },
+    });
+    renderInventory(inventoryStashId, characterId);
+
+    const attuneButton = screen.getByRole('button', {
+      name: /^attune cloak of protection/i,
+    });
+    expect(attuneButton).toBeDisabled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
 

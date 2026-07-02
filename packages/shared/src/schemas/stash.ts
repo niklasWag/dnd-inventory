@@ -21,26 +21,32 @@ const baseStashFields = {
 };
 
 export const stashSchema = z.discriminatedUnion('scope', [
-  z.object({
-    ...baseStashFields,
-    scope: z.literal('character'),
-    ownerCharacterId: z.string().min(1),
-    partyId: z.null(),
-  }),
-  z.object({
-    ...baseStashFields,
-    scope: z.literal('party'),
-    ownerCharacterId: z.null(),
-    partyId: z.string().min(1),
-    isCarried: z.literal(false),
-  }),
-  z.object({
-    ...baseStashFields,
-    scope: z.literal('recovered-loot'),
-    ownerCharacterId: z.null(),
-    partyId: z.string().min(1),
-    isCarried: z.literal(false),
-  }),
+  z
+    .object({
+      ...baseStashFields,
+      scope: z.literal('character'),
+      ownerCharacterId: z.string().min(1),
+      partyId: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      ...baseStashFields,
+      scope: z.literal('party'),
+      ownerCharacterId: z.null(),
+      partyId: z.string().min(1),
+      isCarried: z.literal(false),
+    })
+    .strict(),
+  z
+    .object({
+      ...baseStashFields,
+      scope: z.literal('recovered-loot'),
+      ownerCharacterId: z.null(),
+      partyId: z.string().min(1),
+      isCarried: z.literal(false),
+    })
+    .strict(),
 ]);
 
 export type Stash = z.infer<typeof stashSchema>;

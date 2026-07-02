@@ -7,7 +7,7 @@ import { buildServer } from '../server.js';
 import { runSeed } from '../db/seed-runner.js';
 
 const TEST_DB_URL =
-  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test';
+  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
 
 const env = {
   NODE_ENV: 'test' as const,

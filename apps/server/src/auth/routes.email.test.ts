@@ -18,7 +18,7 @@ import { setupMailerMock } from '../test/mailer-mock.js';
 import { sessionCookieName } from './config.js';
 
 const TEST_DB_URL =
-  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test';
+  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
 
 const baseEnv: Env = {
   NODE_ENV: 'test',

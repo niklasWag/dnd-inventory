@@ -7,7 +7,7 @@ import { CatalogBrowser } from './CatalogBrowser';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
-import { PHB_SEED_VERSION, loadPhbSeed } from '@app/seeds';
+import { SEED_VERSION, loadPhbSeed } from '@app/seeds';
 import { bootstrap, bootstrapWithHomebrew } from '@/test/fixtures';
 
 beforeEach(async () => {
@@ -47,7 +47,7 @@ describe('CatalogBrowser', () => {
     });
     useStore.getState().dispatch({
       type: 'seed-catalog',
-      payload: { seedVersion: PHB_SEED_VERSION, entries: loadPhbSeed() },
+      payload: { seedVersion: SEED_VERSION, entries: loadPhbSeed() },
     });
 
     renderBrowser();

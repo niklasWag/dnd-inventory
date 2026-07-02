@@ -202,3 +202,111 @@ describe('rules.currency.subtract (M4)', () => {
     });
   });
 });
+
+// -------------------- R4.2.d — splitEvenly --------------------
+
+/**
+ * R4.2.d — cascade-down-denominations split. For each denom in
+ * [pp, gp, ep, sp, cp], give each of N recipients `floor(pool[d] / N)`,
+ * then convert the per-denom remainder into the next lower denom
+ * (via the OUTLINE §4 rate constants) and continue. The CP-level
+ * remainder (0 to N-1 cp) stays in the pool.
+ *
+ * Result: each recipient receives a mixed-denomination share that
+ * reflects the shape of the pool as closely as possible; the pool
+ * retains only stray copper. Matches "how a DM splits loot at the
+ * table" — piles of coins on the table, not raw copper.
+ */
+
+describe('splitEvenly', () => {
+  it('3 gp 4 sp split 3 ways: each 1 gp 1 sp 3 cp, pool retains 1 cp', () => {
+    const pool: currency.Currency = { cp: 0, sp: 4, ep: 0, gp: 3, pp: 0 };
+    const { share, remainder } = currency.splitEvenly(pool, 3);
+    expect(share).toEqual({ cp: 3, sp: 1, ep: 0, gp: 1, pp: 0 });
+    expect(remainder).toEqual({ cp: 1, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('100 gp split 3 ways: each 33 gp 3 sp 3 cp, pool retains 1 cp', () => {
+    const pool: currency.Currency = { cp: 0, sp: 0, ep: 0, gp: 100, pp: 0 };
+    const { share, remainder } = currency.splitEvenly(pool, 3);
+    expect(share).toEqual({ cp: 3, sp: 3, ep: 0, gp: 33, pp: 0 });
+    expect(remainder).toEqual({ cp: 1, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('30 gp split 3 ways: each 10 gp exactly, pool retains 0', () => {
+    const pool: currency.Currency = { cp: 0, sp: 0, ep: 0, gp: 30, pp: 0 };
+    const { share, remainder } = currency.splitEvenly(pool, 3);
+    expect(share).toEqual({ cp: 0, sp: 0, ep: 0, gp: 10, pp: 0 });
+    expect(remainder).toEqual({ cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('N=1 gives everything to the sole recipient, pool retains 0', () => {
+    const pool: currency.Currency = { cp: 7, sp: 3, ep: 1, gp: 42, pp: 5 };
+    const { share, remainder } = currency.splitEvenly(pool, 1);
+    expect(share).toEqual({ cp: 7, sp: 3, ep: 1, gp: 42, pp: 5 });
+    expect(remainder).toEqual({ cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('empty pool: everyone gets 0, pool retains 0', () => {
+    const pool: currency.Currency = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
+    const { share, remainder } = currency.splitEvenly(pool, 4);
+    expect(share).toEqual({ cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+    expect(remainder).toEqual({ cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('all-CP pool splits by pure CP arithmetic', () => {
+    const pool: currency.Currency = { cp: 1000, sp: 0, ep: 0, gp: 0, pp: 0 };
+    const { share, remainder } = currency.splitEvenly(pool, 3);
+    // 1000 / 3 = 333 cp each, 1 cp remainder
+    expect(share).toEqual({ cp: 333, sp: 0, ep: 0, gp: 0, pp: 0 });
+    expect(remainder).toEqual({ cp: 1, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('platinum cascades into gp: 1 pp split 3 ways cascades to ep then sp then cp', () => {
+    const pool: currency.Currency = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 1 };
+    // 1 pp = 10 gp → gp: 10/3=3 each, remainder 1 gp = 2 ep
+    //   ep: 2/3=0 each, remainder 2 ep = 10 sp
+    //   sp: 10/3=3 each, remainder 1 sp = 10 cp
+    //   cp: 10/3=3 each, remainder 1 cp
+    const { share, remainder } = currency.splitEvenly(pool, 3);
+    expect(share).toEqual({ cp: 3, sp: 3, ep: 0, gp: 3, pp: 0 });
+    expect(remainder).toEqual({ cp: 1, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('pool starts in sp/cp only (typical Recovered Loot residue)', () => {
+    const pool: currency.Currency = { cp: 5, sp: 7, ep: 0, gp: 0, pp: 0 };
+    // sp: 7/2=3 each, remainder 1 sp = 10 cp → pool.cp = 5+10 = 15
+    // cp: 15/2=7 each, remainder 1 cp
+    const { share, remainder } = currency.splitEvenly(pool, 2);
+    expect(share).toEqual({ cp: 7, sp: 3, ep: 0, gp: 0, pp: 0 });
+    expect(remainder).toEqual({ cp: 1, sp: 0, ep: 0, gp: 0, pp: 0 });
+  });
+
+  it('conservation: N × share + remainder === original pool (in CP)', () => {
+    const pool: currency.Currency = { cp: 17, sp: 23, ep: 5, gp: 91, pp: 4 };
+    const n = 5;
+    const { share, remainder } = currency.splitEvenly(pool, n);
+    const shareCp = currency.toCopper(share);
+    const remainderCp = currency.toCopper(remainder);
+    const poolCp = currency.toCopper(pool);
+    expect(n * shareCp + remainderCp).toBe(poolCp);
+  });
+
+  it('remainder is always < N in CP-equivalent (never enough to split again)', () => {
+    const pool: currency.Currency = { cp: 17, sp: 23, ep: 5, gp: 91, pp: 4 };
+    const n = 5;
+    const { remainder } = currency.splitEvenly(pool, n);
+    expect(currency.toCopper(remainder)).toBeLessThan(n);
+  });
+
+  it('rejects N < 1', () => {
+    const pool: currency.Currency = { cp: 100, sp: 0, ep: 0, gp: 0, pp: 0 };
+    expect(() => currency.splitEvenly(pool, 0)).toThrow(/n must be/i);
+    expect(() => currency.splitEvenly(pool, -1)).toThrow(/n must be/i);
+  });
+
+  it('rejects non-integer N', () => {
+    const pool: currency.Currency = { cp: 100, sp: 0, ep: 0, gp: 0, pp: 0 };
+    expect(() => currency.splitEvenly(pool, 2.5)).toThrow(/integer/i);
+  });
+});

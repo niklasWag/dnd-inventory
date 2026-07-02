@@ -77,14 +77,38 @@ export type HomebrewDefinitionPatch = z.infer<typeof homebrewDefinitionPatchSche
 
 const createCharacterAction = z.object({
   type: z.literal('create-character'),
-  payload: z.object({
-    name: z.string().min(1),
-    species: z.string().min(1),
-    size: creatureSizeSchema,
-    class: z.string().min(1),
-    level: z.number().int().positive(),
-    str: z.number().int().positive(),
-  }),
+  /**
+   * R4.1-followup — two payload shapes share the `create-character`
+   * action:
+   *   - With character: full character payload, `dmOnly` absent or
+   *     `false`. Mints User + Party + dm + player memberships +
+   *     Character + Inventory stash + party-scope stashes + currencies.
+   *   - DM-only: `dmOnly: true` + `partyName`. No character fields.
+   *     Mints User + Party + ONE dm membership + party-scope stashes
+   *     + currencies.
+   *
+   * Modelled as a `z.union` (not `z.discriminatedUnion`) so the
+   * with-character variant can omit `dmOnly` entirely — keeps the
+   * common-case dispatch ergonomic (`dispatch({ type: 'create-character',
+   * payload: { name, species, ... } })`) without forcing an explicit
+   * `dmOnly: false`.
+   */
+  payload: z.union([
+    z.object({
+      dmOnly: z.literal(false).optional(),
+      name: z.string().min(1),
+      species: z.string().min(1),
+      size: creatureSizeSchema,
+      class: z.string().min(1),
+      level: z.number().int().positive(),
+      str: z.number().int().positive(),
+      partyName: z.string().min(1).optional(),
+    }),
+    z.object({
+      dmOnly: z.literal(true),
+      partyName: z.string().min(1),
+    }),
+  ]),
 });
 
 const acquireAction = z.object({
@@ -153,7 +177,12 @@ const currencyChangeAction = z.object({
   payload: z.object({
     stashId: z.string().min(1),
     delta: currencyDeltaPayloadSchema,
-    reason: z.enum(['deposit', 'withdraw', 'convert']),
+    // `deposit | withdraw | convert` — self-managed adjustments a player
+    // makes to a stash they own. `gameplay-drain` (R4.2.d) is a DM-only
+    // reason for removing currency from Party Stash / Recovered Loot
+    // for gameplay reasons (magical drain, NPC tax, theft). The guard
+    // layer enforces the DM-only constraint.
+    reason: z.enum(['deposit', 'withdraw', 'convert', 'gameplay-drain']),
   }),
 });
 
@@ -258,6 +287,11 @@ const attuneAction = z.object({
   payload: z.object({
     itemInstanceId: z.string().min(1),
     characterId: z.string().min(1),
+    // R4.3.d — DM cap-override per OUTLINE §3.8. When true, the reducer
+    // skips the maxAttunement slot-cap check. Guard (`attuneGuard`)
+    // rejects non-DM actors setting this flag. Absent / false = normal
+    // cap enforcement.
+    overrideCap: z.boolean().optional(),
   }),
 });
 
@@ -329,6 +363,152 @@ const editCharacterAction = z.object({
   }),
 });
 
+const deleteCharacterAction = z.object({
+  type: z.literal('delete-character'),
+  payload: z.object({
+    characterId: z.string().min(1),
+  }),
+});
+
+/**
+ * R4.1.c — `leave-party`. The actor self-removes from `partyId`.
+ * Payload deliberately empty (no `partyId` in the wire shape) — the
+ * server resolves the party from session + URL (SECURITY §2 "Server is
+ * authoritative; never trust partyId from a request body"). The
+ * reducer reads `state.party.id` directly because R4.1's web client
+ * only ever holds one party in memory at a time.
+ */
+const leavePartyAction = z.object({
+  type: z.literal('leave-party'),
+  payload: z.object({}),
+});
+
+/**
+ * R4.1.d — `kick-player`. DM removes another member from the party.
+ * Wire payload is `{ kickedUserId }`; the partyId is resolved
+ * server-side from session + URL per SECURITY §2. The reducer reads
+ * `state.party.id` directly because R4.1's web client only holds one
+ * party in memory at a time.
+ */
+const kickPlayerAction = z.object({
+  type: z.literal('kick-player'),
+  payload: z.object({
+    kickedUserId: z.string().min(1),
+  }),
+});
+
+/**
+ * R4.1.e — `join-party`. Dispatched server-side after a successful
+ * invite-code redemption. The reducer mints one `role='player'`
+ * `PartyMembership` row (characterId: null) and appends a `join-party`
+ * log entry; the user creates their character via a subsequent
+ * `create-character` action.
+ *
+ * Wire payload deliberately empty — the server resolves the party
+ * from the invite code (route layer) and the user from the session.
+ * In the local reducer it reads `state.user.id` and `state.party.id`.
+ * NB: the client never directly dispatches `join-party`; the server
+ * does on the client's behalf as part of `POST /parties/join`. The
+ * action exists in the union so the log entry round-trips through
+ * the same `applied[]` channel the rest of `/sync/actions` uses.
+ */
+const joinPartyAction = z.object({
+  type: z.literal('join-party'),
+  payload: z.object({}),
+});
+
+/**
+ * R4.2.a — `appoint-banker`. DM appoints an active player as the
+ * party's Banker per OUTLINE §3.14. Reducer guards reject if:
+ *   - actor lacks an active DM membership in this party (`dm_only`).
+ *   - target equals `Party.ownerUserId` (DM cannot self-appoint).
+ *   - target lacks an active `role='player'` membership in this party.
+ *   - `memberCount < 2` (solo parties have no Banker).
+ *   - `Party.bankerUserId` is already non-null (reassignment is a
+ *     two-step revoke-then-appoint per OUTLINE §3.14).
+ *
+ * Wire payload carries only `bankerUserId`; `partyId` comes from the
+ * URL/session per SECURITY §2.
+ */
+const appointBankerAction = z.object({
+  type: z.literal('appoint-banker'),
+  payload: z.object({
+    bankerUserId: z.string().min(1),
+  }),
+});
+
+/**
+ * R4.2.a / R4.3.a — `revoke-banker`. Clears `Party.bankerUserId`.
+ * Reasons:
+ *   - `'manual'` — DM explicitly revokes.
+ *   - `'reassigned'` — reserved for a future "reassign Banker" CTA
+ *     that combines revoke + appoint in two clicks. R4.2.a only
+ *     emits `'manual'`; the enum value is reserved.
+ *   - `'left-party'` — synthesized by the `leave-party` reducer arm
+ *     when the leaver was the Banker.
+ *   - `'kicked'` — synthesized by `kick-player` when the kicked user
+ *     was the Banker.
+ *   - `'dm-transfer'` — synthesized by the `dm-transfer` reducer arm
+ *     when the incoming DM is the current Banker (§4 invariant:
+ *     `bankerUserId !== ownerUserId`). Added in R4.3.a.
+ *
+ * Only `'manual'` and `'reassigned'` reach this action via the
+ * `POST /sync/actions` route; the other three are synthesized by
+ * cascade reducer arms and never round-trip through dispatch.
+ */
+const revokeBankerAction = z.object({
+  type: z.literal('revoke-banker'),
+  payload: z.object({
+    reason: z.enum(['manual', 'reassigned', 'left-party', 'kicked', 'dm-transfer']),
+  }),
+});
+
+/**
+ * R4.3.a — `dm-transfer`. DM hands the DM role to another active
+ * player in the party per OUTLINE §3.14 + §8.3. Atomic swap:
+ *   - Outgoing DM's `role='dm'` row → soft-deleted (`leftAt: now`).
+ *   - Outgoing DM's `role='player'` row → left active; if none exists
+ *     (DM-only outgoing DM) it is auto-minted with `characterId: null`.
+ *   - Incoming DM's `role='dm'` row → upsert to active (reactivates a
+ *     historical soft-deleted row per BUG-002 lesson, or creates fresh).
+ *   - `Party.ownerUserId` → newDmUserId.
+ *   - If `Party.bankerUserId === newDmUserId` → cleared + synthetic
+ *     `revoke-banker` slice with `reason: 'dm-transfer'`.
+ *
+ * Wire payload carries only `newDmUserId`; `partyId` comes from the
+ * URL/session per SECURITY §2.
+ */
+const dmTransferAction = z.object({
+  type: z.literal('dm-transfer'),
+  payload: z.object({
+    newDmUserId: z.string().min(1),
+  }),
+});
+
+/**
+ * R4.2.d — Banker-only "split-evenly" action. Splits `fromStashId`'s
+ * currency across the supplied `recipientCharacterIds` using the
+ * cascade-down-denominations algorithm (`packages/rules/currency.ts`
+ * `splitEvenly`). Emits one terminal `split-evenly` log entry plus N
+ * `currency-transfer` entries (one per recipient).
+ *
+ * `fromStashId` must be the party's Party Stash (`scope: 'party'`).
+ * Recovered Loot is out of scope for R4.2.d — the Banker can move that
+ * currency manually via `currency-transfer` if needed.
+ *
+ * `recipientCharacterIds` must all be active players' characters in
+ * this party. The Banker's own character is a valid recipient per
+ * OUTLINE §8.1 ("Take Party Stash currency into own character's
+ * purse" — Banker: allowed).
+ */
+const splitEvenlyAction = z.object({
+  type: z.literal('split-evenly'),
+  payload: z.object({
+    fromStashId: z.string().min(1),
+    recipientCharacterIds: z.array(z.string().min(1)).min(1),
+  }),
+});
+
 export const actionSchema = z.discriminatedUnion('type', [
   createCharacterAction,
   acquireAction,
@@ -356,6 +536,14 @@ export const actionSchema = z.discriminatedUnion('type', [
   rechargeAction,
   identifyAction,
   editCharacterAction,
+  deleteCharacterAction,
+  leavePartyAction,
+  kickPlayerAction,
+  joinPartyAction,
+  appointBankerAction,
+  revokeBankerAction,
+  dmTransferAction,
+  splitEvenlyAction,
 ]);
 
 export type Action = z.infer<typeof actionSchema>;

@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { ItemDetail } from './ItemDetail';
-import { Welcome } from './Welcome';
 import { CharacterSheet } from './CharacterSheet';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore, flushPendingPersist } from '@/store';
@@ -22,7 +21,7 @@ beforeEach(async () => {
 function renderAt(path: string): void {
   const router = createMemoryRouter(
     [
-      { path: '/', Component: Welcome },
+      { path: '/', element: null },
       { path: '/character/:id', Component: CharacterSheet },
       { path: '/item/:itemInstanceId', Component: ItemDetail },
     ],
@@ -46,7 +45,9 @@ function bootstrapWithTorch(): { itemInstanceId: string; inventoryStashId: strin
 describe('ItemDetail (M2.5)', () => {
   it('redirects to / when itemInstanceId does not resolve', () => {
     renderAt('/item/does-not-exist');
-    expect(screen.getByRole('heading', { name: /welcome, adventurer/i })).toBeInTheDocument();
+    // If the redirect fires we land on "/" (the test stub renders nothing).
+    // No ItemDetail-specific surface (the History panel) should appear.
+    expect(screen.queryByRole('heading', { name: /history/i })).not.toBeInTheDocument();
   });
 
   it('renders the definition name in the header when customName is unset', () => {

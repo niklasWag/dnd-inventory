@@ -326,15 +326,17 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     // can project null onto the public session payload — the client's
     // sessionUserSchema.email is `z.string().email().nullable().optional()`,
     // which accepts null but rejects ''.
-    const findUniqueMock = vi.fn(async () => ({
-      id: 'user-1',
-      displayName: 'GandalfTheGrey',
-      email: null,
-      emailVerified: null,
-      avatarUrl: null,
-      needsDisplayName: false,
-      discordId: '123',
-    }));
+    const findUniqueMock = vi.fn(() =>
+      Promise.resolve({
+        id: 'user-1',
+        displayName: 'GandalfTheGrey',
+        email: null,
+        emailVerified: null,
+        avatarUrl: null,
+        needsDisplayName: false,
+        discordId: '123',
+      }),
+    );
     const fakePrisma = {
       account: { create: vi.fn() },
       user: { findUnique: findUniqueMock },
@@ -352,13 +354,15 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     // to prisma.user.create — but our schema column is `displayName`, not
     // `name`. Without the field mapping in makeAdapter, this throws
     // "Argument `displayName` missing" on every Discord-first signup.
-    const createMock = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-      id: 'minted-id',
-      displayName: (data['displayName'] as string | undefined) ?? '',
-      email: (data['email'] as string | null | undefined) ?? null,
-      emailVerified: (data['emailVerified'] as Date | null | undefined) ?? null,
-      avatarUrl: (data['avatarUrl'] as string | null | undefined) ?? null,
-    }));
+    const createMock = vi.fn(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({
+        id: 'minted-id',
+        displayName: (data['displayName'] as string | undefined) ?? '',
+        email: (data['email'] as string | null | undefined) ?? null,
+        emailVerified: (data['emailVerified'] as Date | null | undefined) ?? null,
+        avatarUrl: (data['avatarUrl'] as string | null | undefined) ?? null,
+      }),
+    );
     const fakePrisma = {
       account: { create: vi.fn() },
       user: { create: createMock },
@@ -379,7 +383,7 @@ describe('makeAdapter — Discord token stripping (SECURITY §1.1)', () => {
     });
 
     expect(createMock.mock.calls).toHaveLength(1);
-    const writtenData = createMock.mock.calls[0]![0]!.data;
+    const writtenData = createMock.mock.calls[0]![0].data;
     // Schema column names are what hit Prisma.
     expect(writtenData['displayName']).toBe('GandalfTheGrey');
     expect(writtenData['avatarUrl']).toBe('https://cdn.discordapp.com/avatars/123/abc.png');

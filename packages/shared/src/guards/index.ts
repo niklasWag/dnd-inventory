@@ -50,14 +50,19 @@ export type GuardRejectionCode =
   // top-level
   | 'unknown_action'
   | 'state_not_initialized'
+  | 'state_already_initialized'
   | 'not_a_member'
   // ownership
   | 'not_own_character'
   | 'not_own_stash'
   | 'character_must_own_self'
+  | 'character_already_exists'
   // role
   | 'dm_only'
   | 'banker_membership_forbidden'
+  | 'banker_required_for_claim'
+  | 'dm_transfer_self'
+  | 'dm_transfer_target_not_member'
   // domain
   | 'item_not_found'
   | 'stash_not_found'

@@ -97,7 +97,6 @@ async function applyRestore(prisma: PrismaClient, envelope: ExportEnvelope): Pro
           inviteCode: appState.party.inviteCode,
           recoveredLootStashId: appState.party.recoveredLootStashId,
           bankerUserId: appState.party.bankerUserId,
-          isSoloShortcut: appState.party.isSoloShortcut,
           createdAt: new Date(appState.party.createdAt),
         },
       });

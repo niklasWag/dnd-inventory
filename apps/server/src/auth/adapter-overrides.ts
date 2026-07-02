@@ -162,7 +162,7 @@ export function makeAdapter(prisma: PrismaClient): Adapter {
       return dbToAdapterUser(created);
     },
     updateUser: async (data) => {
-      const { id, ...rest } = data as { id: string } & Partial<AdapterUser>;
+      const { id, ...rest } = data;
       const updated = await p.user.update({
         where: { id },
         data: adapterToDbUser(rest),

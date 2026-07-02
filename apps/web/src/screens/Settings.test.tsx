@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import { Settings } from './Settings';
-import { Welcome } from './Welcome';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
@@ -28,12 +27,14 @@ beforeEach(async () => {
  *   6. App info renders APP_VERSION + seedVersion.
  *
  * Uses createMemoryRouter so Settings (which calls useNavigate from
- * the Wipe path) has a router context.
+ * the Wipe path) has a router context. The "/" fallback is a stub —
+ * the tests never assert on it, they just need a valid route to land
+ * on if navigation fires.
  */
 function renderSettings(initialPath = '/settings'): void {
   const router = createMemoryRouter(
     [
-      { path: '/', Component: Welcome },
+      { path: '/', element: null },
       { path: '/settings', Component: Settings },
     ],
     { initialEntries: [initialPath] },
@@ -76,79 +77,6 @@ describe('Settings — Backup (M7)', () => {
   });
 });
 
-describe('Settings — Character & Party rename (M7)', () => {
-  it('renaming the character dispatches rename-character and surfaces the new name', async () => {
-    const user = userEvent.setup();
-    const { characterId } = bootstrap({
-      name: 'Thorin',
-      species: 'Dwarf',
-      size: 'medium',
-      class: 'Fighter',
-      level: 1,
-      str: 16,
-    });
-
-    renderSettings();
-
-    const input = screen.getByLabelText(/character name/i);
-    expect(input).toHaveValue('Thorin');
-
-    await user.clear(input);
-    await user.type(input, 'Thorin Stonefist');
-    // Find the Save button next to the character name input.
-    const charForm = input.closest('form')!;
-    const saveBtn = charForm.querySelector('button[type="submit"]')!;
-    await user.click(saveBtn);
-
-    // Store updated.
-    expect(useStore.getState().appState!.characters.find((c) => c.id === characterId)!.name).toBe(
-      'Thorin Stonefist',
-    );
-    // Log entry appended.
-    const last = useStore.getState().log.at(-1);
-    expect(last?.type).toBe('rename-character');
-  });
-
-  it('renaming the party dispatches rename-party and updates the store', async () => {
-    const user = userEvent.setup();
-    bootstrap();
-    const partyId = useStore.getState().appState!.party.id;
-
-    renderSettings();
-
-    const input = screen.getByLabelText(/party name/i);
-    expect(input).toHaveValue('My Campaign');
-
-    await user.clear(input);
-    await user.type(input, 'The Misfits');
-    const partyForm = input.closest('form')!;
-    const saveBtn = partyForm.querySelector('button[type="submit"]')!;
-    await user.click(saveBtn);
-
-    expect(useStore.getState().appState!.party.name).toBe('The Misfits');
-    const last = useStore.getState().log.at(-1);
-    expect(last?.type).toBe('rename-party');
-    if (last?.type === 'rename-party') {
-      expect(last.payload).toEqual({
-        partyId,
-        oldName: 'My Campaign',
-        newName: 'The Misfits',
-      });
-    }
-  });
-
-  it('Save button is disabled when the input matches the current name', () => {
-    bootstrap();
-    renderSettings();
-
-    const input = screen.getByLabelText(/character name/i);
-    const form = input.closest('form')!;
-    const save = form.querySelector('button[type="submit"]') as HTMLButtonElement;
-    // Currently 'Thorin' (default from fixtures) — no edit yet → disabled.
-    expect(save).toBeDisabled();
-  });
-});
-
 describe('Settings — App info (M7)', () => {
   it('renders app version and seed version', () => {
     bootstrap();
@@ -159,8 +87,8 @@ describe('Settings — App info (M7)', () => {
     expect(screen.getByText(/seed version \d+/i)).toBeInTheDocument();
   });
 
-  it('rename fields are hidden before bootstrap (Welcome owns the create flow)', () => {
-    // No bootstrap call; appState stays null.
+  it('rename fields no longer appear in Settings (moved to /party/settings in R4.1-followup)', () => {
+    bootstrap();
     renderSettings();
     expect(screen.queryByLabelText(/character name/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/party name/i)).not.toBeInTheDocument();

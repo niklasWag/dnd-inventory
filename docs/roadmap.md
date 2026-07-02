@@ -1730,35 +1730,35 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 
 Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointment + distribution toolkit, DM/Player role split when 2+ members. Covers OUTLINE §3.1 (permissive-until-others-join), §3.2, §3.5 ("split evenly"), §3.10 (loot distribution), §3.14 (Banker), §8.1 (full permission matrix), §8.3 (leaving/kicking).
 
-**Slicing.** R4 is the largest milestone (~50 checkboxes). Splits along the feature axes that compose: R4.1 lights up multi-membership (invites, join, leave, kick) — once shipped, a party can have 2+ members; R4.2 adds the Banker role on top; R4.3 adds DM cross-character authority; R4.4 widens currency-transfer + homebrew visibility for the 2+-member world; R4.5 ships the DM Dashboard. Each slice is independently testable; R4.1 is the hard dependency for all later slices.
+**Slicing.** R4 is the largest milestone (~50 checkboxes). Splits along the feature axes that compose: R4.1 lights up multi-membership (invites, join, leave, kick) — once shipped, a party can have 2+ members; R4.2 adds the Banker role on top; R4.3 adds DM cross-character authority; R4.4 widens currency-transfer + homebrew visibility for the 2+-member world; R4.5 ships the DM Dashboard. Each slice is independently testable; R4.1 is the hard dependency for all later slices. R4.1 itself splits into six sub-slices: R4.1.a/b/c/d shipped 2026-06-29 (schema deprecation, delete-character, leave-party, kick-player); R4.1.e shipped same day (invites + join + Hub + PartySettings); **R4.1.f (joiners create their own character) was deferred during the e-split and promoted back on 2026-06-29 — without it joiners can't actually play, so the user-facing flow is incomplete until f lands.**
 
 #### R4.1 — Invites + join/leave/kick + multi-membership schema
 
 **Schema activations (§4)**
-- [ ] `Party.inviteCode` becomes user-visible / rotatable
-- [ ] `PartyMembership` supports count > 2
-- [ ] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24). The "solo" hub badge is derived from `memberCount === 1`. R4 migration: stop writing the field on newly-created parties (drop it from `create-character` reducer); MVP-vintage parties keep the `true` value but readers ignore it. Schema either drops the field entirely or marks it `.optional()` to accept legacy blobs.
-- [ ] Migration test: an M0 / M1 / M2 / M3 / M4 / M5 / M5.5 AppState (with `isSoloShortcut: true`) imports cleanly under R4 schema; the hub renders the "solo" badge based purely on `memberCount`.
-- [ ] Composite-key invariant test: `(userId, partyId, role)` allows DM+player for creator
+- [x] `Party.inviteCode` becomes user-visible / rotatable — **R4.1.e**. `POST /parties/:partyId/invite/rotate` (DM-only) mints a fresh code; PartySettings shows the current code with Copy + DM-only Rotate buttons.
+- [x] `PartyMembership` supports count > 2 — **R4.1.e**. `partyMembershipSchema.leftAt` widened from `z.null()` to `z.string().datetime().nullable()` so members can soft-leave; the MVP-era "exactly two memberships per (userId, partyId)" invariant is now scoped to the party creator only (dm + player), with additional player rows added by `POST /parties/join`.
+- [x] **`Party.isSoloShortcut` deprecated / removed** per OUTLINE §4 amendment (2026-06-24) — **R4.1.a**. Field dropped from Zod `partySchema`, the `partyListItemSchema` API row shape, the reducer's `create-character` writer, the server persistor / mapper / restore CLI / sync route, and the Prisma `Party` model (migration `r41_drop_party_isSoloShortcut`). Hub "solo" badge derived from `memberCount === 1`. Zod's default object-strip behaviour silently drops the legacy field so MVP-vintage exports rehydrate cleanly.
+- [x] Migration test: an M0 / M1 / M2 / M3 / M4 / M5 / M5.5 AppState (with `isSoloShortcut: true`) imports cleanly under R4 schema; the hub renders the "solo" badge based purely on `memberCount` — **R4.1.a** (`packages/shared/src/schemas/appState.test.ts` "R4.1 migration — imports a legacy AppState carrying `isSoloShortcut: true`").
+- [x] Composite-key invariant test: `(userId, partyId, role)` allows DM+player for creator — already shipped (M1 reducer test asserts `memberships.length === 2` with `dm + player` roles for the creator).
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `join-party` action + payload schema
-- [ ] `leave-party` action: moves owned items + currency to Recovered Loot (§8.3)
-- [ ] `kick-player` action: same Recovered Loot transfer (§8.3)
-- [ ] `delete-character` action + payload schema (`{ characterId, name, lastSessionId? }` per §4)
-- [ ] `delete-character` reducer case: moves owned items + currency to Recovered Loot, clears `PartyMembership.characterId`
-- [ ] `delete-character` invariant test: owning user keeps their membership (can recreate a character)
-- [ ] `delete-character` log payload snapshots itemCount + currencyTotalCp (mirrors `delete-stash` pattern in §4)
+- [x] `join-party` action + payload schema — **R4.1.e**. Empty wire payload (`{}`); reducer reads actor from `state.user.id` and party from `state.party.id`. Reducer appends a `role='player'` membership row (characterId: null) and emits one `join-party` log slice with `{ partyId }`. Rejects when the actor is already an active player member of the party.
+- [x] `leave-party` action: moves owned items + currency to Recovered Loot (§8.3) — **R4.1.c**. Reducer payload empty (`{}`); actor + party derived from session/state. Cascade: (1) if leaver had a character, runs the shared `cascadeCharacterToRecoveredLoot` helper (items + currency → Recovered Loot, drop character + stashes + holdings); (2) soft-deletes every active `PartyMembership` row for actor.userId in this party (`leftAt: ctx.now()`); (3) banker auto-clear stub (R4.2 carryforward — unreachable today because `partySchema.bankerUserId: z.null()`); (4) appends terminal `leave-party` slice with `{ partyId, characterId? }`. Reducer guards: rejects sole-member (server archive flow per R4.1.e), rejects sole-DM of a 2+-member party (must `dm-transfer` first in R4.3).
+- [x] `kick-player` action: same Recovered Loot transfer (§8.3) — **R4.1.d**. Symmetrical to `leave-party` but parameterised on `{ kickedUserId }`. Reuses `cascadeCharacterToRecoveredLoot` verbatim. Logged with `actorRole: 'dm'`. Reducer guards: rejects self-kick (use `leave-party` instead), rejects kicking a DM (use `dm-transfer` first in R4.3), rejects unknown / already-left target. Banker auto-clear stub (R4.2 emits `revoke-banker` with `reason: 'kicked'`).
+- [x] `delete-character` action + payload schema (`{ characterId, name, lastSessionId? }` per §4) — **R4.1.b**. Reducer payload narrows to `{ characterId }` (subset of log payload); log entry snapshots `{ characterId, name, itemCount, currencyTotalCp }` (mirrors `delete-stash` snapshot pattern). `lastSessionId` reserved for R5 session tagging.
+- [x] `delete-character` reducer case: moves owned items + currency to Recovered Loot, clears `PartyMembership.characterId` — **R4.1.b** (`packages/rules/src/reducer/index.ts` `deleteCharacter`). Cascade emits one `transfer` slice per item in any character-scope stash (Inventory + every Storage) + one `currency-change` slice with `reason: 'character-deleted'` against Recovered Loot when aggregate currency was non-zero + one terminal `delete-character` slice. Items have `equipped`/`attuned`/`containerInstanceId` cleared on transfer. Character row + their stash rows + CurrencyHolding rows dropped. OUTLINE §4 `currency-change.reason` enum extended with `'character-deleted'` in lockstep.
+- [x] `delete-character` invariant test: owning user keeps their membership (can recreate a character) — **R4.1.b** (`apps/web/src/store/reducer.test.ts` "drops the character row and clears PartyMembership.characterId on the player row").
+- [x] `delete-character` log payload snapshots itemCount + currencyTotalCp (mirrors `delete-stash` pattern in §4) — **R4.1.b**.
 
 **Server-side**
-- [ ] Invite-code generation endpoint (DM-only, rotatable)
-- [ ] Invite-code redemption endpoint
+- [x] Invite-code generation endpoint (DM-only, rotatable) — **R4.1.e** (`POST /parties/:partyId/invite/rotate` in `apps/server/src/parties/routes.ts`). DM-only via `resolveActor` + role check; calls `generateInviteCode()` from `@app/rules`; updates `Party.inviteCode`. Old code becomes invalid immediately.
+- [x] Invite-code redemption endpoint — **R4.1.e** (`POST /parties/join { inviteCode }`). Looks up the party by code (rejects archived parties as `invalid_invite`); rejects double-join as `already_member`; mints a `role='player'` membership + writes a `join-party` log slice in one `$transaction`.
 - [ ] Websocket join/leave channel per party (foundation for R5)
-- [ ] Departure flow: archive empty parties (no destructive delete) per §8.3
+- [x] Departure flow: archive empty parties (no destructive delete) per §8.3 — **R4.1.e**. New `Party.archivedAt` nullable column (migration `r41e_party_archivedAt`). `POST /parties/:partyId/leave` detects sole-member case and stamps `archivedAt` instead of running the §8.3 cascade. `GET /sync/parties` filters `archivedAt IS NULL`. Multi-member leave still goes through the reducer cascade.
 
 **UI**
-- [ ] Hub: Join party (paste code) flow wired — **carryforward from R3.5** (the Hub card is currently hidden with a "Coming in R4" caption; unhide + wire the input + call `POST /parties/join`).
-- [ ] Hub: "do you also play a character?" toggle on the Create-party dialog (OUTLINE §3.1 default yes) — **carryforward from R3.5** (the Hub today always invokes `create-character` which mints both DM + player memberships; the toggle requires a reducer branch for DM-only).
+- [x] Hub: Join party (paste code) flow wired — **R4.1.e**. Hub Join card now active in server mode; opens a `JoinPartyForm` dialog with a single invite-code input. Submit calls `POST /parties/join`, refreshes the parties list, and routes into the new party. Surfaces `invalid_invite` / `already_member` toasts.
+- [x] Hub: "do you also play a character?" toggle on the Create-party dialog (OUTLINE §3.1 default yes) — **R4.1.e + R4.1-followup 2026-06-29**. Three-step wizard: party-name input → Yes/No play prompt → character form (only if Yes). The "No" path dispatches `create-character` with `dmOnly: true` and routes the new DM to `/party/settings`. The "Yes" path dispatches the legacy `create-character` payload with the user-supplied `partyName` override. Solo Hub card stays single-step (party auto-named "My Campaign").
 - [x] Hub: per-party row navigation — clicking a party in the Hub list pulls THAT party's `AppState` via `pullState(partyId)` and routes into it. R3.5 originally shipped a stub click handler (the comment said "Phase 4 wires the pull-then-navigate path") that navigated only to a character already in the local store, which was wrong for users with multiple parties. **Resolved post-R3.5** in `apps/web/src/screens/Hub.tsx`: click handler calls `setCurrentPartyId` (so reload boots back to the same party) → `pullState(partyId)` → `useStore.hydrate(...)` → navigates to `characters[0].id`. Disables all buttons during the pull and shows "Opening…" on the active card.
 - [x] Party Settings screen (§5.15): invite code regenerate / revoke, kick player — **R4.1.e** (`apps/web/src/screens/PartySettings.tsx`, routed at `/party/settings`). Sections: Members list with role badges, Invite code (Copy + DM-only Rotate), Leave party. DM-only Kick buttons appear next to non-DM members. Confirm dialogs for both leave and kick.
 - [x] Member list with role badges (DM / Player) — **R4.1.e** (inside `PartySettings`). One row per `(userId, role)` tuple; solo creator shows two rows (dm + player) by design. Role badges via the `RoleBadge` component.
@@ -1849,107 +1849,595 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 >
 > **Carryforwards (tracked under "Operational followups → Feature gaps"):** multi-party "vault" export (currently per-party) and explicit `archivedAt` check on `/sync/actions` (defensive).
 
+#### R4.1 — Notes
+
+> **2026-06-29 — R4.1 (Multi-member parties — foundation) sub-slices a–e shipped + R4.1.f scoped.** Sub-slices a/b/c/d/e shipped 2026-06-29. Headline shape: multi-membership schema is now real (`Party.isSoloShortcut` dropped; `PartyMembership.leftAt` nullable), the four-action departure surface (`delete-character`, `leave-party`, `kick-player`, `join-party`) shares one `cascadeCharacterToRecoveredLoot` helper, server routes (`POST /parties/join`, `/invite/rotate`, `/leave`, `/kick`, `GET /:partyId/members`) sit alongside the existing `/sync/*` surface, Hub Join card lit up, PartySettings screen ships at `/party/settings`, and sole-member archive runs server-only via `Party.archivedAt`. **R4.1.f (joiners create their own character) was scoped but not yet shipped** — the canonical "DM invites players who join with their own character" flow needs it; without f, `POST /parties/join` mints a membership row with `characterId: null` and the joining user can't play. Tracked above; not a backlog item.
+>
+> **Post-shipping followups (also 2026-06-29).** Six bug-fix / refactor passes after the initial sub-slices landed; each kept R4.1 actually usable rather than just "schema-correct."
+>
+> 1. **DM-only Create-party flow** — extended `create-character` action with `dmOnly: boolean` + optional `partyName`. Reducer branches: full bootstrap (with-character) vs DM-only (mints `User` + `Party` + ONE `dm` membership + party-scope stashes only). Log entry's `characterId`/`name`/`inventoryStashId` became optional + a `dmOnly?: boolean` flag for log readers. Three-step Hub wizard: party name → "Will you also play a character?" Yes/No → character form if Yes. Server `applyBootstrapDelta` was already shape-agnostic; no server-side change needed. **5 new reducer tests** in `apps/web/src/store/reducer.test.ts`.
+> 2. **Multi-party local-mode storage** — Dexie keys each party's blob under `appState:<partyId>`; the Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through the pointer with legacy + first-keyed-blob fallbacks. Reducer's `state === null` invariant stays intact — the Hub flushes + clears in-memory state before each `create-character` dispatch. **7 new persistence tests** in `apps/web/src/db/persistence.test.ts`.
+> 3. **Reverse-proxy `/parties/*` routing** — `infra/docker/Caddyfile` only routed `/auth/*` + `/sync/*` + `/healthz` to the server; new `/parties/*` requests fell through to the SPA handler and returned `index.html`, surfacing client-side as a Zod `malformed_response` parse error. Added `/parties /parties/*` to the `@server` matcher; mirrored in the production Caddy + nginx examples in `README.md` so fresh self-host installs don't trip the same wire.
+> 4. **Sync queue race fix** — `store/index.ts` used `void import('@/sync/queue').then(({enqueue}) => enqueue(action))` which deferred enqueue across a microtask. Hub's `await flushSyncQueue()` then found an empty queue and bailed; bootstrap pull-after-push never ran. Replaced with a static `import { enqueue } from '@/sync/queue'` (no runtime cycle — `queue.ts` only depends on `@/store/session` + `@/store/types`, not `@/store/index.ts`).
+> 5. **Bootstrap pull canonicalisation** — the server's `/sync/actions` runs its own reducer with its own `randomUUID()` ctx, so the freshly-minted `partyId` server-side DIFFERS from the client's optimistic local id. The queue's pull-after-push was using the local id and getting 404. Now reads `response.applied[0].payload.partyId` (the `create-character` log entry the server wrote with its own ids) and pulls THAT. The Hub then re-reads `useStore.getState().appState` AFTER `flushSyncQueue()` so navigation uses the now-canonical (server-minted) character/party ids. The pull-after-push had been silently broken since R3.4.a; pre-R4.1.e it didn't matter because navigation read local state — R4.1.e's PartySettings → `/parties/:id/members` was the first screen to call a server API with the local id and immediately 404.
+> 6. **Settings → PartySettings refactor** — Character rename + Party rename moved from the global `/settings` screen to `/party/settings` (party-scoped, lives next to members + invite code). PartySettings dropped its `!isServerMode` redirect: local mode now sees the rename surfaces with server-only sections (members / invite code / kick / leave) hidden. New "Party" nav button in the header (Users icon), visible whenever `state.party !== null`. PartySettings also handles stale parties — `party_not_found` from `/parties/:id/members` redirects to Hub with a clear toast instead of stranding the user. Hub's `openServerParty` / `openLocalParty` route DM-only parties (no characters) to `/party/settings` instead of erroring "no characters yet." **4 new PartySettings tests**; 3 stale Settings rename tests removed.
+>
+> **Test totals.** 952 (after R4.1.e) → **964** (after R4.1.b's DM-only) → **972** at session-end (with multi-party + PartySettings tests added). All five workspaces typecheck; web lint clean. Server-side route tests at 154 (the 7 new R4.1.e route tests verified end-to-end against real Postgres).
+>
+> **Carryforwards (tracked under "Operational followups → Feature gaps"):** multi-party "vault" export (currently per-party), explicit `archivedAt` check on `/sync/actions` (defensive), and `create-character-in-existing-party` so DM-only DMs can add their own character later without recreating the party.
+
 #### R4.2 — Banker role
 
+Sliced post-R4.1 (2026-06-30 planning session) into five independently-shippable sub-slices. R4.2.a ships the role lifecycle (appoint/revoke + auto-clear cascade); R4.2.b lights up the `'banker'` actorRole on all existing player-driven actions; R4.2.c gates shared-pool claim/distribution behind the Banker; R4.2.d adds the new distribution actions; R4.2.e adds the UI. Each sub-slice depends on the previous.
+
+#### R4.2.a — Foundation: schema widen + appoint/revoke + kick/leave auto-clear
+
 **Schema activations (§4)**
-- [ ] `Party.bankerUserId` becomes settable (was always `null` in MVP) — **carryforward from R3.4.a**: widen `partySchema.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`. Keep `partyMembershipSchema.role` narrow (`['dm', 'player']`) per OUTLINE §3.14 — banker is denormalized on Party, never a membership row.
+- [x] `Party.bankerUserId` becomes settable (was always `null` in MVP) — **carryforward from R3.4.a**: widen `partySchema.bankerUserId` from `z.null()` to `z.string().min(1).nullable()`. Keep `partyMembershipSchema.role` narrow (`['dm', 'player']`) per OUTLINE §3.14 — banker is denormalized on Party, never a membership row.
 
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `appoint-banker` action + payload schema
-- [ ] `revoke-banker` action + payload schema
-- [ ] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker
-- [ ] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
-- [ ] `kick-player` Banker auto-clear with `reason: "kicked"`
-- [ ] Invariant test: DM cannot self-appoint as Banker (§3.14)
-- [ ] Invariant test: Banker target must have active `role="player"` membership
-- [ ] Invariant test: Banker role only legal when `memberCount >= 2`
-- [ ] `currency-change` extended `reason` values (`split-evenly`, `gameplay-drain`)
-- [ ] Action: split Party Stash currency evenly across characters
-- [ ] Action: Banker gives currency / items to a specific player from Party Stash
-- [ ] Action: Banker gives currency / items from Recovered Loot to a specific player
-- [ ] Action: Banker takes from Party Stash / Recovered Loot into own purse
-- [ ] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4) — **shipped in R3.4.a** for the derivation path (`deriveActorRole` in `@app/shared/guards/actor.ts`); R4.2 makes it load-bearing by allowing `bankerUserId` to be non-null.
+- [x] `appoint-banker` action + payload schema (`{ bankerUserId }`)
+- [x] `revoke-banker` action + payload schema (`reason: 'manual' | 'reassigned' | 'left-party' | 'kicked'`; `'dm-transfer'` reserved for R4.3)
+- [x] `leave-party` auto-clears `Party.bankerUserId` if departing player was Banker (R4.1.c stub lit up)
+- [x] `leave-party` writes `revoke-banker` entry with `reason: "left-party"` when applicable
+- [x] `kick-player` Banker auto-clear with `reason: "kicked"` (R4.1.d stub lit up)
+- [x] Invariant test: DM cannot self-appoint as Banker (§3.14)
+- [x] Invariant test: Banker target must have active `role="player"` membership
+- [x] Invariant test: Banker role only legal when `memberCount >= 2`
+- [x] Invariant test: reassignment requires explicit revoke first (no in-place overwrite of `bankerUserId`)
 
 **Server-side**
-- [ ] Server authoritative checks for every Banker action above — extends R3.4.a's `@app/shared/guards/map.ts`. The `banker_membership_forbidden` rejection code (already declared in R3.4.a's `GuardRejectionCode`) becomes load-bearing here — first triggered by a regression where a banker payload writes to `PartyMembership.role` instead of `Party.bankerUserId`.
+- [x] Server-authoritative `appointBankerGuard` + `revokeBankerGuard` (mirror reducer invariants; `banker_membership_forbidden` rejection code first lit-up in R4.2.a)
+- [x] `persistAppointBanker` + `persistRevokeBanker` handlers (atomic `Party.update` on `bankerUserId`)
+- [x] R4.1's `persistLeaveParty` / `persistKickPlayer` banker-clear stub already wired; now load-bearing once schema permits non-null
+
+**Web store middleware**
+- [x] `resolveActor` widened to return `'dm' | 'player' | 'banker'` (was `'dm' | 'player'`); player-driven actions surface as `'banker'` when `state.party.bankerUserId === state.user.id`. Mirrors `@app/shared/guards/actor.ts::deriveActorRole`.
+
+#### R4.2.a — Notes
+
+> **Shipped 2026-06-30** (`feature/r4-parties`, commits `eb68da0 R4.2.a`).
+>
+> **Test totals:** 1030 across the workspace (web 661 ← 659 with 2 new BUG-002 regression tests; server 165 ← 158 with 5 new R4.2.a + 2 BUG-002 integration tests). All five workspaces typecheck.
+>
+> **Decisions captured:**
+> - **Reassignment is two-step.** `appoint-banker` against an already-set Banker rejects with `banker_membership_forbidden`; DM must `revoke-banker` first. The `'reassigned'` reason enum value is reserved for a future combined-CTA UX flow; no current emitter.
+> - **Cascade lives in the reducer; server replays.** `leave-party` / `kick-player` reducer arms emit the synthetic `revoke-banker` slice when the departing user was the Banker. Server persistor replays the same slice; no server-only cascade logic. Matches CLAUDE.md "reducer is single source of truth + server replays authoritatively" pattern.
+> - **`'dm-transfer'` reason intentionally absent from this slice's enum** so it can't be emitted prematurely. R4.3 widens the enum + adds the `dm-transfer`-driven Banker auto-clear cascade.
+>
+> **Did NOT ship (correctly deferred to later sub-slices):**
+> - Permission gating: shared-pool claim/distribute still works for non-Banker actors even when `bankerUserId !== null`. The §8.1 matrix's Banker-conditional rows aren't enforced yet.
+> - Banker distribution actions: `currency-distribute-evenly`, `currency-give-from-pool`, `currency-take-into-purse`, `item-distribute-from-pool`. None exist.
+> - UI: there's no Party Settings appoint/revoke CTA. The slice is CLI-/test-only.
+>
+> **Carryforward (BUG-002 surfaced 2026-06-30 while building R4.2.a):** any code path that writes a row with the `(userId, partyId, role)` composite PK must use `upsert` (or read-then-update) instead of `create` because the soft-delete cascade leaves the row in place. Fix shipped same day under `🐛 BUG-002`; the lesson generalises to future composite-PK writes — flagged in `docs/BUGS.md` postmortem for R4.3 (`dm-transfer` membership churn) to remember.
+
+#### R4.2.b — `actorRole: 'banker'` audit-trail polish
+
+**Reducer / store**
+- [x] `actorRole` on log derived correctly: `"banker"` if `Party.bankerUserId === actorUserId`, else membership role (§4) — **shipped in R3.4.a** for the derivation path (`deriveActorRole` in `@app/shared/guards/actor.ts`); R4.2.a lit it up by allowing `bankerUserId` to be non-null AND widening web `resolveActor` to mirror it.
 
 **UI**
-- [ ] Party Settings screen (§5.15): appoint / revoke Banker
-- [ ] Member list with role badges (DM / Player / Banker)
-- [ ] Party Stash (§5.5): Banker distribution controls (split-evenly, give-to-player, give-items-to-player)
-- [ ] Party Stash for DM-when-Banker-active: distribute-to-player controls hidden; add/remove-for-gameplay visible
-- [ ] Recovered Loot (§5.6): same Banker/DM split as Party Stash
-- [ ] Component test: Banker toggle changes both Party Stash and Recovered Loot control sets
+- [x] Party log UI: render `actorRole: 'banker'` distinct from `'player'` (badge color). Shipped as a shared `RoleBadge` component (`apps/web/src/components/RoleBadge.tsx`) with three theme-tokened variants (`bg-primary/10 text-primary` for DM, `bg-secondary text-secondary-foreground` for Player, `bg-accent text-accent-foreground` for Banker). Wired into `ItemHistory` (per-item audit log) AND `PartySettings` (member list — extracted from local inline definition).
+- [ ] Banker badge IN the PartySettings member list — deferred to R4.2.e. Today the `PartyMemberItem.role` API type is narrow `'dm' | 'player'` (Banker is denormalised on `Party.bankerUserId`, not a membership row). Rendering "Banker" alongside a player's row requires joining `Party.bankerUserId` to the members list at render time — that lands with the R4.2.e appoint/revoke CTA so the UI flows together.
+
+#### R4.2.b — Notes
+
+> **Shipped 2026-06-30** (`feature/r4-parties`).
+>
+> **Test totals:** 1034 across the workspace (web 665 ← 661 with 4 new RoleBadge component tests; server unchanged at 165).
+>
+> **Decisions captured:**
+> - **Component lives at `apps/web/src/components/RoleBadge.tsx`, NOT in `components/ui/`.** Per CLAUDE.md, `components/ui/` is shadcn-managed (hand-edits forbidden). The shared role badge is app-owned, so it sits next to other app components like `CharacterForm`, `Layout`.
+> - **Three theme-token variants, not a custom palette.** DM uses `primary`, Player uses `secondary`, Banker uses `accent` — all already in the shadcn theme. No new design tokens introduced. The "Banker uses accent" choice signals "privileged but not DM" without inventing a custom color.
+> - **Member-list Banker badge deferred to R4.2.e.** The API type `PartyMemberItem.role` is intentionally narrow per OUTLINE §3.14 (banker is denormalised on Party, never a membership row). Joining `Party.bankerUserId` to the members list in the UI is straightforward but belongs with the appoint/revoke CTA work in R4.2.e, where both ship together. R4.2.b focuses on the AUDIT-TRAIL surface (where `actorRole: 'banker'` already flows through from R4.2.a's reducer/middleware changes).
+>
+> **Carryforward to R4.2.e:** PartySettings member-list rendering needs to (a) call `RoleBadge role="banker"` for the player whose `userId === party.bankerUserId`, OR (b) widen the API response with a derived `effectiveRole` field. (a) is preferred — keeps the API narrow and the derivation client-side, matching the existing `deriveActorRole` pattern.
+
+#### R4.2.c — Permission gating: shared-pool claim/distribute is Banker-mediated
+
+**Guard layer (`@app/shared/guards/map.ts`)**
+- [x] When `party.bankerUserId !== null` AND the action targets Party Stash / Recovered Loot as source, reject non-Banker actors with a new code `banker_required_for_claim`.
+- [~] DM "gameplay drain" actions stay allowed (distinguish by destination: player stash vs. nowhere). — **Deferred to R4.2.d.** R4.2.c intentionally gates the DM alongside players (matches §8.1 "DM blocked while Banker active; revoke first"). R4.2.d re-opens the DM path by adding the `gameplay-drain` `currency-change.reason` value which bypasses the gate.
+- [x] When `bankerUserId === null`, behavior unchanged — players self-claim freely.
+
+**Reducer**
+- [~] Same guard logic runs client-side for instant optimistic rejection feedback. — **Skipped for this slice** (planning session 2026-07-01). The web store currently does not call `checkGuard` (only the server does); the reducer's own inline invariants ARE the client-side path today. Rather than proliferate more inline duplication for three actions, R4.2.c relies on server-authoritative rejection + R4.2.e UI hiding/disabling the buttons based on `state.party.bankerUserId`. Revisit if UX evidence shows we need optimistic rejection (e.g. the wider "wire `checkGuard` into the web dispatch" change lands as its own architectural slice).
+
+**Tests**
+- [x] Matrix-driven: every {Banker active, actor role, source pool, destination} combination from §8.1. — 18 new guard tests in `packages/shared/src/guards/map.test.ts` (`currency-change` × 11 cases, `currency-transfer` × 5, `transfer` × 5, `split` un-gated × 1, solo-bypass × 1).
+- [x] Regression: existing "no Banker" tests still pass. — all pre-existing 82 shared-guard tests still pass; new deposit/inventory/no-Banker positive cases confirm no over-gating.
+- [x] Server integration: with a real Postgres, 2-member party with Banker set, non-Banker actor rejected with `banker_required_for_claim`; Banker actor accepted; no-Banker actor accepted; deposit un-gated. 5 new integration tests in `apps/server/src/parties/routes.test.ts`.
+
+#### R4.2.c — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1061 across the workspace (shared 90 ← 82, rules 114, seeds 22, web 665, server 170 ← 165). All five workspaces typecheck. Lint count unchanged from baseline (2 pre-existing errors in `shared/schemas/api.ts:77` and `shared/guards/map.test.ts:35`; 17 pre-existing in `apps/server`).
+>
+> **Design decisions captured (planning session 2026-07-01):**
+> - **Gate on source, not destination.** A single predicate — "is the source stash a Party Stash or Recovered Loot?" — applied uniformly to `currency-change` (withdraw/convert only), `currency-transfer` (fromStashId), and `transfer` (item.ownerId). Deposits (destination = shared pool, source = own stash) are un-gated. This matches §8.1's split between "Add currency/items to Party Stash or Recovered Loot" (allowed) and "Claim / Distribute" (Banker-only).
+> - **`split` is NOT gated.** It's an in-place stack reshape (new row inherits `ownerId`); nothing leaves the pool. Explicit positive test confirms behaviour.
+> - **DM path.** R4.2.c rejects the DM alongside players when a Banker is active. This matches §8.1's "DM blocked while Banker active; revoke first". The R4.2.d `gameplay-drain` `reason` value re-opens the DM path for gameplay-driven pool drains.
+> - **Web-side rejection skipped.** Server is authoritative; UI will hide/disable disallowed buttons in R4.2.e based on `state.party.bankerUserId`. If a user bypasses the UI, the server rejects with a clear code. Revisit if UX warrants optimistic rejection.
+>
+> **Implementation shape.** Two new helper functions in `map.ts`: `isSharedPoolStash(state, stashId)` (structural check) and `checkBankerGate(state, actor, sourceStashId, actionLabel)` (returns rejection or null; called from each of the three guards). The three guards remain single-purpose; the Banker gate is one line each.
+>
+> **Carryforward to R4.2.d:** the `currency-change.reason` enum widening (`gameplay-drain`, `split-evenly`) must be paired with a corresponding `checkBankerGate` bypass so DM drain actions pass. Concretely: R4.2.d's `currencyChangeGuard` should skip the gate when `reason === 'gameplay-drain'` (and the actor is DM, enforced by the same guard's role check).
+>
+> **Carryforward to R4.2.e:** the UI must read `state.party.bankerUserId` when rendering Party Stash / Recovered Loot controls: hide "claim" affordances for non-Banker actors when the value is non-null. `RoleBadge` (R4.2.b) already handles the log-side surface.
+
+#### R4.2.d — Banker distribution toolkit (new actions)
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] `currency-change` extended `reason` values (`gameplay-drain` added to the action enum; `split-evenly` stayed out — see Notes for rationale).
+- [x] Action: split Party Stash currency evenly across characters — new `split-evenly` action + `currency.splitEvenly` cascade helper. Emits ONE terminal `split-evenly` log entry + N `currency-transfer` entries (§4 rule: transfers replace paired `currency-change` in stash-to-stash moves).
+- [x] DM `gameplay-drain` bypass — the `checkBankerGate` skip lets the DM `currency-change` a shared pool with `reason: 'gameplay-drain'` even when a Banker is active; non-DM actors using this reason are rejected outright (`dm_only`).
+
+**Server-side**
+- [x] Server authoritative checks for each new action; CP-integer currency math (per `docs/SECURITY.md` §3.2); no negative balances. `persistSplitEvenly` re-runs `splitEvenly` inside the sync `$transaction`, debits the pool, and increments N recipient Inventory holdings atomically.
+
+**Tests**
+- [x] TDD RED/GREEN/REFACTOR on `currency.splitEvenly` (12 new tests in `packages/rules/src/currency.test.ts` — worked examples, edge cases, conservation invariant `N × share + remainder === pool`, argument validation).
+- [x] Guard matrix in `packages/shared/src/guards/map.test.ts` (13 new tests — DM `gameplay-drain` bypass across Banker-active/inactive, non-DM rejection with `gameplay-drain`, R4.2.c behaviour preserved for `withdraw`, `splitEvenlyGuard` Banker-only + source-must-be-Party-Stash + recipient-must-be-active-player).
+- [x] Reducer tests in `apps/web/src/store/reducer.test.ts` (5 new tests — 100gp/2, 100gp/3 cascade, terminal + N transfer log shape, empty-pool → terminal only, `remainderInPool` always present).
+- [x] Server integration tests in `apps/server/src/parties/routes.test.ts` (5 new tests — 100gp/2 happy path, non-Banker rejection, 100gp/3 cascade end-to-end DB verification, DM `gameplay-drain` when Banker active, non-DM rejection).
+
+#### R4.2.d — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1096 across the workspace (shared 103 ← 90, rules 126 ← 114, seeds 22, web 670 ← 665, server 175 ← 170). All five workspaces typecheck. Lint clean workspace-wide.
+>
+> **Design decisions captured (planning session 2026-07-01):**
+> - **Cascade rounding.** For each denom in `[pp, gp, ep, sp, cp]` (largest → smallest), give each recipient `floor(pool[d] / N)`, then convert the per-denom remainder into the next lower denom via the OUTLINE §4 rate constants (all integer factors: pp/gp=10, gp/ep=2, ep/sp=5, sp/cp=10). CP-level remainder (0 to N-1 cp) stays in the pool. Matches how a DM splits loot at the table — piles of coins in each denomination, not raw copper. Compared to naive-CP-flatten: same total value, but the recipient sees `+33 gp +3 sp +3 cp` instead of `+3333 cp`.
+> - **`split-evenly` action shape.** `{ fromStashId, recipientCharacterIds: string[] }`. Banker picks recipients (opt-in; the Banker can distribute to a subset if, e.g., a player is absent from the session). Banker's own character IS a valid recipient per OUTLINE §8.1 "Take Party Stash currency into own character's purse" (Banker: allowed).
+> - **Log shape.** ONE terminal `split-evenly` entry carrying `{ fromStashId, recipientCharacterIds, sharePerRecipient, remainderInPool }` as the audit anchor; N child `currency-transfer` entries (one per recipient) as the atomic debit/credit machinery. Follows §4's rule that `currency-transfer` replaces paired `currency-change` in stash-to-stash moves. `remainderInPool` is ALWAYS present, even when zero — uniform log shape.
+> - **Empty pool.** If the Banker triggers split-evenly on an empty pool, ONE terminal entry emits (audit: "Banker attempted a split; nothing distributed") but the N transfer entries are skipped (no zero-delta transfers).
+> - **`split-evenly` NOT in `currency-change.reason` enum.** The roadmap text mentioned `'split-evenly'` as a `currency-change.reason` value; that was pre-design language. Our final design uses `currency-transfer` for the child entries (which has no `reason` field) and a dedicated `split-evenly` log-entry type for the terminal. So `'split-evenly'` never appears as a `reason` value at runtime. Left in the log-entry schema's enum (line 336) as a tolerant leftover; not added to the action enum.
+> - **Source restricted to Party Stash.** R4.2.d does NOT support split-evenly on Recovered Loot. Recovered Loot is the incidental pile from character departures; distributing it evenly is uncommon and the Banker can do it manually via `currency-transfer` if needed. Recovered Loot rejection is `stash_not_found` (semantically: not a valid split-source).
+> - **`gameplay-drain` is DM-only.** Even the Banker can't use it — `dm_only` rejection. The reason label describes a world-level effect (magical drain, NPC tax, theft), which is the DM's domain per OUTLINE §8.1 row 464. The DM uses this to remove currency from a pool for gameplay reasons; the Banker uses `withdraw` to prepare a distribution (which the Banker gate then permits).
+> - **Web-side rejection.** Same as R4.2.c: skipped for this slice. Server is authoritative; R4.2.e UI hides/disables buttons based on `state.party.bankerUserId` and `actor.role`. Optimistic UI rejection would require wiring `checkGuard` into the web store's dispatch — that's a broader architectural change outside R4.2.d's scope.
+>
+> **Implementation shape.** `currency.splitEvenly` is a 15-line loop over the 5 denoms; reducer arm is ~90 lines including comments (mostly the recipient-Inventory resolution + log entry construction); server persistor is ~60 lines (Prisma updates in-transaction). Guards add a `splitEvenlyGuard` and extend `currencyChangeGuard` with the `gameplay-drain` bypass. The `checkBankerGate` helper introduced in R4.2.c did not need changes.
+>
+> **Carryforward to R4.2.e:** the UI for "Split the Pot" lives on the Party Stash screen (§5.5). Recipient picker should default to all active players' characters with the Banker's character pre-selected; the Banker can uncheck any to skip them. Preview should show the computed share + remainder BEFORE dispatch so the Banker sees "each player gets 33 gp 3 sp 3 cp; pool retains 1 cp" and can confirm. Pure client-side math via `currency.splitEvenly` — no round-trip.
+>
+> **Carryforward to R4.3:** the `dm-transfer` action lands with the caveat from BUG-002 (soft-delete composite-PK) — no direct interaction with R4.2.d.
+
+#### R4.2.e — UI
+
+- [x] Party Settings screen (§5.15): appoint / revoke Banker CTAs (DM-only, hidden in solo, hidden on the DM's own row).
+- [x] Member list with role badges (DM / Player / Banker) — Banker badge attaches to the player row whose `userId === Party.bankerUserId`. Derivation is client-side; API type `PartyMemberItem.role` stays narrow per §3.14.
+- [x] ~~Log-entry badge for `actorRole: 'banker'`~~ — **shipped in R4.2.b** (via `RoleBadge` in `ItemHistory`).
+- [x] Party Stash (§5.5): Banker distribution — new `SplitEvenlyModal` for split-the-pot (Party Stash only per R4.2.d). "Give currency to player" / "Give items to player" reuse the existing `CurrencyTransferModal` / `MoveItemModal` — R4.2.c gate lets the Banker drive them; the Banker sees the normal Transfer button while non-Banker/non-DM users have it hidden.
+- [x] Party Stash for DM-when-Banker-active: withdraw controls hidden; `DrainCurrencyModal` visible instead (dispatches `currency-change` with `reason: 'gameplay-drain'`). Deposit (`+`) stays visible for the DM per §8.1 deposit row.
+- [x] Recovered Loot (§5.6): same Banker/DM split as Party Stash, minus the Split Evenly button (per R4.2.d, split-evenly source is Party Stash only).
+- [x] Component tests: `SplitEvenlyModal` (7 tests — selection, preview, dispatch), `DrainCurrencyModal` (5 tests — payload, overspending), `CurrencyRow.bankerContext` (5 tests — visibility flags per role permutation).
+
+#### R4.2.e — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). **R4.2 complete.**
+>
+> **Test totals:** 1113 across the workspace (shared 103, rules 126, seeds 22, web 687 ← 670, server 175). Typecheck + lint clean workspace-wide.
+>
+> **Design decisions captured (planning session 2026-07-01):**
+> - **DM drain UX.** Confirmation modal (`DrainCurrencyModal`) instead of an inline rename. Deliberate friction — draining a shared pool for gameplay reasons is a world-level effect (magical drain, NPC tax, theft — §8.1 row 464); a per-denom form + explicit Drain button + destructive-variant styling reads as "you are removing this from the game" instead of "you are moving this somewhere". Deposit path stays inline (+) — depositing IS the fast path.
+> - **Per-row Banker CTAs in PartySettings.** DM sees a "Make Banker" button on every non-DM, non-self player row when no Banker is set; sees "Revoke Banker" next to the current Banker. Hidden in solo (memberCount < 2). Rejected on the DM's own row (§3.14 forbids DM-as-Banker anyway; the reducer + guard enforce it — the UI just avoids the reject-path click).
+> - **Prop-gated visibility over "many components".** Rather than five new modals for Banker/DM permutations, `CurrencyRow` accepts an optional `bankerContext: BankerContext` prop with four flags: `userIsBanker`, `userIsDmWithBankerActive`, `userIsGatedFromPool`, `isPartyStash`. `CharacterSheet` computes these once per render and passes them; character-scope tabs (Inventory / Storage) pass `undefined` and the row falls back to its M4 default control set. Zero behavioural change for non-shared-pool stashes.
+> - **Split-evenly recipient default: all-checked.** When the Banker opens the modal, every eligible active player character is pre-selected (including the Banker's own). Matches R4.2.d's "distribute across the party" default flow. The Banker unchecks recipients only for the absentee/skip-one case.
+> - **Full per-denom preview.** The modal renders the exact cascade output via `currency.splitEvenly` before dispatch. The Banker sees "Each recipient gets: 33 gp, 3 sp, 3 cp" and "Party Stash retains: 1 cp" — no round-trip, no surprise.
+> - **StashItemsTable NOT gated in R4.2.e.** Item-side controls (transfer / split / remove) remain visible for all roles even on shared pools. Non-Banker item transfers already fail at the server with `banker_required_for_claim` and toast the error — that's acceptable friction. Hiding item controls would double the visibility-flag surface for marginal UX gain; revisit if telemetry shows non-Banker users frequently attempting shared-pool item moves.
+> - **PartySettings component tests deferred to server integration.** The Banker CTAs live in the server-mode-only members section, which requires a live API mock. The dispatch pipeline for `appoint-banker` / `revoke-banker` is already covered by R4.2.a's reducer + server integration tests. R4.2.e tests focus on the two new modals + the visibility prop mechanics — the parts with novel logic.
+>
+> **Implementation shape.**
+> - `SplitEvenlyModal` (~230 lines) — recipient checkbox list, `useMemo` preview via `currency.splitEvenly`, single dispatch on Confirm.
+> - `DrainCurrencyModal` (~140 lines) — five per-denom inputs with `max={pool[denom]}`, overspending warning, single dispatch with `reason: 'gameplay-drain'`.
+> - `CurrencyRow` (~65 lines added) — five visibility flags derived from `bankerContext`; existing modals reused; two new modals conditionally mounted.
+> - `CharacterSheet` (~15 lines added) — Banker context computed inside the `useShallow` selector alongside stash ids; passed as a prop only for shared-pool tabs.
+> - `PartySettings` (~60 lines added) — extended selector for `bankerUserId`; two new handlers (`handleAppointBanker` / `handleRevokeBanker`); per-row CTAs with the DM/solo/own-row visibility rule; second `RoleBadge` on the Banker's player row.
+>
+> **Selector pattern gotcha (resolved).** SplitEvenlyModal's first draft used a single `useShallow` selector that built a fresh `EligibleRecipient[]` on each store change. React 19 + Zustand rejected this with "The result of getSnapshot should be cached to avoid an infinite loop" and hit the max-update-depth guard. Fix: split into two primitive `useShallow` selects (`memberships`, `characters`) + `useMemo` for the derived list. Same pattern CLAUDE.md notes for `CatalogBrowser` and `StashItemsTable`.
+>
+> **Negative-zero gotcha (resolved).** `DrainCurrencyModal` originally emitted `delta: { cp: -0, sp: -0, ..., gp: -3 }` because JS `-0 === 0` but the object shape reads oddly. Fixed with `-amounts.cp || 0` per denom — the `|| 0` short-circuits when the negation is `-0`.
 
 #### R4.2 — Notes
 
-> -
+> **R4.2 shipped 2026-07-01 (five sub-slices R4.2.a–e).** The Banker role is now fully implemented across schema, reducer, guards, server persistence, and UI. Sliced from a single roadmap section into R4.2.a–e on 2026-06-30 (planning session). The original section was a flat task list; the sub-slicing aligned Banker work with the R4.1.a/b/c/d/e/f rhythm so each PR stayed reviewable and shipped its own user-visible (or substrate-visible) value.
+>
+> **Total test growth across R4.2:** MVP baseline ~659 tests → 1113 after R4.2 (+454). Guard tests: 82 → 103 (+21 across R4.2.a/c/d). Reducer tests (rules): 114 → 126 (+12 R4.2.d). Web component tests: ~605 → 687 (+82 across R4.2.a/b/e). Server integration: 158 → 175 (+17 across R4.2.a/c/d).
+>
+> **Carryforward to R4.3 (`dm-transfer`):**
+> - `dm-transfer` auto-clears `Party.bankerUserId` when the incoming DM is the current Banker per OUTLINE §3.14. The R4.2.a `revokeBankerGuard` + `revoke-banker` reducer arm are ready; R4.3 extends the `revoke-banker.reason` enum with `'dm-transfer'`.
+> - Every code path that writes a `(userId, partyId, role)` composite-PK row must use `upsert` (BUG-002 lesson). `dm-transfer` will churn DM rows — audit the new persistor arm against the pattern used in `persistJoinParty`.
+> - The R4.2.c/d/e "banker or DM" affordance-visibility pattern generalises to R4.3's DM cross-character actions. When R4.3 lands, StashItemsTable-side visibility gating may be worth revisiting (currently un-gated per R4.2.e Notes).
+>
+> **Carryforward to R4.4 (cross-character currency + homebrew party scope):**
+> - Player→player currency push is Banker-independent per §3.14 amendment (2026-06-24). `currency-transfer` already supports it; R4.4 adds the receiver UX + party-log surfacing.
+> - Homebrew visibility is party-scoped — R4.4 adds the catalog filter. R4.2 doesn't touch homebrew.
 
 #### R4.3 — DM cross-character actions + DM transfer
 
+Sliced post-R4.2 (2026-07-01 planning session) into five independently-shippable sub-slices, mirroring the R4.1.a-f / R4.2.a-e rhythm. R4.3.a ships the `dm-transfer` reducer foundation (schema widen + Banker auto-clear cascade + membership swap semantics); R4.3.b lands server-authoritative guards + persistor + integration tests; R4.3.c/d ship DM cross-character actions in two batches; R4.3.e adds the UI. Each sub-slice depends on the previous.
+
+#### R4.3.a — Foundation: `dm-transfer` reducer + Banker auto-clear cascade
+
 **Reducer actions (§4 TransactionLog union)**
-- [ ] `dm-transfer` action + payload schema
-- [ ] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "left-party" | "kicked" | "reassigned"`) still validate.
-- [ ] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one `dm-transfer` entry + one `revoke-banker` entry with `reason: "dm-transfer"`. New DM must reappoint a Banker afterward.
-- [ ] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
-- [ ] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
+- [x] `dm-transfer` action + payload schema (`{ newDmUserId: string }`; `partyId` derived from URL/session per SECURITY §2)
+- [x] `dm-transfer` log entry schema (`{ oldDmUserId, newDmUserId }`; both ids stored on the entry so the audit trail is self-contained)
+- [x] **`revoke-banker.reason` enum extended with `"dm-transfer"`** per OUTLINE §4 amendment (2026-06-24). Round-trip test that pre-amendment logs (reason ∈ `"manual" | "reassigned" | "left-party" | "kicked"`) still validate — the enum widening is additive.
+- [x] **`dm-transfer` auto-clears `Party.bankerUserId`** when the incoming DM is the current Banker per OUTLINE §3.14. Atomic cascade: one synthetic `revoke-banker` entry with `reason: "dm-transfer"` emitted BEFORE the terminal `dm-transfer` entry (mirrors `leave-party` / `kick-player` cascade ordering). New DM must reappoint a Banker afterward.
+- [x] Invariant test: `dm-transfer` to current Banker → Banker auto-cleared, both log entries emitted in the correct order, new DM is NOT also Banker (preserves §4 `bankerUserId != ownerUserId`).
+- [x] Invariant test: `dm-transfer` to a non-Banker player → no `revoke-banker` entry emitted; Banker (if any) stays in role.
+- [x] Membership swap semantics: outgoing DM's `role='dm'` row soft-deleted (`leftAt: now`); incoming DM's `role='dm'` row upserted to active (reactivates historical soft-deleted row per BUG-002 lesson); outgoing DM's `role='player'` row auto-minted if missing (DM-only outgoing DM case); `Party.ownerUserId` updated to `newDmUserId`.
+- [x] Reducer guards: `dm_only` (actor lacks active DM membership), `dm_transfer_self` (self-transfer rejected), `dm_transfer_target_not_member` (target lacks active player membership).
+- [x] Placeholder `dmTransferGuard` in `packages/shared/src/guards/map.ts` mirroring reducer rejections — satisfies the exhaustive-map type check + provides defense-in-depth for R4.3.b's server-authoritative path. Two new `GuardRejectionCode` values: `dm_transfer_self`, `dm_transfer_target_not_member`.
+
+#### R4.3.a — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1125 across the workspace (web 699 ← 689 with 10 new dm-transfer reducer tests; shared 103 ← 102 with the exhaustive-map guard test list widened by one). Rules 126, seeds 22, server 175 unchanged. All five workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 planning):**
+> - **Outgoing DM keeps player row; new DM keeps player row.** Both users hold their `role='player'` rows post-transfer (untouched by the reducer). The party creator's dual dm+player bootstrap pattern generalises — after any transfer, both users have both roles active (or the outgoing DM has just player, if they were DM-only pre-transfer and got auto-minted).
+> - **Auto-mint player row for DM-only outgoing DM.** Rather than reject (`dm_transfer_no_player_row`), the reducer auto-mints an active `role='player'` row with `characterId: null` for the outgoing DM. UX rationale: transfer completes in one click; the outgoing DM then sees the existing "add character" CTA from the Hub. Matches the joiner-post-join flow (BUG-002's rejoin resets `characterId: null` too). `joinedAt: now` follows current-tenure semantics — historical DM tenure is preserved on the soft-deleted dm row.
+> - **`joinedAt` on reactivated incoming DM's dm row is refreshed to `now`.** BUG-002 rejoin semantics: soft-deleted → reactive resets `joinedAt` to the current tenure. Original historical `joinedAt` is not preserved on the reactivated row (matches how `persistJoinParty` handles the same shape).
+> - **`ownerUserId` bar to self-transfer.** Guard 2 (`newDmUserId === actorUserId`) is redundant with the invariant `state.user.id === state.party.ownerUserId` for any active DM, but keeping the explicit guard clarifies intent + guards against a hypothetical multi-DM state that today can't exist.
+> - **Test approach: batch RED, batch GREEN.** Wrote all 10 reducer tests as RED first (confirmed 10 failures), then implemented the reducer arm + `resolveActor` switch case, hit intermediate failures on `resolveActor` (missing `dm-transfer` case) and guards map (missing entry), fixed both, GREEN. One additional refactor to test structure: the invariant-preservation test originally tried Case A + Case B in the same `it()` with two `localBootstrap()` calls; `beforeEach` only fires between `it`s, so the second bootstrap collided with existing DM character. Split into a single case (Case A); the Case B behaviour is already covered by the "does NOT emit revoke-banker" test.
+>
+> **Not shipped in R4.3.a (deferred to R4.3.b+):**
+> - Server `POST /parties/:partyId/transfer-dm` route + `persistDmTransfer` — R4.3.b.
+> - Integration tests (real Postgres) for the FULL swap semantics — R4.3.b.
+> - `persistDmTransfer` must use `upsert` for the incoming DM's `role='dm'` row (BUG-002 lesson locked-in per pre-R4.3.a audit; see AUDIT-002 below when it lands).
+> - End-to-end optimistic-rollback test for `dm_transfer_self` / `dm_transfer_target_not_member` rejection codes in `apps/web/src/sync/queue.test.ts` per BUG-003 lesson — lands with R4.3.b when the server route can actually reject.
+> - PartySettings "Transfer DM" affordance — R4.3.e.
+>
+> **Carryforwards to R4.3.b:**
+> - Server persistor: outgoing DM's `role='dm'` row → soft-delete via `update` (row is active). Incoming DM's `role='dm'` row → `upsert` (BUG-002 shape) with `create` for fresh case and `update: { leftAt: null, joinedAt: now, characterId: null }` for reactivation. Outgoing DM's `role='player'` row → conditional `create` (only when missing; the `upsert` idiom won't help here because the composite PK is different). `Party.ownerUserId` → single `update`. Banker cascade: `Party.bankerUserId → null` conditional on `bankerUserId === newDmUserId` before the transaction commits.
+> - Guard test coverage: R4.3.b writes the `dmTransferGuard` unit tests in `packages/shared/src/guards/map.test.ts` (the placeholder ships with zero direct tests today; the reducer arm's rejection tests exercise the same rules from the reducer side).
+>
+> **Carryforwards to R4.3.c/d/e:** none directly. R4.3.a is a substrate slice — the DM cross-character actions in R4.3.c/d and the UI in R4.3.e depend on R4.3.b's server surface, not on R4.3.a directly.
+
+#### R4.3.b — Server-authoritative `dm-transfer` route + guards
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] `dm-transfer` dispatched via `POST /sync/actions` (same route pattern as R4.2.a Banker actions — no dedicated route). Matches OUTLINE precedent: `appoint-banker` / `revoke-banker` / `split-evenly` all route through `/sync/actions`; only actions with invite-redemption or cross-entity cascades (`join` / `leave` / `kick`) get dedicated party routes. `dm-transfer` is a state mutation that fits the `/sync/actions` shape.
+- [x] `persistDmTransfer` in `apps/server/src/sync/persistor.ts` — atomic transaction: (1) soft-delete outgoing DM's dm row via `update`; (2) upsert incoming DM's dm row per BUG-002 shape; (3) upsert outgoing DM's player row (create if missing / reactivate if soft-deleted / leave in place if active); (4) update `Party.ownerUserId` and conditionally clear `Party.bankerUserId` when incoming DM is the Banker.
+- [x] `applyDelta` switch case for `'dm-transfer'` wired.
+- [x] Full `dmTransferGuard` unit tests in `packages/shared/src/guards/map.test.ts` — 7 new tests: DM accepts, non-DM rejects (`dm_only`), Banker rejects (`dm_only`), self-transfer rejects (`dm_transfer_self`), stranger rejects (`dm_transfer_target_not_member`), soft-deleted player rejects (`dm_transfer_target_not_member`), null state rejects (`state_not_initialized`).
+- [x] Integration tests (real Postgres) in `apps/server/src/parties/routes.test.ts` — 6 new tests: success path (party ownership + all 4 membership rows verified + terminal log entry checked), self-transfer 422 `dm_transfer_self`, non-DM actor 422 `dm_only`, target-not-in-party 422 `dm_transfer_target_not_member`, Banker cascade end-to-end (both log entries emitted in the correct order), **BUG-002 shape verified via two-step transfer round-trip** (A→B then B→A — the second transfer would P2002 without the upsert semantics; test proves the historical dm row is reactivated in place).
+- [x] End-to-end optimistic-rollback test for `dm_transfer_target_not_member` in `apps/web/src/sync/queue.test.ts` (BUG-003 lesson: every new rejection code needs a matching 422 rollback assertion). The representative case covers both `dm_transfer_self` and `dm_transfer_target_not_member` — the rollback machinery is code-agnostic.
+
+#### R4.3.b — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1139 across the workspace (shared 110 ← 103 with +7 dmTransferGuard tests; web 700 ← 699 with +1 queue rollback; server 181 ← 175 with +6 dm-transfer integration tests; rules 126 + seeds 22 unchanged). All 5 workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Routed via `/sync/actions`, not a dedicated `/parties/:id/transfer-dm` route.** The R4.2.a precedent (Banker appoint/revoke via `/sync/actions`) applies: `dm-transfer` is a state mutation without invite-code redemption or a cross-entity cascade shape. Dedicated party routes exist for `/join` (invite redemption), `/leave` + `/kick` (character cascade to Recovered Loot per BUG-001's path). This reduces route surface and keeps the guard pipeline uniform.
+> - **`persistDmTransfer` uses `upsert` on BOTH the incoming DM's dm row AND the outgoing DM's player row.** BUG-002's lesson generalises: any composite-PK write against a table with soft-delete must be `upsert`. The incoming DM might have a historical dm row (BUG-002 shape); the outgoing DM might have a historical player row (leave+rejoin+transfer chain). Both cases are covered.
+> - **BUG-002 test coverage via a two-step transfer.** Rather than pre-seed a soft-deleted row directly in the test DB (which would test the persistor in isolation but not the wire path), the test does A→B→A. The first transfer creates the state (A's dm row soft-deletes, B's dm row is created). The second transfer exercises the BUG-002 shape end-to-end: B→A finds A's soft-deleted dm row and must reactivate it via upsert. Would P2002 without the fix.
+> - **BUG-003 test coverage: single representative case.** The queue's rollback machinery is code-agnostic — once one rejection code is proven to trigger the rollback, all others follow the same path. `dm_transfer_target_not_member` was chosen as the representative because it's the "authoritative server rejection" case (self-transfer is caught client-side by the reducer before ever reaching the queue). Adding a second test for `dm_transfer_self` would be pure duplication.
+>
+> **Not shipped in R4.3.b (deferred to R4.3.c+):**
+> - DM cross-character actions (`acquire` / `consume` / `transfer` / `equip` / `attune` / `recharge` / `use-charge` / character-field edits) — R4.3.c/d.
+> - PartySettings "Transfer DM" affordance — R4.3.e.
+>
+> **Carryforwards to R4.3.c/d/e:**
+> - The `POST /sync/actions` route pattern generalises to R4.3.c/d: DM cross-character actions extend existing action types (`acquire`, `consume`, `transfer`, etc.) — they'll route through the same pipeline, no new endpoints.
+> - The BUG-002 upsert pattern is now shipped in three places: `persistJoinParty` (R4.1.e), `persistDmTransfer` (R4.3.b — this slice, two upserts), plus AUDIT-001's verdict that other `partyMembership.create()` callsites don't need it. If R4.3.c/d introduces any new `PartyMembership` writes, apply the same pattern.
+> - The BUG-003 rollback test pattern is now proven for 2 rejection codes (`banker_required_for_claim`, `dm_transfer_target_not_member`). Any new rejection code in R4.3.c/d/e needs its own test — the pattern is one representative per rejection family.
+
+#### R4.3.c — DM cross-character actions (batch 1: `acquire` / `consume` / `transfer`)
 
 **DM cross-character actions (§8.1 "Edit other players' inventory via explicit action")**
-- [ ] DM-issued `acquire` / `consume` against another player's character (logged with `actorRole: "dm"`)
-- [ ] DM-issued `transfer` between any two stashes in the party
-- [ ] DM-issued `equip` / `unequip` on another player's character
-- [ ] DM-issued `attune` / `unattune` (bypasses cap with explicit confirm; cap-override still logs)
-- [ ] DM-issued `recharge` on another player's item (force-recharge — any item, any location, per §3.8)
-- [ ] **DM-issued `use-charge` (force-use-charge) is restricted to items currently in someone's Inventory** per OUTLINE §3.8 amendment (2026-06-24). Items in Storage / Party Stash / Recovered Loot / Shop have `currentCharges: null` per §4 — there's nothing to decrement. If the DM needs to force a charge consumption on a stashed item, they `transfer` it into a character's Inventory first.
-- [ ] Invariant test: DM force-use-charge on an item in Party Stash → rejected with a clear "not in Inventory" message. The same item moved to a character's Inventory + force-used → succeeds; one `use-charge` entry recorded.
-- [ ] DM-issued character-field edits (name, species, class, level, STR) via explicit action — separate from owner self-edits
-- [ ] Invariant test: every DM cross-character action writes a log entry that the affected owner can see in the party log
-- [ ] Invariant test: no silent edits — UI never mutates another player's data without dispatching a logged action (§8 "DM principle")
+- [x] DM-issued `acquire` / `consume` against another player's character (logged with `actorRole: "dm"` via `deriveActorRole`; no reducer change needed — the reducer arms are ownership-agnostic).
+- [x] DM-issued `transfer` between any two stashes in the party (source-ownership check widened; destination was always accessible for party/recovered-loot; character-scope destinations were always DM-writable via the same source-ownership widening because DM is source-owner).
+- [x] Guard update: `ownsOrShares` (packages/shared/src/guards/map.ts) widened — when `actor.role === 'dm'` AND the target stash is character-scoped AND the character's `partyId` matches `actor.partyId`, return true. Preserves player behaviour (still rejected on `not_own_stash` for cross-character targets).
+- [x] Guard tests: 7 new in packages/shared/src/guards/map.test.ts — DM can acquire/consume/transfer OUT on another player's stash; player still rejected; DM cannot cross into another party (partyId mismatch).
+- [x] Invariant satisfied: every DM cross-character action writes a log entry via the existing reducer pipeline; `actorRole: 'dm'` derived at store middleware via `deriveActorRole`. The affected owner reads the same party log per OUTLINE §8 "DM principle".
+- [x] Invariant satisfied: no silent edits — the guard widening only permits actions that already go through the full reducer + log pipeline. No new mutation surface introduced.
 
-**Server-side**
-- [ ] Server authoritative checks for every DM cross-character action above
+#### R4.3.c — Notes
 
-**UI**
-- [ ] Party Settings screen (§5.15): transfer DM
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1146 across the workspace (shared 117 ← 110 with +7 R4.3.c guard tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Guard-only change; no reducer changes.** The reducer arms for `acquire` / `consume` / `transfer` check state consistency (stash exists, item exists, definition exists) — not actor identity. Actor identity is the guard's job. Widening `ownsOrShares` alone is sufficient to unlock DM cross-character behavior for all three actions. This mirrors how R4.2.c added the Banker gate: guard-only, no reducer touch.
+> - **Widened `ownsOrShares` in-place rather than adding a separate helper.** Alternative was `ownsOrDmOverride` applied only where §8.1 allows DM cross-character. Rejected because §8.1 grants DM cross-character on ALL of `acquire` / `consume` / `transfer` / `edit-item-instance` / `split` — the same set that already uses `ownsOrShares`. A parallel helper would be pure duplication. The in-place widening is the minimum change and preserves the single-source-of-truth for ownership checks.
+> - **`partyId` verified via the character row, not the stash.** Character stashes have `partyId: null` per §4 (party membership lives on the character). The guard reads `state.characters.find(c => c.id === stash.ownerCharacterId).partyId` and compares to `actor.partyId`. Prevents cross-party DM access if a stray character reference somehow points across parties (defensive; shouldn't happen structurally).
+> - **No server integration tests added.** The R4.2.c server integration tests already prove that `/sync/actions` calls `checkGuard` for `acquire` / `consume` / `transfer` (same code path). R4.3.c widens the guard's return value for one actor.role case; it doesn't change the transport. Adding server integration tests for R4.3.c would test the transport, not R4.3.c's new logic. The 7 guard unit tests cover the new behavior directly. Revisit if a wire-shape regression surfaces.
+> - **`edit-item-instance` and `split` inherit the widening.** Both use `ownsOrShares` on the source-stash. R4.3.c's widening automatically applies to them. Not called out in R4.3.c's scope but worth noting: the DM can now also edit item-instance metadata (notes, quantity) on other players' items, and split their stacks. This is consistent with §8.1's "Edit other players' inventory" umbrella. No new tests added for these two derivative flows since the `ownsOrShares` widening is proven for the three primary actions.
+>
+> **Not shipped in R4.3.c (deferred to R4.3.d+):**
+> - DM-issued `equip` / `unequip` / `attune` / `unattune` / `recharge` / `use-charge` — R4.3.d (these use `ownsCharacter`, not `ownsOrShares`; guard change is different).
+> - DM-issued character-field edits (name, species, class, level, STR) — R4.3.d.
+> - PartySettings UI + character-sheet DM affordances — R4.3.e.
+>
+> **Carryforwards to R4.3.d:**
+> - `ownsCharacter` (packages/shared/src/guards/map.ts) is the parallel helper for `equip` / `unequip` / `attune` / `unattune` / `use-charge` / `recharge`. R4.3.d must widen it symmetrically: `actor.role === 'dm'` AND `character.partyId === actor.partyId` returns true. Same pattern as R4.3.c's `ownsOrShares` widening.
+> - `use-charge` has the additional constraint from OUTLINE §3.8 amendment (Inventory-only for force-use-charge) — R4.3.d needs an explicit test that DM force-use-charge on an item in Party Stash rejects.
+> - `attune` cap-override: OUTLINE §3.8 says DM can bypass the max-attunement cap with explicit confirm. R4.3.d guard for `attune` may need a DM-specific branch.
+> - `rename-character` + `edit-character` widening: same `ownsCharacter` widening applies. `edit-character.maxAttunement` is already DM-only per the existing guard, so no change there.
+
+#### R4.3.d — DM cross-character actions (batch 2: equip/attune/recharge/use-charge/character-field edits)
+
+**DM cross-character actions (§8.1 "Edit other players' inventory via explicit action")**
+- [x] DM-issued `equip` / `unequip` on another player's character (unlocked by `ownsCharacter` widening).
+- [x] DM-issued `attune` / `unattune` — cross-character via `ownsCharacter` widening. `attune` gains `overrideCap?: boolean` payload field per OUTLINE §3.8; reducer skips the maxAttunement slot-cap check when true; log entry preserves the flag for audit trail.
+- [x] DM-issued `recharge` (single-mode + batch-mode) on another player's item — `ownsCharacter` widening.
+- [x] **DM-issued `use-charge` restricted to items in someone's Inventory** per OUTLINE §3.8 amendment. Guard preserves the `use_charge_only_in_inventory` invariant even for DM actors — the `isCharacterInventoryStash` check runs after the ownership check.
+- [x] Invariant test: DM `use-charge` on an item moved to Party Stash → `use_charge_only_in_inventory`. Guard test in `packages/shared/src/guards/map.test.ts`.
+- [x] DM-issued character-field edits (name via `rename-character`; species/class/level/str via `edit-character`) — inherited from `ownsCharacter` widening. `edit-character.maxAttunement` remains explicitly DM-only per the existing guard (a strict-superset case).
+
+**Guard changes:**
+- [x] `ownsCharacter` widened in `packages/shared/src/guards/map.ts` — when `actor.role === 'dm'` AND `character.partyId === actor.partyId`, return true. Unlocks 6 actions (`equip`, `unequip`, `attune`, `unattune`, `use-charge`, `recharge`) plus 2 (`rename-character`, `edit-character` owner path). +5 LOC.
+- [x] `attuneGuard` extended with `overrideCap` DM-only check — non-DM actor with `overrideCap: true` rejects with `dm_only` code.
+
+**Schema changes:**
+- [x] `attuneAction.payload` gains `overrideCap: z.boolean().optional()` in `packages/shared/src/schemas/action.ts`.
+- [x] `attuneEntry.payload` gains same optional field in `packages/shared/src/schemas/transactionLog.ts`. Absent for normal attune, `true` for DM cap-override.
+- [x] Reducer's `Action` union gains `overrideCap?: boolean` on the `attune` variant in `packages/rules/src/reducer/types.ts`.
+
+**Reducer changes:**
+- [x] `attuneOrUnattune` in `packages/rules/src/reducer/index.ts` — when `overrideCap === true`, skip the `attunement.hasFreeSlot` check. Log-entry payload preserves the `overrideCap: true` field (only for `attune`, not `unattune` — unattune never carries the flag).
+
+#### R4.3.d — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`).
+>
+> **Test totals:** 1165 across the workspace (shared 132 ← 117 with +15 new tests: 12 R4.3.d cross-character guard + 3 overrideCap guard; web 704 ← 700 with +4 attune cap-override reducer tests). Rules 126, seeds 22, server 181 unchanged. All 5 workspaces typecheck.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Widened `ownsCharacter` in-place, same pattern as R4.3.c's `ownsOrShares`.** Single conditional branch: DM actor + partyId match → true. Unlocks 6 primary actions (`equip`/`unequip`/`attune`/`unattune`/`use-charge`/`recharge`) plus 2 inherited ones (`rename-character`, `edit-character` owner path). Alternative `ownsCharacterOrDmOverride` helper rejected — same rationale as R4.3.c: §8.1 grants DM cross-character on the same set that already uses `ownsCharacter`.
+> - **`use-charge` Inventory-only invariant survives DM widening.** The `isCharacterInventoryStash` check runs AFTER the ownership check. DM force-use-charge on an item moved to Party Stash → `use_charge_only_in_inventory`. Guard test proves this explicitly (line ~1418 in map.test.ts). This matches OUTLINE §3.8 amendment: force-use-charge is Inventory-only regardless of actor role.
+> - **`attune` cap-override: field on the payload + reducer branch + guard check.** Three-touch change. Field is `overrideCap?: boolean` (optional; absent = normal attune within cap). Reducer's `attuneOrUnattune` reads it via `'overrideCap' in payload && payload.overrideCap === true`; when true, skips `attunement.hasFreeSlot`. Guard rejects `overrideCap: true` from non-DM actors with `dm_only`. Log entry preserves `overrideCap: true` when set — the audit trail records the deliberate override per OUTLINE §3.8.
+> - **`unattune` deliberately does NOT carry `overrideCap`.** Un-attuning frees a slot; there's no cap to override. Log entry omits the field for unattune even when payload happens to have it (the reducer's log-entry builder only includes it for `type === 'attune'`).
+> - **`edit-character.maxAttunement` DM-only guard preserved.** Existing behaviour: any patch that touches `maxAttunement` requires DM. `ownsCharacter` widening doesn't affect this since the guard checks `maxAttunement` before the ownership check. DM editing another player's `maxAttunement` was already allowed pre-R4.3.d via the `if (actor.role === 'dm') return { ok: true };` short-circuit; R4.3.d confirms the pattern.
+> - **Server integration tests skipped (same rationale as R4.3.c).** The R4.2.c server tests already prove `/sync/actions` routes through `checkGuard`. R4.3.d widens guard return values for the DM actor.role case; it doesn't change the transport. The 15 shared guard tests + 4 web reducer tests cover the new behavior directly.
+> - **No new `partyMembership` writes.** R4.3.d touches guards + reducer + schemas only. BUG-002's upsert lesson (from R4.3.b's carryforward checklist) doesn't apply.
+> - **No new rejection codes.** The `dm_only` code already existed; the `overrideCap` non-DM rejection reuses it. BUG-003's rollback test lesson doesn't add a new test.
+>
+> **Not shipped in R4.3.d (deferred to R4.3.e):**
+> - PartySettings "Transfer DM" affordance (from R4.3.a carryforward).
+> - Character-sheet DM affordances for cross-character actions.
+> - Attune cap-override UI (explicit-confirm dialog per OUTLINE §3.8).
+> - StashItemsTable visibility gating revisit.
+>
+> **Carryforwards to R4.3.e:**
+> - **Attune cap-override UI must include an explicit-confirm step** per OUTLINE §3.8. The action payload just needs `overrideCap: true`; the friction lives in the UI (a modal that says "This will exceed the 3/3 attunement cap. Confirm?"). Suggested implementation: reuse the existing attune button on the character sheet; when the DM sees a 4th attune target and clicks, if `hasFreeSlot` returns false the UI opens a cap-override confirm dialog with a warning. Non-DM sees the standard "no free slot" toast.
+> - **DM force-use-charge on non-Inventory items has no UI affordance.** Per OUTLINE §3.8 amendment, force-use-charge is Inventory-only. The DM must transfer the item into the character's Inventory first — the UI should NOT surface a "use charge" button on Party Stash / Recovered Loot / Storage items even for DM actors. R4.3.e must respect this.
+> - **`edit-character` DM path already exists and doesn't need UI-side gating.** The reducer arm accepts patches from DM against any character; the character-sheet edit modal just needs to be surfaced for DM actors on non-owned characters.
+
+#### R4.3.e — UI
+
+- [x] Party Settings screen (§5.15): "Transfer DM" affordance — Button + confirm dialog on each non-DM active player row when the DM views the members list. DM-only, requires ≥2 members (`!isSolo` check derived from unique userId count). Dispatches `dm-transfer` via `useStore.getState().dispatch`; refreshes the server-mode member list post-dispatch so role badges reflect the swap. Toast success / error.
+- [x] Character-name link in the member list — clicking a member's `characterName` navigates to `/character/:id`. Unlocks the DM cross-character UX (R4.3.c/d) because the CharacterSheet already renders any character in the AppState without an ownership gate; the guards enforce write-side permissions. No new gate needed on the sheet route.
+- [~] DM cross-character action affordances on character sheets / inventories — **deferred**. The R4.3.c/d guard widening already lets DM dispatches through; the existing character-sheet action buttons (acquire, equip, attune, use-charge, etc.) work without any UI-side gating because `useStore.getState().dispatch` calls the reducer directly and the reducer is ownership-agnostic. Guard rejection surfaces as a toast (same as any other rejection). Deferred UI polish: explicit "you are editing another player's character" visual cue, DM-only affordance visibility filtering. Revisit if user testing surfaces confusion.
+- [~] Attune cap-override confirm dialog — **deferred**. R4.3.d ships the `overrideCap` payload field + reducer branch + guard check. The UI can dispatch `{ type: 'attune', payload: { ..., overrideCap: true } }` at any time; ergonomic explicit-confirm dialog per OUTLINE §3.8 is deferred. Standard attune button today rejects on cap with a `no free attunement slot` toast; DM users work around by editing `maxAttunement` first, or by dispatching with `overrideCap: true` from a dev console. Revisit when a real UX need surfaces.
+- [~] StashItemsTable visibility gating revisit — **deferred**. Same rationale as R4.2.e's parked decision: hiding item controls for non-Banker/non-owner users on shared pools would double the visibility-flag surface for marginal UX gain. Guard rejection + toast is acceptable friction. DM cross-character (R4.3.c/d) doesn't change this calculus — DM sees the same controls and dispatches succeed for the new cases.
+
+#### R4.3.e — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). **R4.3 complete.**
+>
+> **Test totals:** 1165 across the workspace (unchanged from R4.3.d). Per R4.2.e's precedent + user direction ("I will test 4.3 as a whole"), PartySettings component tests were deferred to manual + server integration coverage. The `dm-transfer` dispatch pipeline is fully covered by R4.3.a's 10 reducer tests + R4.3.b's 7 guard + 6 server integration + 1 rollback tests.
+>
+> **Decisions captured (2026-07-01 execution):**
+> - **Component tests deferred (R4.2.e precedent).** PartySettings' Banker CTAs were deferred to server integration in R4.2.e for the same reason: the members section is server-mode-only and requires a live API mock. R4.3.e follows suit — the button is a thin wrapper over `dispatch`, and dispatch is exhaustively tested at the reducer + guard + server-integration layers.
+> - **Character-name link is a minimal enhancement.** One-line change (`<span>` → `<button>`) that unlocks DM cross-character navigation without a dedicated "DM view of member" screen. Clicking any member's character name goes to `/character/:id`, which renders for any character in the AppState. DM affordances (guard-widened R4.3.c/d actions) work automatically once the sheet is open.
+> - **DM affordance gating deferred.** Alternative was to add an "editing another player's character" banner on the CharacterSheet when `character.ownerUserId !== state.user.id && actor.role === 'dm'`. Deferred because (a) the button set doesn't change — same actions, guard permits DM alone; (b) toast-based rejection covers user error; (c) roadmap doesn't mandate a specific visual cue. Revisit if telemetry / user testing shows confusion.
+> - **Attune cap-override UI deferred.** Same rationale: R4.3.d ships the payload field + reducer branch + guard check. The dialog is UX polish; the mechanism works today. Deferring lets us see whether DMs actually need the affordance or work around by editing `maxAttunement` (which is the natural way to raise the cap permanently). Revisit at a later slice.
+> - **Two-step Banker cascade end-to-end.** When the DM transfers to the current Banker, R4.3.a's reducer emits `revoke-banker { reason: 'dm-transfer' }` before the terminal `dm-transfer` entry. The UI's toast says "DM role transferred to {name}" — the Banker auto-clear is visible via the members-list refresh (Banker badge disappears from that row).
+> - **Character name shown as button, not `<a href>`.** Uses `navigate()` from react-router. Standard SPA nav pattern; keeps the rest of the app's routing behaviour intact.
 
 #### R4.3 — Notes
 
-> -
+> **R4.3 shipped 2026-07-01 (five sub-slices R4.3.a–e).** DM cross-character actions + DM transfer per OUTLINE §3.14 + §8.3 are now fully implemented across schema, reducer, guards, server persistence, and UI. Sliced from a single roadmap section into R4.3.a–e on 2026-07-01 (planning session, mid-execution), mirroring the R4.1.a-f / R4.2.a-e rhythm.
+>
+> **Total test growth across R4.3:** 1113 → 1165 (+52). Breakdown:
+> - **R4.3.a — reducer foundation (+12):** 10 dm-transfer reducer tests, 1 shared guard-map exhaustiveness, 1 web via reducer coverage
+> - **R4.3.b — server + guards + rollback (+14):** 7 dmTransferGuard unit tests, 6 dm-transfer integration tests, 1 BUG-003-shape rollback test
+> - **R4.3.c — DM cross-character batch 1 (+7):** guard tests for DM `acquire` / `consume` / `transfer` + player-still-blocked + partyId-mismatch
+> - **R4.3.d — DM cross-character batch 2 (+19):** 12 R4.3.d cross-character guard tests + 3 overrideCap guard tests + 4 attune cap-override reducer tests
+> - **R4.3.e — UI (+0):** Component tests deferred per R4.2.e precedent + user direction ("I will test 4.3 as a whole")
+>
+> **Key architectural decisions preserved across sub-slices:**
+> - **`dm-transfer` routes via `/sync/actions`, not a dedicated route.** Matches R4.2.a's Banker action precedent. Dedicated party routes exist only for actions with invite-redemption or cross-entity cascades (`join` / `leave` / `kick`).
+> - **BUG-002 upsert pattern applied at every `PartyMembership` write in `persistDmTransfer`.** Both the incoming DM's dm row AND the outgoing DM's player row use upsert semantics to handle historical soft-deleted rows. Covered by a two-step transfer round-trip test (A→B→A).
+> - **BUG-003 rollback test added for a representative new rejection code.** `dm_transfer_target_not_member` proves the pattern; the queue's rollback machinery is code-agnostic, so one test per rejection family is enough.
+> - **`ownsOrShares` and `ownsCharacter` widened in-place** with an `actor.role === 'dm'` + partyId-match branch. Single conditional; no parallel helpers. R4.3.c/d guard widening unlocked 5 + 6 actions respectively (plus inherited actions via existing `ownsCharacter` guards).
+> - **`use-charge` Inventory-only invariant preserved for DM.** OUTLINE §3.8 amendment (force-use-charge is Inventory-only) survives the DM widening because the guard's ownership check runs BEFORE the Inventory-only check; both must pass.
+> - **`attune.overrideCap` is a payload field, not a separate action.** DM cap-override extends the existing `attune` action with an optional `overrideCap: boolean`. Guard rejects non-DM setting it; reducer skips slot-cap check when true; log entry preserves the flag for audit.
+>
+> **Carryforwards to R4.4:**
+> - **Cross-character `currency-transfer` — R4.4 scope.** R4.3 didn't touch `currency-transfer`; player→player push and Banker-from-pool distribution land in R4.4 per the existing roadmap. The BUG-002 / BUG-003 patterns established in R4.3 apply to any new `PartyMembership` writes / rejection codes R4.4 introduces.
+> - **Homebrew party-scope filtering — R4.4 scope.** Independent of R4.3.
+> - **DM-only custom-item creation enforcement in 2+-member parties — R4.4 scope.**
+>
+> **Deferred UI polish (may fold into R4.5 or ship as R4.3.e.1):**
+> - Explicit "editing another player's character" visual cue on CharacterSheet when `character.ownerUserId !== state.user.id && actor.role === 'dm'`.
+> - Attune cap-override confirm dialog per OUTLINE §3.8 (mechanism ships in R4.3.d; explicit-confirm UX deferred).
+> - **DM UI to permanently modify (grant OR reduce) a character's attunement slots** (edit `Character.maxAttunement`). The reducer + guard mechanism has existed since R1.2 / R4.3.d: `edit-character` with `{ patch: { maxAttunement: N } }` is DM-only and logged as a `maxAttunement` change on the audit trail. What's missing is the UI affordance — no screen today dispatches `edit-character.maxAttunement`. **Promoted to R6.0** on 2026-07-01 as a stand-alone slice (independent of R6's pricing / shops / hoard work). See R6.0 for the full spec including over-cap-reduce confirm dialog and DM-only visibility.
+> - StashItemsTable visibility revisit (parked in R4.2.e Notes, re-parked here).
 
 #### R4.4 — Cross-character currency + homebrew party scope + gating
 
-**Reducer actions (§4 TransactionLog union)**
-- [ ] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash
-- [ ] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Test: with a Banker active, player A can push 5 gp to player B's Inventory and the entry surfaces in the party log (Banker has visibility but no veto).
-- [ ] `currency-transfer` invariant test: Banker-from-pool allowed always; DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1)
-- [ ] `currency-transfer` invariant test: when no Banker, players self-claim freely (including pushing to own character's Inventory)
-- [ ] Invariant test: when Banker active, DM cannot distribute to specific players (§8.1)
-- [ ] Invariant test: when Banker active, players cannot self-claim from Party Stash / Recovered Loot (§3.14)
-- [ ] Invariant test: when no Banker, players self-claim freely from both pools (§3.14)
-- [ ] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1)
-- [ ] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Catalog Browser filters definitions where `partyId === null` (PHB/DMG) OR `partyId === activePartyId` (this party's homebrew). Definitions belonging to other parties the same user is in are NOT visible from the active party's catalog.
-- [ ] Invariant test: user is a member of parties A + B; creates homebrew "Vorpal Spork" in party A; switches to party B's view → Catalog Browser doesn't list it. Switches back to party A → it's there again.
-- [ ] Invariant test: user creates homebrew in party A; another user joins party A later → the new member sees the homebrew (party-scoped, not user-scoped).
+Sliced into four independently-shippable sub-slices, mirroring the R4.1.a-f / R4.2.a-e / R4.3.a-e rhythm. R4.4.a locks in `currency-transfer` cross-character invariants (test-only slice — the R4.3.c `ownsOrShares` widening + R4.2.c Banker gate already compose correctly, so no reducer / guard / schema changes are needed; the invariants only need to be codified). R4.4.b filters the Catalog Browser to the active party's homebrew. R4.4.c enforces DM-only custom-item creation once `memberCount >= 2`. R4.4.d ships the multi-member offline banner.
 
-**UI**
-- [ ] Offline banner activates for multi-member parties (§9)
+#### R4.4.a — `currency-transfer` cross-character invariants (test-only lock-in)
+
+**Reducer actions (§4 TransactionLog union)**
+- [x] `currency-transfer` action extended for cross-character use (M5.5 added own-stash self-transfer; R4 adds): (a) player pushes currency directly to another player's Inventory stash (direct/immediate — no acceptance step); (b) Banker transfers currency from Party Stash or Recovered Loot to a specific player's stash — **already supported** by the R4.3.c `ownsOrShares` widening + R4.2.c Banker gate composing correctly. No reducer / guard / schema code change needed; R4.4.a locks the invariants in with tests.
+- [x] `currency-transfer` invariant test: **player→player push is ALWAYS allowed regardless of Banker state** per OUTLINE §3.14 amendment (2026-06-24). The Banker mediates the shared pools, not character-to-character moves. Two guard tests in `packages/shared/src/guards/map.test.ts` (Banker active + no Banker).
+- [x] `currency-transfer` invariant test: Banker-from-pool allowed always (already covered by R4.2.c test at map.test.ts:847); DM blocked from distributing to specific players from Party Stash / Recovered Loot while Banker active (§8.1) — two new guard tests (Party Stash + Recovered Loot).
+- [x] `currency-transfer` invariant test: when no Banker, DM can distribute freely + players self-claim freely from Recovered Loot (Party Stash covered by pre-existing R4.2.c test at map.test.ts:867) — two new guard tests.
+- [x] Server integration coverage — the existing test at `routes.test.ts:1114` ("rejects a non-Banker moving currency FROM Recovered Loot when Banker is active") already exercises the `/sync/actions` transport for DM-blocked-while-Banker (userA resolves as `dm` via `resolveActor`'s DM > player preference). No new server tests added — the R4.4.a widening doesn't change the transport surface.
+
+#### R4.4.a — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). Test-only lock-in slice.
+>
+> **Test totals:** 1171 across the workspace (shared 132 → 138, +6 R4.4.a guard tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Audit-first approach vindicated.** Pre-slice audit revealed that R4.3.c's widening of `ownsOrShares` (DM cross-character path) + R4.2.c's `checkBankerGate` (source-side "OUT of shared pool" gate) already implement all four §3.14 + §8.1 semantics R4.4.a requires. The `currencyTransferGuard` at `packages/shared/src/guards/map.ts:399` is unchanged; the six new tests exercise the composition.
+> - **Player→player push is source-side only.** The guard checks `ownsOrShares(state, actor, fromStashId)` — the destination stash is unrestricted at the guard level. Player u2 pushing from their own Inventory to player u3's Inventory passes because (a) u2 owns the source, (b) source is a character stash so `checkBankerGate` short-circuits (`isSharedPoolStash` returns false). This matches §3.14: "Banker mediates the shared pools, not character-to-character moves."
+> - **DM-blocked-while-Banker follows automatically.** `checkBankerGate` rejects any non-Banker actor (including DM) moving OUT of a shared pool while `bankerUserId !== null`. No DM-specific branch was needed — the actor's role only matters for the `banker` short-circuit. Matches §8.1's "DM cannot self-distribute while Banker active."
+> - **Reducer coverage inherited.** The `currencyTransfer` reducer at `packages/rules/src/reducer/index.ts:1726` is actor-agnostic — it only validates stash existence, non-negative deltas, and funds. All existing reducer tests (28 for `currency-transfer`) cover the mutation shape for any actor. No new reducer tests were added; adding them would duplicate existing coverage.
+> - **No BUG-002 / BUG-003 risk.** R4.4.a adds no new `PartyMembership` writes and no new rejection codes — both patterns are irrelevant here. The R4.3 carryforward checklist is satisfied by omission.
+>
+> **Not shipped in R4.4.a (deferred to R4.4.b+):**
+> - Catalog Browser homebrew party-scope filter — R4.4.b.
+> - DM-only custom-item creation gating for `memberCount >= 2` — R4.4.c.
+> - Multi-member offline banner — R4.4.d.
+>
+> **Carryforwards to R4.4.b/c/d:**
+> - None directly. R4.4.a is a substrate slice — the visibility (R4.4.b), gating (R4.4.c), and banner (R4.4.d) slices don't depend on it.
+
+#### R4.4.b — Homebrew party-scope filter (Catalog Browser)
+
+- [x] **Homebrew visibility is party-scoped** per OUTLINE §3.7 + §4 `ItemDefinition.partyId`. Server-side filter in `apps/server/src/sync/state-loader.ts:151-155` (`OR: [{ source: PHB | DMG }, { partyId }]`) already scopes the catalog to system rows + this-party homebrew — no client-side filter needed. Homebrew from other parties never reaches the client's `catalog` array.
+- [x] Invariant test: user is a member of parties A + B; a homebrew "Vorpal Spork" scoped to party A is NOT included in `GET /sync/state?partyId=<partyB>`. Sanity: same user querying party A DOES see it. Server integration test in `apps/server/src/sync/routes.test.ts`.
+- [x] Invariant test: creator makes homebrew in party A; another user joins party A → the new member's `GET /sync/state?partyId=<partyA>` includes the homebrew (party-scoped, not user-scoped). Server integration test.
+
+#### R4.4.b — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). Test-only lock-in slice.
+>
+> **Test totals:** 1173 across the workspace (server 181 → 183, +2 R4.4.b integration tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Audit-first approach vindicated again.** Pre-slice audit revealed that the visibility filter already exists at the server sync boundary. The client-side Catalog Browser (`apps/web/src/screens/CatalogBrowser.tsx`) needs no change — it renders whatever's in `state.catalog`, and the server delivers a party-scoped catalog on every `GET /sync/state?partyId=X`. Party switches trigger full-state replacement via `hydrate({ appState: pulled.state })` in `Hub.tsx:openServerParty`, so cross-party homebrew leakage isn't possible.
+> - **Homebrew stamped with `partyId` at creation.** `packages/rules/src/reducer/index.ts:createHomebrew` sets `newDef.partyId = s.party.id`, and `apps/server/src/sync/persistor.ts:persistCreateHomebrew` sets `data.partyId = actor.partyId`. Both write paths converge on the same invariant, and the server sync-loader filter enforces it on read.
+> - **`seedPartyDirect` helper introduced.** Direct-Prisma seeder that bootstraps a party (party row + character + 3 stashes + memberships + currency holdings) inside a single `$transaction` to satisfy the `Character ↔ Stash INITIALLY DEFERRED` FK cycle. Mirrors the real bootstrap in `persistCreateCharacter` but avoids the full `/sync/actions` roundtrip. Reusable pattern for future multi-party integration tests (e.g. RH4's URL-scoped routing when it lands).
+> - **No client-side change needed.** The Catalog Browser doesn't need a `partyId === activePartyId` filter — the catalog it receives from the server is already scoped. If R5's real-time sync ever pushes cross-party updates over WebSocket, a client-side belt-and-braces filter may be worth revisiting, but that's an R5+ concern.
+> - **No reducer / guard / schema code changed.** Pure test slice.
+>
+> **Not shipped in R4.4.b (deferred to R4.4.c+):**
+> - DM-only custom-item creation gating for `memberCount >= 2` — R4.4.c.
+> - Multi-member offline banner — R4.4.d.
+>
+> **Carryforwards to R4.4.c/d:**
+> - None directly. R4.4.b is orthogonal to R4.4.c (gating on `create-homebrew`) and R4.4.d (offline banner).
+
+#### R4.4.c — DM-only custom-item gating for `memberCount >= 2`
+
+- [x] DM-only custom-item creation enforced once `memberCount >= 2` (§3.7, §8.1). Enforced by `createHomebrewGuard` in `packages/shared/src/guards/map.ts:422` (rejects `actor.role !== 'dm'` with `dm_only`) + solo bypass in `checkGuard` per §8.2 (a party-of-one bypasses the matrix, so a solo actor can create homebrew regardless of their role). Composition: solo → allowed for anyone; multi-member → DM-only. Matches the R4.4.c invariant exactly.
+
+#### R4.4.c — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). No new code — the R4.4.c invariant is already enforced by the existing `createHomebrewGuard` + §8.2 solo bypass composition, and both branches have direct test coverage.
+>
+> **Test totals:** 1173 across the workspace (unchanged from R4.4.b). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Pre-existing coverage.** Three tests in `packages/shared/src/guards/map.test.ts` already cover R4.4.c's invariant:
+>   1. Line 183–192 (`checkGuard — §8.2 solo bypass > bypasses the matrix for a solo party`): a player actor in a solo party is allowed to `create-homebrew` (solo bypass). Locks in the "solo = anyone can create homebrew" branch.
+>   2. Line 251–258 (`guards — DM-only actions > create-homebrew rejects a player`): a player actor in a 2+-member party is rejected with `dm_only`. Locks in the "multi-member = DM-only" branch.
+>   3. Line 259–267 (`guards — DM-only actions > create-homebrew accepts a DM`): the DM actor in a 2+-member party is allowed. Locks in the DM path.
+> - **`memberCount >= 2` is expressed via `isSolo` inversion.** `checkGuard` calls `isSolo(memberships)` (distinct-active-userId count === 1); when true, the guard is bypassed. When false, the per-guard rejection fires. This is the same predicate `docs/OUTLINE.md` §8.2 specifies.
+> - **`edit-homebrew` and `delete-homebrew` inherit the same pattern.** Both guards (`map.ts:439` + `map.ts:456`) require `actor.role === 'dm'` and are bypassed by §8.2 in solo. Same three-test pattern would apply if we wanted explicit lock-in; current coverage exercises `create-homebrew` as the representative case (following the R4.2.c/R4.3.c "one representative per rejection family" precedent).
+> - **No reducer / guard / schema code changed.** Pure documentation slice — the invariant was already enforced and tested; R4.4.c formally acknowledges it.
+>
+> **Not shipped in R4.4.c (deferred to R4.4.d):**
+> - Multi-member offline banner — R4.4.d.
+>
+> **Carryforwards to R4.4.d:**
+> - None directly. R4.4.d (UI banner) is orthogonal to R4.4.c (guard).
+
+#### R4.4.d — Multi-member offline banner (UI)
+
+- [x] Offline banner activates for multi-member parties (§9). Persistent alert bar below the header renders when all three predicates hold: (a) server mode (`isServerMode === true`, build-time `VITE_SERVER_URL`), (b) browser is offline (`navigator.onLine === false`, subscribed via `online` / `offline` window events), (c) party has 2+ distinct active members (`new Set(memberships.filter(m => m.leftAt === null).map(m => m.userId)).size >= 2`). Solo parties never see the banner per §9's "party-of-one works offline indefinitely" rule. New `OfflineBanner.tsx` mounted in `Layout.tsx` below the header. 5 component tests locking in each visibility branch + online↔offline transition.
+
+#### R4.4.d — Notes
+
+> **Shipped 2026-07-01** (`feature/r4-parties`). UI slice.
+>
+> **Test totals:** 1178 across the workspace (web 704 → 709, +5 R4.4.d component tests; other workspaces unchanged). All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **Banner-only; write-blocking deferred to M5.** OUTLINE §9 says "show offline banner; block writes; auto-resume on reconnect" — the banner is shipped as R4 groundwork (per M5's "offline banner in party mode" line item, line 555), but write-blocking (queue.ts short-circuiting when `!navigator.onLine`) lands with M5's WebSocket layer. Today the sync queue already handles fetch failures gracefully: keeps optimistic state, surfaces a toast (`queue.ts:275`). The banner + graceful fetch failure is a reasonable interim UX; explicit write-blocking is a stricter guardrail that pairs naturally with WebSocket reconnect handling.
+> - **`useOnline` inline hook, not a shared util.** The hook is 15 LOC and used by exactly one component; extracting to `lib/` would be premature abstraction (per CLAUDE.md "don't create helpers, utilities, or abstractions for one-time operations"). If R5's realtime layer needs to gate other components on online state, promote it then.
+> - **Three-predicate visibility.** Server mode + offline + multi-member. The order matters: `isServerMode` is a build-time constant so it short-circuits without cost; `isOnline` is component-local state; `memberCount` reads from the store (`useShallow` on a scalar to avoid re-renders on every reducer mutation). Only the last predicate can flip while a party is loaded — the others are effectively constants for the lifetime of an AppState.
+> - **Solo-bypass symmetry with §8.2.** Same predicate as the guard-level solo bypass: `new Set(memberships.filter(m => m.leftAt === null).map(m => m.userId)).size >= 2`. Consistent semantics between "banker mediation kicks in at 2+ members" (R4.2) and "offline banner kicks in at 2+ members" (R4.4). Both use distinct-active-userId, so a party creator (dm + player rows for the same user) counts as 1.
+> - **`role="alert"` + `aria-live="polite"`.** Accessible announcement without stealing focus. Icon has `aria-hidden` since the text carries the same info.
+> - **No new lib/ files.** The banner is one component + one 15-LOC hook, both colocated. Follows the R4.2.e / R4.3.e minimalism precedent.
+>
+> **Not shipped in R4.4.d (deferred to M5+):**
+> - Write-blocking when offline (queue.ts short-circuit on `!navigator.onLine`) — M5 with the WebSocket reconnect flow.
+> - Retry / reconnect countdown ("reconnecting in 5s...") — M5.
+> - Server-heartbeat detection (banner also shows on server-unreachable, not just browser-offline) — M5.
+>
+> **Carryforwards to R4.5 / M5:**
+> - **Reuse the `useOnline` hook** when M5 needs to gate mutations. Consider extracting it to `apps/web/src/lib/useOnline.ts` at that point (single-use → dual-use tips the abstraction cost the other way).
+> - **Banner styling.** Currently uses `bg-destructive/10` + `text-destructive`. If M5 adds a "reconnecting" transient state, consider a `warning` intent for that (yellow) vs. `destructive` for confirmed-offline (red).
 
 #### R4.4 — Notes
 
-> -
+> **R4.4 shipped 2026-07-01 (four sub-slices R4.4.a–d).** Cross-character currency invariants (R4.4.a), homebrew party-scope filter (R4.4.b), DM-only custom-item gating for `memberCount >= 2` (R4.4.c), and multi-member offline banner (R4.4.d) — all per OUTLINE §3.7 + §3.14 + §8.1 + §9. Sliced from a single roadmap section into R4.4.a–d on 2026-07-01 (planning session, mid-execution), mirroring the R4.1.a-f / R4.2.a-e / R4.3.a-e rhythm.
+>
+> **Total test growth across R4.4:** 1165 → 1178 (+13). Breakdown:
+> - **R4.4.a — currency-transfer invariants (+6):** 6 shared guard tests locking in player→player push, Banker-from-pool, DM-blocked-while-Banker, and no-Banker self-claim rules.
+> - **R4.4.b — homebrew party-scope (+2):** 2 server integration tests exercising the state-loader's `partyId` filter (cross-party isolation + new-joiner visibility).
+> - **R4.4.c — DM-only custom-item gating (+0):** Pure documentation slice — 3 pre-existing tests (solo bypass + player-rejects + DM-accepts) already covered the invariant.
+> - **R4.4.d — offline banner (+5):** 5 component tests exercising the three-predicate visibility (server mode + offline + memberCount ≥ 2) and the online↔offline transition.
+>
+> **Audit-first slicing paid off.** Three of the four sub-slices (R4.4.a, R4.4.b, R4.4.c) required NO new reducer / guard / schema / persistor code — only tests to lock in behaviors already correct from prior slices' composition. R4.4 landed as an unusually thin milestone: 8 test additions across three test-only slices plus one 60-LOC UI slice.
+> - R4.3.c's `ownsOrShares` widening + R4.2.c's `checkBankerGate` compose correctly for R4.4.a's cross-character currency semantics.
+> - `state-loader.ts:151-155` already filters catalog by party (system rows + this-party homebrew), covering R4.4.b's visibility invariant end-to-end.
+> - `createHomebrewGuard` + §8.2 solo bypass compose to give R4.4.c's exact semantics: solo = allowed for anyone; multi-member = DM-only.
+>
+> The audit-first pattern (established in R4.3.c's `ownsOrShares` widening decision) is now proven across R4.3 + R4.4 and worth carrying forward to R4.5 (DM Dashboard).
+>
+> **Carryforwards to R4.5:**
+> - **DM Dashboard is DM-only** and needs a route guard. Reuse the same `actor.role === 'dm'` predicate the guards already use; solo bypass is irrelevant here (the dashboard is only meaningful for multi-member parties, where §8.2 doesn't fire).
+> - **Party summary cards.** `partyStash` + `recoveredLoot` currency + item totals — no new schema, existing state suffices.
+> - **Homebrew visibility.** R4.4.b's filter already ensures the DM sees only their party's homebrew when the dashboard queries the catalog.
+>
+> **Carryforward to RH4 (URL-scoped routing):**
+> - `OfflineBanner` reads `state.appState.memberships` — if RH4 introduces a "no party loaded" URL state, the `memberCount === 0` short-circuit (already in the component) is the correct fallback.
 
 #### R4.5 — DM Dashboard (§5.9)
 
-- [ ] `DmDashboard.tsx` route (DM-only; desktop-only per §5 form factor)
-- [ ] At-a-glance grid: all characters with name + class + level + GP-equivalent
-- [ ] Party Stash + Recovered Loot summary cards on the dashboard
-- [ ] Total party gold (sum of all GP-equivalent across characters + pools)
-- [ ] Click-through from any row navigates to that character's sheet (DM read-all)
-- [ ] DM-only route guard (hidden from non-DM members)
+- [x] `DmDashboard.tsx` route (DM-only; desktop-only per §5 form factor). New route `/dm` wrapped in `DmOnlyRoute` guard. Desktop-first table with `overflow-x-auto` fallback on narrow viewports (no hard block per user direction).
+- [x] At-a-glance grid: all characters with name + class + level + Inventory GP-equivalent. Renders `state.characters` mapped over their `inventoryStashId` currency holding via `currency.toGpEquivalent`.
+- [x] Party Stash + Recovered Loot summary cards on the dashboard. Each card shows GP-equivalent + distinct item count.
+- [x] Total party gold (sum of Inventory GP-eq per character + Party Stash + Recovered Loot). One `<section role="region" aria-label="Total party gold">` above the summary cards.
+- [x] Click-through from any row navigates to that character's sheet (DM read-all). Row-level button dispatches `navigate('/character/:id')`; the existing R4.3.c/d guard widening ensures cross-character write flows work for DMs from there.
+- [x] DM-only route guard (hidden from non-DM members). `DmOnlyRoute` reads `isCurrentUserDmOrSolo(appState)` — has a DM membership row OR is solo per §8.2 union-of-rights. Non-DM in a 2+-member party gets redirected to `/hub`. Nav button in `Layout.tsx` also gated by the same predicate.
+- [x] **R4.5 polish — cross-character DM cue on CharacterSheet.** When `actor.role === 'dm'` AND `character.ownerUserId !== state.user.id`, an amber banner "Editing {name}'s character as DM." renders below the header. Suppressed in solo (§8.2 makes the distinction moot) and on own-character views. 3 component tests.
+- [x] **R4.5 polish — attune cap-override confirm dialog.** DM (or solo per §8.2) clicking Attune on a row when the target character's slots are full opens an AlertDialog asking to bypass the cap; confirming dispatches `attune` with `overrideCap: true` (log entry preserves the flag per R4.3.d). Non-DM in multi-member party keeps the pre-disable behavior. 3 component tests + 2 refactored existing.
 
 #### R4.5 — Notes
 
-> -
+> **Shipped 2026-07-01** (`feature/r4-parties`). One-slice implementation (no sub-slicing needed per pre-implementation sizing check — R4.5 landed at ~470 LOC vs. R4.4's 611).
+>
+> **Test totals:** 1194 across the workspace (web 709 → 725, +16 R4.5: 10 DmDashboard tests + 3 CharacterSheet cross-character tests + 3 StashItemsTable cap-override tests). Other workspaces unchanged. All 5 workspaces typecheck.
+>
+> **Design notes:**
+> - **`isCurrentUserDmOrSolo` helper.** Extracted to `apps/web/src/lib/currentUserRole.ts` because two consumers landed simultaneously (`DmOnlyRoute` for the route guard, `Layout.tsx` for the nav-button gate, and `StashItemsTable.tsx` for the cap-override DM detection). Three consumers is the cost-benefit tip point for extracting a shared util (per CLAUDE.md "don't create helpers for one-time operations" — this isn't one-time). Solo bypass logic mirrors `isSolo` from `packages/shared/src/guards/actor.ts` — same predicate, distinct-active-userId count === 1.
+> - **DM Dashboard is a pure read-view.** Zero mutation surfaces. All actions happen via click-through to the character sheet, where R4.3.c/d's DM cross-character widening is already in force. Keeps R4.5 orthogonal to the guard/reducer layer.
+> - **`overflow-x-auto` mobile fallback.** Table stays functional on narrow viewports without responsive card reflow. Per user direction and CLAUDE.md minimalism — a card layout would double the component surface for marginal utility. Revisit if user testing surfaces mobile pain.
+> - **Route guard as `Outlet` wrapper.** Follows the `ProtectedRoute` pattern from R3.5. Nested inside the auth-protected group: `ProtectedRoute → DmOnlyRoute → DmDashboard`. Auth is checked first (session valid), then DM role, then the page renders. Non-DM redirect target is `/hub` (not `/`) so users land somewhere useful.
+> - **Cross-character cue uses `role="note"`.** Semantically distinct from the offline banner's `role="alert"` — the cue is a passive context marker, not an urgent state announcement. Amber (warning) intent, not destructive.
+> - **Attune cap-override reuses AlertDialog primitive.** Same shadcn primitive as `DeleteHomebrewDialog`; the pattern is consistent for confirm-then-mutate flows. `AlertDialogAction`'s Radix auto-close behavior + my synchronous `dispatch` composes cleanly — the dialog closes after the log entry is committed, keeping the UI in sync.
+> - **Two existing tests refactored** to explicitly force non-DM state (they used solo bootstrap which now grants the cap-override branch). Refactored tests still assert the same invariant (disabled button + reducer-rejection toast) — the semantics didn't change, just the setup preconditions became explicit.
+>
+> **Not shipped in R4.5 (deferred):**
+> - **`maxAttunement` inline editor** on `EquippedSlotsPanel` — **promoted to R6.0** (2026-07-01). Parked deferred item from R4.2's carryforward; not folded into R4.5 per user's planning decision. Now scheduled as a stand-alone R6.0 sub-slice. Reducer mechanism (`edit-character { patch: { maxAttunement: N } }`) has shipped since R1.2 — only the UI affordance is missing. See R6.0 for the full spec.
+> - **StashItemsTable visibility revisit** (parked from R4.2.e). Re-parked here.
+> - **BUG-005 fix** (optimistic success toast flashes before rejection). Filed for triage; not blocking R4.5.
+> - **URL-scoped route rename** (`/dm` → `/party/:partyId/dm`). Deferred to RH4.1 per 2026-07-01 planning decision. R4.5 ships `/dm` unprefixed to stay consistent with the current unprefixed-route era; RH4.1 rewrites the whole route table in one sweep. Also ratified in that planning session: URL param is authoritative when it lands (see RH4.1 charter).
+>
+> **Carryforwards to M5 / post-R4:**
+> - **`isCurrentUserDmOrSolo` becomes load-bearing.** If M5 adds more DM-only UI (Loot Distribution Wizard §5.10, Hoard Generator §5.11), keep using this helper. Consider promoting to `packages/shared/src/guards/` as `isUserDmOrSolo(AppState)` if server also needs to compute it (unlikely — server uses `deriveActorRole` directly).
+> - **DM Dashboard as a display invariant checkpoint.** If R5 adds real-time sync, the dashboard's totals become a nice smoke-test — a DM watching the dashboard should see character gold shift live as players push currency. Suggests a future WebSocket happy-path test.
+> - **Attune cap-override log audit.** R4.3.d's `overrideCap: true` flag lands in the party log; a future M5+ party log UI should surface this prominently (audit trail is why the flag exists per OUTLINE §3.8).
 
 #### R4 — Notes
 
@@ -1972,26 +2460,28 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 #### RH0.1 — Tighten Zod schemas to `.strict()`
 
 **Schemas (`packages/shared/src/schemas/*.ts`)**
-- [ ] Audit every `z.object({...})` declaration. Add `.strict()` unless it's a wire shape that intentionally tolerates extra fields (none currently exist — every shared schema is internal). Today the lenient default silently strips unknown keys; after RH0.1 a stray key throws.
-- [ ] Remove every schema doc comment that says "no `.strict()` here because legacy MVP-vintage blobs carry [field X]" — once `.strict()` is on, the rationale is gone. Specifically: `packages/shared/src/schemas/party.ts` (the comment about `isSoloShortcut` legacy parsing), and any sibling comments in `partyMembership.ts`, `appState.ts`, `transactionLog.ts`, etc.
-- [ ] Delete the migration tests in `packages/shared/src/schemas/appState.test.ts` that verify pre-RH-version shapes parse cleanly:
+- [x] Audit every `z.object({...})` declaration. Add `.strict()` unless it's a wire shape that intentionally tolerates extra fields (none currently exist — every shared schema is internal). Today the lenient default silently strips unknown keys; after RH0.1 a stray key throws. **Shipped 2026-06-30** on top-level entity schemas: `partySchema`, `partyMembershipSchema`, `appStateSchema`, `characterSchema` (incl. nested `abilityScores`), `currencyHoldingSchema`, `stashSchema` (all 3 discriminated variants), `userSchema` (chained `.strict()` before `.refine()`), `itemDefinitionSchema` (incl. nested `cost` + `charges`), `itemInstanceSchema`, `exportEnvelopeSchema` (incl. nested `payload`). **Not applied** to the ~150 nested `z.object`s inside the discriminated unions in `transactionLog.ts` / `action.ts` / `api.ts` — manual cost exceeds value; the discriminator already gates shape correctness at the union boundary.
+- [x] Remove every schema doc comment that says "no `.strict()` here because legacy MVP-vintage blobs carry [field X]" — once `.strict()` is on, the rationale is gone. Specifically: `packages/shared/src/schemas/party.ts` (the comment about `isSoloShortcut` legacy parsing), and any sibling comments in `partyMembership.ts`, `appState.ts`, `transactionLog.ts`, etc. **Shipped 2026-06-30** in `party.ts`, `partyMembership.ts`, `itemDefinition.ts`.
+- [x] Delete the migration tests in `packages/shared/src/schemas/appState.test.ts` that verify pre-RH-version shapes parse cleanly. **Shipped 2026-06-30** — six tests removed (the R4.1 isSoloShortcut migration; the R4.1 pre-R4.1 leftAt-null parses; the pre-R1.3 flatWeight-absent; the pre-R1.5 toContainerInstanceId-absent; the pre-R2.2 currentCharges:null under old narrow schema; the pre-R2.3 identified:true literal + no hint).
   - `R4.1 migration — imports a legacy AppState carrying isSoloShortcut: true` (lines ~763–774)
   - `pre-R1.3 ItemDefinition without flatWeight` (lines ~313–344)
   - `pre-R1.5 transfer without toContainerInstanceId` (lines ~403–430)
   - `pre-R2.2 ItemInstance with currentCharges: null` under old narrow schema (lines ~531–655)
   - `pre-R2.3 ItemInstance with identified: true literal + no hint` (lines ~657–675)
-- [ ] Keep the R4.1 `partyMembership.leftAt: nullable` widening test — that's testing the CURRENT shape works for soft-deletion, not legacy preservation.
+- [x] Keep the R4.1 `partyMembership.leftAt: nullable` widening test — that's testing the CURRENT shape works for soft-deletion, not legacy preservation. **Confirmed 2026-06-30** — the test renamed from "R4.1 migration — accepts a membership with a non-null leftAt" to "R4.1 — accepts a membership with a non-null leftAt" (dropped the misleading "migration" word; same assertion).
 
 #### RH0.2 — Drop MVP placeholder writes
 
 **Reducer (`packages/rules/src/reducer/index.ts`)**
-- [ ] Stop writing `Party.isSoloShortcut: true` in the bootstrap `createCharacter` branch. The field has been removed from Postgres + the Zod schema; the literal was being written purely to keep MVP-vintage Dexie blobs valid. RH0.1's `.strict()` would reject it anyway.
-- [ ] Audit `createCharacter` (both branches) and `createCharacterInExistingParty` for any other field whose only rationale is "match legacy shape." Strip them.
+- [x] Stop writing `Party.isSoloShortcut: true` in the bootstrap `createCharacter` branch. The field has been removed from Postgres + the Zod schema; the literal was being written purely to keep MVP-vintage Dexie blobs valid. RH0.1's `.strict()` would reject it anyway. **Already-done 2026-06-30** — confirmed no `isSoloShortcut` writes remain in the reducer; R4.1.a had already retired them. RH0.2 verified, no change required.
+- [x] Audit `createCharacter` (both branches) and `createCharacterInExistingParty` for any other field whose only rationale is "match legacy shape." Strip them. **Already-done 2026-06-30** — no such fields remain after the R4.1.a / R4.1.f cleanups.
 
 **Tests**
-- [ ] Remove the `Party.isSoloShortcut as null` cast scaffolding in `packages/shared/src/guards/map.test.ts` lines ~31–35 — the comment says "type-asserted here so the guard tests can still exercise the banker path via a manual cast," but `partySchema.bankerUserId` is already `z.null()` for forward-compat. The cast was bridging legacy literal vs. current schema; after RH0.1 it's redundant.
+- [x] Remove the `Party.isSoloShortcut as null` cast scaffolding in `packages/shared/src/guards/map.test.ts` lines ~31–35. **Already-done 2026-06-30** — the cast was resolved during R4.1.f; the comment that mentioned `isSoloShortcut: true` had already been removed.
 
 #### RH0.3 — Make `partyId` mandatory on Dexie hydration
+
+> **Deferred 2026-06-30** — see RH0 Notes. The persistence layer's null-state save path tangles with this and needs a dedicated design decision. Promote to a standalone slice when the hydrate path is touched again.
 
 **Dexie loader (`apps/web/src/db/load.ts`)**
 - [ ] Remove the legacy unkeyed-slot fallback (lines ~12–40). `loadAppState(partyId: string)` becomes required-argument; callers that don't have a partyId must read it from `getCurrentPartyId()` first.
@@ -2007,36 +2497,53 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 #### RH0.4 — Delete dead screens
 
 **Screens (`apps/web/src/screens/`)**
-- [ ] Delete `Welcome.tsx`. It's unrouted; the welcome / empty-state surface moved into the Hub in R3.5+.
-- [ ] Delete `CreateCharacter.tsx`. The character-creation form lives in `apps/web/src/components/CharacterForm.tsx` and is consumed by the Hub wizard + PartySettings CTA.
+- [x] Delete `Welcome.tsx`. It's unrouted; the welcome / empty-state surface moved into the Hub in R3.5+. **Shipped 2026-06-30.**
+- [x] Delete `CreateCharacter.tsx`. The character-creation form lives in `apps/web/src/components/CharacterForm.tsx` and is consumed by the Hub wizard + PartySettings CTA. **Shipped 2026-06-30.**
 
 **Tests**
-- [ ] Migrate the existing screen tests that mount these files:
+- [x] Migrate the existing screen tests that mount these files. **Shipped 2026-06-30.**
   - `apps/web/src/screens/Settings.test.tsx`
   - `apps/web/src/screens/CharacterSheet.test.tsx`
   - `apps/web/src/screens/ItemDetail.test.tsx`
   - `apps/web/src/screens/StorageDetail.test.tsx`
-- [ ] For each, replace direct `<Welcome />` / `<CreateCharacter />` mounts with `bootstrap()` from `apps/web/src/test/fixtures.ts` + the screen under test. The bootstrap fixture already mints the right state; the legacy screens were only there to bypass it.
+- [x] For each, replace direct `<Welcome />` / `<CreateCharacter />` mounts with `bootstrap()` from `apps/web/src/test/fixtures.ts` + the screen under test. The bootstrap fixture already mints the right state; the legacy screens were only there to bypass it. **Shipped 2026-06-30** — three tests use `{ path: '/', element: null }` as no-op fallback (Settings, ItemDetail, CharacterSheet); `StorageDetail.test.tsx` got a local `RedirectToCharacter` helper (~10 LOC) because its test specifically exercises the "unknown stashId → / → CharacterSheet" auto-redirect path. Two heading-text assertions (`/welcome, adventurer/i`) were rewritten as negative assertions (CharacterSheet's tab list NOT present / ItemDetail's history heading NOT present) — same intent, no dependency on the legacy screen.
 
 #### RH0.5 — Flatten the `create-character` action union + tidy aliases
 
 **Action schema (`packages/shared/src/schemas/action.ts`)**
-- [ ] Today the `createCharacterAction` is a `z.union` of two payload shapes: legacy (with-character, `dmOnly?: false`) + DM-only (`dmOnly: true` + required `partyName`). The legacy variant's optional `dmOnly`/`partyName` exist because M0–R3 dispatches didn't carry them. Flatten to a single discriminated shape: `dmOnly: boolean` always required; with-character branch keeps `name`/`species`/`size`/`class`/`level`/`str`; DM-only branch keeps `partyName`.
-- [ ] Reducer + tests: every dispatch site now passes `dmOnly: false` explicitly. Audit + update.
+- [ ] Today the `createCharacterAction` is a `z.union` of two payload shapes: legacy (with-character, `dmOnly?: false`) + DM-only (`dmOnly: true` + required `partyName`). The legacy variant's optional `dmOnly`/`partyName` exist because M0–R3 dispatches didn't carry them. Flatten to a single discriminated shape: `dmOnly: boolean` always required; with-character branch keeps `name`/`species`/`size`/`class`/`level`/`str`; DM-only branch keeps `partyName`. **Not shipped — decided against 2026-06-30.** Re-triage during execution showed this is dispatch-ergonomic compat (preserves `dispatch({ type: 'create-character', payload: { name, ... } })` without forcing an explicit `dmOnly: false`), NOT stored-data compat — which CLAUDE.md's "no legacy-data debt" rule explicitly exempts ("Distinct from forward-compat slots like `bankerUserId: null` … those stay; they preserve UNWRITTEN future code, not stored old data"). The schema comment was reworded to drop the "M0-R3 dispatch-compatible without a migration shim" framing and describe the actual reason (ergonomics). Leaving the box unticked since the work didn't happen as described, but the underlying concern is resolved (rationale corrected).
+- [ ] Reducer + tests: every dispatch site now passes `dmOnly: false` explicitly. Audit + update. **Not shipped — see above.**
 
 **Seeds (`packages/seeds/src/seedVersion.ts`)**
-- [ ] Delete the deprecated `PHB_SEED_VERSION` alias. Confirmed unused in-tree; was kept for out-of-tree consumers that don't exist.
+- [x] Delete the deprecated `PHB_SEED_VERSION` alias. Confirmed unused in-tree; was kept for out-of-tree consumers that don't exist. **Shipped 2026-06-30** — alias removed from `seedVersion.ts` + barrel re-export in `seeds/src/index.ts`; in-tree callers (`apps/web/src/screens/CatalogBrowser.test.tsx`, `apps/web/src/store/reducer.test.ts`) updated to use `SEED_VERSION`.
 
 **Docs sweep**
-- [ ] Strip legacy-rationale paragraphs from:
-  - `docs/MVP.md` — references to `isSoloShortcut: true` as an "Invariant" (line ~217); the line ~109–112 deprecation block; line ~61 mention.
-  - `docs/OUTLINE.md` — the §4 paragraph (lines ~243–244) explaining "MVP code keeps writing `isSoloShortcut: true` so existing Dexie blobs validate."
-  - `docs/roadmap.md` — every "legacy MVP-vintage exports rehydrate cleanly" / "Zod's default object-strip behaviour silently drops the legacy field" comment in R4.1 notes (lines ~1741, 2369). Keep the historical "we removed this field in R4.1.a" trail; delete the "but we still write it because legacy blobs" rationale.
-  - `README.md` — line ~36 R4.1 status line that mentions the legacy preservation behavior.
+- [x] Strip legacy-rationale paragraphs from current-policy spec text. **Shipped 2026-06-30** with narrowed scope per user policy ("MVP.md and old roadmap points should remain to document the history"). What was updated:
+  - `docs/OUTLINE.md` §4 paragraph about `Party.isSoloShortcut` — dropped the "MVP code keeps writing it so existing Dexie blobs validate" sentence; the field is removed, the rationale doesn't apply.
+  - `docs/OUTLINE.md` §11 Resolved-questions bullet on `isSoloShortcut` lifecycle — same edit (dropped the "but R4 multi-member work treats it as 'derived, ignored'" stored-data-compat framing).
+  - `packages/shared/src/schemas/action.ts` `createCharacterAction` comment — reworded to drop "keeping every M0–R3 dispatch payload-compatible" language (see action-union note above).
+  - **Not edited** per user policy:
+    - `docs/MVP.md` — historical record of the M0 spec.
+    - `docs/roadmap.md` slice Notes (past-tense diary entries documenting what each slice did).
+    - `README.md` line ~36 — historical R-section roll-up.
 
 #### RH0 — Notes
 
-> -
+> **2026-06-30 — RH0 partial ship.** Sub-slices RH0.1, RH0.2, RH0.4, RH0.5 landed. RH0.3 deferred. Headline shape: legacy-data preservation scaffolding stripped from the schema layer + the test fixtures; the `Welcome.tsx` / `CreateCharacter.tsx` legacy screens deleted; the `PHB_SEED_VERSION` alias removed; OUTLINE.md spec-text scrubbed of "kept for legacy" framings on `Party.isSoloShortcut`. Test totals: shared 74 → 68 (-6 legacy migration tests deleted as planned); web 646 unchanged (the four screen tests using `Welcome` as router fallback migrated to either a `null` stub or a local `RedirectToCharacter` helper — same coverage, no legacy dependency).
+>
+> **What shipped (sub-slice detail):**
+>
+> **RH0.1 — Zod `.strict()` + legacy migration tests removed.** Top-level entity schemas tightened with `.strict()`: `partySchema`, `partyMembershipSchema`, `appStateSchema`, `characterSchema` (including the nested `abilityScores`), `currencyHoldingSchema`, `stashSchema` (all three discriminated variants), `userSchema` (chained `.strict()` before `.refine()`), `itemDefinitionSchema` (including the nested `cost` and `charges`), `itemInstanceSchema`, `exportEnvelopeSchema` (including the nested `payload`). Six legacy migration tests deleted from `packages/shared/src/schemas/appState.test.ts`: pre-R1.3 `flatWeight`-absent, pre-R1.5 `toContainerInstanceId`-absent, pre-R2.2 `currentCharges: null` under old narrow schema, pre-R2.3 `identified: true` literal + no `hint`, R4.1 legacy `isSoloShortcut: true`, R4.1 pre-R4.1 `leftAt: null` survives. Schema comments that justified leniency-for-legacy-blobs removed in `party.ts`, `partyMembership.ts`, `itemDefinition.ts`. **Discriminated-union entry schemas inside `transactionLog.ts` / `action.ts` / `api.ts` (~150 nested `z.object`s) were not given `.strict()` individually** — manual cost exceeds value; the union's discriminator already rejects shape-wrong payloads.
+>
+> **RH0.2 — MVP placeholder writes.** No source writes to `Party.isSoloShortcut` remained; the R4.1.a slice had already retired them. The `as null` cast scaffolding in `map.test.ts` flagged by the audit had already been resolved during R4.1.f. Net change: zero (work was already absorbed into earlier R4.1 sub-slices).
+>
+> **RH0.3 — `partyId` mandatory on Dexie hydration: DEFERRED.** The persistence layer has two storage modes (unkeyed slot for the pre-character-creation null-state window, keyed `appState:<partyId>` for parties) and both `loadAppState()` callers + `createDebouncedSaver` actively use the unkeyed slot during the bootstrap window. The "remove all fallbacks" surgery requires a real design decision about how to handle the null-state save (skip writing? write to a dedicated key?) plus a ~10-test migration in `persistence.test.ts`. Tangles with how the save side works for the null-state window. Out of scope for RH0; promote to a dedicated slice if/when the hydrate path needs further work.
+>
+> **RH0.4 — Legacy screens deleted.** `apps/web/src/screens/Welcome.tsx` + `apps/web/src/screens/CreateCharacter.tsx` removed. The four screen tests that mounted `Welcome` as the "/" router fallback (`Settings.test.tsx`, `ItemDetail.test.tsx`, `CharacterSheet.test.tsx`, `StorageDetail.test.tsx`) migrated: three use `{ path: '/', element: null }` (a literal no-op fallback), and `StorageDetail.test.tsx` got a local `RedirectToCharacter` component (~10 LOC) to preserve the "unknown stashId redirects to /, then `/` auto-redirects to character" test path. Two tests that asserted the literal `Welcome, adventurer` heading were rewritten to assert the negative ("CharacterSheet's tab list is NOT present" / "ItemDetail's history heading is NOT present") — same intent, no dependency on the legacy screen.
+>
+> **RH0.5 — Action union + alias + docs sweep.** The `PHB_SEED_VERSION` deprecated alias removed from `packages/seeds/src/seedVersion.ts` + `packages/seeds/src/index.ts` and replaced with `SEED_VERSION` at all in-tree callers (`apps/web/src/screens/CatalogBrowser.test.tsx`, `apps/web/src/store/reducer.test.ts`). The `create-character` `z.union` action shape **was NOT flattened** — re-triage during execution showed it was ergonomic-compat, not stored-data-compat (it preserves `dispatch({ type: 'create-character', payload: { name, ... } })` without forcing an explicit `dmOnly: false`), which the CLAUDE.md rule explicitly exempts. The schema comment was reworded to remove the misleading "M0-R3 dispatch-compatible without a migration shim" framing and instead describe the actual reason (ergonomics). Docs sweep narrowed: OUTLINE.md §4 + §11 paragraphs about `Party.isSoloShortcut` rewritten to drop the "MVP code keeps writing it so existing Dexie blobs validate" rationale (current-policy spec text, not history). `MVP.md` and roadmap slice Notes left as historical records per the user-confirmed policy: "old roadmap points should remain to document the history."
+>
+> **Carryforward.** RH0.3 (Dexie partyId mandatory) deferred as documented above. The `Welcome.tsx` / `CreateCharacter.tsx` Operational followups item is now CLOSED — RH0.4 retired both files. The action-union flatten remains as an open question if a future slice wants stricter dispatch ergonomics, but it isn't legacy-data debt.
 
 ---
 
@@ -2044,7 +2551,7 @@ Invite codes, multi-user joining, Party Stash, Recovered Loot, Banker appointmen
 
 > **What this is.** RH-slices are **hardening passes**: architectural cleanups that pay down debt accumulated during feature slices. They don't add user-facing capabilities — they make the existing ones structurally sound. RH1 sits between R4 and R5 because R5 (websocket live sync, multi-writer) compounds the id-canonicalisation problem; fixing it once, before N writers arrive, is much cheaper than patching the resulting conflicts.
 
-**Why now.** Today the **client's reducer** and the **server's persistor** independently call `ctx.newId()` for the same logical entity. They produce different UUIDs. The reported "move acquired item → `item_not_found`" bug (R4.1.f post-ship bug #2) is one visible symptom; the structural issue is that the system has **two id-minting authorities**. The current mitigation (post-flush `GET /sync/state` re-pull for any action in `ID_MINTING_ACTION_TYPES` — `apps/web/src/sync/queue.ts`) is a runtime patch:
+**Why now.** Today the **client's reducer** and the **server's persistor** independently call `ctx.newId()` for the same logical entity. They produce different UUIDs. The reported "move acquired item → `item_not_found`" bug (R4.1.f post-ship bug #2) is one visible symptom; **BUG-004 (server persistor mints a different UUID than the reducer → Item Detail history empty after `acquire` / `split`, surfaced 2026-07-01 in R4.3 manual testing) is another.** The structural issue is that the system has **two id-minting authorities**. The current mitigation (post-flush `GET /sync/state` re-pull for any action in `ID_MINTING_ACTION_TYPES` — `apps/web/src/sync/queue.ts`) is a runtime patch:
 
 - It refetches the **entire** AppState after every `acquire` / `create-stash` / `split` / `create-homebrew` / `create-character`. For a 6-player party with hundreds of items the bandwidth cost scales linearly with party size.
 - The "list of action types we have to remember" drifts: R4.2 / R4.3 / R4.4 / R4.5 will each add actions; some mint ids, some don't; the queue's constant has to stay in lockstep with the server's `ctx.newId()` call sites.
@@ -2214,6 +2721,62 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 - [ ] **Container depth (one-level).** Trigger asserting `containerInstanceId IS NULL OR (the row referenced has containerInstanceId IS NULL)`.
 - [ ] Pair each constraint with a schema-invariants test in `apps/server/src/db/schema-invariants.test.ts` that queries `pg_constraint` / `pg_indexes` and verifies the constraint is present (mirrors the existing DEFERRABLE FK check pattern).
 
+#### RH2.6 — Mode-aware log-authority split (client owns log in local mode, server owns log in server mode)
+
+**Why now.** RH1 retires client id-minting. RH2.1 retires client timestamp/actorRole minting via placeholder-then-patch. But those still have the CLIENT build the log slice, then patch fields post-flush. That's a half-measure — the client-built slice is a source of drift (BUG-004 surfaced this: the client mints a log payload that references a client-minted item id, and the two never reconcile with server truth on the same row). The correct architecture per SECURITY §3.6 ("in server mode the server is the sole authority for TransactionLog contents") is a **mode-aware split**:
+
+- **Local mode** (Dexie-only, no server): the client-side reducer builds the log slice, appends to `state.log`, persists to Dexie. Unchanged from today.
+- **Server mode** (Postgres backend): the client-side reducer does NOT build log slices. The dispatch pipeline calls `reduce(state, action, ctx)` for the state mutation only; log slices are the server's exclusive output. After the queue flushes, the response's `applied[]` (or the post-batch `/sync/state` pull) delivers the canonical log entries, and the store appends them to `state.log`. Between dispatch-time and flush-response, the UI has NO log entries for the in-flight action — displays either "pending…" states or defer log-dependent reads.
+
+**Sequencing.** Ships AFTER RH1 and RH2.1. RH1 removes the client-vs-server id divergence (so the server's log entry references the correct entity id). RH2.1 removes the timestamp/actorRole divergence (so the returned log entries don't need patching for those fields either). Once both are in, log entries returned by the server are structurally identical to what a placeholder-then-patch pipeline would produce — at which point emitting them client-side is pure duplication + drift risk, and this slice retires the duplication.
+
+**Why NOT bundle into RH1 / RH2.1.** RH1 changes id-minting mechanics but keeps the client emitting log slices (with server-canonical ids). RH2.1 patches placeholder fields on client-emitted slices. Both are "same shape, better contents." RH2.6 is a **shape change**: the client stops emitting slices in server mode entirely. That's a bigger conceptual shift with implications for the reducer's return type, the store middleware, and every optimistic-UI reader that assumes `state.log` has an entry for the just-dispatched action. Better as its own slice than as a hidden effect of RH2.1's cleanup.
+
+**Approach.** Two-way `ReducerResult`:
+- **Reducer stays pure.** `reduce(state, action, ctx)` still returns `{ state, logEntries }`. The reducer doesn't know about modes; it produces the full slice list as before.
+- **Store middleware branches on mode.** In `apps/web/src/store/index.ts`, the dispatch pipeline:
+  - **Local mode:** unchanged — build full entries via `buildLogEntry` + append to `state.log`.
+  - **Server mode:** apply `result.state` locally (optimistic UI), but DO NOT append log entries. The reducer's `logEntries` slice output is DISCARDED at the store boundary. The queue's post-flush hook (existing `pullState` re-pull path, or the response's `applied[]` array) is the sole writer of `state.log` in server mode.
+- **Queue owns log append in server mode.** After `/sync/actions` returns `applied[]`, iterate and `set(draft => draft.log.push(entry))` for each. For id-minting actions (RH1's list, or RH2.4's metadata replacement), still `pullState` and replace the full log.
+
+**Consequences.**
+- **In-flight log gap.** Between local dispatch and queue flush (~200 ms debounce window), server-mode UI has no log entry for the in-flight action. `ItemHistory` shows the pre-dispatch state; a subsequent flush repopulates. Acceptable per SECURITY §3.6's carve-out ("readers must not assume the local entry's id/timestamp/actorRole match the server's").
+- **Local-mode behaviour preserved.** Users running local-only Dexie (no backend) see log entries immediately, exactly as today. Zero UX regression for the local-mode path.
+- **BUG-004 auto-fixes.** The server-emitted log entry references the server's canonical `itemInstanceId` (post-RH1). The client's `ItemHistory` reads the server-emitted entry via `pullState` and filters correctly. No client-side patching needed.
+- **Rollback stays intact.** BUG-003's rollback captures the store snapshot BEFORE the mutation lands. In server mode, that snapshot's `log` is the last-known-server-canonical state; on 422, restoring it correctly undoes both state AND any speculative log append (there's nothing to undo in server mode because the client never appended).
+
+**Slicing.** Two sub-slices to keep the change reviewable:
+
+**RH2.6.a — Store dispatch mode-branch**
+- [ ] Add `isServerMode` guard around the log-append block in `apps/web/src/store/index.ts` `dispatch()`. When true, apply `result.state` but skip the `draft.log.push(entry)` loop.
+- [ ] Wire the queue's `applied[]` response into a new `appendServerLogEntries(entries: TransactionLogEntry[])` store method. Called from `apps/web/src/sync/queue.ts` after `pushActions` succeeds.
+- [ ] Update `pullState`-based canonicalisation path to use the same method (or unify with the existing `restoreSnapshot({log, appState})` call — decide during execution).
+- [ ] Reducer, guards, schemas: unchanged. This slice touches ONLY the web store + queue.
+
+**RH2.6.b — UI readers: pending-state ergonomics**
+- [ ] Audit log-reading components for "log entry immediately present" assumptions:
+  - `apps/web/src/components/item/ItemHistory.tsx` — falls back to "No log entries yet" when empty. In server mode with an in-flight action, this shows briefly (~200 ms). Acceptable; document.
+  - Party log (if / when it exists) — same behaviour.
+- [ ] Add a "sync pending" indicator when the queue has an in-flight batch (optional; may fold into R5 offline-banner work). Signals "action pending server confirmation" so users don't misread the empty-log state as failure.
+- [ ] Optional: an in-flight action count in `useStore` derived from the queue's public API. Skip if the empty-log window is short enough (200 ms debounce + network) that users don't notice.
+
+**Tests.**
+- [ ] Store test: in server mode, `dispatch({type: 'acquire', ...})` mutates `state.appState` but does NOT push to `state.log`.
+- [ ] Store test: in local mode, same dispatch appends to `state.log` (unchanged behaviour).
+- [ ] Queue test: after `/sync/actions` responds with `applied: [{type: 'acquire', payload: {itemInstanceId: SERVER_ID}, ...}]`, `state.log` has exactly one entry with `itemInstanceId: SERVER_ID`.
+- [ ] Integration test (server workspace): full round-trip proves the log-read cycle works for the BUG-004 case — dispatch acquire, wait for queue flush, navigate to Item Detail, history shows the acquire entry.
+- [ ] Rollback regression: 422 mid-flight rejection in server mode does not require log rollback (there was nothing to append). Existing BUG-003 tests continue to pass unchanged.
+
+**Documentation.**
+- [ ] Update `docs/SECURITY.md` §3.6 to describe the mode-aware split concretely (the 2026-07-01 bullet added post-BUG-004 can be tightened once this slice lands).
+- [ ] Update `CLAUDE.md` "All mutations go through the reducer" line to clarify: reducer produces the state + slices; **in server mode the slices are for the server to persist and echo back, not for the client to append.**
+
+#### RH2.6 — Notes
+
+> **Filed:** 2026-07-01, following BUG-004 triage. User direction: "In local mode the UI is responsible and in server mode the server is responsible for all log types since it is the source of truth."
+>
+> **Dependency graph:** RH1 → RH2.1 → **RH2.6** → (RH2.5 / RH3 / R5 all continue independently). RH2.2-2.4 are unblocked by RH2.6 (they touch reducer + queue mechanics but not log-authority).
+
 #### RH2 — Notes
 
 > -
@@ -2280,6 +2843,121 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 
 ---
 
+### RH4 — Hardening Pass 4: URL-scoped routing (architectural)
+
+> **What this is.** Retires the "implicit current-party" scoping pattern in favour of URL-scoped routes. Every party-scoped screen gains `:partyId` in its route pattern (`/party/settings` → `/party/:partyId/settings`; `/character/:id` → `/party/:partyId/character/:id`; etc.). Same shift for other resource-scoped surfaces if any surface later.
+>
+> **Sequencing.** Ships AFTER RH3, BEFORE R5.1. Same "R5-blocker" rationale as the other RH slices: R5.1's websocket broadcast subscribes rooms scoped by resource id; the natural mapping is URL → room (`/party/:partyId/*` → `party:${partyId}`). An implicit-pointer scoping forces R5.1 to invent a parallel "which party is this tab in" resolution, which is brittle under multi-tab and untestable in unit tests.
+
+**Why now.** Today the app uses School-B implicit scoping (per 2026-07-01 discussion of URL-scoping conventions). The pattern is fine for a single-writer WIP but bakes in three long-term costs:
+
+- **Multi-tab correctness.** Two tabs on different parties currently share the Dexie `currentPartyId` pointer — activating a party in tab A silently switches tab B on next dispatch. RH2.3 addresses same-party multi-tab (BroadcastChannel coordinator); it doesn't fix cross-party multi-tab because both tabs use the same origin. URL-scoped routing eliminates the shared pointer: each tab's URL identifies its party, no cross-tab activation state to synchronise for the different-party case.
+- **Deep-linking / shareability.** "Copy this URL to your co-DM" fails today — the URL is `/party/settings` regardless of which party is loaded. RH4 makes URLs meaningful outside the current session.
+- **R5 broadcast rooms.** WebSocket subscriptions are naturally scoped by URL params. Matching against a mutable `currentPartyId` pointer under N concurrent tabs = a class of subtle race bugs. URL scoping is the standard fix pattern (see e.g. React Router v6 + Remix docs on nested resource routing).
+- **Client-server URL asymmetry.** Server already uses URL-scoped routes (`POST /parties/:partyId/kick`, `GET /parties/:partyId/members`). Client's implicit scoping means every code review carries a small "does this route need the id explicitly?" tax. Alignment reduces friction.
+
+**Prior art.** GitHub, Linear, Notion, Vercel, Figma, Discord, Slack (post-workspace-switch) all use URL-scoped resource ids for the same reason. React Router v6 + Remix + Next.js App Router all push nested-route scoping as the default. Kent C. Dodds / Ryan Florence's "URL is the world's under-appreciated state manager" is the school this slice adopts.
+
+**What stays.** Local-mode's Dexie `meta.currentPartyId` pointer stays for two derived reasons: (a) it still tracks "which party did the user last activate" for the Hub landing screen; (b) it's the single-writer local-mode's natural home. Server-mode routes read `partyId` from the URL and NEVER from `meta.currentPartyId`; the pointer becomes a UX-hint only, not a source of truth.
+
+**Approach.** Route pattern refactor. Every party-scoped route gains `:partyId`. Every navigation call updates. Every screen reads `partyId` from `useParams()` instead of from `useStore(s => s.appState.party.id)`. Store still exposes `party.id` for reads that don't have URL context (e.g. modals mounted outside a route); but the URL is the source of truth for scope.
+
+**Slicing.** Three sub-slices, ordered by dependency.
+
+#### RH4.1 — Route pattern refactor
+
+**Router (`apps/web/src/router/index.tsx`)**
+- [ ] Rewrite the route table so every party-scoped surface takes `:partyId`. Target patterns:
+  - `/party/:partyId/settings` (was `/party/settings`)
+  - `/party/:partyId/hub` (was `/hub`) — Hub becomes party-agnostic AT the app-level (party picker); per-party Hub content moves under the id
+  - `/party/:partyId/character/:id` (was `/character/:id`)
+  - `/party/:partyId/item/:id` (was `/item/:id`)
+  - `/party/:partyId/stash/:id` (was `/stash/:id`)
+  - `/party/:partyId/catalog` (was `/catalog`) — catalog is party-scoped per R4.4 homebrew rules
+  - `/party/:partyId/dm` (was `/dm`) — **R4.5 carryforward.** The DM Dashboard route shipped as `/dm` on 2026-07-01 to stay consistent with the then-current unprefixed-route era. RH4.1 must rename it alongside every other party-scoped route. Also carries a `DmOnlyRoute` guard that must be preserved through the rewrite (its membership check is orthogonal to the URL structure and needs no change — just ensure the guard still wraps `DmDashboard` after the path change).
+  - `/party/:partyId/log` (once a global party-log screen exists)
+- [ ] `/hub` remains as the pre-party-selection landing (party picker + create-party CTA); it doesn't need a partyId.
+- [ ] `/settings` (app-wide settings, backup/restore) remains party-agnostic and does NOT gain `:partyId`.
+- [ ] `/login`, `/login/*`, other auth routes remain unchanged.
+
+**Component-side (`apps/web/src/screens/*.tsx`, `apps/web/src/components/**/*.tsx`)**
+- [ ] Every screen that currently reads `s.appState.party.id` from the store switches to `useParams<{ partyId: string }>()` and validates the id matches `s.appState.party.id` on mount. Mismatch → trigger a party-switch (Dexie re-hydrate) before rendering.
+- [ ] Every `navigate('/...')` / `<Link to="/..." />` call updates to include the current party id. New helper: `useCurrentPartyId()` returns the id from `useParams`, throws if missing (routes that opt into the helper are guaranteed inside a `/party/:partyId/*` subtree).
+- [ ] `Layout.tsx` (nav bar) — the "Party Settings" link becomes `to={`/party/${partyId}/settings`}` using the same helper.
+
+**Party-switching flow (`apps/web/src/screens/Hub.tsx`)**
+- [ ] Hub's "Enter this party" CTA navigates to `/party/${partyId}/hub` (or a per-party landing). Setting `meta.currentPartyId` in Dexie stays for the local-mode UX hint but is no longer the source of truth.
+- [ ] The party-switching path becomes: URL change → route mount → screen reads `partyId` from `useParams` → if `s.appState.party.id !== partyId`, trigger `loadAppState(partyId)` → replace store. Same shape as today's Hub re-hydrate flow, just triggered by URL rather than a state pointer.
+
+**Tests**
+- [ ] Update every screen test's `initialEntries` to include a `partyId` in the path. Existing fixtures are all `[/party/settings]`, `[/character/char-abc]`, etc. — becomes `[/party/${TEST_PARTY_ID}/settings]`, etc.
+- [ ] New test: URL `partyId` mismatched with loaded state triggers re-hydrate. Given `s.appState.party.id === 'A'` and route `/party/B/settings`, expect the store to reload B before the screen renders.
+- [ ] New test: URL `partyId` for a party the user isn't a member of → 403-style redirect to Hub.
+- [ ] Existing R4.5 tests for `/dm` (`DmDashboard.test.tsx`) — update `initialEntries` to `/party/${TEST_PARTY_ID}/dm` and add a URL-vs-state mismatch test specific to the DM Dashboard.
+
+**URL-vs-state authority decision (2026-07-01, ratified during R4.5 planning).**
+- **URL param is authoritative.** When `useParams.partyId !== s.appState.party.id`, the guard triggers a re-hydrate (`loadAppState(partyId)`) before rendering. State conforms to URL, not vice versa.
+- **Rationale.** Server-authoritative routing means bookmarks + shared links + back-button navigation resolve consistently. If state were authoritative, a URL rewrite wouldn't reload the party, breaking the browser primitive. The URL is the durable identifier.
+- **Mismatch semantics.** Not-a-member of the URL's partyId → redirect to `/hub` (same treatment as R4.5's non-DM redirect). Member-of-both parties → re-hydrate the correct one. Loading in-progress → the same `loading` state as `ProtectedRoute` handles today.
+
+#### RH4.1 — Notes
+
+> -
+
+#### RH4.2 — Retire `meta.currentPartyId` as source-of-truth (local-mode carryforward)
+
+**Dexie meta (`apps/web/src/db/meta.ts`)**
+- [ ] `getCurrentPartyId()` / `setCurrentPartyId()` remain as functions but their role shrinks to: "which party should the pre-URL landing show first?" — used only by `/hub` and the initial post-login redirect.
+- [ ] Every server-mode read of `currentPartyId` (in the sync queue, in `PartySettings`, in `CharacterSheet` state loading) is replaced by the `useParams<{partyId}>()`-based helper. Only local-mode single-writer paths retain the Dexie pointer.
+- [ ] Boot hydration (`apps/web/src/store/hydrate.ts`): on app load, read `currentPartyId` from meta, redirect to `/party/${id}/hub`. On first-login (no current party), redirect to `/hub` (party picker).
+
+**Sync queue (`apps/web/src/sync/queue.ts`)**
+- [ ] `getActivePartyId` dep is replaced by a URL-derived helper. Since queue is module-scoped (not React), it needs to be told the current partyId on each enqueue. Options: (a) `enqueue(action, partyId)` signature widening, (b) `configureQueue({ currentPartyId })` re-run on route changes. Prefer (a) — explicit, no hidden route-listener state.
+
+**Tests**
+- [ ] Test that server-mode routes ignore `meta.currentPartyId` entirely (mismatched pointer + correct URL = correct behaviour).
+- [ ] Test that local-mode boot still uses `meta.currentPartyId` for the initial redirect.
+
+#### RH4.2 — Notes
+
+> -
+
+#### RH4.3 — Cross-party access denial + party-switcher polish
+
+**Route guards**
+- [ ] Add a `PartyScopeGuard` component wrapping every `/party/:partyId/*` route. Reads `partyId` from `useParams`, checks `s.appState.memberships` for an active membership of `state.user.id` in that party. If missing → redirect to `/hub` with a toast: "You're not a member of that party." Prevents URL tampering (deep-linking to another party's screen).
+- [ ] Server-side already enforces this via `resolveActor` (`apps/server/src/sync/actor.ts`) returning 403 for cross-party access; RH4.3 is the client-side mirror for UX.
+
+**Party-switcher**
+- [ ] Optional: add a party picker in the nav bar (dropdown of the user's active parties). Clicking switches URL to `/party/${newId}/hub`. Nice-to-have; not required for RH4 correctness. Consider deferring to R4.6 as UX polish.
+
+**Tests**
+- [ ] `PartyScopeGuard` unit test: user is a member of party A only; navigating to `/party/B/settings` redirects to `/hub` + toast.
+- [ ] `PartyScopeGuard` unit test: user is a member; renders the child screen.
+
+#### RH4.3 — Notes
+
+> -
+
+#### RH4 — Notes
+
+> **Filed 2026-07-01** following BUG-004 triage + a discussion of URL-scoping conventions. User direction: "We should fix this as part of RH slices." Chosen scope: URL scoping is the industry-consensus modern-SaaS pattern (GitHub / Linear / Notion / Vercel / Discord all URL-scope), it eliminates multi-tab pointer-sharing bugs, and it prepares R5's broadcast rooms.
+>
+> **What RH4 does NOT do:**
+> - Change server routes. Server already URL-scopes (`/parties/:partyId/*`); RH4 is purely a client-side alignment.
+> - Rearchitect the store. `useStore(s => s.appState.party.id)` still works; RH4 just makes `useParams<{partyId}>()` the authoritative read.
+> - Retire the Dexie `meta.currentPartyId` pointer entirely. It stays for the "first-load, no URL" case in local mode. See RH4.2.
+>
+> **Interaction with RH2.3.** RH2.3's multi-tab BroadcastChannel coordinator handles the case where TWO TABS OPERATE ON THE SAME PARTY (same URL) — queue coordination for concurrent enqueues. RH4 makes the DIFFERENT-PARTY multi-tab case work correctly (each tab's URL identifies its party, no cross-activation). Both slices remain needed; RH4 doesn't subsume RH2.3.
+>
+> **Interaction with R5.1 (websocket broadcast).** R5.1 subscribes rooms scoped by `partyId`. With URL-scoped routes, `useEffect(() => subscribe(partyId), [partyId])` reads the id from `useParams` and re-subscribes on URL change. Clean; testable. Without URL scoping, the subscription would follow `s.appState.party.id`, which can change under N tabs — R5.1 would need to distinguish "which tab is authoritative" (a much harder problem).
+>
+> **Cost estimate.** ~1 afternoon of work: route table refactor + `useParams` migration in ~15 screens + test `initialEntries` updates. No user-visible behaviour change beyond bookmarkable URLs. Tests need mechanical updates but no new invariants.
+>
+> **Reversibility.** Fully reversible. If URL scoping proves too noisy after ship, revert the router patterns and the migration is complete. Store still exposes `party.id` throughout — no data-model changes to unwind.
+
+---
+
 ### R5 — Live sync & history (outline §10 M5)
 
 Websocket sync; per-item history; party log with session-tag filter; offline banner in party mode. Covers OUTLINE §3.11, §3.12, §4 `Session`, §5.8 (History/Log).
@@ -2342,7 +3020,28 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 Loot distribution wizard (per-hoard mode), hoard generator, identification flow with hints, shop manager (static + modifiers). Covers OUTLINE §3.7 (search), §3.9, §3.10, §6 `hoard.ts` / `pricing.ts` / `search.ts`.
 
-**Slicing.** R6 is the second-largest milestone after R4 (~30+ checkboxes). Splits along the rules-engine + UI surface axes: R6.1 lights up `pricing.ts` + the per-party economy controls (prerequisite for any priced transaction); R6.2 adds `Shop` + `purchase`/`sale` on top; R6.3 ships the hoard generator + loot distribution wizard; R6.4 adds identification UI + batch-identify (the R2.3 reducer already exists by this point); R6.5 swaps the Catalog Browser to `search.ts`. R6.1 is the hard dependency for R6.2 and the catalog price display.
+**Slicing.** R6 is the second-largest milestone after R4 (~30+ checkboxes). Splits along the rules-engine + UI surface axes: R6.0 lights up the DM character-field editors (independent, no rules-engine dep); R6.1 lights up `pricing.ts` + the per-party economy controls (prerequisite for any priced transaction); R6.2 adds `Shop` + `purchase`/`sale` on top; R6.3 ships the hoard generator + loot distribution wizard; R6.4 adds identification UI + batch-identify (the R2.3 reducer already exists by this point); R6.5 swaps the Catalog Browser to `search.ts`. R6.0 is independent of the others; R6.1 is the hard dependency for R6.2 and the catalog price display.
+
+#### R6.0 — DM character-field editors (`maxAttunement`, other catch-all fields)
+
+**Rationale.** The `edit-character` catch-all reducer + guard have shipped since R1.2 (schema + reducer + DM-only guard + audit-log entry), and R4.3.d widened the guard so DMs can dispatch against ANY character in their party. What's missing across the R1.2 → R4.5 arc is the UI affordance: no screen today dispatches `edit-character` with `{ patch: { maxAttunement: N } }` (or any of the other DM-editable fields). R6.0 lights up that surface as a stand-alone slice so subsequent R6 work can lean on it (e.g. R6.3's loot wizard may want to bump a character's `maxAttunement` when handing out a legendary; R6.4 identification runs alongside).
+
+**UI**
+- [ ] DM-only inline editor for `Character.maxAttunement` on `EquippedSlotsPanel` (or a "DM edit character" dialog reachable from the character-sheet header — pick during implementation). Dispatches `edit-character { characterId, patch: { maxAttunement: N } }`. **Both directions supported:** grant (raise cap, e.g. 3 → 5) AND reduce (lower cap, e.g. 3 → 2). Bounded by the R3.1 DB CHECK: `maxAttunement >= 0`, so 0 is the min (a valid legal value meaning "no attunement possible"), no negatives.
+- [ ] Over-cap-reduce confirm dialog. When the DM lowers `maxAttunement` BELOW the character's current attuned count (e.g. character has 3 attuned, DM sets max to 2), show an AlertDialog: "{Character} has {N} attuned items; reducing max to {M} will leave them over-cap. Continue?" Per R1.2 Notes line 865 this is legal (existing attunements NOT auto-revoked; over-cap state is a display flag, not an invariant violation) — but confirmation is warranted so the DM doesn't strand players over cap accidentally. Reuse the R4.3.d cap-override AlertDialog primitive pattern.
+- [ ] Suppressed / hidden for non-DM players in 2+-member parties. Solo bypass (§8.2) allows the sole member to edit their own `maxAttunement`. Reuse the `isCurrentUserDmOrSolo` helper from R4.5.
+- [ ] Optional stretch: an inline "DM edit character" dialog covering `species` / `class` / `level` / `str` / `maxAttunement` in one form (matches OUTLINE §5.15's Party Settings §5.15 amend flow). Skip if per-field inline editors are sufficient.
+
+**Tests**
+- [ ] Component test: DM raises `maxAttunement` from 3 → 5, next attune fires without the cap-override dialog (slot check now passes cleanly).
+- [ ] Component test: DM lowers `maxAttunement` from 3 → 2 while character has 3 attuned → over-cap confirm dialog appears; confirming dispatches the edit and leaves existing attunements intact (over-cap display state).
+- [ ] Component test: cancel on the over-cap confirm dialog leaves `maxAttunement` unchanged.
+- [ ] Component test: `maxAttunement = 0` accepted and rendered (edge case — character can no longer attune anything).
+- [ ] Guard test: non-DM player in 2+-member party cannot dispatch `edit-character { patch: { maxAttunement } }` (already covered by R1.2 tests; add one more if the UI adds a client-side pre-guard).
+
+#### R6.0 — Notes
+
+> -
 
 #### R6.1 — Pricing + per-party economy
 
@@ -2600,13 +3299,15 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 - [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** — verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
 - [ ] **`PendingDiscordLink` cron sweep** — R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
 - [ ] **Snapshot-age operator metric** — "snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). (Source: R3.4.b Notes.)
+- [ ] **Explicit `archivedAt` check in `POST /sync/actions`** — R4.1.e ships the `Party.archivedAt` column + filters it out of `GET /sync/parties`, but the `/sync/actions` route relies on the existing `not_a_member` guard (every member's row is `leftAt: NOT null` after archive, so guards reject). Adding an upfront `archivedAt IS NOT NULL` check would surface a cleaner `party_archived` error code. Inline pointer: `apps/server/src/sync/routes.ts:226`. (Source: R4.1.e Notes.)
 
 ### Test infrastructure
 
 - [ ] **Sync queue bootstrap pull-after-push test** — R3.5 dropped the bootstrap integration test from `apps/web/src/sync/queue.test.ts` because `instanceof BatchRejectedError` checks across `vi.resetModules()` boundaries proved flaky in the existing test rig. A proper fix wires module-singleton caching (or replaces `instanceof` with structural checks) so the bootstrap pull-after-push + 422 rollback paths get explicit coverage. The happy path + 401 path are tested; the rollback + bootstrap paths are exercised only through the type-checker today. (Source: R3.5 Notes.)
-- [ ] **Delete `apps/web/src/screens/Welcome.tsx` + `CreateCharacter.tsx`** — R3.5 kept them as legacy fixtures so the existing screen tests (`Settings.test.tsx`, `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `StorageDetail.test.tsx`) keep working without churn. The tests should be migrated to mount `Hub` (or their target screen) directly; once they do, the legacy files can be deleted. (Source: R3.5 Notes.) **R4.1.f bug-fix note 2026-06-30:** these two files still read `characters[0]` for the actor's character. They're unrouted so the bug isn't user-visible, but the followup will also delete the only remaining `characters[0]` actor-identity reads when it lands.
+- [x] **Delete `apps/web/src/screens/Welcome.tsx` + `CreateCharacter.tsx`** — **Resolved 2026-06-30 (RH0.4).** R3.5 kept them as legacy fixtures so the existing screen tests (`Settings.test.tsx`, `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `StorageDetail.test.tsx`) keep working without churn. RH0.4 deleted both files and migrated the dependent tests: three use `{ path: '/', element: null }` as a no-op fallback, and `StorageDetail.test.tsx` got a local `RedirectToCharacter` helper to preserve the "unknown stashId → / → CharacterSheet" auto-redirect test path. Two tests that asserted the literal Welcome heading were rewritten to assert the negative (CharacterSheet's tab list NOT present / ItemDetail's history heading NOT present) — same intent, no dependency on the legacy screen. (Source: R3.5 Notes, R4.1.f post-ship sweep, RH0.4.)
 - [ ] **Sync queue unit test for the R4.1.f `isBootstrap` discrimination** — `queue.ts:142` now gates `isBootstrap` on `snapshot?.appState == null` in addition to the action type, but the existing 2 queue.test.ts tests don't isolate this branch. The integration test in `apps/server/src/parties/routes.test.ts` exercises the full path end-to-end; a focused unit test asserting `getActivePartyId()` is called (not `'will-be-minted'`) when `appState !== null` would catch a regression at the layer where it would surface. Same flaky-`instanceof` rig as the bootstrap pull-after-push followup above — likely lands together. (Source: R4.1.f.)
 - [ ] **`GET /sync/state` assertion in the R4.1.f integration test** — the current full-flow test in `apps/server/src/parties/routes.test.ts` asserts the DB rows after user B dispatches `create-character`, but doesn't round-trip through `GET /sync/state?partyId=...` for user B. The mapper layer is well-tested elsewhere, but a focused assertion here would close the seam between the persistor's write side and the state-loader's read side specifically for the post-bootstrap-created character. (Source: R4.1.f.)
+- [ ] **End-to-end browser tests (Playwright)** — still deferred per `docs/TECH_STACK.md` §3.3 (re-evaluate at M5). R4.x accumulated two motivating cases — BUG-001 and BUG-002 — where every unit + Vitest server-integration test passed but the real HTTP + real Postgres path failed. Both share a profile: defects that only manifest in the full server-DB-client stack under specific state shapes. M5 re-evaluation criteria + scoping notes captured in TECH_STACK §3.3, with the layer-selection ratchet in §3.5 (climb to Playwright only when a lower-cost layer can't catch the defect category). (Source: BUG-001 + BUG-002 postmortems; TECH_STACK §3.3.)
 
 ### Feature gaps (small, web-only)
 

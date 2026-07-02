@@ -17,7 +17,7 @@ import { runSeed } from './seed-runner.js';
  * — the test DB created by `infra/docker/postgres-init/00-databases.sh`.
  */
 const TEST_DB_URL =
-  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5433/dnd_inv_test';
+  process.env['DATABASE_URL_TEST'] ?? 'postgresql://dnd:dnd@localhost:5434/dnd_inv_test';
 
 let prisma: PrismaClient;
 

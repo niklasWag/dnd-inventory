@@ -53,31 +53,35 @@ export type EncumbranceRule = z.infer<typeof encumbranceRuleSchema>;
  * make it DM-editable. Schema keeps fields settable so R1 can flip them
  * without a migration.
  */
-export const characterSchema = z.object({
-  id: z.string().min(1),
-  partyId: z.string().min(1),
-  ownerUserId: z.string().min(1),
-  name: z.string().min(1),
-  species: z.string().min(1),
-  // R1.1: creature size category. Drives the carrying-capacity multiplier
-  // (PHB 2024 p. 366). Set at character creation; not editable in MVP
-  // (size changes via Enlarge/Reduce etc. are out-of-scope per §3.3).
-  size: creatureSizeSchema,
-  class: z.string().min(1),
-  level: z.number().int().min(1).max(20),
-  abilityScores: z.object({
-    STR: z.number().int().min(1).max(30),
-  }),
-  maxAttunement: z.number().int().min(0),
-  encumbranceRule: encumbranceRuleSchema,
-  // R1.1: orthogonal to `encumbranceRule`. When `true`, R1.2 will reject
-  // `acquire` / `transfer` that pushes Inventory weight over the rule's
-  // upper band (phb: > STR×15×size; variant: > 10×STR×size). In R1.1 the
-  // flag is stored and displayed in Settings but reducer behavior is
-  // identical regardless. The CapacityBar reads it to label hard-mode
-  // visually.
-  enforceEncumbrance: z.boolean(),
-  inventoryStashId: z.string().min(1),
-});
+export const characterSchema = z
+  .object({
+    id: z.string().min(1),
+    partyId: z.string().min(1),
+    ownerUserId: z.string().min(1),
+    name: z.string().min(1),
+    species: z.string().min(1),
+    // R1.1: creature size category. Drives the carrying-capacity multiplier
+    // (PHB 2024 p. 366). Set at character creation; not editable in v1
+    // (size changes via Enlarge/Reduce etc. are out-of-scope per §3.3).
+    size: creatureSizeSchema,
+    class: z.string().min(1),
+    level: z.number().int().min(1).max(20),
+    abilityScores: z
+      .object({
+        STR: z.number().int().min(1).max(30),
+      })
+      .strict(),
+    maxAttunement: z.number().int().min(0),
+    encumbranceRule: encumbranceRuleSchema,
+    // R1.1: orthogonal to `encumbranceRule`. When `true`, R1.2 will reject
+    // `acquire` / `transfer` that pushes Inventory weight over the rule's
+    // upper band (phb: > STR×15×size; variant: > 10×STR×size). In R1.1 the
+    // flag is stored and displayed in Settings but reducer behavior is
+    // identical regardless. The CapacityBar reads it to label hard-mode
+    // visually.
+    enforceEncumbrance: z.boolean(),
+    inventoryStashId: z.string().min(1),
+  })
+  .strict();
 
 export type Character = z.infer<typeof characterSchema>;

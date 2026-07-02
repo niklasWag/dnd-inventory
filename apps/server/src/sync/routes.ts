@@ -78,14 +78,23 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     // Active memberships only (`leftAt` null). Includes the related
     // Party in one round-trip so we can build the response shape
     // without an N+1.
+    //
+    // R4.1.e — filter out archived parties (`Party.archivedAt IS NOT NULL`)
+    // so the Hub never lists a party that's been sole-member-archived
+    // (the DM keeps their last access; UI filtering hides it from the
+    // Hub but the data is preserved per OUTLINE §8.3).
     const memberships = await prisma.partyMembership.findMany({
-      where: { userId: su.user.id, leftAt: null },
+      where: { userId: su.user.id, leftAt: null, party: { archivedAt: null } },
       include: { party: true },
     });
 
     // Group by partyId so a user with both dm + player rows in a
     // party-of-one collapses to a single response entry with both
     // roles listed.
+    //
+    // R4.1 — `isSoloShortcut` dropped per OUTLINE §4 amendment
+    // (2026-06-24). The Hub UI derives the "solo" badge from
+    // `memberCount === 1` instead.
     const byPartyId = new Map<
       string,
       {
@@ -93,7 +102,6 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
         name: string;
         roles: ('dm' | 'player')[];
         memberCount: number;
-        isSoloShortcut: boolean;
         lastActivityAt: string | null;
       }
     >();
@@ -134,7 +142,6 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
         name: m.party.name,
         roles: [m.role],
         memberCount: uniqueUserIds.size,
-        isSoloShortcut: m.party.isSoloShortcut,
         lastActivityAt: latest?.timestamp.toISOString() ?? null,
       });
     }
@@ -236,12 +243,29 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     }
     const { partyId, actions } = bodyParse.data;
 
-    // create-character is the ONLY action that's legal pre-membership.
-    // For every other action, resolve the actor against an existing
-    // membership row; for create-character, the actor is a "synthetic"
-    // actor in the user's prospective new party (the persistor mints
-    // the party + memberships atomically).
-    const isBootstrap = actions.every((a) => a.type === 'create-character');
+    // create-character has TWO valid shapes:
+    //
+    //   1. Bootstrap — single create-character action against a party that
+    //      doesn't exist yet (partyId arrives as a placeholder). The
+    //      reducer mints user + party + memberships + character + stashes
+    //      atomically, and `applyBootstrapDelta` writes the new rows.
+    //
+    //   2. Post-bootstrap (R4.1.f) — create-character against a party that
+    //      ALREADY exists. The actor is an active member (player with
+    //      `characterId: null` OR DM-only DM) who's adding their own
+    //      character. The reducer mutates state; `applyDelta` writes only
+    //      the new character + inventory stash + currency holding + the
+    //      membership update.
+    //
+    // Distinguish by looking up the party row. If it exists, we're in
+    // case (2) and the actor must resolve against the existing membership
+    // graph. If not, we're in case (1) and the actor is synthetic.
+    const partyExists = await prisma.party.findUnique({
+      where: { id: partyId },
+      select: { id: true },
+    });
+    const isBootstrap =
+      partyExists === null && actions.every((a) => a.type === 'create-character');
     let actor: Actor;
     if (isBootstrap) {
       actor = { userId: su.user.id, partyId, role: 'dm' };
@@ -287,14 +311,19 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
             // as a placeholder ('will-be-minted'); promote it to the
             // freshly-minted id BEFORE building the log entry so the
             // TransactionLog row's partyId FK resolves correctly.
-            if (schemaAction.type === 'create-character' && reduced.state !== null) {
+            //
+            // R4.1.f: only fires for true bootstrap (state was null at
+            // the start of the batch). Post-bootstrap create-character
+            // runs against an existing party — the actor.partyId is
+            // already correct and applyDelta handles the writes.
+            if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
               actor = { ...actor, partyId: reduced.state.party.id };
             }
 
             // The persistor MUST run before the log writes so the
             // TransactionLog.partyId / actorUserId FKs resolve. The
             // log entry's payload describes the post-mutation state.
-            if (schemaAction.type === 'create-character' && reduced.state !== null) {
+            if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
               await applyBootstrapDelta(tx, reduced.state, su.user.id, schemaAction.payload);
             } else {
               await applyDelta(tx, action, actor, ctx);

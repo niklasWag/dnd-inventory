@@ -106,11 +106,11 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
       error(error) {
         // Print both the message AND the cause chain — Auth.js often
         // wraps the root error as `.cause`.
-        // eslint-disable-next-line no-console
+         
         console.error('[auth] error:', error);
       },
       warn(code) {
-        // eslint-disable-next-line no-console
+         
         console.warn('[auth] warn:', code);
       },
       debug() {

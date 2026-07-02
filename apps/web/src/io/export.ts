@@ -6,6 +6,7 @@ import {
 } from '@app/shared';
 
 import { APP_VERSION } from '@/lib/version';
+import { getOwnCharacter } from '@/lib/ownCharacter';
 
 /**
  * M7 export. The public surface is intentionally small:
@@ -83,8 +84,12 @@ function slugify(input: string): string {
 
 export function buildExportFilename(snapshot: ExportSnapshot, opts: BuildOpts = {}): string {
   const date = (opts.now ?? new Date()).toISOString().slice(0, 10);
-  const firstCharacter = snapshot.appState?.characters[0];
-  const stem = firstCharacter !== undefined ? slugify(firstCharacter.name) : 'empty';
+  // R4.1.f: filename stem is the exporting user's OWN character (via
+  // their PartyMembership.characterId), not the first character in the
+  // party — players exporting from a multi-member party would otherwise
+  // get a filename for someone else's character.
+  const ownCharacter = getOwnCharacter(snapshot.appState ?? null);
+  const stem = ownCharacter !== null ? slugify(ownCharacter.name) : 'empty';
   return `dnd-inv-${stem}-${date}.json`;
 }
 
