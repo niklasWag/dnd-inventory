@@ -31,7 +31,7 @@ See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut,
 
 **R3 — Backend skeleton** ✅ (self-hosted server, Discord OAuth + email OTP, authoritative sync, snapshots, web integration per `docs/OUTLINE.md` §10 M3)
 
-**R4.1 — Multi-member parties (foundation)** ✅ (post-R3, per `docs/OUTLINE.md` §10 M4)
+**R4 — Multi-member parties** ✅ (post-R3, per `docs/OUTLINE.md` §10 M4)
 
 - R4.1.a — Schema deprecation: `Party.isSoloShortcut` dropped, `PartyMembership.leftAt` widened to nullable datetime ✅
 - R4.1.b — `delete-character` action + cascade to Recovered Loot ✅
@@ -39,19 +39,19 @@ See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut,
 - R4.1.d — `kick-player` action ✅
 - R4.1.e — `join-party` + server routes (`POST /parties/join`, `/invite/rotate`, `/leave`, `/kick`, `GET /:partyId/members`) + Hub Join card + `/party/settings` screen + sole-member archive via `Party.archivedAt` ✅
 - R4.1.f — Joiners create their own character (`create-character-in-existing-party`) ✅
+- R4.2 — Banker role: `appoint-banker` / `revoke-banker` actions, Banker-mediated shared-pool gating, distribution toolkit, Banker UI ✅
+- R4.3 — DM cross-character: `dm-transfer`, encumbrance/attune overrides, cross-character `acquire`/`transfer`, DM audit trail ✅
+- R4.4 — Cross-character currency + homebrew gating: `currency-transfer` cross-character invariants, party-scoped homebrew visibility, DM-only custom items for 2+ member parties, offline banner ✅
+- R4.5 — DM Dashboard: all-characters at-a-glance, party stash / recovered loot summaries, total party gold, cross-character DM cue, attune cap-override confirm ✅
 
-**R4 (cont.)** in progress — Banker (R4.2), DM cross-character (R4.3), cross-character currency + homebrew gating (R4.4), DM Dashboard (R4.5).
+**RH chain — Hardening Passes** (scheduled between R4 and R5):
 
-**RH chain — Hardening Passes** scheduled between R4 and R5, each independently mergeable:
+- **RH0 — Legacy-data scaffolding strip** ✅ Tightened Zod to `.strict()`, dropped MVP placeholder writes, deleted dead legacy screens, cleaned up deprecated constants.
+- **RH1 — Server-Authoritative IDs** ✅ Client mints UUID v7 ids; server validates rather than minting its own. Eliminates the `acquire`/`transfer` id-divergence class of bugs; pre-requisite for R5's multi-writer broadcast.
+- **RH2 — Determinism & Invariants** — next up. Server-authoritative `timestamp`, shared `actorRole` derivation, stable cascade ordering, multi-tab queue coordination, `applied[]` count assertions, action-type metadata, DB-level uniqueness + CHECK constraints.
+- **RH3 — Session entity + sync schema readiness** — blocked on RH2. Introduces the `Session` entity, widens `TransactionLog.sessionId`, defines `start-session` / `end-session` actions. Pre-requisite for R5's session-aware UI.
 
-- **RH0 — Legacy-data scaffolding strip.** Mechanical sweep: tighten Zod to `.strict()`, drop MVP placeholder writes, make Dexie `partyId` mandatory, delete dead legacy screens, flatten the `create-character` action union. No design questions; can ship in parallel with R4.x work.
-- **RH1 — Server-Authoritative IDs.** Client mints UUID v7 ids, server validates rather than minting its own. Eliminates the `acquire` / `transfer` id-divergence class of bugs and prevents the multi-writer conflict that websockets (R5) would otherwise compound.
-- **RH2 — Determinism & Invariants.** Server-authoritative `timestamp` (RH1-shape applied to clocks), shared `actorRole` derivation, stable cascade-iteration ordering, multi-tab queue coordination, `applied[]` count assertions, action-type metadata replacing registry constants, DB-level uniqueness + CHECK constraints for documented invariants.
-- **RH3 — Session entity + sync schema readiness.** Introduces the `Session` entity, widens `TransactionLog.sessionId`, defines `start-session` / `end-session` actions + routing rules. Pre-requisite for R5's session-aware UI work.
-
-See `docs/roadmap.md` for the slice plans.
-
-See `docs/roadmap.md` for the full slice history.
+See `docs/roadmap.md` for the full slice history and plans.
 
 ## Local-only vs server modes (R3.5)
 
