@@ -351,7 +351,12 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
             }
 
             for (const slice of reduced.logEntries) {
-              const entry = buildLogEntryServer(slice, actor, ctx);
+              // RH2.1a — pass the pre-reduce state so the shared
+              // `deriveActorRoleForSlice` can compute the correct
+              // per-action-type role. For the bootstrap create-character
+              // iteration `state === null` here; the shared function
+              // handles that carve-out.
+              const entry = buildLogEntryServer(slice, actor, ctx, state);
               await appendTransactionLog(tx, entry);
               out.push(entry);
             }

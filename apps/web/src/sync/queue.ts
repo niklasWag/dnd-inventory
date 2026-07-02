@@ -65,6 +65,14 @@ export interface QueueDeps {
    * party id.
    */
   getActivePartyId: () => Promise<string | null>;
+  /**
+   * RH2.1b — optional hook called after a successful flush with the
+   * server's `applied[]` echo. Implementations patch local log entries'
+   * timestamps (and other server-authoritative fields) from the echo.
+   * Optional so tests that don't care about this behaviour can omit it;
+   * production wiring in `main.tsx` always supplies it.
+   */
+  patchLogEntries?: (applied: readonly TransactionLogEntry[]) => void;
 }
 
 let queue: Action[] = [];
@@ -187,7 +195,15 @@ export async function flush(): Promise<void> {
         return;
       }
 
-      await pushActions(partyId, batch);
+      await pushActions(partyId, batch).then((response) => {
+        // RH2.1b — server-authoritative log timestamp. Feed the
+        // applied[] echo to the store so it can patch its local
+        // PENDING-timestamp entries to the server-canonical values.
+        // Skipped when deps.patchLogEntries is absent (test fakes).
+        if (deps !== null && deps.patchLogEntries !== undefined) {
+          deps.patchLogEntries(response.applied);
+        }
+      });
 
       // RH1.3 — no post-flush re-pull. The server's reducer runs with
       // NO id-minting authority (the RH1.2 contract removed `ctx.newId`

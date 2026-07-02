@@ -102,6 +102,11 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
         { type: 'join-party', payload: { partyId: party.id } },
         actor,
         ctx,
+        // RH2.1a — no AppState available here (the joining user isn't
+        // yet a member; `loadAppStateForUser` would reject). The shared
+        // deriveActorRoleForSlice tolerates null state for join-party
+        // and returns 'player' (a brand-new joiner cannot be banker).
+        null,
       );
       await appendTransactionLog(tx, entry);
     });
@@ -200,7 +205,9 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
           ctx,
         );
         for (const slice of result.logEntries) {
-          const entry = buildLogEntryServer(slice, actor, ctx);
+          // RH2.1a — pass pre-reduce state so the shared role deriver
+          // sees the party's bankerUserId at dispatch time.
+          const entry = buildLogEntryServer(slice, actor, ctx, state);
           await appendTransactionLog(tx, entry);
         }
       });
@@ -251,7 +258,9 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
         await applyDelta(tx, action, actor, ctx);
         const result = reduce(state, action, ctx);
         for (const slice of result.logEntries) {
-          const entry = buildLogEntryServer(slice, actor, ctx);
+          // RH2.1a — pass pre-reduce state so the shared role deriver
+          // sees the party's bankerUserId at dispatch time.
+          const entry = buildLogEntryServer(slice, actor, ctx, state);
           await appendTransactionLog(tx, entry);
         }
       });

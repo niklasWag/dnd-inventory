@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { newUuidV7 } from '../ids';
 import type { Action, AppState, Party, PartyMembership } from '../schemas';
 
-import { deriveActorRole, isMember, isSolo } from './actor';
+import { deriveActorRole, deriveActorRoleForSlice, isMember, isSolo } from './actor';
 import { checkGuard, guards } from './map';
 import type { Actor, GuardResult } from './index';
 
@@ -212,6 +212,175 @@ describe('actor helpers', () => {
     expect(isMember(makeActor('u1'), memberships)).toBe(true);
     expect(isMember(makeActor('u2'), memberships)).toBe(false);
     expect(isMember(makeActor('u1', 'player', 'other-party'), memberships)).toBe(false);
+  });
+});
+
+// -------------------- RH2.1a: deriveActorRoleForSlice --------------------
+
+/**
+ * RH2.1a — action-aware `actorRole` derivation shared by the web store
+ * dispatcher and the server log builder. Consolidates the per-action-type
+ * table previously inlined in `apps/web/src/store/index.ts::resolveActor`.
+ *
+ * The three role classes:
+ *   - `'dm'` — DM-authored actions (§8.1 DM-only rows) + bootstrap
+ *              `create-character` (no banker exists yet) + `seed-catalog`
+ *              (system-driven; DM by convention per §3.7).
+ *   - `'banker'` — Banker-only actions (`split-evenly`) + player-driven
+ *                  actions where the actor IS the party's banker per §3.14.
+ *   - `'player'` — everything else, when the actor is not the banker.
+ *
+ * The reducer + guards already reject wrong-role dispatches upstream of
+ * log-composition, so in practice the DM-only / Banker-only branches
+ * below are just recording the correct hat rather than defensively
+ * overriding it. The shared function encodes the intent so web + server
+ * cannot drift.
+ */
+describe('deriveActorRoleForSlice — RH2.1a', () => {
+  // Every action.type from the schema, mapped to its expected role class.
+  // "player-or-banker" means: banker iff state.party.bankerUserId ===
+  // state.user.id, else player.
+  const alwaysDm = [
+    'seed-catalog',
+    'identify',
+    'kick-player',
+    'appoint-banker',
+    'revoke-banker',
+    'dm-transfer',
+  ] as const;
+  const alwaysBanker = ['split-evenly'] as const;
+  const playerOrBanker = [
+    'acquire',
+    'consume',
+    'edit-item-instance',
+    'transfer',
+    'split',
+    'create-stash',
+    'rename-stash',
+    'delete-stash',
+    'currency-change',
+    'currency-transfer',
+    'create-homebrew',
+    'edit-homebrew',
+    'delete-homebrew',
+    'rename-character',
+    'rename-party',
+    'set-encumbrance',
+    'equip',
+    'unequip',
+    'attune',
+    'unattune',
+    'use-charge',
+    'recharge',
+    'edit-character',
+    'delete-character',
+    'leave-party',
+    'join-party',
+  ] as const;
+
+  // A minimal slice for a given type. The shared function only reads the
+  // discriminant; payload shape doesn't matter beyond parseability of
+  // `create-character` (which needs userId/partyId on the payload).
+  function slice(type: string, payload: Record<string, unknown> = {}) {
+    return { type, payload } as unknown as Parameters<typeof deriveActorRoleForSlice>[1];
+  }
+
+  it('bootstrap create-character (state=null) → dm; reads actorUserId from slice payload', () => {
+    const bootstrapSlice = slice('create-character', {
+      userId: 'u1',
+      partyId: 'p1',
+      partyStashId: 'ps',
+      recoveredLootStashId: 'rl',
+    });
+    expect(deriveActorRoleForSlice(null, bootstrapSlice)).toBe('dm');
+  });
+
+  it('server-synthesised join-party (state=null) → player', () => {
+    // The `POST /parties/join` route synthesises a join-party slice
+    // BEFORE the user has an AppState (they can't yet load one — they
+    // just became a member). A brand-new joiner cannot be the banker
+    // per §3.14, so 'player' is always correct with null state.
+    expect(deriveActorRoleForSlice(null, slice('join-party'))).toBe('player');
+  });
+
+  it.each(alwaysDm)('%s → dm regardless of banker state', (type) => {
+    const state = makeState();
+    expect(deriveActorRoleForSlice(state, slice(type))).toBe('dm');
+
+    // Even when the actor is the banker, DM-only actions log as 'dm'.
+    // §3.14 forbids DM === banker, so this branch is defensive.
+    const bankerState = {
+      ...state,
+      party: { ...state.party, bankerUserId: state.user.id },
+    };
+    expect(deriveActorRoleForSlice(bankerState, slice(type))).toBe('dm');
+  });
+
+  it.each(alwaysBanker)('%s → banker regardless of banker state on party', (type) => {
+    // split-evenly is Banker-only per §8.1; guards reject non-banker
+    // actors upstream so by the time the log is composed the actor is
+    // the banker. The shared function doesn't re-check — it stamps
+    // 'banker' unconditionally.
+    const state = makeState();
+    expect(deriveActorRoleForSlice(state, slice(type))).toBe('banker');
+  });
+
+  it.each(playerOrBanker)('%s → player when actor is not the banker', (type) => {
+    const state = makeState();
+    expect(state.party.bankerUserId).toBeNull();
+    expect(deriveActorRoleForSlice(state, slice(type))).toBe('player');
+  });
+
+  it.each(playerOrBanker)('%s → banker when actor IS the party banker', (type) => {
+    const state = makeState();
+    const bankerState = {
+      ...state,
+      party: { ...state.party, bankerUserId: state.user.id },
+    };
+    expect(deriveActorRoleForSlice(bankerState, slice(type))).toBe('banker');
+  });
+
+  it.each(playerOrBanker)('%s → player when party has a different banker', (type) => {
+    const state = makeState();
+    const otherBankerState = {
+      ...state,
+      party: { ...state.party, bankerUserId: 'some-other-user' },
+    };
+    expect(deriveActorRoleForSlice(otherBankerState, slice(type))).toBe('player');
+  });
+
+  it('post-bootstrap create-character (state!==null) is treated as player-or-banker', () => {
+    // The post-bootstrap create-character variant (a joiner or DM-only
+    // DM minting their character) runs against a populated state. The
+    // actor is a player (freshly-joined member), never the DM by
+    // definition of that flow. Stamp 'player' — or 'banker' if that
+    // player happens to be the party's banker (edge case, tested).
+    const state = makeState();
+    const postBootstrap = slice('create-character', {
+      userId: state.user.id,
+      partyId: state.party.id,
+      partyStashId: 'ps',
+      recoveredLootStashId: 'rl',
+      characterId: 'c1',
+      name: 'X',
+      inventoryStashId: 'inv',
+    });
+    expect(deriveActorRoleForSlice(state, postBootstrap)).toBe('player');
+
+    const bankerState = {
+      ...state,
+      party: { ...state.party, bankerUserId: state.user.id },
+    };
+    expect(deriveActorRoleForSlice(bankerState, postBootstrap)).toBe('banker');
+  });
+
+  it('throws for a non-bootstrap slice when state is null', () => {
+    // Every other slice type requires state to derive actor identity —
+    // matches the web store's current invariants (line 87 / 100 / 165 /
+    // 179 / 196 / 208 all throw in this shape).
+    expect(() => deriveActorRoleForSlice(null, slice('acquire'))).toThrow(
+      /requires populated AppState/,
+    );
   });
 });
 

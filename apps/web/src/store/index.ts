@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-import { newUuidV7 } from '@app/shared';
+import { newUuidV7, deriveActorRoleForSlice } from '@app/shared';
 
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
@@ -28,6 +28,22 @@ export interface StoreState {
   dispatch: (action: Action) => void;
   hydrate: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
   restoreSnapshot: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
+  /**
+   * RH2.1b — patch the timestamps of local PENDING log entries from
+   * the server's `applied[]` echo. Called by the queue's post-flush
+   * hook. Matches by content (`type` + JSON-canonicalised payload) —
+   * the client- and server-side log entry ids diverge (client uses
+   * `crypto.randomUUID()`, server uses `newUuidV7()`), so id-based
+   * matching isn't available. Content matching is safe because the
+   * reducer never emits two structurally-identical slices in a single
+   * batch.
+   *
+   * RH2.6 retires client-side log emission in server mode entirely,
+   * at which point this method's responsibility shifts to "append
+   * server-authoritative entries" rather than "patch client-emitted
+   * ones."
+   */
+  patchLogEntries: (applied: readonly TransactionLogEntry[]) => void;
 }
 
 const saver = createDebouncedSaver();
@@ -49,171 +65,38 @@ const webReducerCtx: ReducerContext = {
  * pre-mutation state and the reducer's slice. Bootstrap actions like
  * `create-character` run when `state` is null, so they MUST pull identity
  * from the slice payload (which the reducer just minted). Post-bootstrap
- * variants will read `state.user.id` / `state.party.id` here.
+ * variants read `state.user.id` / `state.party.id`.
+ *
+ * RH2.1a — role derivation moved to the shared `deriveActorRoleForSlice`
+ * function so the web store and the server log builder agree on the
+ * per-action-type table. Identity (userId + partyId) still resolves
+ * locally because the two sites source identity differently (web reads
+ * from the pre-mutation store; server reads from the session-derived
+ * `Actor`).
  */
 function resolveActor(
   state: AppState,
   slice: LogEntrySlice,
 ): { actorUserId: string; actorRole: 'dm' | 'player' | 'banker'; partyId: string } {
-  // R4.2.a — `'banker'` is the third actorRole. Derived per OUTLINE
-  // §3.14: actor === party.bankerUserId AND the slice is a player-
-  // dispatched action (not appoint-banker / revoke-banker / kick-player
-  // / identify — those are DM-only by §8.1 and stay 'dm' even if the DM
-  // were somehow the banker, which §3.14 prohibits). Implementation
-  // mirrors `@app/shared/guards/actor.ts::deriveActorRole` for the
-  // player-driven branches below.
-  const playerOrBanker = (s: NonNullable<AppState>) =>
-    s.party.bankerUserId === s.user.id ? ('banker' as const) : ('player' as const);
-
-  // Single switch over the discriminant. When new TxType variants land in
-  // M2+, add a `case` here AND the @app/shared union, both type-checked.
-  switch (slice.type) {
-    case 'create-character':
-      // The AppState BEFORE this action is null, so we pull party/user
-      // from the slice payload itself (the reducer just generated them).
-      return {
-        actorUserId: slice.payload.userId,
-        actorRole: 'dm',
-        partyId: slice.payload.partyId,
-      };
-    case 'acquire':
-    case 'consume':
-    case 'edit-item-instance':
-      // Player-initiated mutations. R4.2.a — when the actor IS the
-      // party's Banker, the log entry surfaces as `'banker'` per §3.14
-      // (the Banker keeps their underlying player rights AND inherits
-      // the Banker badge for audit purposes).
-      if (state === null) {
-        throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
-      }
-      return {
-        actorUserId: state.user.id,
-        actorRole: playerOrBanker(state),
-        partyId: state.party.id,
-      };
-    case 'seed-catalog':
-      // System-driven (bootstrap), but the User is the actor of record so
-      // the entry stays self-explanatory in the future history view.
-      // Logged as `'dm'` because catalog curation is the DM's domain per
-      // OUTLINE §3.7 (and the MVP user wears both hats anyway).
-      if (state === null) {
-        throw new Error('resolveActor: seed-catalog requires populated AppState');
-      }
-      return {
-        actorUserId: state.user.id,
-        actorRole: 'dm',
-        partyId: state.party.id,
-      };
-    case 'transfer':
-    case 'split':
-    case 'create-stash':
-    case 'rename-stash':
-    case 'delete-stash':
-    case 'currency-change':
-    case 'currency-transfer':
-    case 'create-homebrew':
-    case 'edit-homebrew':
-    case 'delete-homebrew':
-    case 'rename-character':
-    case 'rename-party':
-    case 'set-encumbrance':
-    case 'equip':
-    case 'unequip':
-    case 'attune':
-    case 'unattune':
-    case 'use-charge':
-    case 'recharge':
-    case 'edit-character':
-    case 'delete-character':
-    case 'leave-party':
-    case 'join-party':
-      // M3 player-initiated stash CRUD + the synthetic transfer +
-      // currency-change emitted from the delete-stash cascade. M5
-      // adds user-initiated `transfer` + `split` (always player-driven
-      // in the MVP; R4 widens the role split). M5.5 adds
-      // `currency-transfer` for atomic stash-to-stash currency moves.
-      // M6 adds the homebrew CRUD trio — in MVP party-of-one these
-      // are player-role; R4 will restrict create/edit/delete to DM
-      // when the party has 2+ members per OUTLINE §8.1 (custom-item
-      // creation is DM-only in multi-member parties).
-      // M7 adds `rename-character` (owner-only in MVP party-of-one;
-      // owner-only in R4 too — character names belong to the owning
-      // player) and `rename-party` (player-role in MVP; R4 widens to
-      // DM-only when the party has 2+ members per OUTLINE §8.1).
-      // R1.1 adds `set-encumbrance` — owner-only in MVP; R4 will
-      // restrict to DM in 2+-member parties per OUTLINE §8.1 ("Edit
-      // any character encumbrance rule" DM-only row).
-      // R1.2 adds `equip` / `unequip` / `attune` / `unattune` — all
-      // owner-only (the row must live in the character's own Inventory
-      // per the reducer's `resolveInventoryRow` guard). `edit-character`
-      // is logged as player-role in MVP; R4 will route `maxAttunement`
-      // edits through the DM role per OUTLINE §8.1.
-      // R2.2 adds `use-charge` / `recharge` — both owner-only in MVP
-      // (the row must live in the character's own Inventory). R4 will
-      // route DM force-use-charge / force-recharge through the DM role
-      // per OUTLINE §8.1 (force-actions on Inventory items + force-
-      // recharge on any-location items).
-      // R4.1.b adds `delete-character` — player-role for owner-initiated
-      // self-deletion; R4.3 will widen to DM role when the DM deletes
-      // another player's character via explicit action per OUTLINE §8.1.
-      // The cascade also emits synthetic `transfer` + (optional)
-      // `currency-change` entries which share the same actor identity.
-      // R4 (multi-member) will also let DM / Banker drive these.
-      // R4.2.a: actor surfaces as `'banker'` when state.user IS the
-      // Party's Banker, otherwise `'player'`.
-      if (state === null) {
-        throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
-      }
-      return {
-        actorUserId: state.user.id,
-        actorRole: playerOrBanker(state),
-        partyId: state.party.id,
-      };
-    case 'identify':
-      // R2.3: DM-only action per OUTLINE §8.1 row 459 ("Identify magic
-      // item (toggle identified)"). In MVP party-of-one the sole user
-      // wears both hats so this routes the same physical user through
-      // the DM membership for audit purposes. R3+ server-side gate
-      // will enforce DM-only for multi-member parties.
-      if (state === null) {
-        throw new Error('resolveActor: identify requires populated AppState');
-      }
-      return {
-        actorUserId: state.user.id,
-        actorRole: 'dm',
-        partyId: state.party.id,
-      };
-    case 'kick-player':
-    case 'appoint-banker':
-    case 'revoke-banker':
-    case 'dm-transfer':
-      // R4.1.d / R4.2.a / R4.3.a — all DM-only per OUTLINE §8.1.
-      // Reducer rejects non-DM dispatches before this resolver runs,
-      // so `'dm'` is the structurally-correct value (and §3.14 bars
-      // the DM from being the Banker, so even when bankerUserId is
-      // set, the actor of these actions is never the Banker).
-      if (state === null) {
-        throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
-      }
-      return {
-        actorUserId: state.user.id,
-        actorRole: 'dm',
-        partyId: state.party.id,
-      };
-    case 'split-evenly':
-      // R4.2.d — Banker-only per OUTLINE §8.1. Reducer + guard both
-      // reject non-Banker dispatches, so the actor is always the Banker
-      // by the time this resolver runs. Emitted with `actorRole:
-      // 'banker'` for audit-trail clarity.
-      if (state === null) {
-        throw new Error('resolveActor: split-evenly requires populated AppState');
-      }
-      return {
-        actorUserId: state.user.id,
-        actorRole: 'banker',
-        partyId: state.party.id,
-      };
+  const actorRole = deriveActorRoleForSlice(state, slice);
+  if (slice.type === 'create-character' && state === null) {
+    // Bootstrap: identity lives on the slice payload (the reducer just
+    // minted these ids). Every other bootstrap-scope field is derived
+    // from them.
+    return {
+      actorUserId: slice.payload.userId,
+      actorRole,
+      partyId: slice.payload.partyId,
+    };
   }
+  if (state === null) {
+    throw new Error(`resolveActor: ${slice.type} requires populated AppState`);
+  }
+  return {
+    actorUserId: state.user.id,
+    actorRole,
+    partyId: state.party.id,
+  };
 }
 
 /**
@@ -221,6 +104,20 @@ function resolveActor(
  * fields (`id`, `timestamp`, `sessionId`) and the resolved actor identity
  * onto the reducer's pure slice. Kept here — not in the reducer — so the
  * reducer stays free of `crypto.randomUUID()` / `new Date()` side effects.
+ *
+ * RH2.1b — in server mode the log entry's timestamp is stamped as the
+ * sentinel `'PENDING'`; the queue's post-flush hook patches it to the
+ * server-canonical value from `applied[]`. This makes the SERVER the
+ * single authority for `TransactionLog.timestamp` under multi-writer
+ * broadcast (R5.1). In local mode the client is still authoritative;
+ * `new Date().toISOString()` lands on the entry immediately. See
+ * `packages/shared/src/guards/actor.ts` for the analogous `actorRole`
+ * derivation (RH2.1a).
+ *
+ * Note: entity `createdAt` / `joinedAt` / `leftAt` fields on state
+ * (`Stash.createdAt`, `PartyMembership.joinedAt`, etc.) are NOT flipped
+ * to PENDING here — that axis is scoped to RH2.6, which retires
+ * client-side log emission entirely in server mode.
  */
 function buildLogEntry(state: AppState, slice: LogEntrySlice): TransactionLogEntry {
   const { actorUserId, actorRole, partyId } = resolveActor(state, slice);
@@ -228,7 +125,7 @@ function buildLogEntry(state: AppState, slice: LogEntrySlice): TransactionLogEnt
     id: crypto.randomUUID(),
     partyId,
     sessionId: null,
-    timestamp: new Date().toISOString(),
+    timestamp: isServerMode ? 'PENDING' : new Date().toISOString(),
     actorUserId,
     actorRole,
     ...slice,
@@ -268,7 +165,16 @@ export const useStore = create<StoreState>()(
       });
 
       const snapshot = get();
-      saver.save({ appState: snapshot.appState, log: snapshot.log });
+      // RH2.1b — never persist PENDING log entries to Dexie. In server
+      // mode the source of truth is the server; PENDING entries live
+      // only in memory until the queue's post-flush hook patches them.
+      // If the tab closes before flush, the actions never reach the
+      // server anyway, so dropping them from Dexie keeps hydrate
+      // schema-valid (`.datetime()` refinement would reject PENDING).
+      const persistableLog = isServerMode
+        ? snapshot.log.filter((e) => e.timestamp !== 'PENDING')
+        : snapshot.log;
+      saver.save({ appState: snapshot.appState, log: persistableLog });
 
       // R3.5 / R4.1-followup — in server mode, optimistically push the
       // action to the sync queue. The queue debounces + handles 422
@@ -305,8 +211,58 @@ export const useStore = create<StoreState>()(
         draft.log = snapshot.log;
       });
     },
+    /**
+     * RH2.1b — patch local log entries' timestamps from the server's
+     * `applied[]` echo. Content-matches on `(type, canonical-payload)`:
+     * each applied entry pops the FIRST matching PENDING local entry
+     * and overwrites its timestamp. Unmatched applied entries and
+     * leftover PENDING entries are logged as warnings — under RH1's
+     * one-authority-per-field regime they shouldn't occur.
+     */
+    patchLogEntries: (applied) => {
+      if (applied.length === 0) return;
+      set((draft) => {
+        for (const remote of applied) {
+          const remoteKey = matchKey(remote);
+          const idx = draft.log.findIndex(
+            (local) => local.timestamp === 'PENDING' && matchKey(local) === remoteKey,
+          );
+          if (idx === -1) {
+            // No matching local PENDING entry. Post-RH1 this shouldn't
+            // happen — the client and server produce structurally
+            // equivalent slices per action. Log for diagnostics; RH2.3
+            // will add a hard assertion.
+            console.warn(
+              '[store.patchLogEntries] no matching local PENDING entry for applied',
+              remote.type,
+              remote.id,
+            );
+            continue;
+          }
+          draft.log[idx]!.timestamp = remote.timestamp;
+        }
+      });
+    },
   })),
 );
+
+/**
+ * Content-match key for RH2.1b timestamp patching. Combines the slice
+ * type and a canonical (sorted-key) JSON of the payload so that two
+ * structurally-identical slices produce the same key regardless of
+ * property insertion order.
+ */
+function matchKey(entry: TransactionLogEntry): string {
+  return `${entry.type}:${stableStringify(entry.payload)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+}
 
 /**
  * Flush any pending debounced persist. Useful before navigation away
