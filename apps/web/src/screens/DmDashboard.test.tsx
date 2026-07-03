@@ -296,8 +296,11 @@ describe('DmDashboard', () => {
   it('renders one row per character with name, class, level, and Inventory GP-equivalent', () => {
     seedTwoCharState();
     render(
-      <MemoryRouter>
-        <DmDashboard />
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
+        <Routes>
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character page</div>} />
+        </Routes>
       </MemoryRouter>,
     );
     // Alice row
@@ -314,8 +317,11 @@ describe('DmDashboard', () => {
   it('renders Party Stash summary with currency + item count', () => {
     seedTwoCharState();
     render(
-      <MemoryRouter>
-        <DmDashboard />
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
+        <Routes>
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character page</div>} />
+        </Routes>
       </MemoryRouter>,
     );
     const partyStashCard = screen.getByRole('region', { name: /party stash/i });
@@ -327,8 +333,11 @@ describe('DmDashboard', () => {
   it('renders Recovered Loot summary with currency + item count', () => {
     seedTwoCharState();
     render(
-      <MemoryRouter>
-        <DmDashboard />
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
+        <Routes>
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character page</div>} />
+        </Routes>
       </MemoryRouter>,
     );
     const recoveredCard = screen.getByRole('region', { name: /recovered loot/i });
@@ -339,8 +348,11 @@ describe('DmDashboard', () => {
   it('renders total party gold summing character Inventories + pools', () => {
     seedTwoCharState();
     render(
-      <MemoryRouter>
-        <DmDashboard />
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
+        <Routes>
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character page</div>} />
+        </Routes>
       </MemoryRouter>,
     );
     // 10 (Alice) + 5 (Bob) + 20 (party) + 3 (loot) = 38 gp
@@ -352,10 +364,10 @@ describe('DmDashboard', () => {
     seedTwoCharState();
     const { default: userEvent } = await import('@testing-library/user-event');
     render(
-      <MemoryRouter initialEntries={['/dm']}>
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
         <Routes>
-          <Route path="dm" element={<DmDashboard />} />
-          <Route path="character/:id" element={<div>character sheet page</div>} />
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character sheet page</div>} />
         </Routes>
       </MemoryRouter>,
     );
@@ -398,8 +410,11 @@ describe('DmDashboard', () => {
       log: [],
     });
     render(
-      <MemoryRouter>
-        <DmDashboard />
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
+        <Routes>
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character page</div>} />
+        </Routes>
       </MemoryRouter>,
     );
     const total = screen.getByRole('region', { name: /total party gold/i });

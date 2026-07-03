@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { isServerMode } from '@/lib/serverMode';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
+import { useCurrentPartyIdOrNull } from '@/lib/useCurrentPartyId';
 import { useSession } from '@/store/session';
 import { useStore } from '@/store';
 
@@ -24,6 +25,10 @@ import { useStore } from '@/store';
 export function RootLayout(): ReactElement {
   const navigate = useNavigate();
   const session = useSession((s) => s);
+  // RH4.1 — URL-scoped `partyId` for party-scoped nav items. Null when
+  // the current route is not inside `/party/:partyId/*` (i.e. `/hub`,
+  // `/settings`, `/login/*`).
+  const partyId = useCurrentPartyIdOrNull();
   // R4.1-followup — show the Party nav button whenever an AppState is
   // loaded (i.e. the user is "inside" a party). Subscribe via
   // `useShallow` on a boolean so the header doesn't re-render on every
@@ -50,23 +55,25 @@ export function RootLayout(): ReactElement {
             D&amp;D Inventory Manager
           </button>
           <nav className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                void navigate('/catalog');
-              }}
-              aria-label="Catalog"
-            >
-              <BookOpen className="h-4 w-4" />
-              <span className="sr-only sm:not-sr-only">Catalog</span>
-            </Button>
-            {hasParty ? (
+            {partyId !== null ? (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  void navigate('/party/settings');
+                  void navigate(`/party/${partyId}/catalog`);
+                }}
+                aria-label="Catalog"
+              >
+                <BookOpen className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only">Catalog</span>
+              </Button>
+            ) : null}
+            {hasParty && partyId !== null ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void navigate(`/party/${partyId}/settings`);
                 }}
                 aria-label="Party settings"
               >
@@ -74,12 +81,12 @@ export function RootLayout(): ReactElement {
                 <span className="sr-only sm:not-sr-only">Party</span>
               </Button>
             ) : null}
-            {canSeeDmDashboard ? (
+            {canSeeDmDashboard && partyId !== null ? (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  void navigate('/dm');
+                  void navigate(`/party/${partyId}/dm`);
                 }}
                 aria-label="DM Dashboard"
               >

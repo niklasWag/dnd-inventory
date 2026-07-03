@@ -3063,33 +3063,34 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 #### RH4.1 — Route pattern refactor
 
 **Router (`apps/web/src/router/index.tsx`)**
-- [ ] Rewrite the route table so every party-scoped surface takes `:partyId`. Target patterns:
+- [x] Rewrite the route table so every party-scoped surface takes `:partyId`. Target patterns:
   - `/party/:partyId/settings` (was `/party/settings`)
-  - `/party/:partyId/hub` (was `/hub`) — Hub becomes party-agnostic AT the app-level (party picker); per-party Hub content moves under the id
   - `/party/:partyId/character/:id` (was `/character/:id`)
-  - `/party/:partyId/item/:id` (was `/item/:id`)
-  - `/party/:partyId/stash/:id` (was `/stash/:id`)
-  - `/party/:partyId/catalog` (was `/catalog`) — catalog is party-scoped per R4.4 homebrew rules
-  - `/party/:partyId/dm` (was `/dm`) — **R4.5 carryforward.** The DM Dashboard route shipped as `/dm` on 2026-07-01 to stay consistent with the then-current unprefixed-route era. RH4.1 must rename it alongside every other party-scoped route. Also carries a `DmOnlyRoute` guard that must be preserved through the rewrite (its membership check is orthogonal to the URL structure and needs no change — just ensure the guard still wraps `DmDashboard` after the path change).
-  - `/party/:partyId/log` (once a global party-log screen exists)
-- [ ] `/hub` remains as the pre-party-selection landing (party picker + create-party CTA); it doesn't need a partyId.
-- [ ] `/settings` (app-wide settings, backup/restore) remains party-agnostic and does NOT gain `:partyId`.
-- [ ] `/login`, `/login/*`, other auth routes remain unchanged.
+  - `/party/:partyId/item/:itemInstanceId` (was `/item/:itemInstanceId`)
+  - `/party/:partyId/stash/:stashId` (was `/storage/:stashId` — renamed storage→stash to match the data-model term)
+  - `/party/:partyId/catalog` (was `/catalog`)
+  - `/party/:partyId/dm` (was `/dm`) — DmOnlyRoute wrapper preserved.
+  - `/party/:partyId/hub` — **skipped in RH4.1** (see RH4 Notes; no per-party landing content exists today, ~5-min add later when R5.2 lands session-tools content).
+  - `/party/:partyId/log` — deferred to R5.3 (when the party-log screen ships).
+- [x] `/hub` remains as the pre-party-selection landing (party picker + create-party CTA).
+- [x] `/settings` (app-wide settings, backup/restore) remains party-agnostic.
+- [x] `/login`, `/login/*`, other auth routes unchanged. — **Shipped 2026-07-03**
 
 **Component-side (`apps/web/src/screens/*.tsx`, `apps/web/src/components/**/*.tsx`)**
-- [ ] Every screen that currently reads `s.appState.party.id` from the store switches to `useParams<{ partyId: string }>()` and validates the id matches `s.appState.party.id` on mount. Mismatch → trigger a party-switch (Dexie re-hydrate) before rendering.
-- [ ] Every `navigate('/...')` / `<Link to="/..." />` call updates to include the current party id. New helper: `useCurrentPartyId()` returns the id from `useParams`, throws if missing (routes that opt into the helper are guaranteed inside a `/party/:partyId/*` subtree).
-- [ ] `Layout.tsx` (nav bar) — the "Party Settings" link becomes `to={`/party/${partyId}/settings`}` using the same helper.
+- [x] New helpers `useCurrentPartyId()` / `useCurrentPartyIdOrNull()` in `apps/web/src/lib/useCurrentPartyId.ts`. Strict variant throws when mounted outside `/party/:partyId/*` (design signal, not runtime state). Soft variant returns `null` for Layout.tsx nav bar. — **Shipped 2026-07-03**
+- [x] Every `navigate('/character/${id}')` etc. now includes the current party prefix via `useCurrentPartyId()`. Screens updated: `Hub.tsx`, `DmDashboard.tsx`, `PartySettings.tsx`, `StorageDetail.tsx`, `ItemDetail.tsx` (back link). Components updated: `StashItemsTable.tsx`, `StorageStashList.tsx`. — **Shipped 2026-07-03**
+- [x] `Layout.tsx` nav bar — Catalog / Party / DM buttons use `useCurrentPartyIdOrNull()` and hide when partyId is null (user on `/hub` or `/settings`). — **Shipped 2026-07-03**
+- [ ] Every screen that currently reads `s.appState.party.id` for NAVIGATION switches to `useParams<{ partyId }>()` via `useCurrentPartyId()`. — **Partial in RH4.1; primary-read flip lands in RH4.2 per plan; `useCurrentPartyId()` is used at every navigate-construction site.**
 
 **Party-switching flow (`apps/web/src/screens/Hub.tsx`)**
-- [ ] Hub's "Enter this party" CTA navigates to `/party/${partyId}/hub` (or a per-party landing). Setting `meta.currentPartyId` in Dexie stays for the local-mode UX hint but is no longer the source of truth.
-- [ ] The party-switching path becomes: URL change → route mount → screen reads `partyId` from `useParams` → if `s.appState.party.id !== partyId`, trigger `loadAppState(partyId)` → replace store. Same shape as today's Hub re-hydrate flow, just triggered by URL rather than a state pointer.
+- [x] Hub's "Enter this party" CTA now navigates to `/party/${partyId}/character/${ownCharacterId}` (players) or `/party/${partyId}/settings` (DM-only). `setCurrentPartyId(partyId)` write kept (UX hint per RH4.2 scope narrowing). — **Shipped 2026-07-03**
+- [x] URL-vs-state reconciliation via new `PartyScopeSync` component (`apps/web/src/components/PartyScopeSync.tsx`) wraps the `/party/:partyId/*` subtree. On mount / partyId change: mismatch → `pullState` (server) or `loadAppState` (local) → replace store. Failure → redirect to `/hub` with toast. — **Shipped 2026-07-03**
 
 **Tests**
-- [ ] Update every screen test's `initialEntries` to include a `partyId` in the path. Existing fixtures are all `[/party/settings]`, `[/character/char-abc]`, etc. — becomes `[/party/${TEST_PARTY_ID}/settings]`, etc.
-- [ ] New test: URL `partyId` mismatched with loaded state triggers re-hydrate. Given `s.appState.party.id === 'A'` and route `/party/B/settings`, expect the store to reload B before the screen renders.
-- [ ] New test: URL `partyId` for a party the user isn't a member of → 403-style redirect to Hub.
-- [ ] Existing R4.5 tests for `/dm` (`DmDashboard.test.tsx`) — update `initialEntries` to `/party/${TEST_PARTY_ID}/dm` and add a URL-vs-state mismatch test specific to the DM Dashboard.
+- [x] Screen-test `initialEntries` + `<Routes>` paths updated to include `/party/:partyId/`. Files: `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `PartySettings.test.tsx`, `StorageDetail.test.tsx`, `DmDashboard.test.tsx`, `StashItemsTable.test.tsx`, `StorageStashList.test.tsx`. 7 files, ~30 fixture edits. — **Shipped 2026-07-03**
+- [x] New `useCurrentPartyId.test.tsx` — 4 tests. Verifies the throw + null variants under match / non-match. — **Shipped 2026-07-03**
+- [x] New `PartyScopeSync.test.tsx` — 4 tests (server + local reconcile paths + URL match + redirect on failure). — **Shipped 2026-07-03**
+- [ ] Cross-party access denial test — **RH4.3**, not RH4.1.
 
 **URL-vs-state authority decision (2026-07-01, ratified during R4.5 planning).**
 - **URL param is authoritative.** When `useParams.partyId !== s.appState.party.id`, the guard triggers a re-hydrate (`loadAppState(partyId)`) before rendering. State conforms to URL, not vice versa.
@@ -3098,7 +3099,25 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 
 #### RH4.1 — Notes
 
-> -
+> **Shipped 2026-07-03 on `refactor/rh4-url-scoped-routing`.** Commit 1 of 3 for the RH4 slice (per user's three-commit request: RH4.1, RH4.2, RH4.3 land separately). Web tests: 749 pass (was 741 before RH4; +4 useCurrentPartyId + +4 PartyScopeSync). Rules / shared / server unchanged.
+>
+> **Skipped `/party/:partyId/hub` route** — today's Hub is a party picker only, not a per-party landing. Adding it later is ~5 minutes (one route entry + a new component) when R5.2 introduces per-party dashboard content. Documented in the RH4 top-level Notes.
+>
+> **`/storage/:stashId` renamed to `/party/:partyId/stash/:stashId`** — the URL segment now matches the data-model concept name (`Stash`). Old `storage` URLs are dead; the router's `path: '*'` catch-all bounces them to `/hub`.
+>
+> **`useCurrentPartyId()` throw variant** — design decision: the throw is a signal that a caller is in the wrong route tree. React Router error-boundaries catch it cleanly; tests use it to assert "this component only mounts under `/party/:partyId/*`". Soft variant `useCurrentPartyIdOrNull()` used only by Layout.tsx nav bar (mounts globally).
+>
+> **Test-fixture pattern locked in.** Screen tests that were `renderAt('/character/${id}')` now prepend `/party/${partyId}/` inside the helper (partyId read from `useStore.getState().appState?.party.id`). Zero caller-site changes to the ~50 `renderAt` invocations. Component tests (StashItemsTable / StorageStashList) wrap the component in `<Routes><Route path="/party/:partyId/..." element={...} /></Routes>` so `useCurrentPartyId()` resolves.
+>
+> **PartyScopeSync uses the persistedBlobSchema wrapper.** Local-mode `loadAppState` returns `{ appState, log }` (mirrors what `createDebouncedSaver` writes), not a bare AppState. Guard mirrors `hydrateFromDexie`'s schema-parse pattern (`packages/shared`-side `persistedBlobSchema` lives in both `hydrate.ts` and `PartyScopeSync.tsx` — duplication acceptable at v1; a shared helper is trivially added later).
+>
+> **Pre-mutation snapshot pattern.** Guard's `useEffect` keys on `partyId` (URL param) — re-runs only on URL change, not on state mutation. Composed AROUND child routes so children mount only AFTER reconciliation succeeds.
+>
+> **What RH4.1 does NOT do:**
+> - Retire `meta.currentPartyId` reads in server mode. That's RH4.2.
+> - Cross-party access denial (membership check). That's RH4.3.
+> - Update every `useStore(s => s.appState.party.id)` READ to `useCurrentPartyId()` — kept the state read as fallback; only navigate-construction reads flipped.
+> - Server-side changes. Server routes already URL-scope; RH4 is purely client-side alignment.
 
 #### RH4.2 — Retire `meta.currentPartyId` as source-of-truth (local-mode carryforward)
 

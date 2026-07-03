@@ -61,6 +61,14 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - **`GameSession` (RH3.1) is a D&D-gameplay session** — Prisma model, Zod schema, `AppState.gameSessions`, reducer actions `start-game-session` / `end-game-session`. **Do not confuse with the Auth.js `Session` model** (`schema.prisma:417`), which is per-browser auth state. `TransactionLog.sessionId` refers to `GameSession.id`. See `docs/OUTLINE.md` §4 naming note.
 - The MVP hard-codes some fields to placeholder values (`equipped: false`, `encumbranceRule: "off"`, `bankerUserId: null`, etc.). Do not redesign the schema to "remove" them — they're placeholders for future features.
 
+### Routing rules (RH4)
+
+- **URL is authoritative for `partyId`.** Every party-scoped screen mounts under `/party/:partyId/*`. Use `useCurrentPartyId()` from `@/lib/useCurrentPartyId` — throws if called outside the party subtree. Companion `useCurrentPartyIdOrNull()` for surfaces that mount both inside and outside (Layout.tsx nav bar only).
+- **URL-vs-state reconciliation.** `PartyScopeSync` (mounted at the `/party/:partyId/*` root) triggers a re-hydrate when the URL's partyId differs from `state.appState.party.id`. State conforms to URL, never the reverse. Failure → redirect to `/hub`.
+- **`useStore(s => s.appState.party.id)` still works** as a fallback read but is not the primary navigation source. Use `useCurrentPartyId()` when constructing navigate targets.
+- **`meta.currentPartyId` in Dexie** is a UX hint for the pre-URL landing screen (which party to show first on boot), NOT the source of truth in server mode. Only local-mode boot hydration reads it.
+- **Auth routes stay unscoped:** `/`, `/hub`, `/login`, `/login/*`, `/settings`. Do NOT add `:partyId` to these.
+
 ### Permissions / behavior rules (see `docs/OUTLINE.md` §3.14 + §8)
 
 - DM never silently edits a player's character. Every cross-character mutation goes through an explicit action that is logged.

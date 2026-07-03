@@ -40,9 +40,11 @@ beforeEach(async () => {
  * rename surfaces that local mode needs to work.
  */
 function renderPartySettings(): void {
-  const router = createMemoryRouter([{ path: '/party/settings', Component: PartySettings }], {
-    initialEntries: ['/party/settings'],
-  });
+  const partyId = useStore.getState().appState?.party.id ?? 'test-party';
+  const router = createMemoryRouter(
+    [{ path: '/party/:partyId/settings', Component: PartySettings }],
+    { initialEntries: [`/party/${partyId}/settings`] },
+  );
   render(
     <>
       <RouterProvider router={router} />

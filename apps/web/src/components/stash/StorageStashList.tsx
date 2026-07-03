@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { CreateStashModal } from './CreateStashModal';
 import { CurrencyBreakdown } from './CurrencyBreakdown';
 import { useStore } from '@/store';
@@ -40,6 +41,7 @@ interface StorageCard {
  */
 export function StorageStashList({ characterId }: StorageStashListProps): ReactElement {
   const navigate = useNavigate();
+  const partyId = useCurrentPartyId();
   const [creating, setCreating] = useState(false);
 
   const { stashes, items } = useStore(
@@ -93,7 +95,7 @@ export function StorageStashList({ characterId }: StorageStashListProps): ReactE
               <button
                 type="button"
                 onClick={() => {
-                  void navigate(`/storage/${card.id}`);
+                  void navigate(`/party/${partyId}/stash/${card.id}`);
                 }}
                 aria-label={`Open ${card.name} details`}
                 className="w-full rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-foreground/30 hover:bg-accent"

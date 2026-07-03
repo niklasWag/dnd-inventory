@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Copy, RefreshCw, UserMinus, LogOut, Coins, Crown, ArrowLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,7 @@ import type { PartyMemberItem } from '@app/shared';
  */
 export function PartySettings(): ReactElement {
   const navigate = useNavigate();
+  const urlPartyId = useCurrentPartyId();
   const partyId = useStore(useShallow((s) => (s.appState !== null ? s.appState.party.id : null)));
   const partyName = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.party.name : null)),
@@ -294,7 +296,7 @@ export function PartySettings(): ReactElement {
     const canonical = useStore.getState().appState;
     const id = getOwnCharacter(canonical)?.id;
     if (id !== undefined) {
-      void navigate(`/character/${id}`, { replace: true });
+      void navigate(`/party/${urlPartyId}/character/${id}`, { replace: true });
     }
   }
 
@@ -408,7 +410,9 @@ export function PartySettings(): ReactElement {
                       {m.characterName !== null && m.characterId !== null ? (
                         <button
                           type="button"
-                          onClick={() => void navigate(`/character/${m.characterId!}`)}
+                          onClick={() =>
+                            void navigate(`/party/${urlPartyId}/character/${m.characterId!}`)
+                          }
                           className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:underline"
                           aria-label={`Open ${m.characterName}'s character sheet`}
                         >

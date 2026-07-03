@@ -51,14 +51,25 @@ beforeEach(async () => {
  * ItemDetail is registered too so the M2.5 "row name → /item/:id"
  * navigation test can verify the destination renders.
  */
+/**
+ * RH4.1 — path arg is the pre-URL-scoping path (e.g. `/character/:id`
+ * or `/item/:itemInstanceId`). Rewritten to `/party/:partyId/...` using
+ * the currently-bootstrapped party's id. Callers stay untouched — the
+ * per-test call sites don't need to know the partyId.
+ */
 function renderAt(path: string): void {
+  const partyId = useStore.getState().appState?.party.id;
+  const prefixed =
+    partyId !== undefined && (path.startsWith('/character') || path.startsWith('/item'))
+      ? `/party/${partyId}${path}`
+      : path;
   const router = createMemoryRouter(
     [
       { path: '/', element: null },
-      { path: '/character/:id', Component: CharacterSheet },
-      { path: '/item/:itemInstanceId', Component: ItemDetail },
+      { path: '/party/:partyId/character/:id', Component: CharacterSheet },
+      { path: '/party/:partyId/item/:itemInstanceId', Component: ItemDetail },
     ],
-    { initialEntries: [path] },
+    { initialEntries: [prefixed] },
   );
   render(<RouterProvider router={router} />);
 }
@@ -325,13 +336,18 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
    * use a local renderer.
    */
   function renderWithToaster(path: string): void {
+    const partyId = useStore.getState().appState?.party.id;
+    const prefixed =
+      partyId !== undefined && (path.startsWith('/character') || path.startsWith('/item'))
+        ? `/party/${partyId}${path}`
+        : path;
     const router = createMemoryRouter(
       [
         { path: '/', element: null },
-        { path: '/character/:id', Component: CharacterSheet },
-        { path: '/item/:itemInstanceId', Component: ItemDetail },
+        { path: '/party/:partyId/character/:id', Component: CharacterSheet },
+        { path: '/party/:partyId/item/:itemInstanceId', Component: ItemDetail },
       ],
-      { initialEntries: [path] },
+      { initialEntries: [prefixed] },
     );
     render(
       <>

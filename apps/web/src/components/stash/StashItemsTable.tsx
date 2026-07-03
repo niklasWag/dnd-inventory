@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
 
+import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
+
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -67,6 +69,7 @@ interface StashItemsTableProps {
  */
 export function StashItemsTable({ stashId, characterId }: StashItemsTableProps): ReactElement {
   const navigate = useNavigate();
+  const partyId = useCurrentPartyId();
   const items = useStore(
     useShallow((s) =>
       s.appState === null ? [] : s.appState.items.filter((i) => i.ownerId === stashId),
@@ -267,7 +270,7 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
                   <button
                     type="button"
                     onClick={() => {
-                      void navigate(`/item/${row.id}`);
+                      void navigate(`/party/${partyId}/item/${row.id}`);
                     }}
                     className="text-left underline-offset-2 hover:underline focus:outline-none focus-visible:underline"
                     aria-label={`Open details for ${displayName}`}

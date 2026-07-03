@@ -31,13 +31,18 @@ beforeEach(async () => {
 });
 
 function renderAt(path: string): void {
+  const partyId = useStore.getState().appState?.party.id;
+  const prefixed =
+    partyId !== undefined && (path.startsWith('/character') || path.startsWith('/item'))
+      ? `/party/${partyId}${path}`
+      : path;
   const router = createMemoryRouter(
     [
       { path: '/', element: null },
-      { path: '/character/:id', Component: CharacterSheet },
-      { path: '/item/:itemInstanceId', Component: ItemDetail },
+      { path: '/party/:partyId/character/:id', Component: CharacterSheet },
+      { path: '/party/:partyId/item/:itemInstanceId', Component: ItemDetail },
     ],
-    { initialEntries: [path] },
+    { initialEntries: [prefixed] },
   );
   // Toaster mounted so toast.success calls land in the DOM (tests can assert).
   render(

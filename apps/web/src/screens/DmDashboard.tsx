@@ -7,6 +7,7 @@ import { currency } from '@app/rules';
 import type { Character, CurrencyHolding, ItemInstance, Stash } from '@app/shared';
 import { useStore } from '@/store';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
+import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 
 /** Stable empty-array references for the Zustand selector fallback when
  * `appState === null`. Fresh `[]` literals would defeat `useShallow`'s
@@ -47,6 +48,7 @@ export function DmOnlyRoute(): ReactElement {
  */
 export function DmDashboard(): ReactElement {
   const navigate = useNavigate();
+  const partyId = useCurrentPartyId();
   const { characters, stashes, currencies, items } = useStore(
     useShallow((s) => ({
       characters: s.appState?.characters ?? EMPTY_CHARACTERS,
@@ -153,7 +155,7 @@ export function DmDashboard(): ReactElement {
                       <button
                         type="button"
                         onClick={() => {
-                          void navigate(`/character/${character.id}`);
+                          void navigate(`/party/${partyId}/character/${character.id}`);
                         }}
                         aria-label={`Open ${character.name}`}
                         className="text-left font-medium underline-offset-2 hover:underline"

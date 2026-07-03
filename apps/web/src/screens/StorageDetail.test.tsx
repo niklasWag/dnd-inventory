@@ -43,17 +43,25 @@ function RedirectToCharacter(): ReactElement | null {
     useShallow((s) => (s.appState ? (s.appState.characters[0]?.id ?? null) : null)),
   );
   if (characterId === null) return null;
-  return <Navigate to={`/character/${characterId}`} replace />;
+  const partyId = useStore.getState().appState?.party.id;
+  if (partyId === undefined) return null;
+  return <Navigate to={`/party/${partyId}/character/${characterId}`} replace />;
 }
 
 function renderAt(path: string): void {
+  const partyId = useStore.getState().appState?.party.id;
+  const prefixed =
+    partyId !== undefined &&
+    (path.startsWith('/character') || path.startsWith('/storage') || path.startsWith('/stash'))
+      ? `/party/${partyId}${path.replace(/^\/storage/, '/stash')}`
+      : path;
   const router = createMemoryRouter(
     [
       { path: '/', Component: RedirectToCharacter },
-      { path: '/character/:id', Component: CharacterSheet },
-      { path: '/storage/:stashId', Component: StorageDetail },
+      { path: '/party/:partyId/character/:id', Component: CharacterSheet },
+      { path: '/party/:partyId/stash/:stashId', Component: StorageDetail },
     ],
-    { initialEntries: [path] },
+    { initialEntries: [prefixed] },
   );
   render(
     <>

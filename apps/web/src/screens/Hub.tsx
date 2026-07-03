@@ -190,11 +190,11 @@ export function Hub(): ReactElement {
         // Either a DM-only party (R4.1-followup), or the actor is a
         // joiner who hasn't created their character yet (R4.1.f), or
         // they're recreating after delete-character. All three land on
-        // /party/settings, which shows the "Create your character" CTA.
-        void navigate('/party/settings');
+        // /party/:partyId/settings, which shows the "Create your character" CTA.
+        void navigate(`/party/${partyId}/settings`);
         return;
       }
-      void navigate(`/character/${ownCharacterId}`);
+      void navigate(`/party/${partyId}/character/${ownCharacterId}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'unauthenticated') {
         void navigate('/login', { replace: true });
@@ -243,12 +243,12 @@ export function Hub(): ReactElement {
       });
       const id = getOwnCharacter(useStore.getState().appState)?.id;
       if (id !== undefined) {
-        void navigate(`/character/${id}`);
+        void navigate(`/party/${partyId}/character/${id}`);
         return;
       }
       // R4.1-followup — DM-only local party (no characters). Route to
       // the party-management screen instead of leaving the user on Hub.
-      void navigate('/party/settings');
+      void navigate(`/party/${partyId}/settings`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not open this party.');
     } finally {
@@ -316,8 +316,8 @@ export function Hub(): ReactElement {
     // id would land on /character/<unknown-id>.
     const canonical = useStore.getState().appState;
     const id = getOwnCharacter(canonical)?.id;
-    if (id !== undefined) {
-      void navigate(`/character/${id}`, { replace: true });
+    if (id !== undefined && canonical !== null) {
+      void navigate(`/party/${canonical.party.id}/character/${id}`, { replace: true });
     }
   }
 
@@ -361,7 +361,10 @@ export function Hub(): ReactElement {
     // No character → route to party settings. The DM can manage members
     // + invite code there, or use a future "add my character" affordance
     // once the create-character-in-existing-party path lands.
-    void navigate('/party/settings', { replace: true });
+    const partyIdAfterFlush = useStore.getState().appState?.party.id;
+    if (partyIdAfterFlush !== undefined) {
+      void navigate(`/party/${partyIdAfterFlush}/settings`, { replace: true });
+    }
   }
 
   /**

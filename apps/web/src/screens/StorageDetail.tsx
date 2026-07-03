@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { ArrowLeft, Pencil, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyBreakdown } from '@/components/stash/CurrencyBreakdown';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
@@ -39,6 +40,7 @@ void _CreateStashModal; // tree-shaken; import kept to surface circular issues a
  */
 export function StorageDetail(): ReactElement {
   const { stashId } = useParams<{ stashId: string }>();
+  const partyId = useCurrentPartyId();
   const navigate = useNavigate();
 
   const view = useStore(
@@ -84,7 +86,7 @@ export function StorageDetail(): ReactElement {
         variant="ghost"
         size="sm"
         onClick={() => {
-          void navigate(`/character/${characterId}`);
+          void navigate(`/party/${partyId}/character/${characterId}`);
         }}
         className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
       >
@@ -163,7 +165,7 @@ export function StorageDetail(): ReactElement {
         stashName={stashName}
         itemCount={itemCount}
         onDeleted={() => {
-          void navigate(`/character/${characterId}`);
+          void navigate(`/party/${partyId}/character/${characterId}`);
         }}
       />
     </div>

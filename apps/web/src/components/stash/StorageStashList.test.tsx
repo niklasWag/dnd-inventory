@@ -29,17 +29,17 @@ beforeEach(async () => {
 });
 
 function renderWith(characterId: string): void {
-  // Memory router because Storage card clicks navigate to /storage/:id.
+  const partyId = useStore.getState().appState?.party.id ?? 'test-party';
   const router = createMemoryRouter(
     [
       {
-        path: '/',
+        path: '/party/:partyId/character/:id',
         Component: () => <StorageStashList characterId={characterId} />,
       },
       // Destination route — we just verify the URL changes; no real screen.
-      { path: '/storage/:stashId', element: <p>storage-detail-stub</p> },
+      { path: '/party/:partyId/stash/:stashId', element: <p>storage-detail-stub</p> },
     ],
-    { initialEntries: ['/'] },
+    { initialEntries: [`/party/${partyId}/character/${characterId}`] },
   );
   render(
     <>

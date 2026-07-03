@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 
 import { RootLayout } from '@/components/Layout';
+import { PartyScopeSync } from '@/components/PartyScopeSync';
 import { ProtectedRoute, PublicOnlyRoute } from '@/components/auth/ProtectedRoute';
 import { CharacterSheet } from '@/screens/CharacterSheet';
 import { CatalogBrowser } from '@/screens/CatalogBrowser';
@@ -16,25 +17,38 @@ import { Settings } from '@/screens/Settings';
 import { StorageDetail } from '@/screens/StorageDetail';
 
 /**
- * R3.5 — Data router. The hub becomes the universal front door (was
- * `Welcome`), and protected routes are wrapped in `<ProtectedRoute />`.
+ * RH4.1 — URL-scoped router. Every party-scoped surface now takes
+ * `:partyId` in its route pattern (`/party/:partyId/*`). The auth
+ * routes (`/login`, `/login/*`), the party-picker (`/hub`), and the
+ * app-wide settings (`/settings`) stay unscoped.
  *
- *   /                        — redirect to /hub
- *   /login                   — Login (server mode only; local → /hub)
- *   /login/email             — LoginEmail
- *   /login/email/verify      — LoginEmailVerify
- *   /login/display-name      — LoginDisplayName (post-OTP onboarding)
- *   /hub                     — Hub (universal)
- *   /character/:id           — CharacterSheet                (protected)
- *   /catalog                 — CatalogBrowser                (protected)
- *   /item/:itemInstanceId    — ItemDetail                    (protected)
- *   /storage/:stashId        — StorageDetail                 (protected)
- *   /settings                — Settings                      (protected)
- *   /dm                      — DmDashboard                   (DM-only or solo)
+ *   /                              → redirect to /hub
+ *   /login                         — Login (server mode only; local → /hub)
+ *   /login/email                   — LoginEmail
+ *   /login/email/verify            — LoginEmailVerify
+ *   /login/display-name            — LoginDisplayName (post-OTP onboarding)
+ *   /hub                           — Hub (party picker, unscoped)
+ *   /settings                      — Settings (app-wide, unscoped)
+ *   /party/:partyId/settings       — PartySettings                (protected)
+ *   /party/:partyId/character/:id  — CharacterSheet                (protected)
+ *   /party/:partyId/catalog        — CatalogBrowser                (protected)
+ *   /party/:partyId/item/:itemInstanceId — ItemDetail             (protected)
+ *   /party/:partyId/stash/:stashId — StorageDetail                (protected)
+ *   /party/:partyId/dm             — DmDashboard                  (DM-only or solo)
+ *
+ * The `PartyScopeSync` wrapper reconciles URL `:partyId` against the
+ * store's `appState.party.id` on every mount / navigation. Mismatch
+ * triggers a re-hydrate (server: `pullState`; local: `loadAppState`)
+ * before the child screen renders — URL is authoritative for `partyId`.
  *
  * In LOCAL MODE `<ProtectedRoute />` is a no-op (renders `<Outlet />`
  * unconditionally) and `<PublicOnlyRoute />` redirects to `/hub` — so
  * the Login chrome never surfaces.
+ *
+ * **RH4.3 note.** The `PartyScopeGuard` (cross-party access denial)
+ * lands as a sibling wrapper AROUND `PartyScopeSync` in RH4.3 — the
+ * membership check short-circuits before the sync guard bothers
+ * hydrating. RH4.1 ships only `PartyScopeSync`.
  */
 export const router = createBrowserRouter([
   {
@@ -69,15 +83,25 @@ export const router = createBrowserRouter([
       {
         Component: ProtectedRoute,
         children: [
-          { path: 'character/:id', Component: CharacterSheet },
-          { path: 'catalog', Component: CatalogBrowser },
-          { path: 'item/:itemInstanceId', Component: ItemDetail },
-          { path: 'storage/:stashId', Component: StorageDetail },
+          // App-wide settings (backup/restore, sign-out) — party-agnostic.
           { path: 'settings', Component: Settings },
-          { path: 'party/settings', Component: PartySettings },
+          // Party-scoped subtree. Every child has :partyId in its path
+          // and is wrapped by PartyScopeSync for URL-vs-state
+          // reconciliation.
           {
-            Component: DmOnlyRoute,
-            children: [{ path: 'dm', Component: DmDashboard }],
+            path: 'party/:partyId',
+            Component: PartyScopeSync,
+            children: [
+              { path: 'settings', Component: PartySettings },
+              { path: 'character/:id', Component: CharacterSheet },
+              { path: 'catalog', Component: CatalogBrowser },
+              { path: 'item/:itemInstanceId', Component: ItemDetail },
+              { path: 'stash/:stashId', Component: StorageDetail },
+              {
+                Component: DmOnlyRoute,
+                children: [{ path: 'dm', Component: DmDashboard }],
+              },
+            ],
           },
         ],
       },

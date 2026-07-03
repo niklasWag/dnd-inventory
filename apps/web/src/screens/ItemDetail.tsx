@@ -8,6 +8,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { ArrowLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ItemHistory } from '@/components/item/ItemHistory';
@@ -45,6 +46,7 @@ type FormOutput = z.output<typeof formSchema>;
 
 export function ItemDetail(): ReactElement {
   const { itemInstanceId } = useParams<{ itemInstanceId: string }>();
+  const partyId = useCurrentPartyId();
   const navigate = useNavigate();
 
   // Single shallow-equal selector: row, definition, stash, characterId.
@@ -123,7 +125,7 @@ export function ItemDetail(): ReactElement {
   if (view.row === null) return <Navigate to="/" replace />;
   const { row, def, stash, characterId } = view;
 
-  const backHref = characterId !== null ? `/character/${characterId}` : '/';
+  const backHref = characterId !== null ? `/party/${partyId}/character/${characterId}` : '/';
   const backLabel = stash?.name !== undefined ? `Back to ${stash.name}` : 'Back';
 
   function onSubmit(values: FormOutput): void {

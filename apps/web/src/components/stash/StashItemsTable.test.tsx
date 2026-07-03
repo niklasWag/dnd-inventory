@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { StashItemsTable } from './StashItemsTable';
 import { newUuidV7 } from '@app/shared';
@@ -47,10 +47,20 @@ function setupWith(quantity: number): { stashId: string; itemInstanceId: string 
 }
 
 function renderTable(stashId: string): void {
+  const partyId = useStore.getState().appState?.party.id ?? 'test-party';
   render(
-    <MemoryRouter>
-      <StashItemsTable stashId={stashId} />
-      <Toaster />
+    <MemoryRouter initialEntries={[`/party/${partyId}/character/test`]}>
+      <Routes>
+        <Route
+          path="/party/:partyId/character/:id"
+          element={
+            <>
+              <StashItemsTable stashId={stashId} />
+              <Toaster />
+            </>
+          }
+        />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -156,9 +166,22 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
 
   function renderInventory(stashId: string, characterId: string): void {
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={stashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={stashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
   }
@@ -423,9 +446,22 @@ describe('StashItemsTable — R1.3 container view', () => {
     });
 
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
 
@@ -599,9 +635,22 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     });
 
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
 
@@ -656,9 +705,22 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     });
 
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={inventoryStashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
 
@@ -720,9 +782,22 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     });
 
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={partyStashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={partyStashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
 
@@ -741,9 +816,22 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
    */
   function renderInventory(stashId: string, characterId: string): void {
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={stashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={stashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
   }
@@ -821,9 +909,22 @@ describe('StashItemsTable — R2.2 charges indicator', () => {
    */
   function renderInventory(stashId: string, characterId: string): void {
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={stashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={stashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
   }
@@ -872,9 +973,22 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
    */
   function renderInventory(stashId: string, characterId: string): void {
     render(
-      <MemoryRouter>
-        <StashItemsTable stashId={stashId} characterId={characterId} />
-        <Toaster />
+      <MemoryRouter
+        initialEntries={[
+          `/party/${useStore.getState().appState?.party.id ?? 'test-party'}/character/test`,
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={
+              <>
+                <StashItemsTable stashId={stashId} characterId={characterId} />
+                <Toaster />
+              </>
+            }
+          />
+        </Routes>
       </MemoryRouter>,
     );
   }
