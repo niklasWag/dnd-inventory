@@ -2810,9 +2810,24 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 #### RH2.4 — Schema metadata replaces action-type registries
 
 **Action schema (`packages/shared/src/schemas/action.ts`)**
-- [ ] Today the queue uses `ID_MINTING_ACTION_TYPES: Set<Action['type']>` to know which actions need post-flush re-pull. After RH1 that set goes away. But the pattern WILL recur: R5.1 needs "which actions trigger broadcast"; R5.3 needs "which actions affect history visibility"; future slices will add more. Each registry is a drift-risk.
-- [ ] Replace registries with **schema metadata**. Each Zod action schema carries a metadata object: `{ broadcastOnApplied: true, affectsHistory: true, ... }`. Consumers iterate the metadata at runtime rather than maintaining a separate Set.
-- [ ] Document the pattern in `CLAUDE.md` "Code conventions": "no constant-set registry of action types; per-action concerns live as schema metadata."
+- [x] Today the queue uses `ID_MINTING_ACTION_TYPES: Set<Action['type']>` to know which actions need post-flush re-pull. After RH1 that set goes away. But the pattern WILL recur: R5.1 needs "which actions trigger broadcast"; R5.3 needs "which actions affect history visibility"; future slices will add more. Each registry is a drift-risk. **Shipped 2026-07-03** — `ID_MINTING_ACTION_TYPES` was already deleted by RH1.3 (`docs/roadmap.md:2657`), so this slice is **preventive not corrective**: the pattern is established before R5.1 / R5.3 land, so those slices don't have to introduce (and later migrate away from) a Set-shaped registry. See RH2.4 — Notes.
+- [x] Replace registries with **schema metadata**. Each Zod action schema carries a metadata object: `{ broadcastOnApplied: true, affectsHistory: true, ... }`. Consumers iterate the metadata at runtime rather than maintaining a separate Set. **Shipped 2026-07-03** as `packages/shared/src/schemas/actionMetadata.ts` — uses Zod v4's native `z.registry<ActionMetadata>()` API for schema→metadata lookup, backed by a compile-time-exhaustive `Record<Action['type'], ActionMetadata>` that TS enforces stays in sync with the discriminatedUnion. Populated with one representative field (`broadcastOnApplied`) — every user-dispatched variant is `true`, `seed-catalog` is `false`. Additional fields (`affectsHistory`, etc.) land in their consuming slice.
+- [x] Document the pattern in `CLAUDE.md` "Code conventions": "no constant-set registry of action types; per-action concerns live as schema metadata." **Shipped 2026-07-03** — added under `### Code conventions` (`CLAUDE.md:50`), with explicit pointer to `actionMetadata.ts` + the `actionMetadata.test.ts` exhaustiveness guardrail.
+
+#### RH2.4 — Notes
+
+> **2026-07-03 — RH2.4 shipped.**
+>
+> **Preventive, not corrective.** The concrete registry the pre-RH2 audit cited (`ID_MINTING_ACTION_TYPES`) was deleted by RH1.3 before RH2.4 landed. So this slice migrates zero existing code — the payoff is that R5.1 (websocket broadcast decision path) and R5.3 (history-view visibility filter) will consume `getActionMetadata(type).broadcastOnApplied` / `affectsHistory` instead of introducing their own Sets. Landing the pattern now, ahead of R5, means those slices are additive-only edits to `actionMetadata.ts` rather than "introduce Set, then migrate Set to registry".
+>
+> **Two indexes, one source of truth.** `metadataByType: Record<Action['type'], ActionMetadata>` is the compile-time-exhaustive source; TS demands every discriminatedUnion variant have a key. The `z.registry<ActionMetadata>()` is populated FROM the Record at module load by iterating `actionSchema.options` and keying by `variant.shape.type.value`. Consumers pick whichever index is ergonomic — `getActionMetadata(type)` for string-literal callers (typical), `actionMetadataRegistry.get(schema)` for tooling that already holds a schema reference (e.g. future JSON-Schema generation).
+>
+> **Exhaustiveness is enforced twice.** The `Record` type catches missing keys at `tsc` time — the common case. `actionMetadata.test.ts` iterates `actionSchema.options` at runtime and asserts every variant has a registered entry — defence in depth for cases where a Zod variant is added but the imports on `actionMetadata.ts` are stale and the compile-time check silently doesn't fire (e.g. import-cycle-induced type widening). Mutation-checked by removing a variant from the population loop: test fails naming the missing type.
+>
+> **Not migrated.** `deriveActorRoleForSlice`'s per-variant `switch` (`packages/shared/src/guards/actor.ts:68`) and the guard `map.ts` per-action function map are ALSO one-entry-per-action structures, but both are TypeScript-enforced exhaustive (discriminated-union switch + typed guard-function generic). Neither is a `Set<Action['type']>` drift risk. Left alone — RH2.4 is scoped to replacing constant-set registries, not to unifying all per-action data structures.
+>
+> **Zod v4 registry API.** Uses `z.registry<Meta>()` from Zod v4's core registries module. First-class typed WeakMap-backed schema→metadata index. Not documented on Zod's landing page but well-tested (used internally by `z.toJSONSchema()`); saw the type in `node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/core/registries.d.ts`. No hand-rolled `Map<ZodSchema, Meta>` needed.
+
 
 #### RH2.5 — DB-level invariant constraints (Postgres migration)
 
