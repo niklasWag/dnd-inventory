@@ -24,7 +24,7 @@ import type {
   ExportEnvelope,
   TransactionLogEntry,
 } from '@app/shared';
-import { checkGuard, exportEnvelopeSchema } from '@app/shared';
+import { checkGuard, exportEnvelopeSchema, getActionMetadata } from '@app/shared';
 import {
   generateInviteCode,
   reduce,
@@ -288,12 +288,20 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     };
 
     try {
-      const applied = await prisma.$transaction(
+      const { applied, broadcastPlan } = await prisma.$transaction(
         async (tx) => {
           // Loaded state for guard + reducer evaluation. The bootstrap
           // create-character case starts from null state.
           let state = isBootstrap ? null : await loadAppStateForUser(tx, su.user.id, partyId);
           const out: TransactionLogEntry[] = [];
+          // R5.1.a — collect { action, slices } pairs so that after the
+          // transaction commits, we can broadcast each broadcast-eligible
+          // action's slices verbatim to the party's socket.io room. Kept
+          // inside the tx callback so we're guaranteed to observe the
+          // exact slices that got persisted; kept OUTSIDE the broadcast
+          // itself (fired below, post-commit) so a broadcast failure
+          // can't roll back the DB write.
+          const plan: Array<{ action: SchemaAction; slices: TransactionLogEntry[] }> = [];
 
           for (let i = 0; i < actions.length; i++) {
             const schemaAction = actions[i]!;
@@ -366,6 +374,7 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
             // rejection (which would be a BatchRejected → 422).
             const preLen = out.length;
             const expectedCountDelta = reduced.logEntries.length;
+            const perActionSlices: TransactionLogEntry[] = [];
             for (const slice of reduced.logEntries) {
               // RH2.1a — pass the pre-reduce state so the shared
               // `deriveActorRoleForSlice` can compute the correct
@@ -375,6 +384,7 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
               const entry = buildLogEntryServer(slice, actor, ctx, state);
               await appendTransactionLog(tx, entry);
               out.push(entry);
+              perActionSlices.push(entry);
             }
             if (out.length - preLen !== expectedCountDelta) {
               throw new Error(
@@ -383,12 +393,33 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
               );
             }
 
+            // R5.1.a — record the { action, slices } pair for post-
+            // commit broadcast. The metadata filter runs OUTSIDE the
+            // tx so it can't influence tx commit semantics.
+            if (perActionSlices.length > 0) {
+              plan.push({ action: schemaAction, slices: perActionSlices });
+            }
+
             state = reduced.state;
           }
-          return out;
+          return { applied: out, broadcastPlan: plan };
         },
         { timeout: 30_000 },
       );
+
+      // R5.1.a — broadcast each broadcast-eligible { action, slices }
+      // to the party's socket.io room. Fire-and-forget: the DB write
+      // already committed; a broadcast failure logs but must not
+      // impact the HTTP response. The metadata filter lives here (not
+      // inside the tx) so that the filter can be updated without a
+      // migration and so that a schema-metadata bug can't corrupt DB
+      // state. `broadcastApplied` internally swallows emit errors.
+      const canonicalPartyId = actor.partyId;
+      for (const { action, slices } of broadcastPlan) {
+        if (getActionMetadata(action.type).broadcastOnApplied) {
+          app.broadcastApplied(canonicalPartyId, action, slices);
+        }
+      }
 
       return reply.code(200).send({ applied, serverTime: new Date().toISOString() });
     } catch (e) {

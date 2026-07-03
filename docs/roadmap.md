@@ -3330,17 +3330,59 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 #### R5.1 — Websocket sync + reconnect
 
+> **Restructured into four sub-slices 2026-07-03** during R5.1.a implementation planning. Sub-slice split: server plumbing → client consumer → outbox+retry+replay → offline write-block. See R5.1 Notes for the full commit-strategy rationale.
+
+##### R5.1.a — Server-side Socket.IO plumbing + broadcast
+
+- [x] Socket.IO server dependency added + attached to Fastify's HTTP server on `/socket.io`.
+- [x] Auth middleware reuses the session cookie via existing `getSession()`; unauthenticated + `needsDisplayName` upgrades rejected. Cookie parsed from raw upgrade header via `cookie.parseCookie` (Fastify's decoration doesn't propagate to socket upgrades).
+- [x] Auto-join: on connect, `io.use()` reads every active + non-archived `PartyMembership` for the user and joins `party:<partyId>` for each — matches SECURITY §6 ("subscriptions derived server-side, clients never name the room").
+- [x] `broadcastApplied(partyId, action, applied)` exported; decorated on `FastifyInstance` so `POST /sync/actions` can call it.
+- [x] `POST /sync/actions` broadcasts each broadcast-eligible `{action, slices}` after the transaction commits. Filter uses `getActionMetadata(type).broadcastOnApplied`; broadcast is fire-and-forget outside the tx (DB write is authoritative; emit failures log + swallow).
+- [x] `apps/server/src/realtime/io.test.ts` — 4 integration tests: unauthenticated rejection, `needsDisplayName` rejection, auto-join + broadcast delivery (via observable `applied` event), broadcast isolation (non-member receives nothing).
+
+##### R5.1.b — Client socket consumer + inbound reconciliation
+
 - [ ] Websocket party-room subscription (server pushes action diffs)
 - [ ] Optimistic UI: web applies action locally, reconciles on server ack
 - [ ] Conflict resolution policy documented and implemented (server is authoritative)
+
+##### R5.1.c — Outbox + retry + reconnect replay
+
 - [ ] Reconnect flow replays missed events
-- [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
 - [ ] **Offline-first Dexie cache for solo parties** — **carryforward from R3.5**. Today the web sync queue keeps optimistic state on a network error but drops the batch; solo parties should survive a full offline session by replaying the queue when connectivity returns. (Source: R3.5 Notes.)
 - [ ] **Sync queue retry semantics** — R3.5 surfaces a transient toast on network errors and drops the batch. R5 should add bounded retry with exponential backoff and an "outbox" persisted to Dexie so a tab close doesn't lose work. Inline pointer: `apps/web/src/sync/queue.ts:22, 192`. **Carryforward from R3.5.**
 
+##### R5.1.d — Offline write-block + auto-resume
+
+- [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
+
 #### R5.1 — Notes
 
-> -
+> **Sub-sliced 2026-07-03 into R5.1.a/b/c/d** to match the RH4/RH5 slicing pattern (one atomic commit per surface). Rationale: R5.1's original flat checklist packed server plumbing, client consumption, retry/outbox machinery, and offline UX into one slice — too large for a reviewable diff and too big to bisect. Each sub-slice ships green (typecheck + all workspace tests + prettier clean) as a self-contained commit; R5.1.b depends on R5.1.a's payload contract, R5.1.c depends on R5.1.b's socket handle, R5.1.d depends on R5.1.c's outbox.
+>
+> **Design decisions locked with user 2026-07-03:**
+>   - **Broadcast payload shape:** `{ partyId, action, applied }`. Receivers re-run the reducer against `action` for state mutation, then discard reducer log entries and append server's `applied[]` (RH2.6 log-authority pattern). Deterministic per RH2.
+>   - **Reconnect replay:** new `GET /sync/log?partyId=&sinceLogId=` endpoint (added in R5.1.c). Cheap indexed query, bounded response, precise resume.
+>   - **Outbox:** new Dexie `outbox` table on schema v2. Rows keyed by `partyId + createdAt`; carry `attemptCount + lastAttemptAt`.
+>   - **Retry backoff:** exponential w/ ±25% jitter, 5 attempts (500ms → 8s ceiling). After 5th failure, batch stays in outbox and drains on next `socket.on('connect')`.
+>   - **Write-block:** centralized `useStore.getState().canDispatch()` returns `false` when `(isServerMode && !online && memberCount >= 2)`. Solo (memberCount === 1) stays writable + queues to outbox.
+>   - **Socket auth:** reuse the session cookie via `io.use()` middleware calling the existing `getSession()`. SECURITY §6 alignment.
+>   - **Room subscription:** auto-join every active `PartyMembership` on connect; client never names the room.
+
+##### R5.1.a — Notes
+
+> **Shipped 2026-07-03.** Server suite 197 → 201 (+4 integration tests in `apps/server/src/realtime/io.test.ts`). No web-side changes. Real HTTP `app.listen({ port: 0 })` used per test because Socket.IO's upgrade handshake bypasses `app.inject()`.
+>
+> **Broadcast payload extended to `{ partyId, action, applied }`** (from the naive `{ partyId, applied }` in the plan sketch): receivers need the source action to re-run the reducer for state mutation. RH2.6's `applied[]` remains authoritative for the log.
+>
+> **Cookie parsing:** `@fastify/cookie` decorates `req.cookies` only for HTTP requests routed through Fastify's handler pipeline. The Socket.IO upgrade sidesteps that pipeline, so `io.use()` parses the raw `Cookie` header via `cookie@2.x`'s `parseCookie` export (the package renamed its API in v2 — `cookie.parse()` became a named `parseCookie` export). The parsed cookies feed a minimal `FastifyRequest`-shaped shim that carries only `{ cookies }` — `getSession` reads no other request fields.
+>
+> **Broadcast is fire-and-forget outside the transaction.** The plan initially considered emitting inside the `$transaction` callback so a broadcast failure could roll back the DB write, but that inverts the durability contract: the log entry is committed and (via R5.1.c's reconnect replay) will eventually reach every party member via `GET /sync/log?sinceLogId=`. A missed live broadcast is just eventual consistency, not a correctness bug. Emit errors log via `app.log.error` and swallow.
+>
+> **Server-side room-membership assertion via observable effect.** The auto-join test doesn't inspect `io.sockets.adapter.rooms` directly (which would leak an implementation detail into the test); instead it dispatches a broadcast-eligible action and asserts the connected client receives the `applied` event. Stronger evidence + more resilient to Socket.IO internals changes.
+>
+> **`ClientToServerEvents = Record<string, never>` (empty)** — SECURITY §6 mandates broadcast-only. Kept as an explicit empty interface so a future contributor considering adding a client → server event sees the constraint before wiring it up.
 
 #### R5.2 — Sessions entity + log tagging
 
