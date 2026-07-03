@@ -1696,7 +1696,7 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 - [x] **Web reducer runs optimistically against local Dexie state; server response (`200 applied[]` or `422 rejected`) either confirms or rolls back** — carryforward from R3.4.a (the server endpoints + the `applied[]`/`rejected` response shapes locked in R3.4.a; this slice is the client integration that consumes them). Rollback uses **snapshot-before-flush** (single pre-batch snapshot is restored wholesale on 422) rather than per-applied index — simpler and correct by construction for the multi-slice cascades (`delete-stash`, currency-transfer).
 - [x] Web reconciles server events back into the store (bootstrap pull-after-push canonicalises ids; subsequent mutations rely on the server's `applied[]` log entries)
 - [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9) — **deferred to R5 along with the WebSocket reconnect work**. R3.5 assumes online in server mode; Dexie remains a survival cache for the active party only.
-- [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
+- [x] Offline banner reserved for multi-member mode (R4 will gate behavior) — **shipped in R4.4.d** (`apps/web/src/components/OfflineBanner.tsx`). Gated on server mode + `navigator.onLine === false` + `memberCount >= 2` per OUTLINE §9; solo parties excluded by design. Write-blocking still deferred to M5's realtime layer.
 - [x] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
 - [x] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
 - [x] **Discord-link `?link=1` callback handling** — carryforward from R3.3. R3.5 ships a route-layer OAuth code-exchange path (NOT via Auth.js) so the link flow keeps the existing session cookie + attaches `discordId`/`avatarUrl` to the live User row. Conflict on snowflake already linked elsewhere → `302 ${WEB_ORIGIN}/settings?linkError=discord_already_linked`. The handshake uses a new `PendingDiscordLink(token, userId, expires)` table for the state nonce + an HMAC-signed OAuth `state` parameter.
@@ -2756,9 +2756,30 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 #### RH2.2 — Reducer determinism: stable iteration in cascades
 
 **Reducer (`packages/rules/src/reducer/index.ts`)**
-- [ ] Audit every cascade arm that iterates `state.items` / `state.stashes` to emit log slices: `delete-stash`, `delete-character`, `leave-party`, `kick-player`, `transfer` (container-with-contents). Each must sort by stable key (typically `id`) BEFORE emitting slices.
-- [ ] One-liner per call site: `const sortedItems = [...s.items].sort((a, b) => a.id.localeCompare(b.id));`. Apply to ~6 sites.
-- [ ] Property-based test in `packages/rules/src/reducer/`: given the same state in two random insertion orders, the cascade emits identical log slice sequences (modulo `ctx.newId` outputs, which RH1 makes deterministic anyway).
+- [x] Audit every cascade arm that iterates `state.items` / `state.stashes` to emit log slices: `delete-stash`, `delete-character`, `leave-party`, `kick-player`, `transfer` (container-with-contents). Each must sort by stable key (typically `id`) BEFORE emitting slices. **Shipped 2026-07-03** — the 5 listed arms feed 2 helpers (`deleteStash` at `~1195`; `cascadeCharacterToRecoveredLoot` at `~2944`, shared by `delete-character` / `leave-party` / `kick-player`). The `transfer` container-with-contents case emits a single log slice per dispatch (the parent's) — child rows relocate silently through `s.items.map` indexed by an id-set, so log-slice fan-out isn't order-sensitive there.
+- [x] One-liner per call site: `const sortedItems = [...s.items].sort((a, b) => a.id.localeCompare(b.id));`. Apply to ~6 sites. **Shipped 2026-07-03** — 2 sites in practice (`index.ts:1195`, `index.ts:2944`), both inlined into the existing `.filter` chain rather than introducing a fresh binding. The "~6" count in the sketch conflated action arms with source-code iteration points; see Notes below.
+- [x] Property-based test in `packages/rules/src/reducer/`: given the same state in two random insertion orders, the cascade emits identical log slice sequences (modulo `ctx.newId` outputs, which RH1 makes deterministic anyway). **Shipped 2026-07-03** as `packages/rules/src/reducer/determinism.test.ts` — 3 property tests using `fast-check@^4.8.0` shuffling `s.items` across 50 permutations per case; covers `delete-stash` transfer-slice order, `delete-character` transfer-slice order (which also exercises `leave-party` + `kick-player` via the shared cascade helper), and post-cascade state-shape invariance.
+
+#### RH2.2 — Notes
+
+> **2026-07-03 — RH2.2 shipped.**
+>
+> **Site-count discrepancy: "~6 arms → 2 helpers".** The audit surfaced 5 cascade arms feeding log slice fan-out (`delete-stash`, `delete-character`, `leave-party`, `kick-player`, `transfer`) — the "~6" figure in the pre-ship sketch counted these action arms rather than unique iteration points in the reducer source. In practice:
+> - `delete-stash` has its own filter+emit at `index.ts:~1195`.
+> - `delete-character`, `leave-party`, `kick-player` all delegate to `cascadeCharacterToRecoveredLoot` at `index.ts:~2944` (single filter+emit, three consumers).
+> - `transfer` container-with-contents is a red herring for RH2.2's specific concern: it emits ONE `transfer` log slice per dispatch (the parent's). Child rows relocate silently through `s.items.map` indexed by a `Set<childId>`; `Array.prototype.map` preserves input order deterministically, so state mutation order is already stable. No fix needed there.
+>
+> So the mechanical change is 2 sort-insertions, not 6.
+>
+> **Sort placement: inline in the `.filter` chain.** Both helpers already had a `s.items.filter(...)` line; the fix appends `.sort((a, b) => a.id.localeCompare(b.id))` to the same chain. `Array.prototype.filter` returns a new array (safe to mutate in place with `.sort`), and downstream reads (`itemCount` reduce, state-mutation `s.items.map` at other sites) are order-independent, so no additional local copies were needed.
+>
+> **Supply-chain gate for `fast-check`.** Added as `packages/rules` devDependency at `^4.8.0`. Per user direction, relied on the existing `.npmrc:1 min-release-age=7` policy rather than pinning a specific SHA — pnpm refuses to resolve any release younger than 7 days, so a fresh-publish compromise (typosquat, hijacked maintainer) can't slip in. Lockfile pinned `fast-check@4.8.0` at install time. Supply-chain check: `Lockfile passes supply-chain policies` — pnpm 11.8.0.
+>
+> **What RH2.2 does NOT fix.** Two things are worth calling out for the RH chain readers:
+> - Iteration order over `state.stashes`, `state.currencies`, `state.memberships`, `state.characters` — none of the fixed cascades fan out log slices from those, so they weren't in scope. If a future cascade emits N slices by iterating one of them, RH2.2's pattern applies again at that new site.
+> - The single-`transfer`-slice-per-dispatch guarantee. If a future refactor splits the parent + child transfer into N slices (e.g. one per relocated row), that new emit needs a sort too. Left un-guarded because no such refactor is on the roadmap.
+>
+> **Test verification: mutation-check.** During implementation, each sort was independently reverted to confirm the corresponding property test fails with a clean `fast-check` counterexample (shuffled `s.items` array → emitted slice sequence != sorted reference). Both sorts restored before final commit; test suite is 129/129 in `packages/rules`.
 
 #### RH2.3 — Multi-tab queue race + `applied[]` count validation
 
