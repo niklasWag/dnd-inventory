@@ -52,7 +52,6 @@ function fakeDeps(partyId: string): {
       restoreSnapshot: () => {
         // The multi-tab test never triggers a rollback path.
       },
-      getActivePartyId: () => Promise.resolve(partyId),
     },
   };
 }
@@ -77,14 +76,20 @@ describe('queue — RH2.3 multi-tab lock coordination', () => {
     // Instance A — first tab.
     const queueA = await loadQueue();
     queueA.configureQueue(fakeDeps('party-1').deps);
-    queueA.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queueA.enqueue>[0]);
+    queueA.enqueue(
+      { type: 'acquire' } as unknown as Parameters<typeof queueA.enqueue>[0],
+      'party-1',
+    );
 
     // Instance B — second tab. `vi.resetModules()` in `loadQueue()`
     // gives us a fresh module-scope, so `queueB` is a distinct queue
     // with its own `inflight` pointer.
     const queueB = await loadQueue();
     queueB.configureQueue(fakeDeps('party-1').deps);
-    queueB.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queueB.enqueue>[0]);
+    queueB.enqueue(
+      { type: 'acquire' } as unknown as Parameters<typeof queueB.enqueue>[0],
+      'party-1',
+    );
 
     // Race both flushes.
     await Promise.all([queueA.flush(), queueB.flush()]);

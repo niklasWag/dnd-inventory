@@ -1,15 +1,28 @@
 import { db } from '@/db/schema';
 
 /**
- * R3.5 — Active-party pointer.
+ * R3.5 / RH4.2 — Active-party pointer (UX hint, NOT source of truth).
  *
- * In server mode the web boots, hydrates the session, and then re-pulls
- * `AppState` for the **last active party**. We persist that pointer in
- * Dexie's `meta` store (NOT `localStorage`; CLAUDE.md forbids it) under
- * the key `currentPartyId`.
+ * Persisted in Dexie's `meta` store (NOT `localStorage`; CLAUDE.md
+ * forbids it) under the key `currentPartyId`. The pointer's role
+ * shrank in RH4.2 to a boot-landing hint: which party should the
+ * pre-URL landing show first on cold start?
  *
- * The pointer is set after a successful bootstrap (`create-character`)
- * or a manual party selection on the Hub. It's cleared on signout.
+ * **Where it's used**:
+ *   - `apps/web/src/store/hydrate.ts` (local-mode boot) — reads the
+ *     pointer to decide which Dexie blob to hydrate from. Server-mode
+ *     boot does NOT read this (URL is authoritative — PartyScopeSync
+ *     handles per-route hydration).
+ *   - `apps/web/src/screens/Hub.tsx` — sets the pointer when the user
+ *     enters a party (so the next boot lands on the same party).
+ *
+ * **Where it is NOT used**:
+ *   - The sync queue's flush path (RH4.2 threads partyId explicitly on
+ *     enqueue instead — see `apps/web/src/sync/queue.ts`).
+ *   - Screen-level partyId reads (use `useCurrentPartyId()` from
+ *     `@/lib/useCurrentPartyId` — URL is authoritative).
+ *   - The server-mode boot in `main.tsx` (retired in RH4.2; the URL
+ *     handles per-route loading via PartyScopeSync).
  *
  * Reading a missing key returns `null` so callers can write
  * `const id = await getCurrentPartyId()` and branch directly.

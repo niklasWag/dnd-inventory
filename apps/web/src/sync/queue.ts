@@ -30,7 +30,6 @@
 import { toast } from 'sonner';
 
 import { ApiError } from '@/lib/api';
-import { getCurrentPartyId } from '@/db/meta';
 import { useSession } from '@/store/session';
 import type { Action, AppState, TransactionLogEntry } from '@/store/types';
 
@@ -57,15 +56,6 @@ export interface QueueDeps {
    */
   restoreSnapshot: (snapshot: PendingFlushSnapshot) => void;
   /**
-   * After a server response, get the active party id (or `null` if
-   * not yet known — bootstrap case). Post-RH1.3 the client mints the
-   * partyId itself (`newPartyId` in the create-character payload) and
-   * the caller stamps it via `setCurrentPartyId` BEFORE flushing, so
-   * every batch — including bootstrap — sends a real, client-minted
-   * party id.
-   */
-  getActivePartyId: () => Promise<string | null>;
-  /**
    * RH2.6 — post-flush hook. After `POST /sync/actions` returns
    * `applied[]`, the queue passes the array to this dep so the store
    * can append the server-emitted log entries to `state.log`. In
@@ -79,7 +69,7 @@ export interface QueueDeps {
   appendServerLogEntries?: (applied: readonly TransactionLogEntry[]) => void;
 }
 
-let queue: Action[] = [];
+let queue: { action: Action; partyId: string }[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
 let inflight: Promise<void> | null = null;
 let preBatchSnapshot: PendingFlushSnapshot | null = null;
@@ -131,8 +121,16 @@ export function captureRollbackSnapshot(): void {
  * forgets), fall back to the post-mutation snapshot from
  * `deps.getSnapshot()` — same behaviour as pre-fix but with the caveat
  * that rollback restores the mutated state.
+ *
+ * RH4.2 — `partyId` is now passed explicitly per enqueue. Previously
+ * the queue asked its `getActivePartyId` dep at flush time, which
+ * round-tripped through Dexie's `meta.currentPartyId`. Post-RH4.2 the
+ * URL is authoritative for partyId; the dispatcher reads
+ * `state.appState.party.id` (kept URL-synced by PartyScopeSync) at
+ * dispatch time and threads it here. Zero Dexie meta reads on the
+ * flush path in server mode.
  */
-export function enqueue(action: Action): void {
+export function enqueue(action: Action, partyId: string): void {
   if (deps === null) {
     throw new Error('queue.enqueue: configureQueue was never called');
   }
@@ -153,7 +151,7 @@ export function enqueue(action: Action): void {
     // helper.
     preBatchSnapshot = deps.getSnapshot();
   }
-  queue.push(action);
+  queue.push({ action, partyId });
   scheduleFlush();
 }
 
@@ -208,20 +206,26 @@ export async function flush(): Promise<void> {
       // Widely Available since March 2022 (all 4 major browsers). The
       // test env uses the FIFO shim in `apps/web/src/test/setup.ts`.
       try {
-        // RH1.3 — the client mints all entity ids (including `newPartyId`
-        // for bootstrap) via `injectMintedIds` in the store; the caller
-        // (Hub.tsx) stamps it into Dexie meta via `setCurrentPartyId`
-        // BEFORE calling `flush()`. So `getActivePartyId()` always
-        // returns a real, client-minted partyId — bootstrap and post-
-        // bootstrap look identical to the queue.
-        const partyId = await d.getActivePartyId();
-        if (partyId === null) {
-          toast.error('No active party — refresh and try again.');
-          if (snapshot !== null) d.restoreSnapshot(snapshot);
-          return;
+        // RH4.2 — partyId comes from the enqueue call site (dispatcher
+        // reads it from `state.appState.party.id`, which PartyScopeSync
+        // keeps URL-synced). No Dexie meta round-trip. Every entry in
+        // the batch carries its own partyId; splitting the batch by
+        // party is unlikely in practice (each URL identifies one party)
+        // but the queue defends against it — we flush all entries that
+        // share the first entry's partyId and leave the rest for the
+        // next tick.
+        const first = batch[0];
+        if (first === undefined) return; // defensive; length checked above
+        const partyId = first.partyId;
+        const sameParty = batch.filter((b) => b.partyId === partyId);
+        const otherParty = batch.filter((b) => b.partyId !== partyId);
+        if (otherParty.length > 0) {
+          // Requeue at the head; the next flush handles them.
+          queue.unshift(...otherParty);
         }
+        const actions = sameParty.map((b) => b.action);
 
-        await pushActions(partyId, batch).then((response) => {
+        await pushActions(partyId, actions).then((response) => {
           // RH2.6 — server-authoritative log-authority in server mode.
           // The server's `applied[]` echo is the sole source of truth
           // for TransactionLog contents; the store's dispatch
@@ -296,6 +300,3 @@ export function attachUnloadFlush(): void {
     void flush();
   });
 }
-
-// Re-export getCurrentPartyId so callers don't need a second import.
-export { getCurrentPartyId };

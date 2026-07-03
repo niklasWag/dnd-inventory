@@ -35,7 +35,6 @@ function fakeDeps(initial: FakeSnapshot): {
         const cast = s as unknown as FakeSnapshot;
         snap = cast;
       },
-      getActivePartyId: () => Promise.resolve(snap.appState?.party.id ?? null),
     },
     current: () => snap,
   };
@@ -54,7 +53,7 @@ describe('queue — happy path', () => {
       }),
     );
 
-    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-1');
     await queue.flush();
 
     expect(calls).toHaveLength(1);
@@ -88,7 +87,7 @@ describe('queue — 401 clears session', () => {
       http.post(`${TEST_SERVER_ORIGIN}/auth/signout`, () => HttpResponse.json({})),
     );
 
-    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-1');
     await queue.flush();
 
     expect(session.useSession.getState().status).toBe('anonymous');
@@ -154,7 +153,7 @@ describe('queue — no post-flush re-pull after id-minting actions (RH1.3)', () 
       }),
     );
 
-    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-1');
     await queue.flush();
 
     expect(calls.actions).toBe(1);
@@ -197,7 +196,6 @@ describe('queue — 422 rollback restores PRE-mutation snapshot (BUG-003)', () =
         const cast = s as unknown as FakeSnapshot;
         current = cast;
       },
-      getActivePartyId: () => Promise.resolve('party-1'),
     });
 
     // 422 response with a Banker-gate rejection (the exact shape
@@ -223,7 +221,10 @@ describe('queue — 422 rollback restores PRE-mutation snapshot (BUG-003)', () =
     // to the post-mutation snapshot.
     current = postSnapshot;
     // Caller then enqueues the action.
-    queue.enqueue({ type: 'transfer' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue(
+      { type: 'transfer' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'party-1',
+    );
     await queue.flush();
 
     // The rollback must have restored the PRE snapshot, not the POST.
@@ -258,7 +259,6 @@ describe('queue — 422 rollback restores PRE-mutation snapshot (BUG-003)', () =
         const cast = s as unknown as FakeSnapshot;
         current = cast;
       },
-      getActivePartyId: () => Promise.resolve('party-1'),
     });
 
     server.use(
@@ -278,12 +278,74 @@ describe('queue — 422 rollback restores PRE-mutation snapshot (BUG-003)', () =
 
     queue.captureRollbackSnapshot();
     current = postSnapshot;
-    queue.enqueue({ type: 'dm-transfer' } as unknown as Parameters<typeof queue.enqueue>[0]);
+    queue.enqueue(
+      { type: 'dm-transfer' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'party-1',
+    );
     await queue.flush();
 
     // Rollback restored the PRE snapshot (dm-transfer optimistic
     // mutation was undone once the server rejected).
     expect(current.log).toEqual([{ marker: 'PRE_DM_TRANSFER' }]);
+    queue.resetQueue();
+  });
+});
+
+describe('queue — RH4.2 explicit partyId per enqueue', () => {
+  it('the partyId passed to enqueue reaches the POST body (no Dexie meta round-trip)', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'from-state' } }, log: [] });
+    queue.configureQueue(deps);
+    const requestedPartyIds: string[] = [];
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, async ({ request }) => {
+        const body = (await request.json()) as { partyId: string };
+        requestedPartyIds.push(body.partyId);
+        return HttpResponse.json({ applied: [], serverTime: '2026-07-03T00:00:00.000Z' });
+      }),
+    );
+
+    // Enqueue with an explicit partyId that differs from state's — proves
+    // the queue does NOT read state's partyId or Dexie meta; it uses the
+    // caller-supplied value verbatim.
+    queue.enqueue(
+      { type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'from-enqueue',
+    );
+    await queue.flush();
+
+    expect(requestedPartyIds).toEqual(['from-enqueue']);
+    queue.resetQueue();
+  });
+
+  it('mixed-party batch requeues the tail: only entries sharing the first partyId flush together', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-A' } }, log: [] });
+    queue.configureQueue(deps);
+    const batches: { partyId: string; actionCount: number }[] = [];
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, async ({ request }) => {
+        const body = (await request.json()) as { partyId: string; actions: unknown[] };
+        batches.push({ partyId: body.partyId, actionCount: body.actions.length });
+        return HttpResponse.json({ applied: [], serverTime: '2026-07-03T00:00:00.000Z' });
+      }),
+    );
+
+    // Interleave two parties. The queue's flush splits by partyId,
+    // sending the first party's entries first and requeuing the rest.
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-A');
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-B');
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-A');
+    await queue.flush();
+    // First flush sent only party-A entries (2 of them). Party-B is requeued.
+    expect(batches).toEqual([{ partyId: 'party-A', actionCount: 2 }]);
+
+    await queue.flush();
+    // Second flush drains party-B.
+    expect(batches).toEqual([
+      { partyId: 'party-A', actionCount: 2 },
+      { partyId: 'party-B', actionCount: 1 },
+    ]);
     queue.resetQueue();
   });
 });

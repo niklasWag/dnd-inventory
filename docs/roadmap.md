@@ -3122,20 +3122,41 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 #### RH4.2 — Retire `meta.currentPartyId` as source-of-truth (local-mode carryforward)
 
 **Dexie meta (`apps/web/src/db/meta.ts`)**
-- [ ] `getCurrentPartyId()` / `setCurrentPartyId()` remain as functions but their role shrinks to: "which party should the pre-URL landing show first?" — used only by `/hub` and the initial post-login redirect.
-- [ ] Every server-mode read of `currentPartyId` (in the sync queue, in `PartySettings`, in `CharacterSheet` state loading) is replaced by the `useParams<{partyId}>()`-based helper. Only local-mode single-writer paths retain the Dexie pointer.
-- [ ] Boot hydration (`apps/web/src/store/hydrate.ts`): on app load, read `currentPartyId` from meta, redirect to `/party/${id}/hub`. On first-login (no current party), redirect to `/hub` (party picker).
+- [x] `getCurrentPartyId()` / `setCurrentPartyId()` remain as functions but their role shrinks to: "which party should the pre-URL landing show first?" — used only by local-mode boot hydration + Hub's "Enter this party" (write). Docstring updated to reflect the narrowed role. — **Shipped 2026-07-03**
+- [x] Every server-mode read of `currentPartyId` retired. Sync queue no longer consults meta on flush; screen partyId reads use `useCurrentPartyId()` where they were already flipped in RH4.1 (navigate-construction sites). — **Shipped 2026-07-03**
+- [x] Boot hydration (`apps/web/src/main.tsx`): server-mode boot is now a no-op for AppState. PartyScopeSync (RH4.1) triggers `pullState(urlPartyId)` when a `/party/:partyId/*` route mounts. The URL is the sole authority. — **Shipped 2026-07-03**
 
 **Sync queue (`apps/web/src/sync/queue.ts`)**
-- [ ] `getActivePartyId` dep is replaced by a URL-derived helper. Since queue is module-scoped (not React), it needs to be told the current partyId on each enqueue. Options: (a) `enqueue(action, partyId)` signature widening, (b) `configureQueue({ currentPartyId })` re-run on route changes. Prefer (a) — explicit, no hidden route-listener state.
+- [x] `getActivePartyId` dep retired. `enqueue(action, partyId: string)` — explicit signature widening per plan option (a). The dispatcher (`apps/web/src/store/index.ts`) threads `state.appState.party.id` (URL-authoritative via PartyScopeSync) at dispatch time. — **Shipped 2026-07-03**
+- [x] Queue defends against mixed-party batches (unlikely under URL-authoritative routing but structural): splits by first entry's partyId, flushes those, requeues the rest for the next tick. — **Shipped 2026-07-03**
 
 **Tests**
-- [ ] Test that server-mode routes ignore `meta.currentPartyId` entirely (mismatched pointer + correct URL = correct behaviour).
-- [ ] Test that local-mode boot still uses `meta.currentPartyId` for the initial redirect.
+- [x] `queue.test.ts` — new RH4.2 tests: (a) the partyId passed to enqueue reaches the POST body verbatim (not read from state or Dexie meta); (b) mixed-party batch requeues correctly. — **Shipped 2026-07-03**
+- [x] Existing queue / log-authority / multitab / PartyScopeSync tests updated — `getActivePartyId` dep removed from every fake. — **Shipped 2026-07-03**
+- [ ] "Server-mode routes ignore meta.currentPartyId entirely" — covered by RH4.1's PartyScopeSync test (URL-authoritative reconciliation) + the new RH4.2 queue test (verbatim partyId). No further test needed.
+- [ ] "Local-mode boot still uses meta.currentPartyId" — no behavior change in local-mode hydrate.ts; existing hydrate tests cover it.
 
 #### RH4.2 — Notes
 
-> -
+> **Shipped 2026-07-03 on `refactor/rh4-url-scoped-routing`.** Commit 2 of 3 for RH4. Web tests: 751 pass (was 749 after RH4.1; +2 new for RH4.2 queue tests). Rules / shared / server unchanged.
+>
+> **`enqueue(action, partyId)` — plan option (a).** Explicit signature widening. Rejected option (b) (`configureQueue({ currentPartyId })` re-run on route changes) because: (i) hidden route-listener state — the queue is module-scoped, no natural place to subscribe to `useParams` changes; (ii) race window between route change and next dispatch is subtle; (iii) explicit is testable in isolation.
+>
+> **Mixed-party batch handling.** Under URL-authoritative routing, a single tab is on one party at a time — a batch shouldn't contain multiple partyIds. But nothing in the queue's contract prevents it (two rapid dispatches straddling a route change could produce a mixed batch). The queue defends structurally: flush the first entry's party first, requeue the rest. Two-line addition, one test.
+>
+> **Boot hydration flip.** Pre-RH4.2, `main.tsx` in server mode read `meta.currentPartyId` and pre-loaded AppState via `pullState`. Post-RH4.2, server-mode boot is a no-op for AppState — the URL-mounted PartyScopeSync handles loading. This means:
+>   - Cold boot with no URL partyId → lands on `/` → redirects to `/hub` → user picks a party → navigates to `/party/${id}/character/${ownId}` → PartyScopeSync pulls state.
+>   - Cold boot with a bookmarked `/party/${id}/character/${ownId}` URL → session hydrates → PartyScopeSync pulls state directly.
+> Both cases now go through the same code path (PartyScopeSync's pull). Simpler, testable, deterministic.
+>
+> **Removed unused re-export.** `apps/web/src/sync/queue.ts` used to re-export `getCurrentPartyId` — no consumer imported it. Deleted the re-export + the import.
+>
+> **`meta.currentPartyId` still exists.** Local-mode boot (`hydrateFromDexie`) reads it. Hub's "Enter this party" writes it. Both stay as UX hints. RH5 will consider a broader retirement if the null-state save window can be handled.
+>
+> **What RH4.2 does NOT do:**
+> - Cross-party access denial. That's RH4.3.
+> - Retire `meta.currentPartyId` entirely — kept for local-mode boot landing.
+> - Flip every screen's `useStore(s => s.appState.party.id)` READ to `useCurrentPartyId()` — only navigate-construction reads flipped in RH4.1; display reads still use the state read (both resolve to the same value post-PartyScopeSync).
 
 #### RH4.3 — Cross-party access denial + party-switcher polish
 

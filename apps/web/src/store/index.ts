@@ -194,7 +194,17 @@ export const useStore = create<StoreState>()(
       // never run — surfacing as `/sync/state` 404s on the next
       // screen.
       if (isServerMode) {
-        enqueue(action);
+        // RH4.2 — thread partyId explicitly to the queue (retires the
+        // Dexie `meta.currentPartyId` round-trip on the flush path).
+        // `snapshot.appState.party.id` is the URL-authoritative partyId
+        // per RH4.1's PartyScopeSync guard: state was reconciled with
+        // the URL before this dispatch could fire. For bootstrap
+        // `create-character` the party was just minted by the reducer
+        // above and is now in state.
+        const partyId = snapshot.appState?.party.id;
+        if (partyId !== undefined) {
+          enqueue(action, partyId);
+        }
       }
     },
     hydrate: (snapshot) => {

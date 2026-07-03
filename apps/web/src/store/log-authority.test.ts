@@ -46,8 +46,6 @@ async function loadModules(serverMode: boolean) {
         return { appState: s.appState, log: s.log };
       },
       restoreSnapshot: (snap) => storeMod.useStore.getState().restoreSnapshot(snap),
-      getActivePartyId: () =>
-        Promise.resolve(storeMod.useStore.getState().appState?.party.id ?? null),
       appendServerLogEntries: (applied) =>
         storeMod.useStore.getState().appendServerLogEntries(applied),
     });
