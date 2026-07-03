@@ -3161,23 +3161,53 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 #### RH4.3 — Cross-party access denial + party-switcher polish
 
 **Route guards**
-- [ ] Add a `PartyScopeGuard` component wrapping every `/party/:partyId/*` route. Reads `partyId` from `useParams`, checks `s.appState.memberships` for an active membership of `state.user.id` in that party. If missing → redirect to `/hub` with a toast: "You're not a member of that party." Prevents URL tampering (deep-linking to another party's screen).
-- [ ] Server-side already enforces this via `resolveActor` (`apps/server/src/sync/actor.ts`) returning 403 for cross-party access; RH4.3 is the client-side mirror for UX.
+- [x] Added `PartyScopeGuard` component (`apps/web/src/components/PartyScopeGuard.tsx`) wrapping every `/party/:partyId/*` route INSIDE `PartyScopeSync`. Reads `partyId` from `useParams`, checks `s.appState.memberships` for an active membership of `state.user.id` in that party. If missing → redirect to `/hub` with a toast: "You're not a member of that party." — **Shipped 2026-07-03**
+- [x] Guard is a client-side UX mirror per plan; the server's `resolveActor` (`apps/server/src/sync/actor.ts`) is the authoritative check (returns 403 on cross-party access). — **Shipped 2026-07-03**
 
 **Party-switcher**
-- [ ] Optional: add a party picker in the nav bar (dropdown of the user's active parties). Clicking switches URL to `/party/${newId}/hub`. Nice-to-have; not required for RH4 correctness. Consider deferring to R4.6 as UX polish.
+- [ ] Optional party-switcher dropdown — **deferred to R4.6 UX polish** per plan decision (2026-07-03). Users switch parties via the `/hub` picker.
 
 **Tests**
-- [ ] `PartyScopeGuard` unit test: user is a member of party A only; navigating to `/party/B/settings` redirects to `/hub` + toast.
-- [ ] `PartyScopeGuard` unit test: user is a member; renders the child screen.
+- [x] `PartyScopeGuard.test.tsx` — 5 tests: (a) server-mode member renders child; (b) server-mode non-member redirects to `/hub`; (c) server-mode mid-reconciliation defers to PartyScopeSync; (d) local-mode always renders (guard is no-op); (e) `state.appState === null` defers to PartyScopeSync. — **Shipped 2026-07-03**
 
 #### RH4.3 — Notes
 
-> -
+> **Shipped 2026-07-03 on `refactor/rh4-url-scoped-routing`.** Commit 3 of 3 for RH4. Web tests: 756 pass (was 751 after RH4.2; +5 new for PartyScopeGuard). Rules / shared / server unchanged.
+>
+> **Composition order: `PartyScopeSync` OUTSIDE `PartyScopeGuard`.** Reversed the plan's initial "guard runs first" wording after review. Rationale: to check membership client-side we need `state.memberships` populated — that only happens once PartyScopeSync has pulled state. Composition:
+> ```
+> /party/:partyId
+>   └─ PartyScopeSync            (loads state for URL partyId)
+>      └─ PartyScopeGuard         (checks membership in URL partyId)
+>         └─ <children screens>
+> ```
+> The guard's isolation-in-tests branches handle the "mid-reconciliation" case (URL partyId !== state.party.id) by rendering the Outlet — trusting PartyScopeSync's re-hydrate (or server 403 error handler) to redirect correctly. In practice, the guard's redirect only fires after state is fully reconciled AND the user has no active membership in the URL's party.
+>
+> **Server-side authority preserved.** SECURITY §2.1 remains authoritative: every mutation route re-validates actor identity from the session cookie and role from `PartyMembership`. `PartyScopeGuard` is a UX mirror — it prevents the 403 round-trip when the client already knows the user isn't a member.
+>
+> **Party-switcher deferred.** Not part of RH4 correctness. R4.6 UX polish or R5.x will add it.
+>
+> **What RH4.3 does NOT do:**
+> - Introduce a new server-side check. The existing `resolveActor` returns 403 for cross-party access; that's the authoritative gate.
+> - Handle "user was a member, then kicked mid-session" — the next `pullState` call catches the change; RH4.3 doesn't add a real-time membership watcher.
+> - Add a party-switcher dropdown.
 
 #### RH4 — Notes
 
 > **Filed 2026-07-01** following BUG-004 triage + a discussion of URL-scoping conventions. User direction: "We should fix this as part of RH slices." Chosen scope: URL scoping is the industry-consensus modern-SaaS pattern (GitHub / Linear / Notion / Vercel / Discord all URL-scope), it eliminates multi-tab pointer-sharing bugs, and it prepares R5's broadcast rooms.
+>
+> **Shipped 2026-07-03 on `refactor/rh4-url-scoped-routing`** as three separate commits per user's three-commit request:
+>   - Commit 1: `♻️ RH4.1 URL-scoped route pattern` (8d7b13d) — route table rewrite, useCurrentPartyId helper, PartyScopeSync guard, 37+ navigate site migrations, 16 test-fixture updates.
+>   - Commit 2: `♻️ RH4.2 retire meta.currentPartyId as source-of-truth` (af4e1c4) — enqueue signature widening, boot hydration flip, meta.ts docstring narrowing.
+>   - Commit 3: `✨ RH4.3 party-scope guard for cross-party access` (this commit) — PartyScopeGuard component + 5 tests.
+>
+> Final test counts: web 756 (was 741 pre-RH4; +15 new); rules 136; shared 261; server 197; seeds 22. Total 1372, all green.
+>
+> **Skipped `/party/:partyId/hub` per-party landing route** — today's Hub is a party picker only; no per-party content exists. Adding later is ~5 minutes when R5.2 introduces session-tools content. Reversible.
+>
+> **Deferred party-switcher dropdown** to R4.6 UX polish.
+>
+> **`/storage/:stashId` renamed to `/party/:partyId/stash/:stashId`** — URL segment now matches the data-model concept name.
 >
 > **What RH4 does NOT do:**
 > - Change server routes. Server already URL-scopes (`/parties/:partyId/*`); RH4 is purely a client-side alignment.

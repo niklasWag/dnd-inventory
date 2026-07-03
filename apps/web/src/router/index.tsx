@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 
 import { RootLayout } from '@/components/Layout';
+import { PartyScopeGuard } from '@/components/PartyScopeGuard';
 import { PartyScopeSync } from '@/components/PartyScopeSync';
 import { ProtectedRoute, PublicOnlyRoute } from '@/components/auth/ProtectedRoute';
 import { CharacterSheet } from '@/screens/CharacterSheet';
@@ -85,21 +86,29 @@ export const router = createBrowserRouter([
         children: [
           // App-wide settings (backup/restore, sign-out) — party-agnostic.
           { path: 'settings', Component: Settings },
-          // Party-scoped subtree. Every child has :partyId in its path
-          // and is wrapped by PartyScopeSync for URL-vs-state
-          // reconciliation.
+          // Party-scoped subtree. Composition:
+          //   PartyScopeSync — URL-vs-state reconciliation (RH4.1).
+          //   PartyScopeGuard — cross-party access denial (RH4.3).
+          // Guard runs INSIDE PartyScopeSync so it judges membership
+          // against the reconciled state; before reconciliation it's
+          // a no-op (trusts sync to succeed or fail cleanly).
           {
             path: 'party/:partyId',
             Component: PartyScopeSync,
             children: [
-              { path: 'settings', Component: PartySettings },
-              { path: 'character/:id', Component: CharacterSheet },
-              { path: 'catalog', Component: CatalogBrowser },
-              { path: 'item/:itemInstanceId', Component: ItemDetail },
-              { path: 'stash/:stashId', Component: StorageDetail },
               {
-                Component: DmOnlyRoute,
-                children: [{ path: 'dm', Component: DmDashboard }],
+                Component: PartyScopeGuard,
+                children: [
+                  { path: 'settings', Component: PartySettings },
+                  { path: 'character/:id', Component: CharacterSheet },
+                  { path: 'catalog', Component: CatalogBrowser },
+                  { path: 'item/:itemInstanceId', Component: ItemDetail },
+                  { path: 'stash/:stashId', Component: StorageDetail },
+                  {
+                    Component: DmOnlyRoute,
+                    children: [{ path: 'dm', Component: DmDashboard }],
+                  },
+                ],
               },
             ],
           },
