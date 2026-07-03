@@ -170,6 +170,19 @@ Per `OUTLINE.md` §4 "Entity IDs (RH1 — Server-Authoritative ID contract)": ev
 
 **Pre-RH1 deployments (R3 through R4.5)** mint UUID v4 server-side and don't yet validate client ids — see `docs/roadmap.md` RH1 for the migration plan. UUID v7 is structurally compatible with v4 columns; no DB migration is needed and existing v4 rows continue to work.
 
+### 3.1.6 TransactionLog authority split (RH2.6)
+
+Per `docs/roadmap.md` RH2.6: `TransactionLog` contents are **server-authoritative in server mode, client-authoritative in local mode**.
+
+- **Local mode** (Dexie-only, no server): the client-side reducer builds each log entry (id, timestamp, actorRole all client-minted) and appends to `state.log`. Dexie is the only backing store; there is no server to reconcile with.
+- **Server mode** (Postgres backend): the client-side reducer's `logEntries` slice output is **discarded at the store boundary**. `state.log` grows only from `POST /sync/actions`'s `applied[]` response (or a `GET /sync/state` re-hydrate). Every field on `TransactionLog` (`id`, `timestamp`, `actorRole`, payload) is minted server-side; the client-side `dispatch` middleware never contributes a log entry in server mode.
+
+**In-flight window.** Between local dispatch and queue flush (~200 ms debounce + network round-trip), server-mode UI has no log entry for the in-flight action. Readers (`ItemHistory`, party-log views) must handle the empty-log state gracefully — no code assumes "if the item exists in `state.appState`, its log entry exists in `state.log`." The existing "No entries yet" fallback covers this window; the user sees the empty state briefly and it repopulates on flush.
+
+**BUG-004 closure.** The server-authoritative regime eliminates the client-vs-server id-divergence axis for log entries. Prior to RH2.6, the client emitted a log entry with `id = crypto.randomUUID()` and payload keyed by client-minted entity ids; the server persisted the payload's entity ids verbatim but minted its own `TransactionLog.id`. The client-side entry never converged to the server's `id`, and the RH2.1b post-flush hook only patched the `timestamp` field. Any future consumer that keyed by `entry.id` would have silently read the client-minted value. RH2.6 retires the client's emission entirely, so no divergence exists.
+
+**Rollback interaction.** BUG-003's snapshot-before-flush rollback captures `{appState, log}` before the mutation lands. In server mode the pre-mutation `log` is the last-known-server-canonical state; a 422 rejection restores it verbatim. There's no speculative log append in server mode, so nothing to undo on the log side.
+
 ### 3.2 Currency Math
 
 Per §3.5: all storage is in CP (integer); `priceModifier` is a float applied only at the seed-price interpretation boundary; rounding happens once.

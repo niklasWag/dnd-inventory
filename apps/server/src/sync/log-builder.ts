@@ -8,11 +8,16 @@
  *
  * Critical: `actorUserId` and `actorRole` come from the server-derived
  * `Actor` tuple — NEVER from the request body (SECURITY §2.1). The
- * `actorRole` value reflects the §3.14 banker derivation done in
- * `resolveActor`.
+ * `actorRole` value stamped onto the log entry is per-action-type,
+ * derived by `deriveActorRoleForSlice(state, slice)` from
+ * `@app/shared/guards` — RH2.1a moved this out of `Actor.role` (which
+ * captured the actor's coarse party role) so the web store and the
+ * server agree on the per-action-type table (e.g. `identify` always
+ * logs as `'dm'` even if the actor's PartyMembership.role is `'player'`,
+ * because `identify` is a DM-only action per §8.1).
  */
-import type { Actor, TransactionLogEntry } from '@app/shared';
-import { newUuidV7, transactionLogEntrySchema } from '@app/shared';
+import type { Actor, AppState, TransactionLogEntry } from '@app/shared';
+import { deriveActorRoleForSlice, newUuidV7, transactionLogEntrySchema } from '@app/shared';
 import type { LogEntrySlice, ReducerContext } from '@app/rules';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
@@ -22,6 +27,7 @@ export function buildLogEntryServer(
   slice: LogEntrySlice,
   actor: Actor,
   ctx: ReducerContext,
+  state: AppState | null,
 ): TransactionLogEntry {
   return transactionLogEntrySchema.parse({
     // RH1.2 — `TransactionLog.id` is server-minted (each log entry is a
@@ -34,7 +40,12 @@ export function buildLogEntryServer(
     sessionId: null,
     timestamp: ctx.now(),
     actorUserId: actor.userId,
-    actorRole: actor.role,
+    // RH2.1a — per-action-type role derivation via the shared function.
+    // Prior to RH2.1a this used `actor.role` verbatim, which stamped
+    // the actor's coarse party role even for DM-only or Banker-only
+    // actions. Now the shared function encodes §8.1's per-action-type
+    // hat and both web + server agree on the value.
+    actorRole: deriveActorRoleForSlice(state, slice),
     type: slice.type,
     payload: slice.payload,
   });

@@ -46,7 +46,8 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - shadcn/ui primitives live in `src/components/ui/` and are managed by `shadcn-ui add`. **Do not hand-edit them.**
 - Use `useShallow` (or equivalent) for Zustand selectors that derive multiple fields.
 - Reducer actions correspond 1:1 to `TransactionLog.type` values. Adding a mutation means adding both an action and a log type.
-- All mutations go through the reducer: validate → apply → append log entry → persist (debounced).
+- All mutations go through the reducer: validate → apply → append log entry (**local mode only**; in server mode the server appends via `applied[]` echo per RH2.6 — see `docs/SECURITY.md` §3.1.6) → persist (debounced).
+- **No `Set<Action['type']>` registries in consumer modules.** Per-action-type concerns (broadcast, history visibility, etc.) live as **schema metadata** on the Zod variant via `z.registry` in `packages/shared/src/schemas/actionMetadata.ts`. Consumers read `getActionMetadata(type)` at runtime instead of maintaining their own `Set`. Adding a new action variant forces a metadata entry in the same PR — the `Record<Action['type'], ActionMetadata>` is compile-time-exhaustive and `actionMetadata.test.ts` runtime-verifies the registry covers every `actionSchema.options` variant.
 
 ### Data model rules (see `docs/OUTLINE.md` §4)
 
@@ -107,6 +108,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - **Don't** use `dangerouslySetInnerHTML` with any user-controlled value. All user text is plain text (see `docs/SECURITY.md` §4).
 - **Don't** write a mutation route that bypasses the service layer / skips the `TransactionLog` entry. Silent writes are forbidden by `docs/OUTLINE.md` §8.
 - **Don't** store currency as a float or apply `priceModifier` outside the seed-price boundary. CP-integer only (see `docs/SECURITY.md` §3.2).
+- **Don't** commit `plans/` (or any other scratch planning docs) unless the user explicitly asks. Planning artifacts you produce during a slice are working-notes for you, not repo artifacts — the canonical home for design rationale is `docs/roadmap.md` (Notes blocks per slice) or `docs/OUTLINE.md` / `docs/MVP.md` / `docs/TECH_STACK.md` / `docs/SECURITY.md`. If a plan file is genuinely useful to keep, ask before staging it.
 
 ### When in doubt
 

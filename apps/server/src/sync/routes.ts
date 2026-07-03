@@ -330,7 +330,11 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
             // sees a 422 with a diagnostic RH1 code rather than a raw
             // 500.
             try {
-              if (isBootstrap && schemaAction.type === 'create-character' && reduced.state !== null) {
+              if (
+                isBootstrap &&
+                schemaAction.type === 'create-character' &&
+                reduced.state !== null
+              ) {
                 await applyBootstrapDelta(tx, reduced.state, su.user.id, schemaAction.payload);
               } else {
                 await applyDelta(tx, action, actor, ctx);
@@ -350,10 +354,33 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
               throw err;
             }
 
+            // RH2.3 — per-action `applied[]` count assertion. The
+            // reducer promises N slices; the persistor iterates them
+            // and pushes each entry into `out`. A silent slice drop
+            // in this loop (a future refactor bug, an errant `continue`,
+            // an appendTransactionLog throw swallowed elsewhere) would
+            // return a 200 with an `applied[]` shorter than the reducer's
+            // truth — corrupting the RH2.1b timestamp-patch flow and
+            // any future audit reconciliation. Fail loudly with a 500
+            // instead: this is an internal invariant, not a user-level
+            // rejection (which would be a BatchRejected → 422).
+            const preLen = out.length;
+            const expectedCountDelta = reduced.logEntries.length;
             for (const slice of reduced.logEntries) {
-              const entry = buildLogEntryServer(slice, actor, ctx);
+              // RH2.1a — pass the pre-reduce state so the shared
+              // `deriveActorRoleForSlice` can compute the correct
+              // per-action-type role. For the bootstrap create-character
+              // iteration `state === null` here; the shared function
+              // handles that carve-out.
+              const entry = buildLogEntryServer(slice, actor, ctx, state);
               await appendTransactionLog(tx, entry);
               out.push(entry);
+            }
+            if (out.length - preLen !== expectedCountDelta) {
+              throw new Error(
+                `sync/actions: persistor drift on action index ${i} (${schemaAction.type}): ` +
+                  `expected ${expectedCountDelta} slices, got ${out.length - preLen}`,
+              );
             }
 
             state = reduced.state;

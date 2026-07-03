@@ -1,4 +1,4 @@
-import type { Party, PartyMembership } from '../schemas';
+import type { AppState, Party, PartyMembership, TransactionLogEntry } from '../schemas';
 
 import type { Actor, ActorRole } from './index';
 
@@ -25,6 +25,107 @@ export function deriveActorRole(party: Party, membership: PartyMembership): Acto
     return 'banker';
   }
   return membership.role;
+}
+
+/**
+ * RH2.1a — action-aware `actorRole` derivation shared by the web store
+ * dispatch middleware and the server log builder.
+ *
+ * Prior to RH2.1a the per-action-type mapping lived inline in
+ * `apps/web/src/store/index.ts::resolveActor` while the server used the
+ * `Actor.role` produced by `deriveActorRole(party, membership)` for
+ * every slice. The two sites did NOT agree — the web hard-codes `'dm'`
+ * for DM-only actions like `identify` even when the actor's underlying
+ * membership role is `player`, while the server relied on the guard
+ * layer to reject wrong-role dispatches upstream. This function makes
+ * the intent shared: given a state + slice, return the role the actor
+ * is wearing for THIS specific action.
+ *
+ * Three role classes:
+ *   - `'dm'`     — DM-only actions per §8.1 (`identify`, `kick-player`,
+ *                  `appoint-banker`, `revoke-banker`, `dm-transfer`),
+ *                  the bootstrap `create-character` (no banker yet),
+ *                  and `seed-catalog` (system-driven per §3.7).
+ *   - `'banker'` — the Banker-only `split-evenly` action per §8.1, AND
+ *                  player-driven actions where the actor IS the party's
+ *                  banker per §3.14 (`state.party.bankerUserId ===
+ *                  state.user.id`).
+ *   - `'player'` — everything else, when the actor is not the banker.
+ *
+ * State handling:
+ *   - `state === null` is legal ONLY for the bootstrap
+ *     `create-character` slice (which carries `userId` + `partyId` on
+ *     its payload since the state is being minted right now).
+ *     Every other slice requires a populated state and throws.
+ *   - Post-bootstrap `create-character` (a joiner or DM-only DM minting
+ *     their character against an existing party) is treated as
+ *     player-or-banker via `state.user.id` vs `state.party.bankerUserId`.
+ */
+export function deriveActorRoleForSlice(
+  state: AppState | null,
+  slice: { type: TransactionLogEntry['type']; payload: unknown },
+): ActorRole {
+  switch (slice.type) {
+    case 'create-character': {
+      // Bootstrap: state is null, action is the initial mint. Actor is
+      // by definition the party creator = DM. No banker exists yet.
+      // Post-bootstrap (state !== null): a joiner or DM-only DM adding
+      // their character — treat as player-or-banker.
+      if (state === null) return 'dm';
+      return playerOrBanker(state);
+    }
+    case 'join-party': {
+      // The join-party server route (POST /parties/join) synthesises this
+      // slice inline BEFORE the joining user is a member — so `state` is
+      // unavailable there. A brand-new joiner cannot be the party's
+      // banker (banker per §3.14 must reference an existing active
+      // player), so `'player'` is always correct with null state.
+      // When state IS available (reducer-driven leave/kick cascades
+      // don't emit join-party, so this branch is only hit by the
+      // server's synthesised join), the player-or-banker rule applies.
+      if (state === null) return 'player';
+      return playerOrBanker(state);
+    }
+    case 'seed-catalog':
+    case 'identify':
+    case 'kick-player':
+    case 'appoint-banker':
+    case 'revoke-banker':
+    case 'dm-transfer':
+      // DM-only per §8.1. The guard layer rejects non-DM dispatches
+      // upstream; this branch records the DM hat the actor is wearing.
+      // §3.14 forbids DM === banker, so 'dm' is always structurally
+      // correct here regardless of `bankerUserId`.
+      if (state === null) {
+        throw new Error(
+          `deriveActorRoleForSlice: ${slice.type} requires populated AppState`,
+        );
+      }
+      return 'dm';
+    case 'split-evenly':
+      // Banker-only per §8.1. Guards reject non-Banker actors upstream;
+      // this branch records the Banker hat.
+      if (state === null) {
+        throw new Error(
+          `deriveActorRoleForSlice: ${slice.type} requires populated AppState`,
+        );
+      }
+      return 'banker';
+    default: {
+      // Every remaining variant is player-driven. Actor is the banker
+      // if `state.party.bankerUserId === state.user.id`, else player.
+      if (state === null) {
+        throw new Error(
+          `deriveActorRoleForSlice: ${slice.type} requires populated AppState`,
+        );
+      }
+      return playerOrBanker(state);
+    }
+  }
+}
+
+function playerOrBanker(state: NonNullable<AppState>): ActorRole {
+  return state.party.bankerUserId === state.user.id ? 'banker' : 'player';
 }
 
 /**

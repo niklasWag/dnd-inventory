@@ -186,7 +186,8 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -218,7 +219,8 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
                 class: 'Fighter',
                 level: 1,
                 str: 16,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -261,7 +263,8 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
           class: 'Fighter',
           level: 1,
           str: 16,
-          ...createCharacterIds(), },
+          ...createCharacterIds(),
+        },
       }));
       const res = await app.inject({
         method: 'POST',
@@ -361,7 +364,8 @@ describe('GET + POST /sync round trip (R3.4.a)', () => {
                 class: 'Wizard',
                 level: 3,
                 str: 8,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -683,9 +687,25 @@ describe('R4.4.b — homebrew party-scope filter', () => {
       });
       await tx.currencyHolding.createMany({
         data: [
-          { id: `c-${inventoryStashId}`, stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          {
+            id: `c-${inventoryStashId}`,
+            stashId: inventoryStashId,
+            cp: 0,
+            sp: 0,
+            ep: 0,
+            gp: 0,
+            pp: 0,
+          },
           { id: `c-${partyStashId}`, stashId: partyStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
-          { id: `c-${recoveredStashId}`, stashId: recoveredStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+          {
+            id: `c-${recoveredStashId}`,
+            stashId: recoveredStashId,
+            cp: 0,
+            sp: 0,
+            ep: 0,
+            gp: 0,
+            pp: 0,
+          },
         ],
       });
     });
@@ -867,6 +887,154 @@ describe('POST /sync/actions — RH1.3 bootstrap collision behaviour', () => {
       });
       expect(resB.statusCode).toBe(403);
       expect(resB.json()).toEqual({ error: 'not_a_member' });
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('POST /sync/actions — RH2.3 applied[] count invariant', () => {
+  /**
+   * RH2.3 — per-action `applied[]` count assertion (server-side).
+   *
+   * The persistor iterates `reduced.logEntries` and pushes each entry
+   * into an `out` array that becomes the response's `applied[]`. Any
+   * silent slice drop (a future refactor bug, an errant `continue`,
+   * etc.) would return 200 with a short array and diverge the RH2.1b
+   * timestamp-patch flow. The routes handler now asserts
+   * `out.length - preLen === reduced.logEntries.length` per action.
+   *
+   * This test exercises the assertion's happy-path counterpart under a
+   * real cascade: create a Storage stash, acquire 3 distinct items,
+   * then delete the stash. The reducer emits 3 `transfer` slices
+   * (post-RH2.2 in stable id-sorted order) + 1 `delete-stash` slice
+   * (currency is zero on a freshly-created stash, so no
+   * `currency-change` slice). All 4 must appear in `applied[]`; if the
+   * assertion were misconfigured (e.g. off-by-one), the test would 500.
+   *
+   * A red-path test — inducing a mid-loop persistor drop to prove the
+   * assertion actually fires — would require intercepting the local
+   * `out.push` inside the transaction closure, which isn't spyable
+   * from the outside. Left as defence-in-depth; the error message
+   * embedded in the throw is descriptive enough that a future
+   * regression would surface with a clear diagnostic.
+   */
+  it('returns 200 with applied.length equal to the reducer-emitted slice count for a delete-stash cascade', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap.
+      const bootstrapIds = createCharacterIds();
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const partyId = bootstrapIds.newPartyId;
+
+      // Create a Storage stash owned by the character (Inventory /
+      // Party Stash / Recovered Loot are guard-protected for
+      // delete-stash; Storage is not).
+      const storageStashId = newUuidV7();
+      const storageCurrencyId = newUuidV7();
+      const createStashRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'create-stash',
+              payload: {
+                ownerCharacterId: bootstrapIds.newCharacterId,
+                name: 'Chest',
+                newStashId: storageStashId,
+                newCurrencyHoldingId: storageCurrencyId,
+              },
+            },
+          ],
+        },
+      });
+      expect(createStashRes.statusCode).toBe(200);
+
+      // Acquire 3 distinct items into the Storage stash so
+      // delete-stash's cascade emits 3 transfer slices.
+      const itemIds = [newUuidV7(), newUuidV7(), newUuidV7()];
+      const acquireRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: itemIds.map((id, idx) => ({
+            type: 'acquire',
+            payload: {
+              stashId: storageStashId,
+              definitionId:
+                idx === 0
+                  ? 'phb-2024:torch'
+                  : idx === 1
+                    ? 'phb-2024:rope-hempen-50ft'
+                    : 'phb-2024:rations-1day',
+              quantity: 1,
+              source: 'catalog-add',
+              newItemInstanceId: id,
+            },
+          })),
+        },
+      });
+      expect(acquireRes.statusCode).toBe(200);
+
+      // Delete the stash. Expect 3 transfer + 1 delete-stash = 4 slices
+      // in applied[]. Currency is zero (freshly-created holding), so no
+      // currency-change slice.
+      const deleteRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'delete-stash',
+              payload: { stashId: storageStashId },
+            },
+          ],
+        },
+      });
+      expect(deleteRes.statusCode).toBe(200);
+      const body = deleteRes.json<{
+        applied: { type: string }[];
+      }>();
+
+      // Contract: 3 transfer + 1 delete-stash. If the persistor ever
+      // silently drops a slice mid-loop, this length becomes 3 (or
+      // fewer) and the route now 500s instead — either way the test
+      // catches it.
+      expect(body.applied).toHaveLength(4);
+      expect(body.applied.filter((e) => e.type === 'transfer')).toHaveLength(3);
+      expect(body.applied.filter((e) => e.type === 'delete-stash')).toHaveLength(1);
+      expect(body.applied.filter((e) => e.type === 'currency-change')).toHaveLength(0);
     } finally {
       await app.close();
     }

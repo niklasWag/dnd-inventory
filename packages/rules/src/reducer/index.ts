@@ -1189,7 +1189,12 @@ function deleteStash(
   }
 
   const recoveredLootId = s.party.recoveredLootStashId;
-  const itemsInStash = s.items.filter((i) => i.ownerId === stash.id);
+  // RH2.2 — stable sort by id so the emitted `transfer` log slices
+  // (line ~1233 below) fan out in a deterministic order across clients.
+  // The `itemCount` reduce is order-independent; safe to share the sort.
+  const itemsInStash = s.items
+    .filter((i) => i.ownerId === stash.id)
+    .sort((a, b) => a.id.localeCompare(b.id));
   const stashCurrency = s.currencies.find((c) => c.stashId === stash.id);
   if (stashCurrency === undefined) {
     throw new Error(`delete-stash: invariant violation — no CurrencyHolding for ${stash.id}`);
@@ -2933,7 +2938,12 @@ function cascadeCharacterToRecoveredLoot(
   const ownedStashIds = new Set(ownedStashes.map((st) => st.id));
 
   // 1. Items → Recovered Loot (clear equip/attune/container).
-  const itemsToTransfer = s.items.filter((i) => ownedStashIds.has(i.ownerId));
+  // RH2.2 — sort by id so the emitted `transfer` log slices (line
+  // ~2998 below) fan out deterministically across clients. `nextItems`
+  // and `itemCount` don't depend on this array's order.
+  const itemsToTransfer = s.items
+    .filter((i) => ownedStashIds.has(i.ownerId))
+    .sort((a, b) => a.id.localeCompare(b.id));
   const nextItems = s.items.map((i) =>
     ownedStashIds.has(i.ownerId)
       ? {

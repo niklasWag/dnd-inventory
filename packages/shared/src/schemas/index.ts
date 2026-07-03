@@ -1,4 +1,5 @@
 export * from './action';
+export * from './actionMetadata';
 export * from './api';
 export * from './appState';
 export * from './character';

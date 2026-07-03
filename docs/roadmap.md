@@ -1696,7 +1696,7 @@ Self-hosted server, Discord OAuth + email OTP auth, user model, sync of solo dat
 - [x] **Web reducer runs optimistically against local Dexie state; server response (`200 applied[]` or `422 rejected`) either confirms or rolls back** — carryforward from R3.4.a (the server endpoints + the `applied[]`/`rejected` response shapes locked in R3.4.a; this slice is the client integration that consumes them). Rollback uses **snapshot-before-flush** (single pre-batch snapshot is restored wholesale on 422) rather than per-applied index — simpler and correct by construction for the multi-slice cascades (`delete-stash`, currency-transfer).
 - [x] Web reconciles server events back into the store (bootstrap pull-after-push canonicalises ids; subsequent mutations rely on the server's `applied[]` log entries)
 - [ ] Offline-first: Dexie remains primary cache; solo party works offline (§9) — **deferred to R5 along with the WebSocket reconnect work**. R3.5 assumes online in server mode; Dexie remains a survival cache for the active party only.
-- [ ] Offline banner reserved for multi-member mode (R4 will gate behavior)
+- [x] Offline banner reserved for multi-member mode (R4 will gate behavior) — **shipped in R4.4.d** (`apps/web/src/components/OfflineBanner.tsx`). Gated on server mode + `navigator.onLine === false` + `memberCount >= 2` per OUTLINE §9; solo parties excluded by design. Write-blocking still deferred to M5's realtime layer.
 - [x] Settings: Account section shows displayName + avatar (Discord) or email (email-only) (§5.17)
 - [x] Settings: "Linked accounts" section — email entry + OTP flow for Discord users; "Connect Discord" OAuth flow for email-only users (§3.1)
 - [x] **Discord-link `?link=1` callback handling** — carryforward from R3.3. R3.5 ships a route-layer OAuth code-exchange path (NOT via Auth.js) so the link flow keeps the existing session cookie + attaches `discordId`/`avatarUrl` to the live User row. Conflict on snowflake already linked elsewhere → `302 ${WEB_ORIGIN}/settings?linkError=discord_already_linked`. The handshake uses a new `PendingDiscordLink(token, userId, expires)` table for the state nonce + an HMAC-signed OAuth `state` parameter.
@@ -2724,50 +2724,137 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 **Why grouped:** Both are the same RH1 shape — two sides computing the same value, the system relying on them agreeing. Same fix shape: server is authoritative for the value, client uses an optimistic placeholder that gets replaced from the `applied[]` echo.
 
 **Timestamp (`packages/rules/src/reducer/types.ts` + the two reducers)**
-- [ ] `ReducerContext.now` becomes server-only. Client-side reducer dispatches use a sentinel placeholder (e.g. `'PENDING'`) on log slices; the queue's post-flush hook overwrites it with `applied[].timestamp` once the server echoes it. Equivalent to the RH1 id treatment, applied to timestamp.
-- [ ] Add a Zod refinement: `transactionLogEntry.timestamp` must be a valid ISO datetime when persisted — `'PENDING'` is forbidden once an entry is server-canonical. The wire schema doesn't see `'PENDING'`; it's a client-internal sentinel.
-- [ ] Update `apps/web/src/store/index.ts` dispatch site to do the placeholder-then-patch dance.
-- [ ] Update `apps/web/src/sync/queue.ts` post-flush patch logic: for each entry in `applied[]`, locate the matching local log row by id and overwrite timestamp.
-- [ ] Tests: reducer unit test that a freshly-dispatched action's local log entry has `'PENDING'` timestamp; integration test that after queue flush, every local entry has the server-canonical timestamp.
+- [x] `ReducerContext.now` becomes server-only for LOG-ENTRY timestamps. Client-side reducer dispatches use a sentinel placeholder `'PENDING'` on log entries; the queue's post-flush hook overwrites it with `applied[].timestamp` once the server echoes it. **Shipped 2026-07-02 (Option 2 scope)** — the seam that flips is `apps/web/src/store/index.ts::buildLogEntry` (line ~120), which now branches on `isServerMode`. `ReducerContext.now` itself stays on the interface because entity `createdAt` / `joinedAt` / `leftAt` fields still need it in optimistic UI; retiring `ctx.now` entirely is deferred to **RH2.6** which retires client-side log emission in server mode.
+- [-] Add a Zod refinement: `transactionLogEntry.timestamp` must be a valid ISO datetime when persisted — `'PENDING'` is forbidden once an entry is server-canonical. The wire schema doesn't see `'PENDING'`; it's a client-internal sentinel. **Skipped** — nothing on the wire accepts a client-composed log entry (only actions), so a wire-side refinement has no target. The Dexie-persistence boundary is guarded instead: `apps/web/src/store/index.ts::dispatch` filters PENDING entries out of the debounced saver's payload in server mode, so `.datetime()` on the hydrate path never sees `'PENDING'`.
+- [x] Update `apps/web/src/store/index.ts` dispatch site to do the placeholder-then-patch dance. New `patchLogEntries(applied)` store method matches entries by `(type, canonical-payload)` content and overwrites `timestamp` — id-matching isn't available because client and server mint log-entry ids independently (`crypto.randomUUID()` vs `newUuidV7()`).
+- [x] Update `apps/web/src/sync/queue.ts` post-flush patch logic: for each entry in `applied[]`, locate the matching local log row and overwrite timestamp. Wired via a new optional `QueueDeps.patchLogEntries` hook; `main.tsx` supplies the real dep, tests may omit.
+- [x] Tests: reducer unit test that a freshly-dispatched action's local log entry has `'PENDING'` timestamp; integration test that after queue flush, every local entry has the server-canonical timestamp. **Shipped as `apps/web/src/store/timestamp-authority.test.ts`** — 3 tests covering server-mode PENDING emission, local-mode unchanged behaviour, and post-flush timestamp patch.
 
 **`actorRole` shared derivation (`packages/shared/src/guards/actor.ts` — `deriveActorRole` exists)**
-- [ ] Today both `apps/web/src/store/index.ts:resolveActor` and `apps/server/src/sync/log-builder.ts` independently derive `actorRole` from `(actor, membership, party)`. Move the logic to a single shared function `deriveActorRole(state, action, actorUserId)` and call it from both sites.
-- [ ] Banker derivation: when `Party.bankerUserId === actorUserId`, return `'banker'`. Today both sites partially handle this; some action arms hard-code `'player'`. After RH2.1 there's one definition that handles all cases.
-- [ ] Guard test asserting the contract: given the same `(state, action, actorUserId)`, both sites return identical results.
+- [x] Today both `apps/web/src/store/index.ts:resolveActor` and `apps/server/src/sync/log-builder.ts` independently derive `actorRole` from `(actor, membership, party)`. Move the logic to a single shared function called from both sites. **Shipped 2026-07-02** as `deriveActorRoleForSlice(state, slice)` in `packages/shared/src/guards/actor.ts` — action-aware; consumed by web's `resolveActor` (now ~15 LOC, was ~165) and by `buildLogEntryServer` (which previously used `actor.role` verbatim). The pre-existing 2-arg `deriveActorRole(party, membership)` stays for the guard-layer identity resolution.
+- [x] Banker derivation: when `Party.bankerUserId === actorUserId`, return `'banker'`. Today both sites partially handle this; some action arms hard-code `'player'`. After RH2.1 there's one definition that handles all cases. **Shipped** — the shared function's default arm returns `banker iff state.party.bankerUserId === state.user.id`; DM-only and Banker-only arms (`identify`, `kick-player`, `appoint-banker`, `revoke-banker`, `dm-transfer`, `split-evenly`) hard-code their canonical role.
+- [x] Guard test asserting the contract: given the same `(state, action, actorUserId)`, both sites return identical results. **Shipped** — new `describe('deriveActorRoleForSlice — RH2.1a')` block in `packages/shared/src/guards/map.test.ts` covers the full action-type × (banker, non-banker, DM) matrix (~35 assertions via `it.each` fan-out) plus bootstrap null-state and server-synthesised join-party null-state carve-outs.
+
+#### RH2.1 — Notes
+
+> **2026-07-02 — RH2.1 shipped (Option 2 scope).**
+>
+> **Option 2 chosen.** Two options were considered:
+> - **Option 1 (full RH2.1):** `TransactionLog.timestamp` + entity `createdAt`/`joinedAt`/`leftAt` both become server-authoritative via placeholder-then-patch.
+> - **Option 2 (log-timestamp only, chosen):** only `TransactionLog.timestamp` flips to PENDING in server mode. Entity timestamps deferred to RH2.6.
+>
+> Option 2 preserves the RH chain's "one axis per slice" discipline: RH2.1 handles the log-entry axis; RH2.6's mode-aware log-authority split naturally picks up entity timestamps as part of the same "server owns state in server mode" cutover. Splitting keeps each PR bisectable.
+>
+> **`ReducerContext.now` stays on the interface** contrary to the roadmap sketch's summary sentence. The reducer still calls `ctx.now()` for entity `createdAt`/`joinedAt`/`leftAt` fields, which are asserted by 30+ `appStateSchema.parse` tests. Only the log-entry timestamp seam (`buildLogEntry` in the web store) flips to PENDING. RH2.6 will complete the retirement.
+>
+> **Correlation strategy: content-matching.** Client log-entry ids and server log-entry ids diverge today (client: `crypto.randomUUID()`, server: `newUuidV7()`). Rather than adding a `newLogEntryId` field to every action payload (RH1-shape extension, large surface), the patch matches on `(type, canonical-JSON-payload)`. Robust because the reducer never emits two structurally-identical slices in one batch. RH2.6 retires client-side log emission entirely, making the correlation problem moot.
+>
+> **Dexie persistence:** PENDING entries are stripped from the debounced saver's payload in server mode. If the tab closes with PENDING entries in memory, Dexie has state without the corresponding log entries — but the server pull on next boot replaces both, so no user-visible inconsistency.
+>
+> **BUG-004 partial-fix.** RH2.1a's shared `deriveActorRoleForSlice` fixes the DM-vs-player role stamp on Item Detail history; RH2.1b's server timestamp patch fixes the "why does my newest acquire show yesterday's date" symptom class. The **full** BUG-004 closure still needs RH2.6 (client stops emitting log slices in server mode, server-emitted slices with server-canonical ids arrive via applied[]).
 
 #### RH2.2 — Reducer determinism: stable iteration in cascades
 
 **Reducer (`packages/rules/src/reducer/index.ts`)**
-- [ ] Audit every cascade arm that iterates `state.items` / `state.stashes` to emit log slices: `delete-stash`, `delete-character`, `leave-party`, `kick-player`, `transfer` (container-with-contents). Each must sort by stable key (typically `id`) BEFORE emitting slices.
-- [ ] One-liner per call site: `const sortedItems = [...s.items].sort((a, b) => a.id.localeCompare(b.id));`. Apply to ~6 sites.
-- [ ] Property-based test in `packages/rules/src/reducer/`: given the same state in two random insertion orders, the cascade emits identical log slice sequences (modulo `ctx.newId` outputs, which RH1 makes deterministic anyway).
+- [x] Audit every cascade arm that iterates `state.items` / `state.stashes` to emit log slices: `delete-stash`, `delete-character`, `leave-party`, `kick-player`, `transfer` (container-with-contents). Each must sort by stable key (typically `id`) BEFORE emitting slices. **Shipped 2026-07-03** — the 5 listed arms feed 2 helpers (`deleteStash` at `~1195`; `cascadeCharacterToRecoveredLoot` at `~2944`, shared by `delete-character` / `leave-party` / `kick-player`). The `transfer` container-with-contents case emits a single log slice per dispatch (the parent's) — child rows relocate silently through `s.items.map` indexed by an id-set, so log-slice fan-out isn't order-sensitive there.
+- [x] One-liner per call site: `const sortedItems = [...s.items].sort((a, b) => a.id.localeCompare(b.id));`. Apply to ~6 sites. **Shipped 2026-07-03** — 2 sites in practice (`index.ts:1195`, `index.ts:2944`), both inlined into the existing `.filter` chain rather than introducing a fresh binding. The "~6" count in the sketch conflated action arms with source-code iteration points; see Notes below.
+- [x] Property-based test in `packages/rules/src/reducer/`: given the same state in two random insertion orders, the cascade emits identical log slice sequences (modulo `ctx.newId` outputs, which RH1 makes deterministic anyway). **Shipped 2026-07-03** as `packages/rules/src/reducer/determinism.test.ts` — 3 property tests using `fast-check@^4.8.0` shuffling `s.items` across 50 permutations per case; covers `delete-stash` transfer-slice order, `delete-character` transfer-slice order (which also exercises `leave-party` + `kick-player` via the shared cascade helper), and post-cascade state-shape invariance.
+
+#### RH2.2 — Notes
+
+> **2026-07-03 — RH2.2 shipped.**
+>
+> **Site-count discrepancy: "~6 arms → 2 helpers".** The audit surfaced 5 cascade arms feeding log slice fan-out (`delete-stash`, `delete-character`, `leave-party`, `kick-player`, `transfer`) — the "~6" figure in the pre-ship sketch counted these action arms rather than unique iteration points in the reducer source. In practice:
+> - `delete-stash` has its own filter+emit at `index.ts:~1195`.
+> - `delete-character`, `leave-party`, `kick-player` all delegate to `cascadeCharacterToRecoveredLoot` at `index.ts:~2944` (single filter+emit, three consumers).
+> - `transfer` container-with-contents is a red herring for RH2.2's specific concern: it emits ONE `transfer` log slice per dispatch (the parent's). Child rows relocate silently through `s.items.map` indexed by a `Set<childId>`; `Array.prototype.map` preserves input order deterministically, so state mutation order is already stable. No fix needed there.
+>
+> So the mechanical change is 2 sort-insertions, not 6.
+>
+> **Sort placement: inline in the `.filter` chain.** Both helpers already had a `s.items.filter(...)` line; the fix appends `.sort((a, b) => a.id.localeCompare(b.id))` to the same chain. `Array.prototype.filter` returns a new array (safe to mutate in place with `.sort`), and downstream reads (`itemCount` reduce, state-mutation `s.items.map` at other sites) are order-independent, so no additional local copies were needed.
+>
+> **Supply-chain gate for `fast-check`.** Added as `packages/rules` devDependency at `^4.8.0`. Per user direction, relied on the existing `.npmrc:1 min-release-age=7` policy rather than pinning a specific SHA — pnpm refuses to resolve any release younger than 7 days, so a fresh-publish compromise (typosquat, hijacked maintainer) can't slip in. Lockfile pinned `fast-check@4.8.0` at install time. Supply-chain check: `Lockfile passes supply-chain policies` — pnpm 11.8.0.
+>
+> **What RH2.2 does NOT fix.** Two things are worth calling out for the RH chain readers:
+> - Iteration order over `state.stashes`, `state.currencies`, `state.memberships`, `state.characters` — none of the fixed cascades fan out log slices from those, so they weren't in scope. If a future cascade emits N slices by iterating one of them, RH2.2's pattern applies again at that new site.
+> - The single-`transfer`-slice-per-dispatch guarantee. If a future refactor splits the parent + child transfer into N slices (e.g. one per relocated row), that new emit needs a sort too. Left un-guarded because no such refactor is on the roadmap.
+>
+> **Test verification: mutation-check.** During implementation, each sort was independently reverted to confirm the corresponding property test fails with a clean `fast-check` counterexample (shuffled `s.items` array → emitted slice sequence != sorted reference). Both sorts restored before final commit; test suite is 129/129 in `packages/rules`.
 
 #### RH2.3 — Multi-tab queue race + `applied[]` count validation
 
 **Multi-tab queue (`apps/web/src/sync/queue.ts`)**
-- [ ] Queue is currently module-level state (`queue`, `timer`, `preBatchSnapshot`, `inflight`). Two browser tabs on the same origin produce two independent queues against shared Dexie. Add a `BroadcastChannel`-based coordinator: one tab owns the queue at a time; other tabs forward enqueues to the owner via the channel.
-- [ ] Acceptance test: two `loadQueue()` instances in the same test process, both enqueue against the same party, only one issues a network request, the other receives the post-flush state.
+- [x] Queue is currently module-level state (`queue`, `timer`, `preBatchSnapshot`, `inflight`). Two browser tabs on the same origin produce two independent queues against shared Dexie. Add a `BroadcastChannel`-based coordinator: one tab owns the queue at a time; other tabs forward enqueues to the owner via the channel. **Shipped 2026-07-03** — pivoted from `BroadcastChannel` to the **native Web Locks API** (`navigator.locks.request('sync-queue-flush', ...)`). Baseline Widely Available since March 2022 across Chrome / Firefox / Safari / Edge (93.96% global). The lock FIFO-queues concurrent flushes across same-origin tabs by default; auto-releases on tab close; zero manual heartbeat / leader-election protocol. No new npm dependencies. `apps/web/src/sync/queue.ts:190`. See RH2.3 — Notes for the sticky-leader-vs-native-lock trade-off.
+- [x] Acceptance test: two `loadQueue()` instances in the same test process, both enqueue against the same party, only one issues a network request, the other receives the post-flush state. **Shipped 2026-07-03** as `apps/web/src/sync/queue.multitab.test.ts` — spins up two module instances via `vi.resetModules()`, both flush concurrently against a slow (100 ms) MSW handler, asserts `intervals[1].start >= intervals[0].end` (non-overlapping). Mutation-checked by bypassing the lock: test correctly fails with `expected N to be greater than or equal to M` showing a ~100 ms overlap.
 
 **`applied[]` count assertion (`apps/server/src/sync/routes.ts`)**
-- [ ] After the `prisma.$transaction` block, assert `applied.length === reducer.logEntries.length`. Mismatch indicates a persistor bug (silent slice drop) and should 500, not 200.
-- [ ] Integration test: dispatch a `delete-stash` cascade with 3+ items, expect `applied.length` to equal the reducer-emitted slice count.
+- [x] After the `prisma.$transaction` block, assert `applied.length === reducer.logEntries.length`. Mismatch indicates a persistor bug (silent slice drop) and should 500, not 200. **Shipped 2026-07-03** — assertion is **per-action inside the reducer loop** (not post-transaction total): `apps/server/src/sync/routes.ts:353-380` captures `preLen = out.length` before the slice-push loop and throws a descriptive `Error` on mismatch. Load-bearing shape — catches persistor bugs that silently drop a slice mid-loop, which a batch-total assertion would miss.
+- [x] Integration test: dispatch a `delete-stash` cascade with 3+ items, expect `applied.length` to equal the reducer-emitted slice count. **Shipped 2026-07-03** — added `describe('POST /sync/actions — RH2.3 applied[] count invariant')` to `apps/server/src/sync/routes.test.ts:876`. Bootstraps a party, creates a Storage stash, acquires 3 distinct items (torch / rope / rations-1day), deletes the stash, asserts `applied.length === 4` (3 transfer + 1 delete-stash; currency-change omitted because the freshly-created holding is zero). Green-path only — see RH2.3 — Notes on why a red-path mock-persistor test wasn't added.
+
+#### RH2.3 — Notes
+
+> **2026-07-03 — RH2.3 shipped.**
+>
+> **Multi-tab coordinator: pivoted from `BroadcastChannel` to Web Locks API.** The pre-ship sketch called for a sticky-leader coordinator with heartbeat + enqueue-forwarding via `BroadcastChannel`. Research surfaced that `navigator.locks` (Baseline Widely Available since March 2022; 93.96% global support per caniuse) provides exactly this primitive natively — FIFO queuing across same-origin tabs, auto-release on tab close, no manual protocol. One `navigator.locks.request<void>('sync-queue-flush', async () => { ... })` wrapping the existing `flush()` body replaces what would have been ~150 LOC of leader-election, heartbeat, and message-forwarding code. Rejected the `broadcast-channel` npm library (2 k stars, MIT, well-maintained) as unnecessary: it exists to polyfill non-Baseline browsers and shim Node compatibility. Our target is evergreen browsers; the polyfill is dead weight.
+>
+> **jsdom shim.** jsdom 29.1.1 doesn't ship `navigator.locks` (as of this writing; may land in a future release). The test env now installs a ~20 LOC FIFO shim at `apps/web/src/test/setup.ts:42-64` guarded by `if (!('locks' in navigator))` so it's a no-op in real browsers or when jsdom eventually adds native support. Shim is per-lock-name-serialising, mirroring the production contract closely enough for the queue's usage. Deletable when the underlying platform catches up. Mutation-check: disabling the shim causes `TypeError: Cannot read properties of undefined (reading 'request')` — descriptive enough that a future jsdom upgrade would surface cleanly.
+>
+> **Server assert scope.** Chose per-action-inside-transaction over batch-total-outside-transaction. Rationale: a batch total is trivially true by construction (`out.push(entry)` is the only writer, `sum(logEntries.length)` is the only expected value); a persistor bug that dropped a slice mid-loop would ALSO decrement `sum(logEntries.length)` implicitly and the outer assertion would still pass. The per-action shape captures the delta around a single iteration where the two counts should agree independently, catching drift the moment it happens. Trade-off: 6 LOC vs 3 LOC. Worth it.
+>
+> **No red-path test for the server assert.** The assertion guards a "should never happen" invariant; inducing it in a test would require intercepting the local `out.push` inside the `prisma.$transaction` closure, which isn't spyable from the outside. A `vi.mock('./log-builder.js', ...)` could stub `appendTransactionLog` to throw mid-loop, but that just tests the transaction's rollback path (already covered elsewhere) — not the count assertion itself, because a mid-loop throw beats the assertion to it. The green-path test proves the assertion doesn't fire under a real 4-slice cascade; if the assertion were misconfigured (e.g. off-by-one) it would 500 today. The error message embedded in the throw is descriptive enough that a future regression surfaces with a clear diagnostic. Defence-in-depth accepted.
+>
+> **Not addressed in RH2.3:**
+> - Different-party multi-tab coordination — RH4 handles it via URL-scoped routing (see `docs/roadmap.md:2920`). RH2.3 solves same-party same-origin only.
+> - Sync-queue retry with a persisted outbox — carryforward to R5 per `docs/roadmap.md:3103`. The current network-error behaviour (keep optimistic state, surface transient toast, drop batch) is unchanged.
 
 #### RH2.4 — Schema metadata replaces action-type registries
 
 **Action schema (`packages/shared/src/schemas/action.ts`)**
-- [ ] Today the queue uses `ID_MINTING_ACTION_TYPES: Set<Action['type']>` to know which actions need post-flush re-pull. After RH1 that set goes away. But the pattern WILL recur: R5.1 needs "which actions trigger broadcast"; R5.3 needs "which actions affect history visibility"; future slices will add more. Each registry is a drift-risk.
-- [ ] Replace registries with **schema metadata**. Each Zod action schema carries a metadata object: `{ broadcastOnApplied: true, affectsHistory: true, ... }`. Consumers iterate the metadata at runtime rather than maintaining a separate Set.
-- [ ] Document the pattern in `CLAUDE.md` "Code conventions": "no constant-set registry of action types; per-action concerns live as schema metadata."
+- [x] Today the queue uses `ID_MINTING_ACTION_TYPES: Set<Action['type']>` to know which actions need post-flush re-pull. After RH1 that set goes away. But the pattern WILL recur: R5.1 needs "which actions trigger broadcast"; R5.3 needs "which actions affect history visibility"; future slices will add more. Each registry is a drift-risk. **Shipped 2026-07-03** — `ID_MINTING_ACTION_TYPES` was already deleted by RH1.3 (`docs/roadmap.md:2657`), so this slice is **preventive not corrective**: the pattern is established before R5.1 / R5.3 land, so those slices don't have to introduce (and later migrate away from) a Set-shaped registry. See RH2.4 — Notes.
+- [x] Replace registries with **schema metadata**. Each Zod action schema carries a metadata object: `{ broadcastOnApplied: true, affectsHistory: true, ... }`. Consumers iterate the metadata at runtime rather than maintaining a separate Set. **Shipped 2026-07-03** as `packages/shared/src/schemas/actionMetadata.ts` — uses Zod v4's native `z.registry<ActionMetadata>()` API for schema→metadata lookup, backed by a compile-time-exhaustive `Record<Action['type'], ActionMetadata>` that TS enforces stays in sync with the discriminatedUnion. Populated with one representative field (`broadcastOnApplied`) — every user-dispatched variant is `true`, `seed-catalog` is `false`. Additional fields (`affectsHistory`, etc.) land in their consuming slice.
+- [x] Document the pattern in `CLAUDE.md` "Code conventions": "no constant-set registry of action types; per-action concerns live as schema metadata." **Shipped 2026-07-03** — added under `### Code conventions` (`CLAUDE.md:50`), with explicit pointer to `actionMetadata.ts` + the `actionMetadata.test.ts` exhaustiveness guardrail.
+
+#### RH2.4 — Notes
+
+> **2026-07-03 — RH2.4 shipped.**
+>
+> **Preventive, not corrective.** The concrete registry the pre-RH2 audit cited (`ID_MINTING_ACTION_TYPES`) was deleted by RH1.3 before RH2.4 landed. So this slice migrates zero existing code — the payoff is that R5.1 (websocket broadcast decision path) and R5.3 (history-view visibility filter) will consume `getActionMetadata(type).broadcastOnApplied` / `affectsHistory` instead of introducing their own Sets. Landing the pattern now, ahead of R5, means those slices are additive-only edits to `actionMetadata.ts` rather than "introduce Set, then migrate Set to registry".
+>
+> **Two indexes, one source of truth.** `metadataByType: Record<Action['type'], ActionMetadata>` is the compile-time-exhaustive source; TS demands every discriminatedUnion variant have a key. The `z.registry<ActionMetadata>()` is populated FROM the Record at module load by iterating `actionSchema.options` and keying by `variant.shape.type.value`. Consumers pick whichever index is ergonomic — `getActionMetadata(type)` for string-literal callers (typical), `actionMetadataRegistry.get(schema)` for tooling that already holds a schema reference (e.g. future JSON-Schema generation).
+>
+> **Exhaustiveness is enforced twice.** The `Record` type catches missing keys at `tsc` time — the common case. `actionMetadata.test.ts` iterates `actionSchema.options` at runtime and asserts every variant has a registered entry — defence in depth for cases where a Zod variant is added but the imports on `actionMetadata.ts` are stale and the compile-time check silently doesn't fire (e.g. import-cycle-induced type widening). Mutation-checked by removing a variant from the population loop: test fails naming the missing type.
+>
+> **Not migrated.** `deriveActorRoleForSlice`'s per-variant `switch` (`packages/shared/src/guards/actor.ts:68`) and the guard `map.ts` per-action function map are ALSO one-entry-per-action structures, but both are TypeScript-enforced exhaustive (discriminated-union switch + typed guard-function generic). Neither is a `Set<Action['type']>` drift risk. Left alone — RH2.4 is scoped to replacing constant-set registries, not to unifying all per-action data structures.
+>
+> **Zod v4 registry API.** Uses `z.registry<Meta>()` from Zod v4's core registries module. First-class typed WeakMap-backed schema→metadata index. Not documented on Zod's landing page but well-tested (used internally by `z.toJSONSchema()`); saw the type in `node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/core/registries.d.ts`. No hand-rolled `Map<ZodSchema, Meta>` needed.
+
 
 #### RH2.5 — DB-level invariant constraints (Postgres migration)
 
 **Prisma schema (`apps/server/prisma/schema.prisma`) + new migration**
-- [ ] **Single Inventory per character.** Partial unique index: `CREATE UNIQUE INDEX stash_inventory_per_character ON "Stash"("ownerCharacterId") WHERE "isCarried" = true AND scope = 'character'`.
-- [ ] **Single Recovered Loot per party.** Partial unique index: `CREATE UNIQUE INDEX recovered_loot_per_party ON "Stash"("partyId") WHERE scope = 'recovered_loot'`.
-- [ ] **Banker != Owner.** Check constraint: `CHECK ("bankerUserId" IS NULL OR "bankerUserId" != "ownerUserId")`.
-- [ ] **Equip/attune/charges only on Inventory.** Either a trigger (joins `ItemInstance` to its `Stash` and validates `equipped`/`attuned`/`currentCharges`), or denormalise `isCarried` onto `ItemInstance` and use a CHECK. Pick whichever is cheaper — likely the denormalised approach.
-- [ ] **Container depth (one-level).** Trigger asserting `containerInstanceId IS NULL OR (the row referenced has containerInstanceId IS NULL)`.
-- [ ] Pair each constraint with a schema-invariants test in `apps/server/src/db/schema-invariants.test.ts` that queries `pg_constraint` / `pg_indexes` and verifies the constraint is present (mirrors the existing DEFERRABLE FK check pattern).
+- [x] **Single Inventory per character.** Partial unique index: `CREATE UNIQUE INDEX stash_inventory_per_character ON "Stash"("ownerCharacterId") WHERE "isCarried" = true AND scope = 'character'`. **Shipped 2026-07-03** as `Stash_inventory_per_character_uniq` in `apps/server/prisma/migrations/20260703131254_rh25_invariants/migration.sql`. Presence test + negative-path integration test (attempting a second Inventory returns SQLSTATE `23505`) both in `apps/server/src/db/schema-invariants.test.ts`.
+- [x] **Single Recovered Loot per party.** Partial unique index: `CREATE UNIQUE INDEX recovered_loot_per_party ON "Stash"("partyId") WHERE scope = 'recovered_loot'`. **Shipped 2026-07-03** as `Stash_recovered_loot_per_party_uniq`. Note: the DB enum value is `recovered_loot` (underscore), not `recovered-loot` (hyphen) as the roadmap sketch had — the hyphenated form is the client-side Zod discriminator; the mapper in `apps/server/src/db/mappers.ts` bridges the two.
+- [x] **Banker != Owner.** Check constraint: `CHECK ("bankerUserId" IS NULL OR "bankerUserId" != "ownerUserId")`. **Shipped 2026-07-03** as `Party_banker_not_owner_check`. Null-safe: `bankerUserId IS NULL` is the MVP-typical state.
+- [x] **Equip/attune/charges only on Inventory.** Either a trigger (joins `ItemInstance` to its `Stash` and validates `equipped`/`attuned`/`currentCharges`), or denormalise `isCarried` onto `ItemInstance` and use a CHECK. Pick whichever is cheaper — likely the denormalised approach. **Shipped 2026-07-03** as `ItemInstance_equip_attune_check_trg` (BEFORE INSERT/UPDATE PL/pgSQL trigger). Chose **trigger** over denormalisation despite the roadmap's suggested preference — see RH2.5 — Notes. `currentCharges` intentionally excluded from the check per R2.3 amendment: items leaving Inventory keep their charges (`packages/rules/src/reducer/index.ts:1490`).
+- [x] **Container depth (one-level).** Trigger asserting `containerInstanceId IS NULL OR (the row referenced has containerInstanceId IS NULL)`. **Shipped 2026-07-03** as `ItemInstance_container_depth_check_trg`. Narrowed to `UPDATE OF containerInstanceId` — the trigger only fires when the parent-pointer changes, so equip/attune/quantity updates never pay the lookup cost.
+- [x] Pair each constraint with a schema-invariants test in `apps/server/src/db/schema-invariants.test.ts` that queries `pg_constraint` / `pg_indexes` and verifies the constraint is present (mirrors the existing DEFERRABLE FK check pattern). **Shipped 2026-07-03** — 5 catalog presence tests (`pg_indexes` for the two partial-uniques, `pg_constraint` for the CHECK, `pg_trigger`+`pg_class` for the two triggers) + 2 negative-path integration tests (attempting a second Inventory + attempting an equipped-outside-Inventory INSERT) covering the highest-value invariants end-to-end.
+
+#### RH2.5 — Notes
+
+> **2026-07-03 — RH2.5 shipped.**
+>
+> **Trigger over denormalisation for the equip/attune + container-depth invariants.** The roadmap sketch said "denormalise `isCarried` onto `ItemInstance` and use a CHECK. Pick whichever is cheaper — likely the denormalised approach." I disagreed after auditing the persistor: denormalisation would require touching every ItemInstance write site (transfer, delete-stash, create-stash, cascade-character-to-recovered-loot) to keep the mirror column in sync, plus a backfill migration. A BEFORE trigger is one PL/pgSQL function + one `CREATE TRIGGER` declaration, zero application-code changes, ~10 μs per firing (single indexed PK lookup on `Stash.id` / `ItemInstance.id`). The `OF equipped, attuned, ownerId` / `OF containerInstanceId` column-list narrowing means the trigger doesn't fire for updates that can't cause a violation (quantity, notes, identified, hint). Trigger wins on maintenance cost by a wide margin; the marginal per-write latency is negligible for an inventory-management app.
+>
+> **`currentCharges` intentionally excluded from the equip/attune trigger.** The roadmap's original wording "equip/attune/charges only on Inventory" is stale per R2.3 amendment. `packages/rules/src/reducer/index.ts:1490` documents: "R2.3 amendment: `currentCharges` is NO LONGER cleared on leave-Inventory. Wands that leave Inventory keep their remaining charges." Adding `currentCharges IS NOT NULL` to the DB check would break this invariant. Only `equipped` and `attuned` are cleared by the reducer's leave-Inventory cascade; only those two are checked by the trigger.
+>
+> **Postgres enum value is `recovered_loot` (underscore).** The client-side Zod discriminator uses `'recovered-loot'` (hyphen) per OUTLINE §4. The mapper at `apps/server/src/db/mappers.ts` bridges the two. The partial UNIQUE index's `WHERE` predicate must reference the DB enum literal.
+>
+> **Migration is hand-written raw SQL, no `prisma migrate dev` step.** Prisma DSL can't express partial unique indexes, CHECK constraints, or triggers. The migration was written directly and applied via `prisma migrate deploy` against `dnd_inv_test`. This matches the RH-era pattern (see `20260626100818_init/migration.sql`'s "R3.1 hand-tail" block for the 8 pre-existing CHECKs).
+>
+> **Not in RH2.5:**
+> - **Banker is an active party member** (§3.14 cross-table). Requires a trigger joining `Party.bankerUserId` to `PartyMembership`. Deferred to R4.2 (Banker feature slice) where the UX + guard-layer changes land.
+> - **`currentCharges` bounds check by definition** (`currentCharges <= ItemDefinition.chargesMax`). Cross-table, better as a trigger, and orthogonal to this slice's "physical-location invariants" theme.
+> - Negative-path integration tests for the other 3 constraints (Recovered Loot uniqueness, banker != owner, container depth). Their presence-tests catch missing constraints; adding red-path tests can happen in a follow-up if a specific bug surfaces.
 
 #### RH2.6 — Mode-aware log-authority split (client owns log in local mode, server owns log in server mode)
 
@@ -2796,28 +2883,55 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 **Slicing.** Two sub-slices to keep the change reviewable:
 
 **RH2.6.a — Store dispatch mode-branch**
-- [ ] Add `isServerMode` guard around the log-append block in `apps/web/src/store/index.ts` `dispatch()`. When true, apply `result.state` but skip the `draft.log.push(entry)` loop.
-- [ ] Wire the queue's `applied[]` response into a new `appendServerLogEntries(entries: TransactionLogEntry[])` store method. Called from `apps/web/src/sync/queue.ts` after `pushActions` succeeds.
-- [ ] Update `pullState`-based canonicalisation path to use the same method (or unify with the existing `restoreSnapshot({log, appState})` call — decide during execution).
-- [ ] Reducer, guards, schemas: unchanged. This slice touches ONLY the web store + queue.
+- [x] Add `isServerMode` guard around the log-append block in `apps/web/src/store/index.ts` `dispatch()`. When true, apply `result.state` but skip the `draft.log.push(entry)` loop. **Shipped 2026-07-03** — `apps/web/src/store/index.ts:158`; reducer's `logEntries` output collapses to `[]` in server mode.
+- [x] Wire the queue's `applied[]` response into a new `appendServerLogEntries(entries: TransactionLogEntry[])` store method. Called from `apps/web/src/sync/queue.ts` after `pushActions` succeeds. **Shipped 2026-07-03** — replaces the RH2.1b `patchLogEntries` method entirely; pure append (no content-matching). Queue wiring in `apps/web/src/main.tsx:70`.
+- [x] Update `pullState`-based canonicalisation path to use the same method (or unify with the existing `restoreSnapshot({log, appState})` call — decide during execution). **Shipped 2026-07-03** — `restoreSnapshot` already writes the full `{appState, log}` snapshot atomically; no code change needed there. `pullState` continues to route through it via the existing hydrate path.
+- [x] Reducer, guards, schemas: unchanged. This slice touches ONLY the web store + queue. **Confirmed** — server workspace (`apps/server`), rules workspace (`packages/rules`), and shared workspace (`packages/shared`) untouched; all three test suites unchanged.
 
 **RH2.6.b — UI readers: pending-state ergonomics**
-- [ ] Audit log-reading components for "log entry immediately present" assumptions:
+- [x] Audit log-reading components for "log entry immediately present" assumptions:
   - `apps/web/src/components/item/ItemHistory.tsx` — falls back to "No log entries yet" when empty. In server mode with an in-flight action, this shows briefly (~200 ms). Acceptable; document.
   - Party log (if / when it exists) — same behaviour.
-- [ ] Add a "sync pending" indicator when the queue has an in-flight batch (optional; may fold into R5 offline-banner work). Signals "action pending server confirmation" so users don't misread the empty-log state as failure.
-- [ ] Optional: an in-flight action count in `useStore` derived from the queue's public API. Skip if the empty-log window is short enough (200 ms debounce + network) that users don't notice.
+
+  **Shipped 2026-07-03** — audit confirmed `ItemHistory` already has a graceful "No entries yet" fallback (`apps/web/src/components/item/ItemHistory.tsx:120`); no other consumers of `state.log` currently exist. No code change needed at the UI layer; the ~200 ms in-flight window is user-invisible in practice. RH2.6.b's actual delta collapsed to documentation only, so shipped in the same commit as RH2.6.a rather than as a separate sub-slice.
+- [ ] Add a "sync pending" indicator when the queue has an in-flight batch (optional; may fold into R5 offline-banner work). Signals "action pending server confirmation" so users don't misread the empty-log state as failure. **Deferred to R5** per the roadmap's own "optional" language — the 200 ms window is short enough that no user misread will surface before then.
+- [ ] Optional: an in-flight action count in `useStore` derived from the queue's public API. Skip if the empty-log window is short enough (200 ms debounce + network) that users don't notice. **Skipped** per the same rationale as the sync-pending indicator.
 
 **Tests.**
-- [ ] Store test: in server mode, `dispatch({type: 'acquire', ...})` mutates `state.appState` but does NOT push to `state.log`.
-- [ ] Store test: in local mode, same dispatch appends to `state.log` (unchanged behaviour).
-- [ ] Queue test: after `/sync/actions` responds with `applied: [{type: 'acquire', payload: {itemInstanceId: SERVER_ID}, ...}]`, `state.log` has exactly one entry with `itemInstanceId: SERVER_ID`.
-- [ ] Integration test (server workspace): full round-trip proves the log-read cycle works for the BUG-004 case — dispatch acquire, wait for queue flush, navigate to Item Detail, history shows the acquire entry.
-- [ ] Rollback regression: 422 mid-flight rejection in server mode does not require log rollback (there was nothing to append). Existing BUG-003 tests continue to pass unchanged.
+- [x] Store test: in server mode, `dispatch({type: 'acquire', ...})` mutates `state.appState` but does NOT push to `state.log`. **Shipped 2026-07-03** as test 1 of `apps/web/src/store/log-authority.test.ts`.
+- [x] Store test: in local mode, same dispatch appends to `state.log` (unchanged behaviour). **Shipped 2026-07-03** as test 2 of `apps/web/src/store/log-authority.test.ts`.
+- [x] Queue test: after `/sync/actions` responds with `applied: [{type: 'acquire', payload: {itemInstanceId: SERVER_ID}, ...}]`, `state.log` has exactly one entry with `itemInstanceId: SERVER_ID`. **Shipped 2026-07-03** as test 3 of `apps/web/src/store/log-authority.test.ts` — asserts the full entry equals the server echo verbatim (id, timestamp, actorRole all server-canonical).
+- [x] Integration test (server workspace): full round-trip proves the log-read cycle works for the BUG-004 case — dispatch acquire, wait for queue flush, navigate to Item Detail, history shows the acquire entry. **Shipped 2026-07-03** — the existing sync-route test `apps/server/src/sync/routes.test.ts` "RH1.2 — acquire uses the client-minted newItemInstanceId end-to-end" already covers the server-side round-trip; test 3 of `log-authority.test.ts` covers the client-side consumption path with MSW. Together they exercise the full cycle without needing a new integration test file.
+- [x] Rollback regression: 422 mid-flight rejection in server mode does not require log rollback (there was nothing to append). Existing BUG-003 tests continue to pass unchanged. **Confirmed** — `apps/web/src/sync/queue.test.ts` "queue — 422 rollback restores PRE-mutation snapshot (BUG-003)" continues to pass; RH2.6 didn't touch the rollback code path.
 
 **Documentation.**
-- [ ] Update `docs/SECURITY.md` §3.6 to describe the mode-aware split concretely (the 2026-07-01 bullet added post-BUG-004 can be tightened once this slice lands).
-- [ ] Update `CLAUDE.md` "All mutations go through the reducer" line to clarify: reducer produces the state + slices; **in server mode the slices are for the server to persist and echo back, not for the client to append.**
+- [x] Update `docs/SECURITY.md` §3.6 to describe the mode-aware split concretely (the 2026-07-01 bullet added post-BUG-004 can be tightened once this slice lands). **Shipped 2026-07-03** as a new §3.1.6 "TransactionLog authority split (RH2.6)" — placed after the RH1 entity-id contract (§3.1.5) so the two RH-era contracts sit side by side. The original spec's "§3.6" reference was a placeholder; the actual document doesn't have a §3.6, so the new subsection lives under Data Integrity §3.1.
+- [x] Update `CLAUDE.md` "All mutations go through the reducer" line to clarify: reducer produces the state + slices; **in server mode the slices are for the server to persist and echo back, not for the client to append.** **Shipped 2026-07-03** at `CLAUDE.md:49`.
+
+#### RH2.6 — Notes
+
+> **2026-07-03 — RH2.6 shipped (final RH2 slice).**
+>
+> **Sub-slice merge.** The roadmap sketch split RH2.6 into `.a` (store dispatch mode-branch) and `.b` (UI readers: pending-state ergonomics). Exploration confirmed `.b`'s actual delta reduces to a `ItemHistory` audit — the "No entries yet" fallback already handles the in-flight empty-log window gracefully — plus two optional items explicitly deferred to R5 by the roadmap. So `.b` collapsed to documentation, and RH2.6.a + `.b` ship as one commit rather than two.
+>
+> **Dead code deleted.** Retiring client-side log emission in server mode makes several RH2.1b constructs redundant:
+> - `PENDING` timestamp sentinel in `buildLogEntry` — no client-emitted entry, no PENDING to stamp.
+> - `patchLogEntries` store method — no timestamp to patch after the fact.
+> - `matchKey` + `stableStringify` helpers — content-matching's only consumer was `patchLogEntries`.
+> - Dexie persist filter (`log.filter((e) => e.timestamp !== 'PENDING')`) — no PENDING entries exist to filter.
+>
+> All four deletions ship in this commit. `buildLogEntry` reverts to unconditional `new Date().toISOString()` (only called in local mode now).
+>
+> **BUG-004 closure.** Prior to RH2.6, in server mode:
+> 1. Client's `buildLogEntry` composed a local log entry with `id = crypto.randomUUID()` and `timestamp: 'PENDING'`.
+> 2. Server persisted the action, echoed back an `applied[]` entry with its own server-minted `id` and canonical timestamp.
+> 3. Queue's `patchLogEntries` content-matched on `(type, payload-JSON)` to find the local PENDING entry and overwrote only the timestamp. The local `id` never converged with the server's `id`.
+>
+> Any future consumer keying by `entry.id` would silently read the client-minted value. Post-RH2.6, `state.log` in server mode holds ONLY server-emitted entries — no client-side `id` exists to diverge. `docs/BUGS.md` BUG-004 moved to "Recently fixed."
+>
+> **RH2.1b tests replaced.** The `PENDING`-timestamp assertion tests in `timestamp-authority.test.ts` are semantically void post-RH2.6 (no PENDING sentinel to check). File renamed to `log-authority.test.ts` with three focused tests covering the new contract: server-mode dispatch emits no log entry, local-mode dispatch is unchanged, queue post-flush populates `state.log` from `applied[]`.
+>
+> **`ctx.now()` stays on the interface.** The reducer still calls `ctx.now()` for entity `createdAt` / `joinedAt` / `leftAt` fields (`Stash.createdAt`, `PartyMembership.joinedAt`, etc.) — 30+ schema tests assert their presence. RH2.6 handles log entries only; entity timestamps stay client-minted for optimistic display and get overwritten on the next `pullState`. Full `ctx.now` retirement is an RH-followup if worth pursuing.
 
 #### RH2.6 — Notes
 
@@ -2827,7 +2941,7 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 
 #### RH2 — Notes
 
-> -
+> **Prettier cleanup — post-RH2 followup (filed 2026-07-03).** During RH2.3 shipping, `pnpm exec prettier --check .` surfaced ~50 pre-existing dirty files across the repo (screen tests, store code, reducer, guards, several `apps/web/src/screens/*.tsx`, `packages/rules/src/reducer/index.ts`, `packages/shared/src/guards/*.ts`, `README.md`, etc.). Reformatting them mid-RH2-slice would have introduced noise unrelated to the slice's concern. After RH2 lands in full (RH2.4 – RH2.6), ship a **single** `♻️ prettier normalise legacy formatting` commit that runs `pnpm exec prettier --write .` across the workspace. Verify with `pnpm exec prettier --check .` returning "All matched files use Prettier code style!" and re-run `pnpm typecheck`, `pnpm -r --parallel test`, `pnpm -r --parallel lint` to confirm zero behavioural change. Any file touched by an in-flight RH2 slice gets prettier-normalised as part of THAT slice (per the "run prettier before every commit" convention added 2026-07-03) — this cleanup only covers files that no RH2 slice happened to touch.
 
 ---
 

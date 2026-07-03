@@ -65,6 +65,18 @@ export interface QueueDeps {
    * party id.
    */
   getActivePartyId: () => Promise<string | null>;
+  /**
+   * RH2.6 — post-flush hook. After `POST /sync/actions` returns
+   * `applied[]`, the queue passes the array to this dep so the store
+   * can append the server-emitted log entries to `state.log`. In
+   * server mode this is the SOLE path by which `state.log` grows;
+   * the store's dispatch middleware discards the reducer's local
+   * `logEntries` slice output (see `apps/web/src/store/index.ts`).
+   *
+   * Optional so tests that don't care about post-flush log growth
+   * can omit it; production wiring in `main.tsx` always supplies it.
+   */
+  appendServerLogEntries?: (applied: readonly TransactionLogEntry[]) => void;
 }
 
 let queue: Action[] = [];
@@ -166,78 +178,112 @@ export async function flush(): Promise<void> {
   }
   if (queue.length === 0) return;
 
+  // Capture the narrowed `deps` for use inside the async lock callback.
+  // TypeScript's control-flow analysis doesn't survive across the
+  // callback boundary, so we bind `d` here (guaranteed non-null by the
+  // early return above) rather than re-checking `deps !== null` at
+  // every use site inside the callback.
+  const d = deps;
+
   // Splice up to MAX_BATCH off the head; leftovers stay for the next
   // tick.
   const batch = queue.splice(0, MAX_BATCH);
   const snapshot = preBatchSnapshot;
   preBatchSnapshot = null;
 
-  inflight = (async () => {
-    try {
-      // RH1.3 — the client mints all entity ids (including `newPartyId`
-      // for bootstrap) via `injectMintedIds` in the store; the caller
-      // (Hub.tsx) stamps it into Dexie meta via `setCurrentPartyId`
-      // BEFORE calling `flush()`. So `getActivePartyId()` always
-      // returns a real, client-minted partyId — bootstrap and post-
-      // bootstrap look identical to the queue.
-      const partyId = await deps.getActivePartyId();
-      if (partyId === null) {
-        toast.error('No active party — refresh and try again.');
-        if (snapshot !== null) deps.restoreSnapshot(snapshot);
-        return;
-      }
-
-      await pushActions(partyId, batch);
-
-      // RH1.3 — no post-flush re-pull. The server's reducer runs with
-      // NO id-minting authority (the RH1.2 contract removed `ctx.newId`
-      // server-side); every id in the server's `applied[]` echo is the
-      // same client-minted UUID v7 that's already in local state. The
-      // pre-RH1.3 re-pull was necessary because the server's reducer
-      // used to mint its own randomUUIDs — that divergence is gone.
-    } catch (err) {
-      if (err instanceof BatchRejectedError) {
-        if (snapshot !== null) deps.restoreSnapshot(snapshot);
-        toast.error(`Action rejected: ${err.rejectedCode}`, {
-          description: err.rejectedMessage,
-        });
-        return;
-      }
-      if (err instanceof ApiError) {
-        if (err.code === 'unauthenticated') {
-          if (snapshot !== null) deps.restoreSnapshot(snapshot);
-          await useSession.getState().signOut();
+  inflight = navigator.locks.request<void>(
+    'sync-queue-flush',
+    // The `LockGrantedCallback<T>` DOM type is `(lock) => T`, which
+    // TS type-checks fine against an async callback (Promise<void> is
+    // assignable to void). ESLint's `no-misused-promises` doesn't see
+    // that Web Locks accepts async callbacks natively — the runtime
+    // awaits the returned promise. Suppressing this one call site.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    async () => {
+      // RH2.3 — same-origin multi-tab coordinator. `navigator.locks`
+      // FIFO-queues requests to the same name across tabs so only ONE
+      // tab issues a `POST /sync/actions` at a time. The lock releases
+      // automatically when this callback settles or the tab closes; no
+      // manual heartbeat / leader-election protocol needed. Baseline
+      // Widely Available since March 2022 (all 4 major browsers). The
+      // test env uses the FIFO shim in `apps/web/src/test/setup.ts`.
+      try {
+        // RH1.3 — the client mints all entity ids (including `newPartyId`
+        // for bootstrap) via `injectMintedIds` in the store; the caller
+        // (Hub.tsx) stamps it into Dexie meta via `setCurrentPartyId`
+        // BEFORE calling `flush()`. So `getActivePartyId()` always
+        // returns a real, client-minted partyId — bootstrap and post-
+        // bootstrap look identical to the queue.
+        const partyId = await d.getActivePartyId();
+        if (partyId === null) {
+          toast.error('No active party — refresh and try again.');
+          if (snapshot !== null) d.restoreSnapshot(snapshot);
           return;
         }
-        if (err.code === 'display_name_required') {
-          if (snapshot !== null) deps.restoreSnapshot(snapshot);
-          // The session store's status will already be `authenticated`
-          // — flip it so ProtectedRoute reroutes.
-          const user = useSession.getState().user;
-          if (user !== null) {
-            useSession.getState().setUserPatch({ ...user, needsDisplayName: true });
+
+        await pushActions(partyId, batch).then((response) => {
+          // RH2.6 — server-authoritative log-authority in server mode.
+          // The server's `applied[]` echo is the sole source of truth
+          // for TransactionLog contents; the store's dispatch
+          // middleware discards the reducer's local logEntries in
+          // server mode, so this call is the only path by which
+          // `state.log` grows. Skipped when the dep is absent (test
+          // fakes that don't care about log growth).
+          if (d.appendServerLogEntries !== undefined) {
+            d.appendServerLogEntries(response.applied);
           }
+        });
+
+        // RH1.3 — no post-flush re-pull. The server's reducer runs with
+        // NO id-minting authority (the RH1.2 contract removed `ctx.newId`
+        // server-side); every id in the server's `applied[]` echo is the
+        // same client-minted UUID v7 that's already in local state. The
+        // pre-RH1.3 re-pull was necessary because the server's reducer
+        // used to mint its own randomUUIDs — that divergence is gone.
+      } catch (err) {
+        if (err instanceof BatchRejectedError) {
+          if (snapshot !== null) d.restoreSnapshot(snapshot);
+          toast.error(`Action rejected: ${err.rejectedCode}`, {
+            description: err.rejectedMessage,
+          });
           return;
         }
-        toast.error(`Sync error: ${err.code}`);
-        // Don't roll back on transient errors — the user can retry.
-        return;
-      }
-      // Network error: keep optimistic state, drop the batch.
+        if (err instanceof ApiError) {
+          if (err.code === 'unauthenticated') {
+            if (snapshot !== null) d.restoreSnapshot(snapshot);
+            await useSession.getState().signOut();
+            return;
+          }
+          if (err.code === 'display_name_required') {
+            if (snapshot !== null) d.restoreSnapshot(snapshot);
+            // The session store's status will already be `authenticated`
+            // — flip it so ProtectedRoute reroutes.
+            const user = useSession.getState().user;
+            if (user !== null) {
+              useSession.getState().setUserPatch({ ...user, needsDisplayName: true });
+            }
+            return;
+          }
+          toast.error(`Sync error: ${err.code}`);
+          // Don't roll back on transient errors — the user can retry.
+          return;
+        }
+        // Network error: keep optimistic state, drop the batch.
 
-      console.warn('[queue] flush failed; keeping optimistic state', err);
-      toast.error('Network error — your changes may not have saved.');
-    } finally {
-      inflight = null;
-      // If more actions arrived while we were in-flight, drain them.
-      if (queue.length > 0) {
-        // The next flush captures its own snapshot from the (already
-        // server-confirmed) current state.
-        preBatchSnapshot = deps.getSnapshot();
-        scheduleFlush();
+        console.warn('[queue] flush failed; keeping optimistic state', err);
+        toast.error('Network error — your changes may not have saved.');
+      } finally {
+        inflight = null;
+        // If more actions arrived while we were in-flight, drain them.
+        if (queue.length > 0) {
+          // The next flush captures its own snapshot from the (already
+          // server-confirmed) current state.
+          preBatchSnapshot = d.getSnapshot();
+          scheduleFlush();
+        }
       }
-    }
-  })();
+    },
+  );
   return inflight;
 }
 
