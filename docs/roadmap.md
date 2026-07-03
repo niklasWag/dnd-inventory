@@ -3246,11 +3246,21 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 #### RH5.1 — Design decision: null-state save behaviour
 
 **Design work (before any code)**
-- [ ] Pick one of three approaches for the pre-character-creation null-state window:
+- [x] Pick one of three approaches for the pre-character-creation null-state window:
   1. **Skip null-state persistence entirely.** The store's `appState: null` phase never writes to Dexie. On reload, `hydrate.ts` sees no keyed blob for `currentPartyId` (because it's also `null`), boots empty, and Hub renders the create-party CTA. Pros: cleanest — no null-state row in storage. Cons: any in-progress state (draft party name, wizard step) is lost on refresh — but the Hub wizard is transient by design, so this may be acceptable.
   2. **Dedicated `appState:pending` key.** Null-state writes go to a well-known key that's semantically distinct from party blobs. Loader ignores it during party-scoped reads. Pros: null-state persistence preserved for Hub wizard refresh survival. Cons: one more storage key to reason about; RH0.1's `.strict()` schema doesn't naturally cover a partial "wizard-in-progress" shape.
   3. **Move Hub wizard state out of `appState` entirely.** Wizard draft goes to a component-local `useState` or a tiny separate Dexie `meta` field (e.g. `hubWizardDraft`), not into the main store. The store's `appState` becomes strictly non-null after first party creation. Pros: cleanest separation of concerns; the store is only ever null before the FIRST party ever exists on the device. Cons: mechanical Hub refactor.
-- [ ] Capture the decision in this slice's Notes block. The decision affects RH5.2's shape.
+- [x] Capture the decision in this slice's Notes block. The decision affects RH5.2's shape.
+
+**Shipped 2026-07-03.** Approach #1 selected — skip null-state persistence entirely. The debounced saver early-returns when the snapshot has no `appState.party.id`; `saveAppState(state, partyId)` tightened to required-arg (throws on empty string). One live-code consumer of arg-less `saveAppState` (`ReplaceAllConfirmDialog` for JSON import) migrated to pass `result.snapshot.appState.party.id`, guarded by an `appState !== null` branch for empty-backup imports. Persistence tests rewritten to remove the arg-less/legacy-slot cases; added positive "no-op when appState is null" tests. Web suite 755/755 green.
+
+##### RH5.1 — Notes
+
+> **Filed 2026-07-03.** Rationale for approach #1: the Hub wizard state (party name, wizard step) is already component-local `useState` — nothing in the store is ever null-with-meaningful-payload. Skipping the null-state save removes the only reason for the loader's legacy-unkeyed-slot fallback tier, which unblocks RH5.2's single-path collapse without a mechanical Hub refactor.
+>
+> **Alternative behaviour retired.** Pre-RH5.1 the debounced saver wrote `{appState: null, log: []}` to the unkeyed `'appState'` slot during the Hub's flush-then-clear window (before create-party dispatch). That row served no purpose — `hydrate.ts` never used it once ANY keyed blob existed, and post-RH0.1's `.strict()` schema the null-appState shape wouldn't have parsed at hydrate time anyway. Removed.
+>
+> **Interaction with JSON import.** `ReplaceAllConfirmDialog` was the sole live-code consumer of arg-less `saveAppState`. It now derives partyId from `result.snapshot.appState.party.id` and skips the write when `appState === null` (empty-backup import). In-memory `useStore.hydrate` still runs so the UI updates immediately; on reload the store lands on Hub via the RH5.2 single-path resolver.
 
 #### RH5.2 — Dexie loader + hydration path
 

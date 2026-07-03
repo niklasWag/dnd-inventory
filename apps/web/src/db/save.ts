@@ -1,35 +1,32 @@
 import { db } from '@/db/schema';
 
 /**
- * R4-followup — per-party persistence keying.
+ * RH5.1 — per-party persistence keying (single-path).
  *
- * The web client holds ONE party's `AppState` in memory at a time, but a
- * user may have many parties (server mode lists them via `GET
- * /sync/parties`; local mode keeps them under separate Dexie keys). The
- * persistence layer keys each party's blob under `appState:<partyId>`.
- *
- * Backward-compat: the original single-key path (`'appState'`) is kept
- * as a fallback for tests and for the "no character yet" bootstrap
- * window — `saveAppState` / `loadAppState` accept an optional partyId,
- * and when absent fall back to the legacy unkeyed slot. The store
- * middleware always passes the current `state.party.id` once it has
- * one.
+ * The web client holds ONE party's `AppState` in memory at a time. Each
+ * party's blob is keyed as `appState:<partyId>`. There is no legacy
+ * unkeyed fallback slot post-RH5.1 — the debounced saver skips writes
+ * entirely while `state.appState` is null (pre-first-party / mid-swap
+ * windows). The direct `saveAppState(state, partyId)` writer still
+ * accepts an explicit partyId; callers must supply one for a keyed
+ * write.
  */
 const APP_STATE_KEY = 'appState';
 
-function keyFor(partyId?: string | null): string {
-  if (partyId === undefined || partyId === null || partyId.length === 0) {
-    return APP_STATE_KEY;
-  }
+function keyFor(partyId: string): string {
   return `${APP_STATE_KEY}:${partyId}`;
 }
 
 /**
- * Persist the AppState blob immediately. Most callers should prefer
- * `createDebouncedSaver()` instead — every reducer mutation triggers a save,
- * so we batch consecutive writes to avoid hammering IndexedDB.
+ * Persist the AppState blob immediately under `appState:<partyId>`. Most
+ * callers should prefer `createDebouncedSaver()` — every reducer mutation
+ * triggers a save, so we batch consecutive writes to avoid hammering
+ * IndexedDB.
  */
-export async function saveAppState(state: unknown, partyId?: string | null): Promise<void> {
+export async function saveAppState(state: unknown, partyId: string): Promise<void> {
+  if (partyId.length === 0) {
+    throw new Error('saveAppState: partyId must be non-empty');
+  }
   await db.meta.put({ key: keyFor(partyId), value: state });
 }
 
@@ -49,11 +46,11 @@ const DEFAULT_DEBOUNCE_MS = 250;
  * window wins; intermediate states are dropped. `flush()` forces a pending
  * save immediately (useful before navigation away or in tests).
  *
- * R4-followup: the saver derives the Dexie key from `state.party.id` on
- * each call so a "switch parties" mid-session writes to the right blob.
- * When the state is null (pre-character-creation), it falls back to the
- * legacy unkeyed slot so the existing test suite + bootstrap path keeps
- * working.
+ * RH5.1 — the saver derives the Dexie key from `state.appState.party.id`
+ * on each call. When the state is null (`appState === null`; pre-first-
+ * party or mid-swap window), the save is a NO-OP — the null-state phase
+ * is transient and doesn't survive reload by design. Post-RH5.1 there
+ * is no legacy unkeyed fallback slot.
  */
 export function createDebouncedSaver(debounceMs: number = DEFAULT_DEBOUNCE_MS): {
   save: (state: unknown) => void;
@@ -81,13 +78,21 @@ export function createDebouncedSaver(debounceMs: number = DEFAULT_DEBOUNCE_MS): 
     hasPending = false;
     pending = undefined;
     pendingPartyId = null;
+    // RH5.1 — never persist a null-state (partyId === null) snapshot.
+    // Guards against a `flush()` that races a state-clear window.
+    if (partyId === null) return;
     await saveAppState(snapshot, partyId);
   }
 
   return {
     save(state: unknown): void {
+      const partyId = partyIdFromBlob(state);
+      // RH5.1 — silently skip when there's no party in the snapshot.
+      // The null-state window doesn't need persistence; on reload the
+      // Hub CTA renders (see docs/roadmap.md RH5.1 Notes).
+      if (partyId === null) return;
       pending = state;
-      pendingPartyId = partyIdFromBlob(state);
+      pendingPartyId = partyId;
       hasPending = true;
       if (timer !== null) clearTimeout(timer);
       timer = setTimeout(() => {

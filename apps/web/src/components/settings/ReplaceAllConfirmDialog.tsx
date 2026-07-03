@@ -66,7 +66,16 @@ export function ReplaceAllConfirmDialog({
     try {
       await flushPendingPersist();
       await wipeAll();
-      await saveAppState({ appState: result.snapshot.appState, log: result.snapshot.log });
+      // RH5.1 — persist ONLY if the imported snapshot has an appState
+      // (partyId available). Empty-backup imports (`appState: null`)
+      // skip the Dexie write; the null-state phase is transient by
+      // design and doesn't survive reload.
+      if (result.snapshot.appState !== null) {
+        await saveAppState(
+          { appState: result.snapshot.appState, log: result.snapshot.log },
+          result.snapshot.appState.party.id,
+        );
+      }
       useStore.getState().hydrate({
         appState: result.snapshot.appState,
         log: result.snapshot.log,
