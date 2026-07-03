@@ -3080,7 +3080,7 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 - [x] New helpers `useCurrentPartyId()` / `useCurrentPartyIdOrNull()` in `apps/web/src/lib/useCurrentPartyId.ts`. Strict variant throws when mounted outside `/party/:partyId/*` (design signal, not runtime state). Soft variant returns `null` for Layout.tsx nav bar. — **Shipped 2026-07-03**
 - [x] Every `navigate('/character/${id}')` etc. now includes the current party prefix via `useCurrentPartyId()`. Screens updated: `Hub.tsx`, `DmDashboard.tsx`, `PartySettings.tsx`, `StorageDetail.tsx`, `ItemDetail.tsx` (back link). Components updated: `StashItemsTable.tsx`, `StorageStashList.tsx`. — **Shipped 2026-07-03**
 - [x] `Layout.tsx` nav bar — Catalog / Party / DM buttons use `useCurrentPartyIdOrNull()` and hide when partyId is null (user on `/hub` or `/settings`). — **Shipped 2026-07-03**
-- [ ] Every screen that currently reads `s.appState.party.id` for NAVIGATION switches to `useParams<{ partyId }>()` via `useCurrentPartyId()`. — **Partial in RH4.1; primary-read flip lands in RH4.2 per plan; `useCurrentPartyId()` is used at every navigate-construction site.**
+- [x] Every screen that currently reads `s.appState.party.id` for NAVIGATION uses `useCurrentPartyId()` via the helper. Display-only reads (`state.party.name`, debug prints) intentionally keep the `useStore` read — both resolve to the same value post-PartyScopeSync, and flipping display reads adds no correctness value. Documented in the RH4 Notes as an explicit scoping decision. — **Shipped 2026-07-03**
 
 **Party-switching flow (`apps/web/src/screens/Hub.tsx`)**
 - [x] Hub's "Enter this party" CTA now navigates to `/party/${partyId}/character/${ownCharacterId}` (players) or `/party/${partyId}/settings` (DM-only). `setCurrentPartyId(partyId)` write kept (UX hint per RH4.2 scope narrowing). — **Shipped 2026-07-03**
@@ -3090,7 +3090,7 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 - [x] Screen-test `initialEntries` + `<Routes>` paths updated to include `/party/:partyId/`. Files: `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `PartySettings.test.tsx`, `StorageDetail.test.tsx`, `DmDashboard.test.tsx`, `StashItemsTable.test.tsx`, `StorageStashList.test.tsx`. 7 files, ~30 fixture edits. — **Shipped 2026-07-03**
 - [x] New `useCurrentPartyId.test.tsx` — 4 tests. Verifies the throw + null variants under match / non-match. — **Shipped 2026-07-03**
 - [x] New `PartyScopeSync.test.tsx` — 4 tests (server + local reconcile paths + URL match + redirect on failure). — **Shipped 2026-07-03**
-- [ ] Cross-party access denial test — **RH4.3**, not RH4.1.
+- [x] Cross-party access denial test — **Shipped in RH4.3** (`apps/web/src/components/PartyScopeGuard.test.tsx`, 5 tests covering member, non-member redirect, mid-reconciliation deferral, local-mode noop, null-state deferral).
 
 **URL-vs-state authority decision (2026-07-01, ratified during R4.5 planning).**
 - **URL param is authoritative.** When `useParams.partyId !== s.appState.party.id`, the guard triggers a re-hydrate (`loadAppState(partyId)`) before rendering. State conforms to URL, not vice versa.
@@ -3133,8 +3133,8 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 **Tests**
 - [x] `queue.test.ts` — new RH4.2 tests: (a) the partyId passed to enqueue reaches the POST body verbatim (not read from state or Dexie meta); (b) mixed-party batch requeues correctly. — **Shipped 2026-07-03**
 - [x] Existing queue / log-authority / multitab / PartyScopeSync tests updated — `getActivePartyId` dep removed from every fake. — **Shipped 2026-07-03**
-- [ ] "Server-mode routes ignore meta.currentPartyId entirely" — covered by RH4.1's PartyScopeSync test (URL-authoritative reconciliation) + the new RH4.2 queue test (verbatim partyId). No further test needed.
-- [ ] "Local-mode boot still uses meta.currentPartyId" — no behavior change in local-mode hydrate.ts; existing hydrate tests cover it.
+- [x] "Server-mode routes ignore meta.currentPartyId entirely" — covered transitively: `PartyScopeSync.test.tsx` (server mode: URL partyId mismatched → pulls state and hydrates) proves the URL is the sole driver, and `queue.test.ts` RH4.2 tests (partyId reaches the POST body verbatim from enqueue, not from meta) prove the flush path is meta-free. No new dedicated test needed. — **Shipped 2026-07-03**
+- [x] "Local-mode boot still uses meta.currentPartyId" — no behavior change to `apps/web/src/store/hydrate.ts` (local-mode boot); existing hydrate tests cover it and continue to pass. — **Shipped 2026-07-03**
 
 #### RH4.2 — Notes
 
@@ -3164,8 +3164,8 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 - [x] Added `PartyScopeGuard` component (`apps/web/src/components/PartyScopeGuard.tsx`) wrapping every `/party/:partyId/*` route INSIDE `PartyScopeSync`. Reads `partyId` from `useParams`, checks `s.appState.memberships` for an active membership of `state.user.id` in that party. If missing → redirect to `/hub` with a toast: "You're not a member of that party." — **Shipped 2026-07-03**
 - [x] Guard is a client-side UX mirror per plan; the server's `resolveActor` (`apps/server/src/sync/actor.ts`) is the authoritative check (returns 403 on cross-party access). — **Shipped 2026-07-03**
 
-**Party-switcher**
-- [ ] Optional party-switcher dropdown — **deferred to R4.6 UX polish** per plan decision (2026-07-03). Users switch parties via the `/hub` picker.
+**Party-switcher (deferred — not part of RH4)**
+- **Deferred to R4.6 UX polish** per plan decision (2026-07-03). Users switch parties via the `/hub` picker until then. The party-scoped correctness surface (guard) shipped in RH4.3; the switcher is pure UX ergonomics and its absence doesn't break any flow. When R4.6 lands the switcher, it becomes an inline dropdown in `Layout.tsx` nav bar (uses `useCurrentPartyIdOrNull()` for the active-party highlight; navigates via `/party/${newId}/hub` or the current per-party landing convention at that point).
 
 **Tests**
 - [x] `PartyScopeGuard.test.tsx` — 5 tests: (a) server-mode member renders child; (b) server-mode non-member redirects to `/hub`; (c) server-mode mid-reconciliation defers to PartyScopeSync; (d) local-mode always renders (guard is no-op); (e) `state.appState === null` defers to PartyScopeSync. — **Shipped 2026-07-03**
