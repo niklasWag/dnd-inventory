@@ -69,6 +69,7 @@ describe('appStateSchema round-trip', () => {
         inventoryStashId: 'stash-inv',
       },
     ],
+    gameSessions: [],
     stashes: [
       {
         id: 'stash-inv',

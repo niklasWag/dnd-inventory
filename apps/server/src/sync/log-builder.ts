@@ -17,7 +17,12 @@
  * because `identify` is a DM-only action per §8.1).
  */
 import type { Actor, AppState, TransactionLogEntry } from '@app/shared';
-import { deriveActorRoleForSlice, newUuidV7, transactionLogEntrySchema } from '@app/shared';
+import {
+  currentGameSessionId,
+  deriveActorRoleForSlice,
+  newUuidV7,
+  transactionLogEntrySchema,
+} from '@app/shared';
 import type { LogEntrySlice, ReducerContext } from '@app/rules';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
@@ -37,7 +42,7 @@ export function buildLogEntryServer(
     // when entity-id minting moved to the action payload.
     id: newUuidV7(),
     partyId: actor.partyId,
-    sessionId: null,
+    sessionId: currentGameSessionId(state),
     timestamp: ctx.now(),
     actorUserId: actor.userId,
     // RH2.1a — per-action-type role derivation via the shared function.

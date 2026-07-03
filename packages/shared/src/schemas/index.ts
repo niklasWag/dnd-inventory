@@ -5,6 +5,7 @@ export * from './appState';
 export * from './character';
 export * from './currencyHolding';
 export * from './exportEnvelope';
+export * from './gameSession';
 export * from './itemDefinition';
 export * from './itemInstance';
 export * from './party';

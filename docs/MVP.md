@@ -367,7 +367,7 @@ Each post-MVP outline section adds **purely additive** changes. No MVP schema fi
    - Add Banker-mediated claim rules (already documented in outline §8).
 
 5. **Live history UI + sessions** (outline M5)
-   - Render the existing `TransactionLog` — no schema change. Add `Session` entity.
+   - Render the existing `TransactionLog` — no schema change. Add `GameSession` entity (called `GameSession` in code to avoid collision with the Auth.js `Session` model; see OUTLINE §4).
 
 6. **DM tools** (outline M6) — hoard generator, identification flow, shop manager.
 

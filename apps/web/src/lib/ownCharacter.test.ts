@@ -55,6 +55,7 @@ function makeAppState(opts: {
       enforceEncumbrance: false,
       inventoryStashId: `inv-${id}`,
     })),
+    gameSessions: [],
     stashes: [],
     catalog: [],
     items: [],

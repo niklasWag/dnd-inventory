@@ -58,6 +58,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - `equipped` / `attuned` / `identified` / `currentCharges` are only meaningful on items in a `scope=character, isCarried=true` stash.
 - Currency lives on every stash uniformly via `CurrencyHolding.stashId`.
 - `PartyMembership` primary key is composite `(userId, partyId, role)` — a party creator has two rows (dm + player).
+- **`GameSession` (RH3.1) is a D&D-gameplay session** — Prisma model, Zod schema, `AppState.gameSessions`, reducer actions `start-game-session` / `end-game-session`. **Do not confuse with the Auth.js `Session` model** (`schema.prisma:417`), which is per-browser auth state. `TransactionLog.sessionId` refers to `GameSession.id`. See `docs/OUTLINE.md` §4 naming note.
 - The MVP hard-codes some fields to placeholder values (`equipped: false`, `encumbranceRule: "off"`, `bankerUserId: null`, etc.). Do not redesign the schema to "remove" them — they're placeholders for future features.
 
 ### Permissions / behavior rules (see `docs/OUTLINE.md` §3.14 + §8)

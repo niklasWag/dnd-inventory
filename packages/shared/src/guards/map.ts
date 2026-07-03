@@ -1048,6 +1048,50 @@ const splitEvenlyGuard: Guard<Extract<Action, { type: 'split-evenly' }>> = (
   return { ok: true };
 };
 
+/**
+ * RH3.1 — `start-game-session`. DM-only per OUTLINE §3.12 ("the DM
+ * marks the current session"). §8.2 solo bypass is handled by
+ * `checkGuard` upstream.
+ */
+const startGameSessionGuard: Guard<Extract<Action, { type: 'start-game-session' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'start-game-session: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'start-game-session is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * RH3.1 — `end-game-session`. DM-only per OUTLINE §3.12 (symmetric with
+ * `start-game-session`). §8.2 solo bypass is handled by `checkGuard`
+ * upstream.
+ */
+const endGameSessionGuard: Guard<Extract<Action, { type: 'end-game-session' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'end-game-session: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'end-game-session is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
 export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>> } = {
   'create-character': createCharacterGuard,
   acquire: acquireGuard,
@@ -1083,6 +1127,8 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'revoke-banker': revokeBankerGuard,
   'dm-transfer': dmTransferGuard,
   'split-evenly': splitEvenlyGuard,
+  'start-game-session': startGameSessionGuard,
+  'end-game-session': endGameSessionGuard,
 };
 
 /**

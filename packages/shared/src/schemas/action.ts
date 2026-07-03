@@ -563,6 +563,47 @@ const splitEvenlyAction = z.object({
   }),
 });
 
+/**
+ * RH3.1 — `start-game-session`. Marks the start of a play session
+ * (OUTLINE §3.12). Reducer mints a fresh `GameSession` row with
+ * `isCurrent: true` and demotes any prior current session.
+ *
+ * `newGameSessionId` is client-minted per RH1's id-authority contract
+ * (UUID v7). `date` defaults to today's calendar date (from `ctx.now()`)
+ * when omitted — the caller can override for "recording a session that
+ * happened yesterday" workflows.
+ *
+ * `endCurrentFirst` opts into auto-ending the prior current session
+ * before starting the new one. Without the flag, the reducer rejects
+ * with `session_already_current` — preserves the "exactly one current
+ * session per party" invariant by making the caller acknowledge the
+ * end-then-start transition explicitly.
+ */
+const startGameSessionAction = z.object({
+  type: z.literal('start-game-session'),
+  payload: z.object({
+    newGameSessionId: z.string().min(1),
+    date: z.iso.date().optional(),
+    notes: z.string().optional(),
+    endCurrentFirst: z.boolean().optional(),
+  }),
+});
+
+/**
+ * RH3.1 — `end-game-session`. Marks the end of the current play
+ * session. Reducer clears `isCurrent` on the current `GameSession`
+ * (found via `state.gameSessions.find(s => s.isCurrent)`); subsequent
+ * log entries land with `sessionId: null` ("Untagged" bucket per
+ * OUTLINE §3.12) until the next `start-game-session`.
+ *
+ * Wire payload deliberately empty — the reducer reads which session
+ * is current directly from `state.gameSessions`.
+ */
+const endGameSessionAction = z.object({
+  type: z.literal('end-game-session'),
+  payload: z.object({}),
+});
+
 export const actionSchema = z.discriminatedUnion('type', [
   createCharacterAction,
   acquireAction,
@@ -598,6 +639,8 @@ export const actionSchema = z.discriminatedUnion('type', [
   revokeBankerAction,
   dmTransferAction,
   splitEvenlyAction,
+  startGameSessionAction,
+  endGameSessionAction,
 ]);
 
 export type Action = z.infer<typeof actionSchema>;

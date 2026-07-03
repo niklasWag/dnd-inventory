@@ -46,6 +46,7 @@ function makeState(opts: {
     },
     memberships: opts.memberships,
     characters: opts.characters ?? [],
+    gameSessions: [],
     stashes: opts.stashes ?? [],
     catalog: [],
     items: opts.items ?? [],

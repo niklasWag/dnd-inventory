@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-import { newUuidV7, deriveActorRoleForSlice } from '@app/shared';
+import { newUuidV7, currentGameSessionId, deriveActorRoleForSlice } from '@app/shared';
 
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
@@ -111,13 +111,20 @@ function resolveActor(
  * skips the log-append entirely; the server is the sole authority for
  * `TransactionLog` contents, and `state.log` grows from the queue's
  * `appendServerLogEntries` post-flush hook.
+ *
+ * RH3.1 — `sessionId` is derived from `state.gameSessions` via
+ * `currentGameSessionId(state)` — a shared helper that both this
+ * middleware and the server-side `buildLogEntryServer` call, keeping
+ * the web + server stampers bit-identical (RH2.1a's shared-derivation
+ * pattern). `null` when no `GameSession` has `isCurrent: true`
+ * (the "Untagged" bucket per OUTLINE §3.12).
  */
 function buildLogEntry(state: AppState, slice: LogEntrySlice): TransactionLogEntry {
   const { actorUserId, actorRole, partyId } = resolveActor(state, slice);
   return {
     id: crypto.randomUUID(),
     partyId,
-    sessionId: null,
+    sessionId: currentGameSessionId(state),
     timestamp: new Date().toISOString(),
     actorUserId,
     actorRole,

@@ -34,6 +34,7 @@ import type { Prisma, PrismaClient } from '../../prisma/generated/prisma/client.
 import {
   fromPrismaCharacter,
   fromPrismaCurrencyHolding,
+  fromPrismaGameSession,
   fromPrismaItemDefinition,
   fromPrismaItemInstance,
   fromPrismaParty,
@@ -146,20 +147,28 @@ async function assembleAppState(
   const stashIds = stashRows.map((s) => s.id);
 
   // The remaining four reads can fan out in parallel.
-  const [itemDefRows, itemInstanceRows, currencyRows, txLogRows] = await Promise.all([
-    // Catalog: PHB + DMG (system rows) + homebrew scoped to this party.
-    tx.itemDefinition.findMany({
-      where: {
-        OR: [{ source: { in: ['PHB', 'DMG'] } }, { partyId }],
-      },
-    }),
-    tx.itemInstance.findMany({ where: { ownerId: { in: stashIds } } }),
-    tx.currencyHolding.findMany({ where: { stashId: { in: stashIds } } }),
-    tx.transactionLog.findMany({
-      where: { partyId },
-      orderBy: { timestamp: 'asc' },
-    }),
-  ]);
+  const [itemDefRows, itemInstanceRows, currencyRows, txLogRows, gameSessionRows] =
+    await Promise.all([
+      // Catalog: PHB + DMG (system rows) + homebrew scoped to this party.
+      tx.itemDefinition.findMany({
+        where: {
+          OR: [{ source: { in: ['PHB', 'DMG'] } }, { partyId }],
+        },
+      }),
+      tx.itemInstance.findMany({ where: { ownerId: { in: stashIds } } }),
+      tx.currencyHolding.findMany({ where: { stashId: { in: stashIds } } }),
+      tx.transactionLog.findMany({
+        where: { partyId },
+        orderBy: { timestamp: 'asc' },
+      }),
+      // RH3.1 — GameSession rows scoped to this party, ordered by number
+      // for deterministic hydration (a fresh session picker in R5.2 will
+      // want the sequence to match the log's per-session tagging).
+      tx.gameSession.findMany({
+        where: { partyId },
+        orderBy: { number: 'asc' },
+      }),
+    ]);
 
   // Translate user row through the existing auth-shape mapper used by
   // the Auth.js routes — keeps a single source of truth for the user
@@ -195,6 +204,7 @@ async function assembleAppState(
     party: fromPrismaParty(partyRow),
     memberships: membershipRows.map(fromPrismaPartyMembership),
     characters: characterRows.map(fromPrismaCharacter),
+    gameSessions: gameSessionRows.map(fromPrismaGameSession),
     stashes: stashRows.map(fromPrismaStash),
     catalog: itemDefRows.map(fromPrismaItemDefinition),
     items: itemInstanceRows.map(fromPrismaItemInstance),

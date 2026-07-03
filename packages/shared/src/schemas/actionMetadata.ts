@@ -85,6 +85,10 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   'appoint-banker': { broadcastOnApplied: true },
   'revoke-banker': { broadcastOnApplied: true },
 
+  // Game-session actions (RH3.1)
+  'start-game-session': { broadcastOnApplied: true },
+  'end-game-session': { broadcastOnApplied: true },
+
   // Item / stash mutation actions
   acquire: { broadcastOnApplied: true },
   consume: { broadcastOnApplied: true },

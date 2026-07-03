@@ -1,5 +1,6 @@
 import type {
   CurrencyHolding,
+  GameSession,
   ItemDefinition,
   ItemInstance,
   Stash,
@@ -164,6 +165,10 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return dmTransfer(state, action.payload, ctx);
     case 'split-evenly':
       return splitEvenlyReducer(state, action.payload);
+    case 'start-game-session':
+      return startGameSession(state, action.payload, ctx);
+    case 'end-game-session':
+      return endGameSession(state);
   }
 }
 
@@ -542,6 +547,7 @@ function createCharacter(
       party,
       memberships: [dmMembership],
       characters: [],
+      gameSessions: [],
       stashes: [partyStash, recoveredLootStash],
       catalog: [],
       items: [],
@@ -617,6 +623,7 @@ function createCharacter(
       partyStash,
       recoveredLootStash,
     ],
+    gameSessions: [],
     catalog: [],
     items: [],
     currencies: [
@@ -3841,5 +3848,121 @@ function splitEvenlyReducer(
   return {
     state: { ...s, currencies: nextCurrencies },
     logEntries,
+  };
+}
+
+// -------------------------------------------------------------------- //
+// start-game-session / end-game-session (RH3.1)
+// -------------------------------------------------------------------- //
+
+/**
+ * `start-game-session` — marks the start of a play session (OUTLINE §3.12).
+ *
+ * Guards:
+ *   - `state === null` rejects — no bootstrap-via-session.
+ *   - `newGameSessionId` must be UUID v7 (RH1 id-authority contract).
+ *   - If any prior session has `isCurrent: true`:
+ *       - `payload.endCurrentFirst === true` → demote it and emit a
+ *         synthetic `end-game-session` slice before the new one.
+ *       - Else → throw `session_already_current`.
+ *
+ * The `number` field is a per-party monotone sequence: `max(existing) + 1`.
+ * `date` defaults to `ctx.now()`'s calendar-date portion when omitted.
+ * `createdAt` is `ctx.now()` verbatim (full timestamp).
+ */
+function startGameSession(
+  state: AppState,
+  payload: Extract<Action, { type: 'start-game-session' }>['payload'],
+  ctx: ReducerContext,
+): ReducerResult {
+  const s = requireState(state, 'start-game-session');
+
+  if (!isValidUuidV7(payload.newGameSessionId)) {
+    throw new Error('start-game-session: newGameSessionId must be a valid UUID v7');
+  }
+
+  const priorCurrent = s.gameSessions.find((gs) => gs.isCurrent);
+  if (priorCurrent !== undefined && payload.endCurrentFirst !== true) {
+    throw new Error('start-game-session: session_already_current');
+  }
+
+  const now = ctx.now();
+  const nextNumber = s.gameSessions.reduce((m, gs) => Math.max(m, gs.number), 0) + 1;
+  const date = payload.date ?? now.slice(0, 10);
+
+  const newSession: GameSession = {
+    id: payload.newGameSessionId,
+    partyId: s.party.id,
+    number: nextNumber,
+    date,
+    ...(payload.notes !== undefined ? { notes: payload.notes } : {}),
+    isCurrent: true,
+    createdAt: now,
+  };
+
+  const logEntries: LogEntrySlice[] = [];
+
+  const demoted: GameSession[] =
+    priorCurrent !== undefined
+      ? s.gameSessions.map((gs) =>
+          gs.id === priorCurrent.id ? { ...gs, isCurrent: false as const } : gs,
+        )
+      : s.gameSessions;
+
+  if (priorCurrent !== undefined) {
+    logEntries.push({
+      type: 'end-game-session',
+      payload: {
+        gameSessionId: priorCurrent.id,
+        number: priorCurrent.number,
+      },
+    });
+  }
+
+  logEntries.push({
+    type: 'start-game-session',
+    payload: {
+      gameSessionId: newSession.id,
+      number: newSession.number,
+      date: newSession.date,
+    },
+  });
+
+  return {
+    state: { ...s, gameSessions: [...demoted, newSession] },
+    logEntries,
+  };
+}
+
+/**
+ * `end-game-session` — clears `isCurrent` on the party's current
+ * `GameSession`. Subsequent log entries land with `sessionId: null`
+ * ("Untagged" bucket per OUTLINE §3.12) until the next `start-game-session`.
+ *
+ * Guards: rejects with `no_current_session` if no `GameSession` has
+ * `isCurrent: true`.
+ */
+function endGameSession(state: AppState): ReducerResult {
+  const s = requireState(state, 'end-game-session');
+  const current = s.gameSessions.find((gs) => gs.isCurrent);
+  if (current === undefined) {
+    throw new Error('end-game-session: no_current_session');
+  }
+  return {
+    state: {
+      ...s,
+      gameSessions: s.gameSessions.map((gs) =>
+        gs.id === current.id ? { ...gs, isCurrent: false as const } : gs,
+      ),
+    },
+    logEntries: [
+      {
+        type: 'end-game-session',
+        payload: {
+          gameSessionId: current.id,
+          number: current.number,
+        },
+      },
+    ],
   };
 }

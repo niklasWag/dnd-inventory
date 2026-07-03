@@ -86,7 +86,14 @@ export type GuardRejectionCode =
    * route layer maps `P2002` to this code. */
   | 'id_already_exists';
 
-export { deriveActorRole, deriveActorRoleForSlice, isSolo, isMember } from './actor';
+export {
+  currentGameSessionId,
+  deriveActorRole,
+  deriveActorRoleForSlice,
+  isMember,
+  isSolo,
+  isUntaggedLogEntry,
+} from './actor';
 export { guards, checkGuard } from './map';
 
 /** Re-export the schema types the guards take as input so server +

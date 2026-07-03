@@ -22,6 +22,7 @@ import type {
   Character,
   ChargesRechargeRule,
   CurrencyHolding,
+  GameSession,
   ItemDefinition,
   ItemInstance,
   Party,
@@ -34,6 +35,7 @@ import type {
 import {
   characterSchema,
   currencyHoldingSchema,
+  gameSessionSchema,
   itemDefinitionSchema,
   itemInstanceSchema,
   partyMembershipSchema,
@@ -527,6 +529,35 @@ export function fromPrismaStash(row: StashRow): Stash {
     scope: fromDbStashScope(row.scope),
     ownerCharacterId: row.ownerCharacterId,
     partyId: row.partyId,
+  });
+}
+
+/**
+ * RH3.1 — GameSession row shape (mirrors `apps/server/prisma/schema.prisma`
+ * `model GameSession`). The DB stores `date` as `DATE` (calendar date),
+ * hydrated by Prisma as a `Date` at midnight UTC; the Zod schema uses
+ * the ISO date-only string (`YYYY-MM-DD`) so the mapper narrows to the
+ * first ten chars of `toISOString()`.
+ */
+export interface GameSessionRow {
+  id: string;
+  partyId: string;
+  number: number;
+  date: Date;
+  notes: string | null;
+  isCurrent: boolean;
+  createdAt: Date;
+}
+
+export function fromPrismaGameSession(row: GameSessionRow): GameSession {
+  return gameSessionSchema.parse({
+    id: row.id,
+    partyId: row.partyId,
+    number: row.number,
+    date: row.date.toISOString().slice(0, 10),
+    ...(row.notes !== null ? { notes: row.notes } : {}),
+    isCurrent: row.isCurrent,
+    createdAt: row.createdAt.toISOString(),
   });
 }
 

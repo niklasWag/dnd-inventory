@@ -1040,3 +1040,180 @@ describe('POST /sync/actions — RH2.3 applied[] count invariant', () => {
     }
   });
 });
+
+describe('POST /sync/actions — RH3.1 GameSession sessionId stamping', () => {
+  it('start-game-session then acquire — both applied entries carry the new gameSessionId', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap first (create-character owns the party creation).
+      const bootstrapIds = createCharacterIds();
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'DM',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 1,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+
+      // Now start a session + acquire in one batch. The server-side
+      // middleware stamps sessionId from currentGameSessionId(state)
+      // AFTER the reducer applies each action, so:
+      //   - start-game-session sees the new session as isCurrent=true
+      //     when it composes its own log entry (self-referential
+      //     sessionId).
+      //   - the subsequent acquire also sees isCurrent=true and
+      //     inherits the same sessionId.
+      const newGameSessionId = newUuidV7();
+      const clientMintedItemId = newUuidV7();
+      const batchRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'start-game-session',
+              payload: { newGameSessionId },
+            },
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 1,
+                source: 'catalog-add',
+                newItemInstanceId: clientMintedItemId,
+              },
+            },
+          ],
+        },
+      });
+      expect(batchRes.statusCode).toBe(200);
+      const body = batchRes.json<{
+        applied: { type: string; sessionId: string | null; payload: unknown }[];
+      }>();
+      expect(body.applied).toHaveLength(2);
+      const [startEntry, acquireEntry] = body.applied;
+      // Middleware reads PRE-reduce state (same as partyId/actorRole).
+      // start-game-session lands Untagged because the new session
+      // doesn't yet exist in pre-state. Its payload still carries the
+      // gameSessionId for audit.
+      expect(startEntry!.type).toBe('start-game-session');
+      expect(startEntry!.sessionId).toBeNull();
+      // The follow-on acquire sees isCurrent=true in pre-state (the
+      // previous action's reduce() already applied) and inherits the id.
+      expect(acquireEntry!.type).toBe('acquire');
+      expect(acquireEntry!.sessionId).toBe(newGameSessionId);
+
+      // Direct DB check: the GameSession row exists with isCurrent=true.
+      const dbSession = await prisma.gameSession.findUnique({
+        where: { id: newGameSessionId },
+      });
+      expect(dbSession).not.toBeNull();
+      expect(dbSession!.isCurrent).toBe(true);
+      expect(dbSession!.number).toBe(1);
+      // Only the acquire log FK's to this session; start-game-session
+      // is Untagged.
+      const dbLogsForSession = await prisma.transactionLog.findMany({
+        where: { partyId, sessionId: newGameSessionId },
+      });
+      expect(dbLogsForSession).toHaveLength(1);
+      expect(dbLogsForSession[0]!.type).toBe('acquire');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('end-game-session and subsequent acquire → sessionId: null (Untagged bucket)', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      const bootstrapIds = createCharacterIds();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'DM',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 1,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+
+      const newGameSessionId = newUuidV7();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            { type: 'start-game-session', payload: { newGameSessionId } },
+            { type: 'end-game-session', payload: {} },
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:torch',
+                quantity: 1,
+                source: 'catalog-add',
+                newItemInstanceId: newUuidV7(),
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{ applied: { type: string; sessionId: string | null }[] }>();
+      expect(body.applied).toHaveLength(3);
+      // Middleware reads PRE-reduce state.
+      //   - start-game-session pre-state has no current session → null.
+      //   - end-game-session pre-state has isCurrent=true → carries the id.
+      //   - post-end acquire pre-state has isCurrent=false → null.
+      expect(body.applied[0]!.type).toBe('start-game-session');
+      expect(body.applied[0]!.sessionId).toBeNull();
+      expect(body.applied[1]!.type).toBe('end-game-session');
+      expect(body.applied[1]!.sessionId).toBe(newGameSessionId);
+      expect(body.applied[2]!.type).toBe('acquire');
+      expect(body.applied[2]!.sessionId).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+});

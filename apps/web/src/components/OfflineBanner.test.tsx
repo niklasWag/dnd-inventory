@@ -73,6 +73,7 @@ function makeAppStateFixture(memberCount: number): AppState {
     },
     memberships,
     characters: [],
+    gameSessions: [],
     stashes: [],
     catalog: [],
     items: [],

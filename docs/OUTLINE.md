@@ -316,9 +316,11 @@ No HP, spells, AC, proficiencies in v1.
 - stock: `[{ itemDefinitionId, priceOverride? (cp), quantity }]`
   - **`quantity === -1` means unlimited**; otherwise finite stock that decrements on purchase.
 
-### `Session`
+### `GameSession`
 - id, partyId, number, date, notes
 - isCurrent (only one per party at a time)
+
+> **Naming note (RH3, 2026-07-03).** Called `GameSession` in code (Prisma model, Zod schema, AppState field `gameSessions`, reducer actions `start-game-session` / `end-game-session`) to avoid collision with the existing Auth.js `Session` model (`sessionToken` ↔ `userId`, one row per browser tab). The `TransactionLog.sessionId` column keeps its name — the column has never had another meaning and the terser column name still reads naturally in query output. When this doc refers to "session" in a §3.12 gameplay context (e.g. "the DM starts a session"), it means a `GameSession`.
 
 ### `TransactionLog`
 - id, partyId (required — every action happens in some party, even party-of-one), sessionId (nullable), timestamp, actorUserId, actorRole (`dm` | `player` | `banker` — captures which hat the actor was wearing)

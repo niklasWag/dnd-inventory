@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { characterSchema } from './character';
 import { currencyHoldingSchema } from './currencyHolding';
+import { gameSessionSchema } from './gameSession';
 import { itemDefinitionSchema } from './itemDefinition';
 import { itemInstanceSchema } from './itemInstance';
 import { partySchema } from './party';
@@ -36,6 +37,7 @@ export const appStateSchema = z
     party: partySchema,
     memberships: z.array(partyMembershipSchema),
     characters: z.array(characterSchema),
+    gameSessions: z.array(gameSessionSchema),
     stashes: z.array(stashSchema),
     catalog: z.array(itemDefinitionSchema),
     items: z.array(itemInstanceSchema),

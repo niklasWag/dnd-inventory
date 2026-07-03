@@ -123,6 +123,7 @@ function makeState(opts?: { ownerUserId?: string; ownerCharacterId?: string }): 
         inventoryStashId: 'inv',
       },
     ],
+    gameSessions: [],
     stashes: [
       {
         id: 'inv',
@@ -1894,6 +1895,8 @@ describe('guards — every action has an entry', () => {
       'revoke-banker',
       'dm-transfer',
       'split-evenly',
+      'start-game-session',
+      'end-game-session',
     ];
     for (const t of expected) {
       expect(typeof guards[t]).toBe('function');
@@ -2133,5 +2136,53 @@ describe('checkGuard — RH1.2 id-shape + clock-skew validation', () => {
       },
     };
     expect(checkGuard(state, action, actor, memberships)).toEqual({ ok: true });
+  });
+});
+
+describe('currentGameSessionId + isUntaggedLogEntry — RH3.1', () => {
+  it('currentGameSessionId returns null when state is null', async () => {
+    const { currentGameSessionId } = await import('./actor');
+    expect(currentGameSessionId(null)).toBeNull();
+  });
+
+  it('currentGameSessionId returns null when no session is current', async () => {
+    const { currentGameSessionId } = await import('./actor');
+    const state = makeState();
+    expect(currentGameSessionId(state)).toBeNull();
+  });
+
+  it('currentGameSessionId returns the isCurrent session id', async () => {
+    const { currentGameSessionId } = await import('./actor');
+    const state = makeState();
+    const stateWithSession = {
+      ...state,
+      gameSessions: [
+        {
+          id: 'gs-1',
+          partyId: state.party.id,
+          number: 1,
+          date: '2026-07-03',
+          isCurrent: true,
+          createdAt: '2026-07-03T00:00:00.000Z',
+        },
+        {
+          id: 'gs-2',
+          partyId: state.party.id,
+          number: 2,
+          date: '2026-07-02',
+          isCurrent: false,
+          createdAt: '2026-07-02T00:00:00.000Z',
+        },
+      ],
+    };
+    expect(currentGameSessionId(stateWithSession)).toBe('gs-1');
+  });
+
+  it('isUntaggedLogEntry — true when sessionId is null', async () => {
+    const { isUntaggedLogEntry } = await import('./actor');
+    // Cast avoids re-building a full log entry fixture; only the
+    // sessionId field is under test.
+    expect(isUntaggedLogEntry({ sessionId: null } as never)).toBe(true);
+    expect(isUntaggedLogEntry({ sessionId: 'gs-1' } as never)).toBe(false);
   });
 });

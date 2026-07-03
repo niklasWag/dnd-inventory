@@ -391,4 +391,22 @@ describe('schema invariants — RH2.5 constraint promotions', () => {
       ),
     ).rejects.toThrow(/23514|ItemInstance_equip_attune_requires_inventory|check/i);
   });
+
+  // -------- RH3.1 partial UNIQUE --------
+
+  it('(f) GameSession_isCurrent_uniq — partial UNIQUE index present', async () => {
+    const rows = await prisma.$queryRawUnsafe<{ indexname: string; indexdef: string }[]>(
+      `SELECT indexname, indexdef
+       FROM pg_indexes
+       WHERE tablename = 'GameSession' AND indexname = 'GameSession_isCurrent_uniq'`,
+    );
+    expect(
+      rows,
+      'GameSession_isCurrent_uniq missing — the RH3.1 migration did not run.',
+    ).toHaveLength(1);
+    // Sanity-check the partial predicate is present.
+    expect(rows[0]!.indexdef).toContain('UNIQUE');
+    expect(rows[0]!.indexdef).toContain('WHERE');
+    expect(rows[0]!.indexdef).toContain('isCurrent');
+  });
 });

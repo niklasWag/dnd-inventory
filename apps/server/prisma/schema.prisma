@@ -167,8 +167,16 @@ model Party {
   characters  Character[]
   stashes     Stash[]
   txLog       TransactionLog[]
+  // RH3.1 — D&D-gameplay sessions (called GameSession in code to
+  // avoid collision with Auth.js's Session model; see OUTLINE §4).
+  gameSessions GameSession[]
 
   @@index([ownerUserId])
+  // R4.1.e — the archive-lookup index was created by migration
+  // `20260629201337_r41e_party_archivedAt` but was never declared on
+  // the schema, so subsequent `prisma migrate dev` runs kept emitting
+  // a DROP INDEX pair. RH3.1 fixes the drift by declaring it here.
+  @@index([archivedAt])
 }
 
 model PartyMembership {
@@ -355,7 +363,10 @@ model CurrencyHolding {
 model TransactionLog {
   id          String         @id
   partyId     String
-  // Null in MVP per OUTLINE §4; R5+ Session entity will populate.
+  // RH3.1 — FK to GameSession(id). Was raw nullable String from MVP
+  // through RH2; the RH3.1 migration adds the FK with ON DELETE SET NULL
+  // so deleting a session doesn't orphan its history (entries just lose
+  // their tag and become "Untagged" per OUTLINE §3.12).
   sessionId   String?
   timestamp   DateTime
   actorUserId String
@@ -365,11 +376,37 @@ model TransactionLog {
   type        String
   payload     Json
 
-  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
-  actor User  @relation(fields: [actorUserId], references: [id])
+  party       Party        @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  actor       User         @relation(fields: [actorUserId], references: [id])
+  gameSession GameSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([partyId, timestamp])
   @@index([type])
+  @@index([sessionId])
+}
+
+// RH3.1 — D&D-gameplay session (OUTLINE §3.12 + §4). Named GameSession
+// (not Session) to avoid collision with the Auth.js Session model
+// (line 417). The TransactionLog.sessionId column keeps its short name.
+//
+// At most one row per party has isCurrent=true — enforced by a partial
+// UNIQUE index in the migration tail (Prisma DSL cannot express WHERE
+// predicates on unique indexes). Mirrors the RH2.5 partial-unique
+// pattern (Stash_inventory_per_character_uniq etc.).
+model GameSession {
+  id        String   @id
+  partyId   String
+  number    Int
+  date      DateTime @db.Date
+  notes     String?
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  party        Party            @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  transactionLogs TransactionLog[]
+
+  @@index([partyId])
+  @@index([partyId, number])
 }
 
 // Server-only — key/value table for canonical metadata (currently just

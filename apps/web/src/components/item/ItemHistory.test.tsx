@@ -202,6 +202,7 @@ describe('ItemHistory', () => {
         },
         memberships: [],
         characters: [],
+        gameSessions: [],
         stashes: [
           {
             id: fromStashId,
@@ -310,6 +311,7 @@ describe('ItemHistory', () => {
             inventoryStashId: 'some-inventory-id',
           },
         ],
+        gameSessions: [],
         // Note: no stash row for `fromStashId` — it's been deleted.
         // Only Recovered Loot survives.
         stashes: [
@@ -379,6 +381,7 @@ describe('ItemHistory', () => {
         },
         memberships: [],
         characters: [],
+        gameSessions: [],
         stashes: [
           {
             id: toStashId,

@@ -132,6 +132,10 @@ export async function applyDelta(
       return persistDmTransfer(tx, action.payload, actor, ctx);
     case 'split-evenly':
       return persistSplitEvenly(tx, action.payload, ctx);
+    case 'start-game-session':
+      return persistStartGameSession(tx, action.payload, actor, ctx);
+    case 'end-game-session':
+      return persistEndGameSession(tx, actor);
   }
 }
 
@@ -1384,3 +1388,67 @@ async function persistSplitEvenly(
 // Silence unused-import lint for translators that future actions will use.
 void toDbRarity;
 void toDbRechargeRule;
+
+// -------------------- RH3.1 GameSession persistors --------------------
+
+/**
+ * RH3.1 — persist `start-game-session`. Mints a fresh GameSession row
+ * with `isCurrent: true` and a per-party monotone `number`. When the
+ * caller opts into `endCurrentFirst`, demotes any prior current row
+ * within the same transaction — the partial UNIQUE index on
+ * `(partyId) WHERE isCurrent = true` would otherwise reject the
+ * insert.
+ *
+ * `number` is computed from the DB (`MAX(number) + 1`) rather than
+ * threaded from the reducer — keeps the persistor authoritative and
+ * avoids desync when parallel batches would ever try to mint numbers
+ * (out of scope in v1 but the pattern is cheap).
+ *
+ * `date` defaults to `ctx.now()`'s calendar-date portion when the
+ * client omits it (mirrors the reducer's default).
+ */
+async function persistStartGameSession(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'start-game-session' }>['payload'],
+  actor: Actor,
+  ctx: ReducerContext,
+): Promise<void> {
+  if (payload.endCurrentFirst === true) {
+    await tx.gameSession.updateMany({
+      where: { partyId: actor.partyId, isCurrent: true },
+      data: { isCurrent: false },
+    });
+  }
+
+  const now = new Date(ctx.now());
+  const dateStr = payload.date ?? ctx.now().slice(0, 10);
+  const agg = await tx.gameSession.aggregate({
+    where: { partyId: actor.partyId },
+    _max: { number: true },
+  });
+  const nextNumber = (agg._max.number ?? 0) + 1;
+
+  await tx.gameSession.create({
+    data: {
+      id: payload.newGameSessionId,
+      partyId: actor.partyId,
+      number: nextNumber,
+      date: new Date(`${dateStr}T00:00:00.000Z`),
+      notes: payload.notes ?? null,
+      isCurrent: true,
+      createdAt: now,
+    },
+  });
+}
+
+/**
+ * RH3.1 — persist `end-game-session`. Flips `isCurrent: false` on the
+ * party's current session. No-op if no row matches (the reducer
+ * rejects `no_current_session` first; this is defense-in-depth).
+ */
+async function persistEndGameSession(tx: Prisma.TransactionClient, actor: Actor): Promise<void> {
+  await tx.gameSession.updateMany({
+    where: { partyId: actor.partyId, isCurrent: true },
+    data: { isCurrent: false },
+  });
+}

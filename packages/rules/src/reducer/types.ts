@@ -660,6 +660,32 @@ export type Action =
         fromStashId: string;
         recipientCharacterIds: string[];
       };
+    }
+  | {
+      // RH3.1: mark the start of a play session (OUTLINE §3.12).
+      // Reducer mints a fresh `GameSession` row with `isCurrent: true`
+      // and demotes any prior current session (opt-in via
+      // `endCurrentFirst`; without the flag it rejects with
+      // `session_already_current`). `newGameSessionId` is client-minted
+      // per RH1. `date` defaults to `ctx.now()`'s calendar date when
+      // omitted.
+      type: 'start-game-session';
+      payload: {
+        newGameSessionId: string;
+        date?: string;
+        notes?: string;
+        endCurrentFirst?: boolean;
+      };
+    }
+  | {
+      // RH3.1: mark the end of the current play session. Reducer clears
+      // `isCurrent` on the current `GameSession`. Subsequent log entries
+      // land with `sessionId: null` ("Untagged" bucket per OUTLINE §3.12)
+      // until the next `start-game-session`. Wire payload deliberately
+      // empty — the reducer resolves the current session from
+      // `state.gameSessions`.
+      type: 'end-game-session';
+      payload: Record<string, never>;
     };
 
 /**

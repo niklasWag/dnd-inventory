@@ -153,3 +153,43 @@ export function isMember(actor: Actor, memberships: readonly PartyMembership[]):
     (m) => m.userId === actor.userId && m.partyId === actor.partyId && m.leftAt === null,
   );
 }
+
+/**
+ * RH3.1 — resolves the currently-active `GameSession.id` for the party
+ * held in `state`, or `null` when no session is current (the "Untagged"
+ * bucket per OUTLINE §3.12).
+ *
+ * Called by both middleware stampers (`apps/web/src/store/index.ts`
+ * `buildLogEntry` and `apps/server/src/sync/log-builder.ts`
+ * `buildLogEntryServer`) to fill `TransactionLogEntry.sessionId` at
+ * dispatch time. Kept here alongside `deriveActorRoleForSlice` because
+ * both are shared derivation helpers that keep web + server producing
+ * bit-identical log entries.
+ *
+ * The partial UNIQUE index on `GameSession.isCurrent` guarantees at
+ * most one match — `.find()` is safe.
+ *
+ * `state === null` returns `null`: during the `create-character`
+ * bootstrap the party doesn't exist yet, so no `GameSession` can be
+ * current. The bootstrap's own log entries land as "Untagged"
+ * (`sessionId: null`).
+ */
+export function currentGameSessionId(state: AppState | null): string | null {
+  if (state === null) return null;
+  return state.gameSessions.find((s) => s.isCurrent)?.id ?? null;
+}
+
+/**
+ * RH3.2 — derived-predicate for the "Untagged" filter bucket
+ * (OUTLINE §3.12). A log entry belongs to the "Untagged" bucket iff
+ * its `sessionId` is `null`.
+ *
+ * Kept as a helper (not stored state on the entry) so callers that
+ * consume the filter — the R5.3 history-view "Session" dropdown, the
+ * R5.1 broadcast decision path if it ever needs to gate on
+ * session-membership — can import a single named symbol instead of
+ * re-typing `entry.sessionId === null` inline.
+ */
+export function isUntaggedLogEntry(entry: TransactionLogEntry): boolean {
+  return entry.sessionId === null;
+}

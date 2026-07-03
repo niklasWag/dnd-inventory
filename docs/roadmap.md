@@ -2698,7 +2698,7 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 >
 > **Carryforward to RH2 + RH3.** Two follow-on hardening passes pick up the rest of the architectural-debt audit (see findings catalog from 2026-06-30):
 > - **RH2 — Determinism & Invariants**: dual-authority `timestamp` minting, `actorRole` derivation split between client + server, reducer iteration-order non-determinism in cascades, multi-tab queue race, `applied[]` count not validated, action-type registry drift, and the DB-level invariant constraints (`isCarried` uniqueness, recovered-loot uniqueness, `bankerUserId !== ownerUserId`, equip/attune/charges only on Inventory, container depth).
-> - **RH3 — Session + sync foundation**: introduce the `Session` entity + `sessionId` widening in the log schema BEFORE R5.2 lands the user-facing session tools.
+> - **RH3 — Session + sync foundation**: introduce the `GameSession` entity + `sessionId` widening in the log schema BEFORE R5.2 lands the user-facing session tools. (Called `GameSession` in code to avoid collision with the Auth.js `Session` model — see OUTLINE §4 naming note.)
 >
 > RH1 stays narrowly scoped to the id-authority cleanup; the broader determinism / invariant / session work lives in RH2 / RH3. Non-architectural cleanup (`Welcome.tsx`, vault export, etc.) is captured in RH0 (legacy-data scaffolding strip).
 
@@ -2945,9 +2945,9 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 
 ---
 
-### RH3 — Hardening Pass 3: Session entity + sync schema readiness (architectural)
+### RH3 — Hardening Pass 3: GameSession entity + sync schema readiness (architectural)
 
-> **What this is.** Lifts the `Session` entity out of the R5.2 slice and onto its own pre-R5 hardening pass. Today `Session` is a single line in OUTLINE §3.12 and a placeholder in §4; `TransactionLog.sessionId` is hard-`z.null()`. R5.2 currently bundles "introduce Session entity + activate session tagging + ship history UI session-filter" into one bullet; that's 3-4 slices of work, and the entity / schema piece is a pre-requisite for everything else.
+> **What this is.** Lifts the `GameSession` entity (called `Session` in OUTLINE §3.12 / §4 gameplay copy; renamed to `GameSession` in code per the OUTLINE §4 naming note to avoid collision with the Auth.js `Session` model) out of the R5.2 slice and onto its own pre-R5 hardening pass. Today the gameplay `Session` is a single line in OUTLINE §3.12 and a placeholder in §4; `TransactionLog.sessionId` is hard-`z.null()`. R5.2 currently bundles "introduce GameSession entity + activate session tagging + ship history UI session-filter" into one bullet; that's 3-4 slices of work, and the entity / schema piece is a pre-requisite for everything else.
 >
 > **Sequencing.** Ships AFTER RH2, BEFORE R5.1. R5.1's websocket broadcast needs to know whether a log entry belongs to an active session for routing purposes (a "no, the user hasn't started a session yet — these are untagged events" is itself a state R5.1 must handle). Defining the entity + the routing rules cleanly before R5.1 lands prevents R5.1 from accreting session logic it doesn't want.
 
@@ -2962,46 +2962,80 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 
 **Slicing.** Two sub-slices.
 
-#### RH3.1 — `Session` entity + schema widening
+#### RH3.1 — `GameSession` entity + schema widening
 
 **Prisma schema (`apps/server/prisma/schema.prisma`) + migration**
-- [ ] New `Session` model: `id` (UUID v7, RH1-canonical), `partyId` (FK), `number` (auto-increment per party), `date` (date), `notes` (text, optional), `isCurrent` (bool — at most one true per party, enforced via partial unique index).
-- [ ] FK on `TransactionLog.sessionId → Session(id)` (nullable).
-- [ ] Partial unique index: at most one `Session` per party has `isCurrent = true`.
+- [x] New `GameSession` model: `id` (UUID v7, RH1-canonical), `partyId` (FK), `number` (auto-increment per party), `date` (date), `notes` (text, optional), `isCurrent` (bool — at most one true per party, enforced via partial unique index). **Named `GameSession` (not `Session`)** to avoid collision with the existing `model Session` Auth.js table (`schema.prisma:417`). — **Shipped 2026-07-03**
+- [x] FK on `TransactionLog.sessionId → GameSession(id)` (nullable). The column keeps its short name — no rename needed; `sessionId` on a transaction log is unambiguous. FK carries `ON DELETE SET NULL` so deleting a GameSession never orphans history (entries become Untagged). — **Shipped 2026-07-03**
+- [x] Partial unique index: at most one `GameSession` per party has `isCurrent = true` (`GameSession_isCurrent_uniq`). Mirrors the RH2.5 partial-unique pattern; verified in `apps/server/src/db/schema-invariants.test.ts` (test `(f)`). — **Shipped 2026-07-03**
 
 **Zod schemas (`packages/shared/src/schemas/`)**
-- [ ] New `sessionSchema` in `packages/shared/src/schemas/session.ts`.
-- [ ] Widen `TransactionLog.sessionId` from `z.null()` to `z.string().uuid().nullable()`. Existing log entries keep `null`; future entries will carry the active session's id when one exists.
-- [ ] Add `Session[]` to `AppState`.
+- [x] New `gameSessionSchema` in `packages/shared/src/schemas/gameSession.ts`. — **Shipped 2026-07-03**
+- [x] Widen `TransactionLog.sessionId` from `z.null()` to `z.string().uuid().nullable()`. Existing log entries keep `null`; future entries will carry the active GameSession's id when one exists. — **Shipped 2026-07-03**
+- [x] Add `gameSessions: GameSession[]` to `AppState`. — **Shipped 2026-07-03**
 
 **Reducer (`packages/rules/src/reducer/index.ts`)**
-- [ ] `start-session` action: mints a fresh Session row, sets `isCurrent: true`, demotes any prior current session for the party.
-- [ ] `end-session` action: clears `isCurrent` on the current session; subsequent log entries land with `sessionId: null` ("Untagged" bucket per OUTLINE §3.12).
-- [ ] Reducer guard: `start-session` rejects if a session is already current AND the user didn't pass an explicit "end-first" flag — preserves the "exactly one current session per party" invariant.
+- [x] `start-game-session` action: mints a fresh GameSession row, sets `isCurrent: true`, demotes any prior current session for the party (opt-in via `endCurrentFirst`; without the flag, throws `session_already_current`). Number is `max(existing) + 1`, per-party monotone. — **Shipped 2026-07-03**
+- [x] `end-game-session` action: clears `isCurrent` on the current session; subsequent log entries land with `sessionId: null` ("Untagged" bucket per OUTLINE §3.12). — **Shipped 2026-07-03**
+- [x] Reducer guard: `start-game-session` rejects if a session is already current AND the user didn't pass an explicit "end-first" flag — preserves the "exactly one current session per party" invariant. — **Shipped 2026-07-03**
 
 **Log entry types (`packages/shared/src/schemas/transactionLog.ts`)**
-- [ ] Add `start-session` and `end-session` log entry types: `{ sessionId, number, date }`.
-- [ ] When the reducer applies any action, it stamps the active session's id (if `isCurrent: true` exists) onto every emitted log slice's `sessionId`. The stamping happens in the reducer, not in `log-builder.ts` — keeps the log entry self-describing.
+- [x] Add `start-game-session` and `end-game-session` log entry types: `{ gameSessionId, number, date }` / `{ gameSessionId, number }`. — **Shipped 2026-07-03**
+- [x] Middleware stamps the active GameSession's id from PRE-reduce state (same as `partyId` / `actorRole`) via shared `currentGameSessionId(state)` helper in `packages/shared/src/guards/actor.ts`. Consequence for the transition markers: `start-game-session` lands Untagged (pre-state has no current session yet); `end-game-session` lands with the ending session's id (pre-state still isCurrent=true). Subsequent regular entries inherit correctly. — **Shipped 2026-07-03**
 
 **Server-side**
-- [ ] `persistStartSession` / `persistEndSession` in `apps/server/src/sync/persistor.ts`.
+- [x] `persistStartGameSession` / `persistEndGameSession` in `apps/server/src/sync/persistor.ts`. Number computed authoritatively from `MAX(number) + 1` per party. — **Shipped 2026-07-03**
+- [x] `state-loader.ts` includes `gameSessions` in the pulled AppState; `db/mappers.ts` gains `fromPrismaGameSession`. — **Shipped 2026-07-03**
+
+**Guards (`packages/shared/src/guards/map.ts`)**
+- [x] `startGameSessionGuard` / `endGameSessionGuard` — DM-only per OUTLINE §3.12 ("the DM marks the current session"). Solo bypass in `checkGuard` handles party-of-one. — **Shipped 2026-07-03**
+- [x] Action metadata registry (RH2.4) — both actions marked `broadcastOnApplied: true` in `actionMetadata.ts`. — **Shipped 2026-07-03**
 
 #### RH3.2 — Routing & "Untagged" filter rule
 
 **Per OUTLINE §3.12 — already documented but not implemented**
 
-- [ ] The "Untagged" filter bucket: every log entry with `sessionId: null` belongs to the "Untagged" filter. Define this as a derived predicate, not stored state. The session-filter UI in R5.3 reads this; R5.1's websocket broadcast uses it to gate "this happened outside a session" notifications.
-- [ ] **Server routing rule**: R5.1's broadcast doesn't filter by sessionId at the transport layer — every active member of a party receives every event. The session-filter is a client-side concern (display rule, history-view filter). Document this in SECURITY §6 (WebSocket Security) so R5.1 doesn't try to gate broadcasts by session.
+- [x] The "Untagged" filter bucket: every log entry with `sessionId: null` belongs to the "Untagged" filter. Defined as a derived predicate `isUntaggedLogEntry(entry)` in `packages/shared/src/guards/actor.ts` — R5.3 will import when the session-filter UI ships. — **Shipped 2026-07-03**
+- [x] **Server routing rule**: R5.1's broadcast doesn't filter by sessionId at the transport layer — every active member of a party receives every event. The session-filter is a client-side concern (display rule, history-view filter). Documented as an RH3 Notes rationale — SECURITY §6 (WebSocket Security) update deferred to R5.1's slice when the broadcast surface actually ships. — **Shipped 2026-07-03**
 
 **Tests**
-- [ ] Reducer test: dispatching `start-session` then `acquire` produces an `acquire` log entry with `sessionId === <new session id>`.
-- [ ] Reducer test: dispatching `acquire` with no active session produces a log entry with `sessionId: null`.
-- [ ] Reducer test: dispatching `end-session` then `acquire` produces a log entry with `sessionId: null`.
-- [ ] Schema test: `transactionLogEntrySchema.parse(...)` accepts both `null` and a valid UUID for `sessionId`.
+- [x] Reducer test: dispatching `start-game-session` then `acquire` produces an `acquire` log entry with `sessionId === <new game-session id>` — verified in `packages/rules/src/reducer/gameSession.test.ts` + `apps/web/src/store/log-authority.test.ts`. — **Shipped 2026-07-03**
+- [x] Reducer test: dispatching `acquire` with no active game session produces a log entry with `sessionId: null`. — **Shipped 2026-07-03**
+- [x] Reducer test: dispatching `end-game-session` then `acquire` produces a log entry with `sessionId: null` (the acquire lands Untagged; the end entry itself carries the ending session's id — see RH3 Notes for the pre-reduce-state stamping rationale). — **Shipped 2026-07-03**
+- [x] Schema test: `transactionLogEntrySchema.parse(...)` accepts both `null` and a valid UUID for `sessionId` — `packages/shared/src/schemas/transactionLog.test.ts`. — **Shipped 2026-07-03**
+- [x] Server integration test: `POST /sync/actions` batch with `start-game-session` + `acquire` — the acquire's `applied[]` entry carries the new session id — `apps/server/src/sync/routes.test.ts`. — **Shipped 2026-07-03**
 
 #### RH3 — Notes
 
-> -
+> **Shipped 2026-07-03 on `refactor/rh3-session-entity-sync-schema`.** RH3.1 + RH3.2 merged into one commit (`♻️ RH3 GameSession entity + sync schema`) following the RH2.6 precedent — RH3.2's UI-facing work was documentation-scale (one derived-predicate helper + a routing-rule note), not worth its own commit.
+>
+> **Naming decision.** Called `GameSession` in code (Prisma model, Zod schema, `AppState.gameSessions`, reducer actions `start-game-session` / `end-game-session`) to avoid collision with the existing Auth.js `Session` model at `schema.prisma:417`. The `TransactionLog.sessionId` column keeps its short name — unambiguous in log-column context. OUTLINE §4 gained a naming note pointing at this rationale.
+>
+> **Stamping decision — middleware, not reducer.** RH3.1 sketch said "stamping happens in the reducer". Post-RH2.6 review flipped this: `sessionId` is a state-derived log field, same category as `partyId` / `actorRole` — both are middleware-stamped via `resolveActor` / `buildLogEntry` / `buildLogEntryServer`. Putting sessionId in the reducer would (a) require every reducer arm to add `sessionId` to its slice output (30+ emit sites), (b) require the `LogEntrySlice` type to widen, and (c) break the RH2.1a symmetry that makes web + server produce bit-identical entries. The middleware path uses a shared `currentGameSessionId(state)` helper in `packages/shared/src/guards/actor.ts` — same file, same pattern as RH2.1a's `deriveActorRoleForSlice`.
+>
+> **Pre-reduce vs post-reduce state.** The middleware stamps from PRE-reduce state (consistent with `partyId` + `actorRole`). Consequence for the transition markers:
+> - `start-game-session` lands with `sessionId: null` — the new session doesn't exist in pre-state. The entry belongs to the Untagged epoch it transitions OUT of.
+> - `end-game-session` lands with the ending session's id — pre-state still has isCurrent=true. The entry belongs to the session it closes.
+> - Regular entries emitted AFTER `start-game-session` see the new session as isCurrent=true in pre-state and inherit its id.
+>
+> This is the semantically correct decomposition: the transition markers announce the boundary crossings, and each belongs to the epoch it's leaving (start → Untagged; end → the ending session). Alternative (`result.state`-based stamping) would have made `start` self-referential and `end` Untagged — plausible but requires the middleware to break its "pre-reduce state" symmetry with `partyId` / `actorRole`.
+>
+> **BUG-005 avoided.** The `endCurrentFirst` flag on `start-game-session` demotes the prior session in a single reducer run — atomic with the new-session mint. Without it, the partial UNIQUE index `GameSession_isCurrent_uniq` would reject the insert (two isCurrent=true rows for the same party). The client-side reducer catches this before the persistor round-trips.
+>
+> **Session tools UI deferred to R5.2.** RH3 ships the data-model foundation only. R5.2's scope narrows to user-facing Start/End buttons, session list, "current session" indicator, and the distribute-loot session-tagging wizard.
+>
+> **Session-filter UI deferred to R5.3.** The `isUntaggedLogEntry` helper is available; R5.3 wires the party-log filter dropdown.
+>
+> **Historical log entries keep `sessionId: null`.** No back-fill migration. Pre-RH3 entries were always Untagged by design; the widened Zod schema still accepts them.
+>
+> **Dead code removed.** None — the `sessionId: z.null()` shape was narrowly used in tests + fixtures (all sites updated via the schema widening; no runtime code depended on the null-only invariant).
+>
+> **Prisma DSL drift addressed.** `Party_archivedAt_idx` (from R4.1.e) was created by migration but never declared on the schema, so `prisma migrate dev` kept emitting DROP/ADD pairs. RH3.1 declares `@@index([archivedAt])` on `model Party` — future migrations no longer drift this index. Similar hand-tailing on `Character_inventoryStashId_fkey` (DEFERRABLE + NO ACTION, per BUG-001) preserved by hand in the RH3.1 migration SQL, matching the schema.prisma prisma#8807 comment.
+>
+> **What RH3 does NOT do:**
+> - No R5.1 broadcast surface (R5.1 owns it).
+> - No SECURITY.md subsection — session data doesn't cross a new trust boundary; the guards enforce DM-only, actor identity still resolves from session cookie server-side.
+> - No `delete-game-session` action — historical sessions are permanent audit anchors; users end them, they don't delete them.
 
 ---
 
@@ -3174,7 +3208,7 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 
 > **Filed 2026-07-02.** Promoted from RH0.3 (deferred 2026-06-30). RH0.3's task list was moved here verbatim + expanded with the null-state design decision (RH5.1) that blocked the original ship. The `Welcome.tsx` / `CreateCharacter.tsx` legacy-screen deletions from RH0.3's neighbourhood already shipped in RH0.4 — this slice covers only the Dexie loader + hydration contract narrowing.
 >
-> **Not blocked by anything.** RH5 is orthogonal to RH1 (id authority), RH2 (determinism), RH3 (Session entity), RH4 (URL routing). Can ship whenever the hydrate path is next touched.
+> **Not blocked by anything.** RH5 is orthogonal to RH1 (id authority), RH2 (determinism), RH3 (GameSession entity), RH4 (URL routing). Can ship whenever the hydrate path is next touched.
 >
 > **Estimated cost.** ~1 afternoon for RH5.1 (design + capture) + ~1 afternoon for RH5.2 (code) + ~1 afternoon for RH5.3 (test migration). Small slice; the design decision is the only real cost.
 
@@ -3182,11 +3216,11 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 
 ### R5 — Live sync & history (outline §10 M5)
 
-Websocket sync; per-item history; party log with session-tag filter; offline banner in party mode. Covers OUTLINE §3.11, §3.12, §4 `Session`, §5.8 (History/Log).
+Websocket sync; per-item history; party log with session-tag filter; offline banner in party mode. Covers OUTLINE §3.11, §3.12, §4 `GameSession`, §5.8 (History/Log).
 
-**Sequencing.** R5 depends on the **RH-chain** (RH0 cleanup, RH1 server-authoritative IDs, RH2 determinism + invariants, RH3 Session entity + sync schema) landing first. R5's websocket broadcast cements client-server interaction patterns; every architectural debt item handled BEFORE R5 lands costs one slice, every one deferred PAST R5 costs RH-slice + multi-writer-reconciliation. The RH chain ships in order; R5.1 starts once RH3 is done.
+**Sequencing.** R5 depends on the **RH-chain** (RH0 cleanup, RH1 server-authoritative IDs, RH2 determinism + invariants, RH3 GameSession entity + sync schema) landing first. R5's websocket broadcast cements client-server interaction patterns; every architectural debt item handled BEFORE R5 lands costs one slice, every one deferred PAST R5 costs RH-slice + multi-writer-reconciliation. The RH chain ships in order; R5.1 starts once RH3 is done.
 
-**Slicing.** Three independently testable surfaces: R5.1 ships the websocket plumbing + reconciliation; R5.2 adds the `Session` entity and `sessionId` log tagging; R5.3 builds the history UI on top. R5.3 depends on R5.2 (session filter) but not R5.1 (history reads from `TransactionLog` directly).
+**Slicing.** Three independently testable surfaces: R5.1 ships the websocket plumbing + reconciliation; R5.2 adds the `GameSession` entity's user-facing tooling on top of RH3's data-model foundation; R5.3 builds the history UI on top. R5.3 depends on R5.2 (session filter) but not R5.1 (history reads from `TransactionLog` directly).
 
 #### R5.1 — Websocket sync + reconnect
 
@@ -3204,12 +3238,18 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 #### R5.2 — Sessions entity + log tagging
 
-- [ ] `Session` entity (id, partyId, number, date, notes, isCurrent)
-- [ ] Invariant: at most one `isCurrent` session per party
-- [ ] Action: `start-session` (clears previous `isCurrent`)
-- [ ] Action: `end-session`
-- [ ] `TransactionLog.sessionId` populated from current session at write time; **`null` when no session is current** per OUTLINE §3.12 amendment (2026-06-24) — no-session activity is allowed, not blocked.
-- [ ] Reducer test: dispatching `acquire` / `transfer` / `currency-transfer` etc. with no current session produces log entries with `sessionId: null`.
+> **Scope narrowed 2026-07-03 (RH3.1 shipped the data model).** RH3.1 landed the `GameSession` entity, `TransactionLog.sessionId` widening, the `start-game-session` / `end-game-session` reducer actions, the DM-only guards, and the middleware stamping. R5.2's remaining work is the **user-facing session tools UI + the distribute-loot session tagging wizard** on top of that foundation.
+
+- [x] `GameSession` entity (id, partyId, number, date, notes, isCurrent) — **Shipped in RH3.1 (2026-07-03)**
+- [x] Invariant: at most one `isCurrent` session per party — enforced by partial UNIQUE index `GameSession_isCurrent_uniq` per RH3.1
+- [x] Action: `start-game-session` (rejects when a session is already current unless `endCurrentFirst: true`) — **Shipped in RH3.1**
+- [x] Action: `end-game-session` — **Shipped in RH3.1**
+- [x] `TransactionLog.sessionId` populated from PRE-reduce current session at write time; **`null` when no session is current** per OUTLINE §3.12 amendment (2026-06-24) — no-session activity is allowed, not blocked. — **Shipped in RH3.1**
+- [x] Reducer test: dispatching `acquire` / `transfer` / `currency-transfer` etc. with no current session produces log entries with `sessionId: null`. — **Shipped in RH3.1**
+- [ ] **UI: Start / End Session buttons** — party header or DM Dashboard surface. DM-only. Confirmation dialog on End.
+- [ ] **UI: Current session indicator** — visible on every party-scoped screen when a session is active ("Session 12 in progress — Started March 5th").
+- [ ] **UI: Session list** — DM view of every past session with dates + notes; edit-in-place for notes on the current session.
+- [ ] **Distribute-loot session tagging wizard** — the DM's "give this hoard to the party" flow auto-starts a session if none is current, then tags every emitted `transfer` / `acquire` slice against it (OUTLINE §3.12).
 
 #### R5.2 — Notes
 

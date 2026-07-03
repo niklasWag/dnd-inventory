@@ -18,13 +18,17 @@ import { encumbranceRuleSchema } from './character';
  * `MembershipRole` move together in a single migration; R3.4 lands the
  * §2.2 guard layer that actually writes banker rows.
  *
- * `sessionId` is `null` until R5 (`Session` entity).
+ * `sessionId` was `z.null()` from MVP through RH2. RH3 widens it to
+ * `string().uuid() | null` when the `GameSession` entity lands (OUTLINE
+ * §3.12 + §4). Existing log rows keep `null`; future rows carry the
+ * active `GameSession.id` when the party has a session current, or
+ * `null` for the "Untagged" bucket (§3.12).
  */
 
 const baseLogFields = {
   id: z.string().min(1),
   partyId: z.string().min(1),
-  sessionId: z.null(),
+  sessionId: z.string().uuid().nullable(),
   timestamp: z.string().datetime(),
   actorUserId: z.string().min(1),
   actorRole: z.enum(['dm', 'player', 'banker']),
@@ -704,7 +708,10 @@ const editCharacterEntry = z.object({
  * holdings across all their stashes at delete time.
  *
  * `lastSessionId` is reserved for R5 session tagging per OUTLINE §4 line
- * 329; absent in R4.1 (`sessionId` is always `null` until R5).
+ * 329; absent in R4.1 and unpopulated in RH3 (RH3 lands the
+ * `GameSession` entity but the `delete-character` cascade doesn't yet
+ * capture "last session the character participated in" — R5.2 wires
+ * that when the session tools UI ships).
  *
  * After the cascade: the character's stash rows + their `CurrencyHolding`
  * rows are dropped from state, and the owning user's `PartyMembership`
@@ -866,6 +873,71 @@ const dmTransferEntry = z.object({
 });
 
 /**
+ * `start-game-session` — RH3.1. Marks the start of a play session
+ * (OUTLINE §3.12). Reducer arm mints a fresh `GameSession` row with
+ * `isCurrent: true` and demotes any prior current session (opt-in via
+ * `endCurrentFirst` on the action payload; without it, `start-game-
+ * session` rejects when a session is already current).
+ *
+ * The log entry captures the new session's `gameSessionId`, its
+ * per-party sequence `number` (1-based), and calendar `date` — enough
+ * for history readers to render "Session 12 started on 2026-03-05"
+ * without joining against the `GameSession` table.
+ *
+ * **sessionId stamping on this entry itself.** The middleware stamps
+ * `sessionId` from `currentGameSessionId(state)` on the PRE-reduce
+ * state — same as `partyId` / `actorRole`. At the moment
+ * `start-game-session` is composed, the new session doesn't exist
+ * yet in pre-state, so the entry lands as Untagged (`sessionId:
+ * null`). The payload still carries `gameSessionId` for audit;
+ * only the derived `sessionId` field is null. Rationale: the "start"
+ * marker announces the transition INTO the session from the Untagged
+ * epoch — and belongs semantically to that epoch. Subsequent entries
+ * dispatched AFTER `start-game-session` see `isCurrent: true` in
+ * pre-state and inherit the new session's id.
+ */
+const startGameSessionEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('start-game-session'),
+  payload: z.object({
+    gameSessionId: z.string().min(1),
+    number: z.number().int().positive(),
+    date: z.iso.date(),
+  }),
+});
+
+/**
+ * `end-game-session` — RH3.1. Marks the end of the current play
+ * session. Reducer clears `isCurrent` on the current `GameSession`;
+ * subsequent log entries land with `sessionId: null` ("Untagged"
+ * bucket per OUTLINE §3.12) until a new `start-game-session` fires.
+ *
+ * **sessionId stamping on this entry itself.** The middleware stamps
+ * `sessionId` from `currentGameSessionId(state)` on the PRE-reduce
+ * state. At the moment `end-game-session` is composed, the ending
+ * session is still `isCurrent: true` in pre-state — so the entry
+ * lands WITH the ending session's id. The "end" marker belongs
+ * semantically to the session it closes: subsequent Untagged
+ * entries then land with `sessionId: null`.
+ *
+ * Symmetric with `start-game-session` (which lands Untagged because
+ * the new session doesn't yet exist in pre-state): the pair encodes
+ * the transitions rather than the epochs they bound.
+ *
+ * Emitted synthetically by `start-game-session` when the caller
+ * passed `endCurrentFirst: true` (mirrors `revoke-banker` synthesis
+ * inside `dm-transfer` — one dispatch, two log entries).
+ */
+const endGameSessionEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('end-game-session'),
+  payload: z.object({
+    gameSessionId: z.string().min(1),
+    number: z.number().int().positive(),
+  }),
+});
+
+/**
  * R4.2.d — Banker split-evenly terminal log entry. Emitted by the
  * `split-evenly` reducer arm as the audit anchor; the N child
  * `currency-transfer` entries (one per recipient) carry the atomic
@@ -926,6 +998,8 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   revokeBankerEntry,
   dmTransferEntry,
   splitEvenlyEntry,
+  startGameSessionEntry,
+  endGameSessionEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

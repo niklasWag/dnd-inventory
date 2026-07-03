@@ -217,3 +217,117 @@ describe('RH2.6 — mode-aware log-authority split', () => {
     queue.resetQueue();
   });
 });
+
+/**
+ * RH3.1 — sessionId stamping. When a `GameSession` is current in
+ * `state.gameSessions`, the middleware stamps its id onto every
+ * subsequent log entry's `sessionId`. When no session is current the
+ * stamp is `null` ("Untagged" bucket per OUTLINE §3.12).
+ *
+ * The shared `currentGameSessionId(state)` helper is called by both
+ * web `buildLogEntry` and server `buildLogEntryServer` — tested here
+ * on the web side; server-side stamping is covered by the server
+ * integration test in `apps/server/src/sync/routes.test.ts`.
+ *
+ * **Middleware reads PRE-reduce state.** Same as `partyId` /
+ * `actorRole`. Consequences for the transition markers:
+ *   - `start-game-session` lands Untagged (pre-state has no current
+ *     session yet). Subsequent entries inherit the new session's id.
+ *   - `end-game-session` lands WITH the ending session's id (pre-state
+ *     still has isCurrent=true). Subsequent entries land Untagged.
+ */
+describe('RH3.1 — sessionId stamping', () => {
+  it('local mode: entries emitted AFTER start-game-session inherit the new session id', async () => {
+    const { store, fixtures } = await loadModules(false);
+    const { inventoryStashId } = fixtures.bootstrap();
+
+    const gameSessionId = newUuidV7();
+    store.useStore.getState().dispatch({
+      type: 'start-game-session',
+      payload: { newGameSessionId: gameSessionId },
+    });
+
+    // The start-game-session entry itself lands Untagged (the session
+    // doesn't yet exist in the pre-reduce state that the middleware
+    // reads for sessionId). Payload still carries the gameSessionId
+    // for audit; only the derived sessionId field is null.
+    const startEntry = store.useStore.getState().log.find((e) => e.type === 'start-game-session');
+    expect(startEntry).toBeDefined();
+    expect(startEntry!.sessionId).toBeNull();
+    if (startEntry !== undefined && startEntry.type === 'start-game-session') {
+      expect(startEntry.payload.gameSessionId).toBe(gameSessionId);
+    }
+
+    // A subsequent acquire inherits the current session id.
+    store.useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: 'phb-2024:torch',
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const acquireEntry = store.useStore.getState().log.find((e) => e.type === 'acquire');
+    expect(acquireEntry).toBeDefined();
+    expect(acquireEntry!.sessionId).toBe(gameSessionId);
+  });
+
+  it('local mode: entries emitted with no current session have sessionId: null (Untagged)', async () => {
+    const { store, fixtures } = await loadModules(false);
+    const { inventoryStashId } = fixtures.bootstrap();
+
+    // No start-game-session dispatched — every entry stamps null.
+    store.useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: 'phb-2024:torch',
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const acquireEntry = store.useStore.getState().log.find((e) => e.type === 'acquire');
+    expect(acquireEntry).toBeDefined();
+    expect(acquireEntry!.sessionId).toBeNull();
+  });
+
+  it('local mode: end-game-session carries the ending session id; subsequent entries are Untagged', async () => {
+    const { store, fixtures } = await loadModules(false);
+    const { inventoryStashId } = fixtures.bootstrap();
+
+    const gameSessionId = newUuidV7();
+    store.useStore.getState().dispatch({
+      type: 'start-game-session',
+      payload: { newGameSessionId: gameSessionId },
+    });
+    store.useStore.getState().dispatch({ type: 'end-game-session', payload: {} });
+
+    store.useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: 'phb-2024:torch',
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+
+    const log = store.useStore.getState().log;
+    const startEntry = log.find((e) => e.type === 'start-game-session');
+    const endEntry = log.find((e) => e.type === 'end-game-session');
+    const acquireEntry = log.find((e) => e.type === 'acquire');
+
+    // start-game-session lands Untagged (pre-state had no current session).
+    expect(startEntry!.sessionId).toBeNull();
+    // end-game-session lands WITH the ending id (pre-state still had
+    // isCurrent=true).
+    expect(endEntry!.sessionId).toBe(gameSessionId);
+    // Post-end acquire is Untagged (pre-state had isCurrent=false by
+    // then).
+    expect(acquireEntry!.sessionId).toBeNull();
+  });
+});
