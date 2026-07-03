@@ -21,90 +21,6 @@ Open + recently-closed bugs in the project. Each entry has a stable id (`BUG-<n>
 
 ## Open
 
-### BUG-004 — Server persistor mints a different UUID than the reducer for new item rows; Item Detail history is empty right after `acquire` / `split`
-
-- **Filed:** 2026-07-01
-- **Severity:** medium (item history is a display feature — the log entries exist and are correct, just not linkable to the freshly-created row until a subsequent mutation. No data corruption. Later actions on the same row still resolve because they read the DB id from post-refresh state.)
-- **Status:** open — **Promoted to RH1** (dual-authority ID minting retirement) per 2026-07-01 triage.
-- **Affected slice:** cross-cutting — surfaced during R4.3 manual testing. Underlying defect predates R3.5 (server-authoritative sync).
-
-**Symptom.** Server mode. User acquires a mundane item from the Catalog Browser (or an equivalent flow that dispatches `acquire` with `source: 'catalog-add'`). The item appears in the target stash as expected. User navigates to `/item/:id` for the newly-created row. The History section renders "No log entries for this item yet." Later, when the user transfers or otherwise mutates the same row, the transfer entry surfaces normally on the Item Detail history.
-
-**Reproduction.**
-1. Server mode, any party (solo works fine — solo-bypass has no effect on this defect).
-2. From the Catalog Browser (or any UI dispatching `acquire`), add an item to a stash.
-3. Navigate to that item's Detail page.
-4. History section is empty.
-5. Move the item to another stash (dispatch `transfer`).
-6. History now shows the `transfer` entry — but the earlier `acquire` is still missing.
-
-**Root cause analysis.**
-
-The `POST /sync/actions` handler in `apps/server/src/sync/routes.ts:296-338` runs the reducer and the persistor sequentially against the same `ReducerContext`:
-
-```
-for (let i = 0; i < actions.length; i++) {
-  const reduced = reduce(state, action, ctx);   // step 1
-  await applyDelta(tx, action, actor, ctx);     // step 2
-  for (const slice of reduced.logEntries) {
-    const entry = buildLogEntryServer(slice, actor, ctx);
-    await appendTransactionLog(tx, entry);
-  }
-}
-```
-
-Both the reducer (`packages/rules/src/reducer/index.ts::acquire`) and the persistor (`apps/server/src/sync/persistor.ts::persistAcquire`) call `ctx.newId()` when a new row is minted:
-
-- Reducer, line ~675: `resolvedItemId = ctx.newId()`. The log slice's `payload.itemInstanceId` = `resolvedItemId` (UUID_A).
-- Persistor, line ~262-264: `tx.itemInstance.create({ data: { id: ctx.newId(), ... } })` (UUID_B).
-
-Two calls to `ctx.newId()` → two different UUIDs. The `TransactionLog` row references UUID_A; the `ItemInstance` row uses UUID_B. When the client re-pulls state via `/sync/state`, it gets:
-- `items: [{id: UUID_B, ...}]`
-- `log: [{type: 'acquire', payload: {itemInstanceId: UUID_A, ...}}]`
-
-The Item Detail page routes to `/item/UUID_B`. `ItemHistory` filters `log.filter(e => e.payload.itemInstanceId === UUID_B)` → **0 matches**. History renders empty.
-
-Later, when the user transfers the item, the transfer flow reads UUID_B from local state (the post-refresh state now carries the DB's id) and passes it as the action's `payload.itemInstanceId`. The reducer's `transfer` arm doesn't mint any new item id (it re-uses `payload.itemInstanceId` verbatim in the log slice), so the transfer log entry correctly references UUID_B. Same for the persistor — the persistor's `persistTransfer` reads `source.id` from the DB by the payload's id, so it also uses UUID_B. Hence transfer entries surface correctly.
-
-**Affected action types.** Any persistor that mints a new entity id via `ctx.newId()` after the reducer already did the same:
-- `acquire` — new-row branch (auto-stack branch is unaffected because it updates an existing row, no `ctx.newId()` call in the persistor).
-- `split` — always mints a new item row (partial-split target).
-- Potentially `create-stash`, `create-homebrew` — need audit but the pattern is the same shape.
-
-**Why R4.3 didn't surface this earlier.** R4.3.c widened `ownsOrShares` for DM cross-character acquire/consume/transfer. The R4.3.c integration tests are guard tests only (per the R4.3.c Notes decision to skip server integration). The R4.3 slice touches guards + reducer, not persistors. The BUG-004 code path (server persistor mints IDs post-reduce) has been latent since R3.5 (server-authoritative sync landed) — this is the first time someone manually inspected an Item Detail history right after an acquire and noticed the mismatch.
-
-**Related patterns already handled.**
-
-`apps/web/src/sync/queue.ts:56-62` already lists the id-minting action types and re-pulls `/sync/state` after each one to canonicalize the LOCAL client-side ids. That's the mechanism that keeps subsequent actions from failing with `item_not_found`. But it canonicalizes the `items` array — the log entries stay as-fetched from the server, which is where the defect lives (the log's id and the item's id diverge server-side, and both survive the re-pull unchanged).
-
-**Fix approach (chosen 2026-07-01 triage):**
-
-**Promoted to RH1 + RH2.6** — dual-authority ID minting retirement (RH1) + mode-aware log-authority split (RH2.6). Per CLAUDE.md's SECURITY §2 ("server is authoritative") and BUG-002's lesson ("Two-id-minting authorities (client reducer + server persistor) need the same defect fixed in both places"), the structural fix is to make the server the single source of truth for entity ids AND for `TransactionLog` contents in server mode:
-
-- Client reducer stops minting canonical ids in server mode; uses placeholders (e.g. `'pending-<uuid>'`).
-- Server reducer + persistor share the SAME `ctx.newId()` result per action — either by the persistor reading the id from the reducer's just-produced log slice, or by pre-minting in the reducer and passing to the persistor via a threaded context.
-- Response includes the canonical ids so the client can canonicalize local state after each batch.
-
-**Interim minimal fix (Approach A, considered and deferred):** persistors read the entity id from the reducer's log-entry slice instead of calling `ctx.newId()` themselves. Two-touch (`applyDelta` signature + each id-minting persistor). Was considered as an R4.3.f slice but deferred because RH1 + RH2.6 will subsume it and shipping a persistor-side patch would create migration debt. Additionally, even the interim fix wouldn't fully close BUG-004 — it fixes the id-alignment axis (RH1's shape) but leaves the client-side log-emission drift open (RH2.6's shape); both slices are needed for the complete resolution.
-
-**Workarounds until RH1 lands.**
-- Users can still see the acquire entry in the party-wide log (Party Settings → Party Log or wherever a global feed lives — need to confirm the exact screen). Only the Item Detail per-item history is affected.
-- After a subsequent `edit-item-instance` or `transfer`, the item history populates with the newer events; the missing `acquire` remains missing until RH1 retroactively re-hydrates.
-
-**Related code (do NOT patch pre-RH1 without discussion).**
-- `apps/server/src/sync/persistor.ts::persistAcquire` (line ~262) — `id: ctx.newId()`.
-- `apps/server/src/sync/persistor.ts::persistTransfer` (line ~591, partial-split) — `id: ctx.newId()`.
-- `apps/server/src/sync/persistor.ts::persistSplit` — similar shape (audit needed).
-- `apps/server/src/sync/routes.ts::/sync/actions` (line ~296-338) — the reduce-then-persist loop.
-- `packages/rules/src/reducer/index.ts::acquire` (line ~675) — reducer-side `ctx.newId()`.
-- `apps/web/src/components/item/ItemHistory.tsx::entryReferencesItem` — the id-based filter that misses.
-
-**Lessons (preserved for the RH1 postmortem).**
-- Dual-authority ID minting is a compound defect: BUG-002 was one manifestation (upsert vs create), BUG-004 is another (id divergence in a same-transaction handoff). The single structural fix is retiring the client's id-minting authority in server mode.
-- Item Detail's per-item history is a canary for id-consistency defects. When id divergence appears, this is the display that goes empty first — the party-wide log doesn't care about id linkage, only the per-item filter does.
-
----
-
 ### BUG-005 — Optimistic success toast flashes before the server rejection toast on guarded actions
 
 - **Filed:** 2026-07-01
@@ -163,6 +79,78 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 ---
 
 ## Recently fixed
+
+### BUG-004 — Server persistor mints a different UUID than the reducer for new item rows; Item Detail history is empty right after `acquire` / `split`
+
+- **Filed:** 2026-07-01
+- **Fixed:** 2026-07-03 (branch: `refactor/rh2-determinism-invariants`; RH1 + RH2.6)
+- **Severity:** medium (item history is a display feature — the log entries exist and are correct, just not linkable to the freshly-created row until a subsequent mutation. No data corruption. Later actions on the same row still resolve because they read the DB id from post-refresh state.)
+- **Status:** fixed
+- **Affected slice:** cross-cutting — surfaced during R4.3 manual testing. Underlying defect predated R3.5 (server-authoritative sync).
+
+**Symptom.** Server mode. User acquires a mundane item from the Catalog Browser (or an equivalent flow that dispatches `acquire` with `source: 'catalog-add'`). The item appears in the target stash as expected. User navigates to `/item/:id` for the newly-created row. The History section renders "No log entries for this item yet." Later, when the user transfers or otherwise mutates the same row, the transfer entry surfaces normally on the Item Detail history.
+
+**Reproduction.**
+1. Server mode, any party (solo works fine — solo-bypass has no effect on this defect).
+2. From the Catalog Browser (or any UI dispatching `acquire`), add an item to a stash.
+3. Navigate to that item's Detail page.
+4. History section is empty.
+5. Move the item to another stash (dispatch `transfer`).
+6. History now shows the `transfer` entry — but the earlier `acquire` is still missing.
+
+**Root cause analysis.**
+
+The `POST /sync/actions` handler in `apps/server/src/sync/routes.ts:296-338` ran the reducer and the persistor sequentially against the same `ReducerContext`:
+
+```
+for (let i = 0; i < actions.length; i++) {
+  const reduced = reduce(state, action, ctx);   // step 1
+  await applyDelta(tx, action, actor, ctx);     // step 2
+  for (const slice of reduced.logEntries) {
+    const entry = buildLogEntryServer(slice, actor, ctx);
+    await appendTransactionLog(tx, entry);
+  }
+}
+```
+
+Both the reducer (`packages/rules/src/reducer/index.ts::acquire`) and the persistor (`apps/server/src/sync/persistor.ts::persistAcquire`) called `ctx.newId()` when a new row was minted:
+
+- Reducer, line ~675: `resolvedItemId = ctx.newId()`. The log slice's `payload.itemInstanceId` = `resolvedItemId` (UUID_A).
+- Persistor, line ~262-264: `tx.itemInstance.create({ data: { id: ctx.newId(), ... } })` (UUID_B).
+
+Two calls to `ctx.newId()` → two different UUIDs. The `TransactionLog` row referenced UUID_A; the `ItemInstance` row used UUID_B. When the client re-pulled state via `/sync/state`, it got:
+- `items: [{id: UUID_B, ...}]`
+- `log: [{type: 'acquire', payload: {itemInstanceId: UUID_A, ...}}]`
+
+The Item Detail page routed to `/item/UUID_B`. `ItemHistory` filtered `log.filter(e => e.payload.itemInstanceId === UUID_B)` → **0 matches**. History rendered empty.
+
+Later, when the user transferred the item, the transfer flow read UUID_B from local state (the post-refresh state carried the DB's id) and passed it as the action's `payload.itemInstanceId`. The reducer's `transfer` arm didn't mint any new item id (it re-used `payload.itemInstanceId` verbatim in the log slice), so the transfer log entry correctly referenced UUID_B. Same for the persistor. Hence transfer entries surfaced correctly.
+
+**Affected action types (pre-fix).** Any persistor that minted a new entity id via `ctx.newId()` after the reducer already did the same:
+- `acquire` — new-row branch (auto-stack branch was unaffected because it updated an existing row).
+- `split` — always minted a new item row (partial-split target).
+- Potentially `create-stash`, `create-homebrew` — same shape.
+
+**Why R4.3 didn't surface this earlier.** R4.3.c widened `ownsOrShares` for DM cross-character acquire/consume/transfer. The R4.3.c integration tests were guard tests only. The BUG-004 code path (server persistor minting IDs post-reduce) had been latent since R3.5 — this was the first time someone manually inspected an Item Detail history right after an acquire and noticed the mismatch.
+
+**Fix (2026-07-03 — RH1 + RH2.6):**
+
+The bug had two independent axes; both needed to close.
+
+**Axis 1 — Entity ID divergence (RH1, shipped earlier).** The client now mints every entity id (as UUID v7) client-side and sends them in the action payload via `new<EntityName>Id` fields. The server's persistor consumes these ids verbatim (`newItemInstanceId`, `newStashId`, etc.) instead of calling `ctx.newId()`. The `ItemInstance` id and the `TransactionLog.payload.itemInstanceId` are now the same value by construction — they come from the same client-minted `newItemInstanceId`.
+
+**Axis 2 — TransactionLog authority split (RH2.6, this slice).** The client-side reducer's `logEntries` output is now discarded at the store boundary in server mode; `state.log` grows only from `POST /sync/actions`'s `applied[]` response. The server-emitted log entry has server-canonical `id`, `timestamp`, and `actorRole` — and its payload's entity ids come from the action payload the client already minted (axis 1). No divergence axis exists anymore.
+
+Together, the fix is structural: in server mode, entity ids come from the client, `TransactionLog` contents come from the server, and the two agree on entity ids by construction. `ItemHistory` filtering by `payload.itemInstanceId === UUID_X` now works because both `ItemInstance.id` and `TransactionLog.payload.itemInstanceId` are UUID_X.
+
+**Verification.** `apps/web/src/store/log-authority.test.ts` test 3 exercises the full server-mode round trip: dispatch `acquire`, flush the queue, assert the `applied[]` entry echoed back into `state.log` carries the client-minted `itemInstanceId` intact and a server-canonical `id`. Mutation-checked by dropping the `appendServerLogEntries` call — test correctly fails with an empty `state.log`. See `docs/roadmap.md` § RH2.6 for full context.
+
+**Lessons.**
+- Dual-authority ID minting is a compound defect: BUG-002 was one manifestation (upsert vs create), BUG-004 another (id divergence in a same-transaction handoff). The single structural fix is retiring the client's id-minting authority in server mode — accomplished via RH1 (client mints upstream, server validates) + RH2.6 (server owns log emission).
+- Item Detail's per-item history is a canary for id-consistency defects. When id divergence appears, this is the display that goes empty first — the party-wide log doesn't care about id linkage, only the per-item filter does.
+- Half-measures accumulate cost. RH2.1b's placeholder-then-patch approach (client emits with `PENDING` timestamp, queue patches post-flush) fixed one field at a time. RH2.6's authority split removes the client-side emission entirely — the drift risk was structural, not per-field.
+
+---
 
 ### BUG-003 — Sync-queue rollback restored post-mutation state, not pre-mutation state
 

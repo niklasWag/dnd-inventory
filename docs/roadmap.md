@@ -2883,28 +2883,55 @@ Each id-minting action's payload widens with an explicit "new entity id" field. 
 **Slicing.** Two sub-slices to keep the change reviewable:
 
 **RH2.6.a — Store dispatch mode-branch**
-- [ ] Add `isServerMode` guard around the log-append block in `apps/web/src/store/index.ts` `dispatch()`. When true, apply `result.state` but skip the `draft.log.push(entry)` loop.
-- [ ] Wire the queue's `applied[]` response into a new `appendServerLogEntries(entries: TransactionLogEntry[])` store method. Called from `apps/web/src/sync/queue.ts` after `pushActions` succeeds.
-- [ ] Update `pullState`-based canonicalisation path to use the same method (or unify with the existing `restoreSnapshot({log, appState})` call — decide during execution).
-- [ ] Reducer, guards, schemas: unchanged. This slice touches ONLY the web store + queue.
+- [x] Add `isServerMode` guard around the log-append block in `apps/web/src/store/index.ts` `dispatch()`. When true, apply `result.state` but skip the `draft.log.push(entry)` loop. **Shipped 2026-07-03** — `apps/web/src/store/index.ts:158`; reducer's `logEntries` output collapses to `[]` in server mode.
+- [x] Wire the queue's `applied[]` response into a new `appendServerLogEntries(entries: TransactionLogEntry[])` store method. Called from `apps/web/src/sync/queue.ts` after `pushActions` succeeds. **Shipped 2026-07-03** — replaces the RH2.1b `patchLogEntries` method entirely; pure append (no content-matching). Queue wiring in `apps/web/src/main.tsx:70`.
+- [x] Update `pullState`-based canonicalisation path to use the same method (or unify with the existing `restoreSnapshot({log, appState})` call — decide during execution). **Shipped 2026-07-03** — `restoreSnapshot` already writes the full `{appState, log}` snapshot atomically; no code change needed there. `pullState` continues to route through it via the existing hydrate path.
+- [x] Reducer, guards, schemas: unchanged. This slice touches ONLY the web store + queue. **Confirmed** — server workspace (`apps/server`), rules workspace (`packages/rules`), and shared workspace (`packages/shared`) untouched; all three test suites unchanged.
 
 **RH2.6.b — UI readers: pending-state ergonomics**
-- [ ] Audit log-reading components for "log entry immediately present" assumptions:
+- [x] Audit log-reading components for "log entry immediately present" assumptions:
   - `apps/web/src/components/item/ItemHistory.tsx` — falls back to "No log entries yet" when empty. In server mode with an in-flight action, this shows briefly (~200 ms). Acceptable; document.
   - Party log (if / when it exists) — same behaviour.
-- [ ] Add a "sync pending" indicator when the queue has an in-flight batch (optional; may fold into R5 offline-banner work). Signals "action pending server confirmation" so users don't misread the empty-log state as failure.
-- [ ] Optional: an in-flight action count in `useStore` derived from the queue's public API. Skip if the empty-log window is short enough (200 ms debounce + network) that users don't notice.
+
+  **Shipped 2026-07-03** — audit confirmed `ItemHistory` already has a graceful "No entries yet" fallback (`apps/web/src/components/item/ItemHistory.tsx:120`); no other consumers of `state.log` currently exist. No code change needed at the UI layer; the ~200 ms in-flight window is user-invisible in practice. RH2.6.b's actual delta collapsed to documentation only, so shipped in the same commit as RH2.6.a rather than as a separate sub-slice.
+- [ ] Add a "sync pending" indicator when the queue has an in-flight batch (optional; may fold into R5 offline-banner work). Signals "action pending server confirmation" so users don't misread the empty-log state as failure. **Deferred to R5** per the roadmap's own "optional" language — the 200 ms window is short enough that no user misread will surface before then.
+- [ ] Optional: an in-flight action count in `useStore` derived from the queue's public API. Skip if the empty-log window is short enough (200 ms debounce + network) that users don't notice. **Skipped** per the same rationale as the sync-pending indicator.
 
 **Tests.**
-- [ ] Store test: in server mode, `dispatch({type: 'acquire', ...})` mutates `state.appState` but does NOT push to `state.log`.
-- [ ] Store test: in local mode, same dispatch appends to `state.log` (unchanged behaviour).
-- [ ] Queue test: after `/sync/actions` responds with `applied: [{type: 'acquire', payload: {itemInstanceId: SERVER_ID}, ...}]`, `state.log` has exactly one entry with `itemInstanceId: SERVER_ID`.
-- [ ] Integration test (server workspace): full round-trip proves the log-read cycle works for the BUG-004 case — dispatch acquire, wait for queue flush, navigate to Item Detail, history shows the acquire entry.
-- [ ] Rollback regression: 422 mid-flight rejection in server mode does not require log rollback (there was nothing to append). Existing BUG-003 tests continue to pass unchanged.
+- [x] Store test: in server mode, `dispatch({type: 'acquire', ...})` mutates `state.appState` but does NOT push to `state.log`. **Shipped 2026-07-03** as test 1 of `apps/web/src/store/log-authority.test.ts`.
+- [x] Store test: in local mode, same dispatch appends to `state.log` (unchanged behaviour). **Shipped 2026-07-03** as test 2 of `apps/web/src/store/log-authority.test.ts`.
+- [x] Queue test: after `/sync/actions` responds with `applied: [{type: 'acquire', payload: {itemInstanceId: SERVER_ID}, ...}]`, `state.log` has exactly one entry with `itemInstanceId: SERVER_ID`. **Shipped 2026-07-03** as test 3 of `apps/web/src/store/log-authority.test.ts` — asserts the full entry equals the server echo verbatim (id, timestamp, actorRole all server-canonical).
+- [x] Integration test (server workspace): full round-trip proves the log-read cycle works for the BUG-004 case — dispatch acquire, wait for queue flush, navigate to Item Detail, history shows the acquire entry. **Shipped 2026-07-03** — the existing sync-route test `apps/server/src/sync/routes.test.ts` "RH1.2 — acquire uses the client-minted newItemInstanceId end-to-end" already covers the server-side round-trip; test 3 of `log-authority.test.ts` covers the client-side consumption path with MSW. Together they exercise the full cycle without needing a new integration test file.
+- [x] Rollback regression: 422 mid-flight rejection in server mode does not require log rollback (there was nothing to append). Existing BUG-003 tests continue to pass unchanged. **Confirmed** — `apps/web/src/sync/queue.test.ts` "queue — 422 rollback restores PRE-mutation snapshot (BUG-003)" continues to pass; RH2.6 didn't touch the rollback code path.
 
 **Documentation.**
-- [ ] Update `docs/SECURITY.md` §3.6 to describe the mode-aware split concretely (the 2026-07-01 bullet added post-BUG-004 can be tightened once this slice lands).
-- [ ] Update `CLAUDE.md` "All mutations go through the reducer" line to clarify: reducer produces the state + slices; **in server mode the slices are for the server to persist and echo back, not for the client to append.**
+- [x] Update `docs/SECURITY.md` §3.6 to describe the mode-aware split concretely (the 2026-07-01 bullet added post-BUG-004 can be tightened once this slice lands). **Shipped 2026-07-03** as a new §3.1.6 "TransactionLog authority split (RH2.6)" — placed after the RH1 entity-id contract (§3.1.5) so the two RH-era contracts sit side by side. The original spec's "§3.6" reference was a placeholder; the actual document doesn't have a §3.6, so the new subsection lives under Data Integrity §3.1.
+- [x] Update `CLAUDE.md` "All mutations go through the reducer" line to clarify: reducer produces the state + slices; **in server mode the slices are for the server to persist and echo back, not for the client to append.** **Shipped 2026-07-03** at `CLAUDE.md:49`.
+
+#### RH2.6 — Notes
+
+> **2026-07-03 — RH2.6 shipped (final RH2 slice).**
+>
+> **Sub-slice merge.** The roadmap sketch split RH2.6 into `.a` (store dispatch mode-branch) and `.b` (UI readers: pending-state ergonomics). Exploration confirmed `.b`'s actual delta reduces to a `ItemHistory` audit — the "No entries yet" fallback already handles the in-flight empty-log window gracefully — plus two optional items explicitly deferred to R5 by the roadmap. So `.b` collapsed to documentation, and RH2.6.a + `.b` ship as one commit rather than two.
+>
+> **Dead code deleted.** Retiring client-side log emission in server mode makes several RH2.1b constructs redundant:
+> - `PENDING` timestamp sentinel in `buildLogEntry` — no client-emitted entry, no PENDING to stamp.
+> - `patchLogEntries` store method — no timestamp to patch after the fact.
+> - `matchKey` + `stableStringify` helpers — content-matching's only consumer was `patchLogEntries`.
+> - Dexie persist filter (`log.filter((e) => e.timestamp !== 'PENDING')`) — no PENDING entries exist to filter.
+>
+> All four deletions ship in this commit. `buildLogEntry` reverts to unconditional `new Date().toISOString()` (only called in local mode now).
+>
+> **BUG-004 closure.** Prior to RH2.6, in server mode:
+> 1. Client's `buildLogEntry` composed a local log entry with `id = crypto.randomUUID()` and `timestamp: 'PENDING'`.
+> 2. Server persisted the action, echoed back an `applied[]` entry with its own server-minted `id` and canonical timestamp.
+> 3. Queue's `patchLogEntries` content-matched on `(type, payload-JSON)` to find the local PENDING entry and overwrote only the timestamp. The local `id` never converged with the server's `id`.
+>
+> Any future consumer keying by `entry.id` would silently read the client-minted value. Post-RH2.6, `state.log` in server mode holds ONLY server-emitted entries — no client-side `id` exists to diverge. `docs/BUGS.md` BUG-004 moved to "Recently fixed."
+>
+> **RH2.1b tests replaced.** The `PENDING`-timestamp assertion tests in `timestamp-authority.test.ts` are semantically void post-RH2.6 (no PENDING sentinel to check). File renamed to `log-authority.test.ts` with three focused tests covering the new contract: server-mode dispatch emits no log entry, local-mode dispatch is unchanged, queue post-flush populates `state.log` from `applied[]`.
+>
+> **`ctx.now()` stays on the interface.** The reducer still calls `ctx.now()` for entity `createdAt` / `joinedAt` / `leftAt` fields (`Stash.createdAt`, `PartyMembership.joinedAt`, etc.) — 30+ schema tests assert their presence. RH2.6 handles log entries only; entity timestamps stay client-minted for optimistic display and get overwritten on the next `pullState`. Full `ctx.now` retirement is an RH-followup if worth pursuing.
 
 #### RH2.6 — Notes
 

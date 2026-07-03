@@ -65,10 +65,12 @@ async function boot(): Promise<void> {
       useStore.getState().restoreSnapshot(snap);
     },
     getActivePartyId: () => getCurrentPartyId(),
-    // RH2.1b — queue passes the server's applied[] echo to the store
-    // so it can patch local PENDING-timestamp entries.
-    patchLogEntries: (applied) => {
-      useStore.getState().patchLogEntries(applied);
+    // RH2.6 — queue passes the server's applied[] echo to the store
+    // so it can append the server-emitted log entries to state.log.
+    // In server mode this is the SOLE writer of state.log (client-
+    // side reducer's logEntries are discarded at the store boundary).
+    appendServerLogEntries: (applied) => {
+      useStore.getState().appendServerLogEntries(applied);
     },
   });
   attachUnloadFlush();

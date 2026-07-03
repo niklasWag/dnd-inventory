@@ -66,13 +66,17 @@ export interface QueueDeps {
    */
   getActivePartyId: () => Promise<string | null>;
   /**
-   * RH2.1b — optional hook called after a successful flush with the
-   * server's `applied[]` echo. Implementations patch local log entries'
-   * timestamps (and other server-authoritative fields) from the echo.
-   * Optional so tests that don't care about this behaviour can omit it;
-   * production wiring in `main.tsx` always supplies it.
+   * RH2.6 — post-flush hook. After `POST /sync/actions` returns
+   * `applied[]`, the queue passes the array to this dep so the store
+   * can append the server-emitted log entries to `state.log`. In
+   * server mode this is the SOLE path by which `state.log` grows;
+   * the store's dispatch middleware discards the reducer's local
+   * `logEntries` slice output (see `apps/web/src/store/index.ts`).
+   *
+   * Optional so tests that don't care about post-flush log growth
+   * can omit it; production wiring in `main.tsx` always supplies it.
    */
-  patchLogEntries?: (applied: readonly TransactionLogEntry[]) => void;
+  appendServerLogEntries?: (applied: readonly TransactionLogEntry[]) => void;
 }
 
 let queue: Action[] = [];
@@ -218,12 +222,15 @@ export async function flush(): Promise<void> {
         }
 
         await pushActions(partyId, batch).then((response) => {
-          // RH2.1b — server-authoritative log timestamp. Feed the
-          // applied[] echo to the store so it can patch its local
-          // PENDING-timestamp entries to the server-canonical values.
-          // Skipped when d.patchLogEntries is absent (test fakes).
-          if (d.patchLogEntries !== undefined) {
-            d.patchLogEntries(response.applied);
+          // RH2.6 — server-authoritative log-authority in server mode.
+          // The server's `applied[]` echo is the sole source of truth
+          // for TransactionLog contents; the store's dispatch
+          // middleware discards the reducer's local logEntries in
+          // server mode, so this call is the only path by which
+          // `state.log` grows. Skipped when the dep is absent (test
+          // fakes that don't care about log growth).
+          if (d.appendServerLogEntries !== undefined) {
+            d.appendServerLogEntries(response.applied);
           }
         });
 

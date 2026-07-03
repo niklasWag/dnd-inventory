@@ -46,7 +46,7 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - shadcn/ui primitives live in `src/components/ui/` and are managed by `shadcn-ui add`. **Do not hand-edit them.**
 - Use `useShallow` (or equivalent) for Zustand selectors that derive multiple fields.
 - Reducer actions correspond 1:1 to `TransactionLog.type` values. Adding a mutation means adding both an action and a log type.
-- All mutations go through the reducer: validate → apply → append log entry → persist (debounced).
+- All mutations go through the reducer: validate → apply → append log entry (**local mode only**; in server mode the server appends via `applied[]` echo per RH2.6 — see `docs/SECURITY.md` §3.1.6) → persist (debounced).
 - **No `Set<Action['type']>` registries in consumer modules.** Per-action-type concerns (broadcast, history visibility, etc.) live as **schema metadata** on the Zod variant via `z.registry` in `packages/shared/src/schemas/actionMetadata.ts`. Consumers read `getActionMetadata(type)` at runtime instead of maintaining their own `Set`. Adding a new action variant forces a metadata entry in the same PR — the `Record<Action['type'], ActionMetadata>` is compile-time-exhaustive and `actionMetadata.test.ts` runtime-verifies the registry covers every `actionSchema.options` variant.
 
 ### Data model rules (see `docs/OUTLINE.md` §4)

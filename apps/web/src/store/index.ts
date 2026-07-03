@@ -29,21 +29,23 @@ export interface StoreState {
   hydrate: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
   restoreSnapshot: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
   /**
-   * RH2.1b — patch the timestamps of local PENDING log entries from
-   * the server's `applied[]` echo. Called by the queue's post-flush
-   * hook. Matches by content (`type` + JSON-canonicalised payload) —
-   * the client- and server-side log entry ids diverge (client uses
-   * `crypto.randomUUID()`, server uses `newUuidV7()`), so id-based
-   * matching isn't available. Content matching is safe because the
-   * reducer never emits two structurally-identical slices in a single
-   * batch.
+   * RH2.6 — mode-aware log-authority split. In **server mode** the
+   * client's reducer discards its `logEntries` slice output; `state.log`
+   * grows only via this method, which the queue calls after each
+   * successful `POST /sync/actions` with the response's `applied[]`
+   * array. Pure append — the server-emitted entries are the canonical
+   * source of truth (server-minted `id`, `timestamp`, `actorRole`).
    *
-   * RH2.6 retires client-side log emission in server mode entirely,
-   * at which point this method's responsibility shifts to "append
-   * server-authoritative entries" rather than "patch client-emitted
-   * ones."
+   * In **local mode** this method is unused; `dispatch` appends
+   * client-built entries directly.
+   *
+   * BUG-004 closure: prior to RH2.6, the client emitted a log entry
+   * with `id = crypto.randomUUID()` and the queue's post-flush hook
+   * patched only the timestamp — the id never converged with the
+   * server's `TransactionLog.id`. Retiring client-side emission in
+   * server mode eliminates that divergence axis entirely.
    */
-  patchLogEntries: (applied: readonly TransactionLogEntry[]) => void;
+  appendServerLogEntries: (applied: readonly TransactionLogEntry[]) => void;
 }
 
 const saver = createDebouncedSaver();
@@ -105,19 +107,10 @@ function resolveActor(
  * onto the reducer's pure slice. Kept here — not in the reducer — so the
  * reducer stays free of `crypto.randomUUID()` / `new Date()` side effects.
  *
- * RH2.1b — in server mode the log entry's timestamp is stamped as the
- * sentinel `'PENDING'`; the queue's post-flush hook patches it to the
- * server-canonical value from `applied[]`. This makes the SERVER the
- * single authority for `TransactionLog.timestamp` under multi-writer
- * broadcast (R5.1). In local mode the client is still authoritative;
- * `new Date().toISOString()` lands on the entry immediately. See
- * `packages/shared/src/guards/actor.ts` for the analogous `actorRole`
- * derivation (RH2.1a).
- *
- * Note: entity `createdAt` / `joinedAt` / `leftAt` fields on state
- * (`Stash.createdAt`, `PartyMembership.joinedAt`, etc.) are NOT flipped
- * to PENDING here — that axis is scoped to RH2.6, which retires
- * client-side log emission entirely in server mode.
+ * RH2.6 — only called in **local mode**. In server mode `dispatch`
+ * skips the log-append entirely; the server is the sole authority for
+ * `TransactionLog` contents, and `state.log` grows from the queue's
+ * `appendServerLogEntries` post-flush hook.
  */
 function buildLogEntry(state: AppState, slice: LogEntrySlice): TransactionLogEntry {
   const { actorUserId, actorRole, partyId } = resolveActor(state, slice);
@@ -125,7 +118,7 @@ function buildLogEntry(state: AppState, slice: LogEntrySlice): TransactionLogEnt
     id: crypto.randomUUID(),
     partyId,
     sessionId: null,
-    timestamp: isServerMode ? 'PENDING' : new Date().toISOString(),
+    timestamp: new Date().toISOString(),
     actorUserId,
     actorRole,
     ...slice,
@@ -150,12 +143,21 @@ export const useStore = create<StoreState>()(
       // avoid — the reducer is meant to be plain-value pure).
       const prev = get();
       const result = reduce(prev.appState, action, webReducerCtx);
+      // RH2.6 — mode-aware log-authority split. In LOCAL mode the client
+      // builds full log entries from the reducer's slices and appends
+      // to `state.log`. In SERVER mode the reducer's `logEntries` output
+      // is DISCARDED at this boundary; the queue's post-flush hook
+      // (`appendServerLogEntries`) is the sole writer of `state.log`
+      // in server mode. See `docs/SECURITY.md` §3.1.6 for the contract.
+      //
       // Most reducer cases emit one slice; M3's `delete-stash` cascade
       // emits N+1 (transfers + delete-stash) or N+2 (when currency rolls
       // into Recovered Loot). Resolve each slice against the SAME
       // pre-mutation snapshot — within a single dispatch all entries
       // share `actorUserId`/`actorRole`/`partyId`.
-      const entries = result.logEntries.map((slice) => buildLogEntry(prev.appState, slice));
+      const entries = isServerMode
+        ? []
+        : result.logEntries.map((slice) => buildLogEntry(prev.appState, slice));
 
       set((draft) => {
         draft.appState = result.state;
@@ -165,16 +167,10 @@ export const useStore = create<StoreState>()(
       });
 
       const snapshot = get();
-      // RH2.1b — never persist PENDING log entries to Dexie. In server
-      // mode the source of truth is the server; PENDING entries live
-      // only in memory until the queue's post-flush hook patches them.
-      // If the tab closes before flush, the actions never reach the
-      // server anyway, so dropping them from Dexie keeps hydrate
-      // schema-valid (`.datetime()` refinement would reject PENDING).
-      const persistableLog = isServerMode
-        ? snapshot.log.filter((e) => e.timestamp !== 'PENDING')
-        : snapshot.log;
-      saver.save({ appState: snapshot.appState, log: persistableLog });
+      // RH2.6 — no PENDING sentinel to filter out. In server mode the
+      // client no longer emits log entries at all; in local mode every
+      // entry has a real ISO timestamp. Persist the log as-is.
+      saver.save({ appState: snapshot.appState, log: snapshot.log });
 
       // R3.5 / R4.1-followup — in server mode, optimistically push the
       // action to the sync queue. The queue debounces + handles 422
@@ -212,57 +208,26 @@ export const useStore = create<StoreState>()(
       });
     },
     /**
-     * RH2.1b — patch local log entries' timestamps from the server's
-     * `applied[]` echo. Content-matches on `(type, canonical-payload)`:
-     * each applied entry pops the FIRST matching PENDING local entry
-     * and overwrites its timestamp. Unmatched applied entries and
-     * leftover PENDING entries are logged as warnings — under RH1's
-     * one-authority-per-field regime they shouldn't occur.
+     * RH2.6 — server-mode log append. The queue calls this after each
+     * successful `POST /sync/actions` with the server's `applied[]`
+     * echo. Every entry is server-minted (id, timestamp, actorRole,
+     * payload); we append them verbatim.
+     *
+     * No matching, no patching — the server IS the source of truth.
+     * `state.log` in server mode grows exclusively through this seam.
+     * In local mode this method is never called (dispatch appends
+     * client-built entries directly).
      */
-    patchLogEntries: (applied) => {
+    appendServerLogEntries: (applied) => {
       if (applied.length === 0) return;
       set((draft) => {
-        for (const remote of applied) {
-          const remoteKey = matchKey(remote);
-          const idx = draft.log.findIndex(
-            (local) => local.timestamp === 'PENDING' && matchKey(local) === remoteKey,
-          );
-          if (idx === -1) {
-            // No matching local PENDING entry. Post-RH1 this shouldn't
-            // happen — the client and server produce structurally
-            // equivalent slices per action. Log for diagnostics; RH2.3
-            // will add a hard assertion.
-            console.warn(
-              '[store.patchLogEntries] no matching local PENDING entry for applied',
-              remote.type,
-              remote.id,
-            );
-            continue;
-          }
-          draft.log[idx]!.timestamp = remote.timestamp;
+        for (const entry of applied) {
+          draft.log.push(entry);
         }
       });
     },
   })),
 );
-
-/**
- * Content-match key for RH2.1b timestamp patching. Combines the slice
- * type and a canonical (sorted-key) JSON of the payload so that two
- * structurally-identical slices produce the same key regardless of
- * property insertion order.
- */
-function matchKey(entry: TransactionLogEntry): string {
-  return `${entry.type}:${stableStringify(entry.payload)}`;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
-}
 
 /**
  * Flush any pending debounced persist. Useful before navigation away
@@ -332,10 +297,7 @@ type MintingActionInput =
   | (Omit<Extract<Action, { type: 'create-character' }>, 'payload'> & {
       payload:
         | Omit<
-            Extract<
-              Extract<Action, { type: 'create-character' }>['payload'],
-              { dmOnly?: false }
-            >,
+            Extract<Extract<Action, { type: 'create-character' }>['payload'], { dmOnly?: false }>,
             | 'newCharacterId'
             | 'newInventoryStashId'
             | 'newCurrencyHoldingId'
@@ -347,10 +309,7 @@ type MintingActionInput =
             | 'newRecoveredLootCurrencyId'
           >
         | Omit<
-            Extract<
-              Extract<Action, { type: 'create-character' }>['payload'],
-              { dmOnly: true }
-            >,
+            Extract<Extract<Action, { type: 'create-character' }>['payload'], { dmOnly: true }>,
             | 'newUserId'
             | 'newPartyId'
             | 'newPartyStashId'
