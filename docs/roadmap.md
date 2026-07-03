@@ -3355,7 +3355,7 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 ##### R5.1.d — Offline write-block + auto-resume
 
-- [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
+- [x] Offline banner active in multi-member parties; writes blocked while offline (§9) — banner already shipped in R4.4.d, now surfaces the write-block reason ("Offline — changes are disabled until you reconnect."). Store-level short-circuit in `dispatch()` no-ops + toasts when `(isServerMode && !online && memberCount >= 2)`; new `useCanDispatch()` hook exposes the reactive predicate for UI affordance (disable Save buttons). Solo parties bypass the block and buffer to the outbox (R5.1.c). Auto-resume: `socket.on('connect')` fires `drainOutbox()` (R5.1.c wiring); a `store.online` field mirrors `navigator.onLine` via `main.tsx` listeners so all connectivity-aware surfaces derive from one source.
 
 #### R5.1 — Notes
 
@@ -3369,6 +3369,20 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 >   - **Write-block:** centralized `useStore.getState().canDispatch()` returns `false` when `(isServerMode && !online && memberCount >= 2)`. Solo (memberCount === 1) stays writable + queues to outbox.
 >   - **Socket auth:** reuse the session cookie via `io.use()` middleware calling the existing `getSession()`. SECURITY §6 alignment.
 >   - **Room subscription:** auto-join every active `PartyMembership` on connect; client never names the room.
+>
+> **Shipped 2026-07-03 (four commits on `feat/r5-live-sync-history`).** Total test-suite growth 1375 → 1411 (+36 net):
+>   - **R5.1.a** — Server suite 197 → 201 (+4).
+>   - **R5.1.b** — Web suite 759 → 763 (+4).
+>   - **R5.1.c** — Web suite 763 → 779 (+16).
+>   - **R5.1.d** — Web suite 779 → 791 (+12).
+>
+> **Two implementation pivots documented in sub-slice Notes:**
+>   - **R5.1.c dropped `GET /sync/log`** in favour of `pullState` re-hydrate. Log entries aren't isomorphic to action payloads for id-minting variants; re-pulling authoritative state is simpler and reuses `PartyScopeSync`'s proven endpoint.
+>   - **R5.1.d ships two-tier write-block** (store guard + `useCanDispatch` hook). The plan called for wiring `disabled={!canDispatch}` on every Save button; in practice the app has 45 dispatch call sites, so the store guard is the correctness backstop and UI-level wiring is deferred as polish.
+>
+> **Retired module state at end of R5.1:**
+>   - `apps/web/src/components/OfflineBanner.tsx::useOnline` — replaced by `store.online` (single source).
+>   - Naive `HttpResponse.error → drop-the-batch` in `queue.ts` — replaced by retry + outbox.
 
 ##### R5.1.a — Notes
 
@@ -3411,6 +3425,22 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 > **Tests use `vi.doMock` per-test + fresh module re-imports.** The retry backoff formula would make tests wait real seconds. `loadReconnect()` / `loadQueue()` mock `@/lib/backoff` to 1ms after `vi.resetModules()`. The reconnect test also re-imports `@/store` and `@/test/fixtures` after the reset so `bootstrap()` and `drainOutbox` share a single fresh `useStore` singleton — a top-level `import { useStore }` in `fixtures.ts` would otherwise capture the pre-reset instance, invisible to the freshly-loaded `reconnect.ts`.
 >
 > **Outbox rows survive tab close.** The plan called this out but it's worth restating: the whole point of the outbox is durability across "hostile" boundaries. On network error, we persist to Dexie BEFORE scheduling the first retry, so a tab close mid-first-attempt still leaves the batch recoverable. Next tab boot's `socket.on('connect')` picks it up.
+
+##### R5.1.d — Notes
+
+> **Shipped 2026-07-03.** Web suite 779 → 791 (+12 tests: 4 `canDispatch` pure-fn, 4 `useCanDispatch` reactive-hook, 4 `dispatchWriteBlock` store-guard; plus the existing OfflineBanner tests kept green after migration to store-driven online state). Server + shared surfaces unchanged.
+>
+> **Two-tier write-block: store guard + UI hook.** The plan called for a `canDispatch()` selector consumed by UI Save buttons. In practice, the app has 45 files that call `dispatch()` — disabling every button would be a huge diff for marginal value. Instead R5.1.d ships **both** tiers with a clear division of labour:
+>   - **Correctness backstop** — `useStore.getState().dispatch()` short-circuits + toasts when the block is active. Any programmatic dispatch (screens, effects, tests) is caught. `seed-catalog` is exempt (local-only bootstrap seed).
+>   - **User affordance** — `useCanDispatch()` reactive hook, ready for primary Save buttons to consume via `disabled={!canDispatch}`. Not yet wired into every screen; that's a follow-up polish task. The store guard means correctness doesn't depend on the wiring being exhaustive.
+>
+> **`store.online` mirrors `navigator.onLine`.** `main.tsx` attaches the `online`/`offline` window listeners and sets `useStore.getState().setOnline(...)` on each flip; initial value is read once at boot. `OfflineBanner` migrated from a component-local `useOnline` hook to reading `store.online` — one source of truth means the banner, the `canDispatch()` predicate, and the store's dispatch guard can never disagree. `useOnline` deleted.
+>
+> **`activeMemberCount` extracted to `store/index.ts`.** Previously inlined in `OfflineBanner`'s selector. Exported so `canDispatchFor`, `useCanDispatch`, and `OfflineBanner` share one implementation. De-dupes by userId so a party-of-one with dm + player membership rows correctly counts as 1.
+>
+> **Test isolation for `vi.mock('@/lib/serverMode')`.** Multiple new tests need `isServerMode: true`. Each file scopes the mock to itself via top-level `vi.mock('@/lib/serverMode', ...)`. `dispatchWriteBlock.test.ts` also configures the sync queue with a no-op stub so the successful-dispatch code path doesn't throw at `queue.enqueue`.
+>
+> **UI polish deferred.** Wiring `disabled={useCanDispatch()}` on every primary Save button across `AddItemModal`, `CharacterSheet`, `ItemDetail`, `StorageDetail`, `PartySettings`, `HomebrewForm`, etc. is a mechanical follow-up. Filed as a small operational followup (Feature gaps section — see below). The store guard means the app is CORRECT under §9 today; UI polish is affordance only.
 
 #### R5.2 — Sessions entity + log tagging
 
@@ -3751,6 +3781,7 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 
 - [ ] **`delete-character` UI entry point** — R4.1.b shipped the reducer action + cascade to Recovered Loot, but no UI surface dispatches it. The PartySettings "Create your character" CTA from R4.1.f explicitly supports the post-delete recreation case (the reducer + guard accept it), but until a deletion button exists somewhere — Character Sheet header? Settings → Danger zone? PartySettings → Members row? — the third use case is theoretical. Recommendation: small "Delete character" button on the Character Sheet header behind a confirm dialog showing the snapshot (item count + currency total cp moved to Recovered Loot), mirroring the existing `delete-stash` confirmation pattern. (Source: R4.1.b carryforward, surfaced by R4.1.f.)
 - [ ] **Reject `partyName` on the post-bootstrap `create-character` branch** — `createCharacterInExistingParty` currently ignores `partyName` silently if a client sends it (the party already exists; renaming is `rename-party`). A client could plausibly send `{ name: 'X', partyName: 'rename me' }` expecting both effects, and the partial silent ignore is a footgun. Either: (a) reject the action with `invalid_payload` when `partyName` is set on the post-bootstrap branch, OR (b) treat it as an implicit `rename-party` and emit both log entries. (a) is the simpler / safer choice. (Source: R4.1.f.)
+- [ ] **Wire `useCanDispatch()` on primary Save buttons** — R5.1.d shipped the store-level write-block backstop + the reactive hook, but the hook isn't yet consumed by every mutation control. Correctness is met (dispatch short-circuits + toasts when blocked), but UX polish would disable the buttons directly. Candidate touch-list from R5.1.d Notes: `AddItemModal`, `CharacterSheet` (rename / inline edits), `ItemDetail` (currency / move), `StorageDetail` (move / split / currency), `PartySettings` (rename / member management), `HomebrewForm`. Read `useCanDispatch()` in each, pass to `disabled={!canDispatch}`. Mechanical follow-up. (Source: R5.1.d.)
 
 - [x] **Multiple local-mode parties** — **shipped 2026-06-29 (R4.1 followup)**. The Dexie persistence layer now keys each party's blob under `appState:<partyId>` (`apps/web/src/db/save.ts`, `load.ts`). The Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through that pointer with a fallback to the legacy unkeyed slot and a "first keyed blob" tertiary fallback. Hub flows now flush + clear the in-memory store before each `create-character` dispatch and before swapping to another party's blob — the reducer's `state === null` invariant stays intact. Local-mode users can hold N parties; server-mode users continue to use `GET /sync/parties` + per-party pull. **Carryforward (not blocking):** the JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) still operates on the active party only — a future "vault" export that bundles every keyed blob is a separate scope.
 

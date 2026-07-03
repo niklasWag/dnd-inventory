@@ -65,6 +65,17 @@ async function boot(): Promise<void> {
   });
   attachUnloadFlush();
 
+  // R5.1.d — mirror `navigator.onLine` into the store so `canDispatch()`
+  // + `OfflineBanner` derive from a single source. Listeners are
+  // process-lifetime; no cleanup needed.
+  window.addEventListener('online', () => {
+    useStore.getState().setOnline(true);
+  });
+  window.addEventListener('offline', () => {
+    useStore.getState().setOnline(false);
+  });
+  useStore.getState().setOnline(navigator.onLine);
+
   // R5.1.b — in server mode, open the Socket.IO connection so live
   // broadcasts from other party members flow into the store as they
   // happen. Local mode returns null (no server to connect to).

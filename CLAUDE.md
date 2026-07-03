@@ -76,6 +76,15 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - **Corruption is user-visible.** Post-RH0.1's `.strict()` schemas, a Zod parse failure at boot is a real corruption signal. `hydrate.ts` toasts and leaves the store empty; Settings surfaces a "Wipe corrupted party data" button when the current-party blob fails parse. Server mode recovers via `pullState`; local mode recovers via JSON backup import (`ReplaceAllConfirmDialog`).
 - **All persistence writes are keyed.** Every write goes to `appState:<partyId>`. `saveAppState(state, partyId)` requires an explicit partyId; the debounced saver derives it from `state.appState.party.id`.
 
+### Sync + realtime rules (R5.1)
+
+- **Live sync is broadcast-only WebSocket + HTTP mutations.** Socket.IO attaches to Fastify's HTTP server (`apps/server/src/realtime/io.ts`); the client (`apps/web/src/sync/socket.ts`) auto-connects in server mode. Mutations still POST to `/sync/actions` — the socket receives `applied` broadcasts that other party members trigger and reconciles them via `applyBroadcast` (Zod parse → party-id filter → id-dedupe → reducer re-run + `appendServerLogEntries`). Server auth on socket upgrade reuses the session cookie via `getSession()`. Client never names its room — `io.use()` auto-joins every `party:<partyId>` from active `PartyMembership` per SECURITY §6.
+- **Broadcast filter reads schema metadata.** `POST /sync/actions` broadcasts only for actions where `getActionMetadata(type).broadcastOnApplied === true`. New action variants MUST populate the metadata registry (`packages/shared/src/schemas/actionMetadata.ts`) in the same PR; TypeScript enforces this at compile time.
+- **Broadcast payload is `{ partyId, action, applied }`.** RH2.6 log-authority: receivers keep the server's `applied[]` verbatim for `state.log`; they re-run the reducer against `action` for state mutation (RH2 determinism makes this safe).
+- **Bounded retry + Dexie outbox on network failure.** `queue.ts` writes failed batches to the Dexie `outbox` table (schema v2), retries with exponential backoff + ±25% jitter (500ms → 8s ceiling, `MAX_ATTEMPTS = 5`), then parks the row for reconnect drain. On `socket.on('connect')`, `reconnect.ts::drainOutbox()` re-pulls state via `pullState` (server-authoritative) and drains outbox rows via `replayOutboxRow`.
+- **Offline write-block for multi-member parties (§9).** `useStore.getState().dispatch()` short-circuits + toasts when `(isServerMode && !online && memberCount >= 2)`. Solo parties (memberCount === 1) stay writable and buffer to the outbox. Predicate lives in `store/index.ts::canDispatchFor`; UI reads via `lib/useCanDispatch.ts` to disable Save buttons.
+- **The Immer `set` middleware wraps store methods (`dispatch`, `hydrate`, ...).** Broadcast reconciliation uses `useStore.setState({ appState: result.state })` directly — bypasses Immer intentionally (the reducer already produces a fresh plain object).
+
 ### Permissions / behavior rules (see `docs/OUTLINE.md` §3.14 + §8)
 
 - DM never silently edits a player's character. Every cross-character mutation goes through an explicit action that is logged.
