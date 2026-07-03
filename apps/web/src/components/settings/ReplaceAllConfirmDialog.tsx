@@ -36,8 +36,10 @@ interface ReplaceAllConfirmDialogProps {
  *      below, but cheap insurance).
  *   2. `wipeAll()` — clear Dexie. Without this the saver's next debounce
  *      could race the import.
- *   3. `saveAppState({ appState, log })` — persist the imported blob
- *      synchronously. Future hydrate-on-reload sees this directly.
+ *   3. `saveAppState({ appState, log }, appState.party.id)` — persist
+ *      the imported blob synchronously under the keyed slot (skipped
+ *      for empty-backup imports where `appState === null` per RH5.1).
+ *      Future hydrate-on-reload sees this directly.
  *   4. `useStore.hydrate({ appState, log })` — update in-memory state so
  *      the rest of the app re-renders against the imported snapshot
  *      immediately, without waiting for a page reload.
@@ -66,7 +68,16 @@ export function ReplaceAllConfirmDialog({
     try {
       await flushPendingPersist();
       await wipeAll();
-      await saveAppState({ appState: result.snapshot.appState, log: result.snapshot.log });
+      // RH5.1 — persist ONLY if the imported snapshot has an appState
+      // (partyId available). Empty-backup imports (`appState: null`)
+      // skip the Dexie write; the null-state phase is transient by
+      // design and doesn't survive reload.
+      if (result.snapshot.appState !== null) {
+        await saveAppState(
+          { appState: result.snapshot.appState, log: result.snapshot.log },
+          result.snapshot.appState.party.id,
+        );
+      }
       useStore.getState().hydrate({
         appState: result.snapshot.appState,
         log: result.snapshot.log,

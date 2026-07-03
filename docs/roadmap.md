@@ -3246,33 +3246,63 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 #### RH5.1 — Design decision: null-state save behaviour
 
 **Design work (before any code)**
-- [ ] Pick one of three approaches for the pre-character-creation null-state window:
+- [x] Pick one of three approaches for the pre-character-creation null-state window:
   1. **Skip null-state persistence entirely.** The store's `appState: null` phase never writes to Dexie. On reload, `hydrate.ts` sees no keyed blob for `currentPartyId` (because it's also `null`), boots empty, and Hub renders the create-party CTA. Pros: cleanest — no null-state row in storage. Cons: any in-progress state (draft party name, wizard step) is lost on refresh — but the Hub wizard is transient by design, so this may be acceptable.
   2. **Dedicated `appState:pending` key.** Null-state writes go to a well-known key that's semantically distinct from party blobs. Loader ignores it during party-scoped reads. Pros: null-state persistence preserved for Hub wizard refresh survival. Cons: one more storage key to reason about; RH0.1's `.strict()` schema doesn't naturally cover a partial "wizard-in-progress" shape.
   3. **Move Hub wizard state out of `appState` entirely.** Wizard draft goes to a component-local `useState` or a tiny separate Dexie `meta` field (e.g. `hubWizardDraft`), not into the main store. The store's `appState` becomes strictly non-null after first party creation. Pros: cleanest separation of concerns; the store is only ever null before the FIRST party ever exists on the device. Cons: mechanical Hub refactor.
-- [ ] Capture the decision in this slice's Notes block. The decision affects RH5.2's shape.
+- [x] Capture the decision in this slice's Notes block. The decision affects RH5.2's shape.
+
+**Shipped 2026-07-03.** Approach #1 selected — skip null-state persistence entirely. The debounced saver early-returns when the snapshot has no `appState.party.id`; `saveAppState(state, partyId)` tightened to required-arg (throws on empty string). One live-code consumer of arg-less `saveAppState` (`ReplaceAllConfirmDialog` for JSON import) migrated to pass `result.snapshot.appState.party.id`, guarded by an `appState !== null` branch for empty-backup imports. Persistence tests rewritten to remove the arg-less/legacy-slot cases; added positive "no-op when appState is null" tests. Web suite 755/755 green.
+
+##### RH5.1 — Notes
+
+> **Filed 2026-07-03.** Rationale for approach #1: the Hub wizard state (party name, wizard step) is already component-local `useState` — nothing in the store is ever null-with-meaningful-payload. Skipping the null-state save removes the only reason for the loader's legacy-unkeyed-slot fallback tier, which unblocks RH5.2's single-path collapse without a mechanical Hub refactor.
+>
+> **Alternative behaviour retired.** Pre-RH5.1 the debounced saver wrote `{appState: null, log: []}` to the unkeyed `'appState'` slot during the Hub's flush-then-clear window (before create-party dispatch). That row served no purpose — `hydrate.ts` never used it once ANY keyed blob existed, and post-RH0.1's `.strict()` schema the null-appState shape wouldn't have parsed at hydrate time anyway. Removed.
+>
+> **Interaction with JSON import.** `ReplaceAllConfirmDialog` was the sole live-code consumer of arg-less `saveAppState`. It now derives partyId from `result.snapshot.appState.party.id` and skips the write when `appState === null` (empty-backup import). In-memory `useStore.hydrate` still runs so the UI updates immediately; on reload the store lands on Hub via the RH5.2 single-path resolver.
 
 #### RH5.2 — Dexie loader + hydration path
 
 **Dexie loader (`apps/web/src/db/load.ts`)**
-- [ ] Remove the legacy unkeyed-slot fallback (lines ~12–40). `loadAppState(partyId: string)` becomes required-argument; callers that don't have a partyId must read it from `getCurrentPartyId()` first.
-- [ ] Remove the "first keyed blob" tertiary fallback. If no partyId is supplied AND no current-party pointer exists, return `null` cleanly (caller routes to Hub).
-- [ ] `createDebouncedSaver` updated per the RH5.1 decision (skip null-state / dedicated key / no null-state persistence at all).
+- [x] Remove the legacy unkeyed-slot fallback (lines ~12–40). `loadAppState(partyId: string)` becomes required-argument; callers that don't have a partyId must read it from `getCurrentPartyId()` first.
+- [x] Remove the "first keyed blob" tertiary fallback. If no partyId is supplied AND no current-party pointer exists, return `null` cleanly (caller routes to Hub).
+- [x] `createDebouncedSaver` updated per the RH5.1 decision (skip null-state / dedicated key / no null-state persistence at all). *Shipped in RH5.1.*
 
 **Boot hydration (`apps/web/src/store/hydrate.ts`)**
-- [ ] Reduce the four-tier fallback chain (lines ~29–59) to a single path: `currentPartyId from meta → loadAppState(partyId)`. If `currentPartyId` is missing, the store stays empty (`appState: null`) — Hub handles the empty case via the existing "no current party" branch.
-- [ ] Remove the Zod-parse-then-try-legacy-slot pattern in `hydrate.ts`. After RH0.1 the schema is strict — a parse failure means the blob is genuinely corrupted, not "old shape we should fall back from." Surface the error to the user (toast + wipe), don't silently retry against legacy slots.
+- [x] Reduce the four-tier fallback chain (lines ~29–59) to a single path: `currentPartyId from meta → loadAppState(partyId)`. If `currentPartyId` is missing, the store stays empty (`appState: null`) — Hub handles the empty case via the existing "no current party" branch.
+- [x] Remove the Zod-parse-then-try-legacy-slot pattern in `hydrate.ts`. After RH0.1 the schema is strict — a parse failure means the blob is genuinely corrupted, not "old shape we should fall back from." Surface the error to the user (toast + wipe), don't silently retry against legacy slots.
 
 **Error handling**
-- [ ] Corruption path: on parse failure, show a user-facing dialog ("Local data for this party is corrupted. Export any data you can, then wipe.") with a Wipe button that clears just the affected blob. Don't silently continue with a partial state.
+- [x] Corruption path: on parse failure, show a user-facing toast ("Local data for this party is corrupted. Open Settings to wipe.") + a Settings "Wipe corrupted party data" button that clears just the affected keyed slot. Don't silently continue with a partial state. *Chose toast + Settings action over a boot-time modal — respects existing app chrome; recovery is one click from a persistent, dismissable surface.*
+
+**Shipped 2026-07-03.** Loader signature tightened to required-arg (throws on empty string); both fallback tiers deleted. Boot hydration collapsed from 4 tiers to a single path: pointer → keyed blob → Zod parse → hydrate OR (on parse fail) toast + stay-empty. Hub's `openLocalParty` also gains a Zod parse guard so corrupted parties surface a symmetric toast rather than crashing the store. Settings gains a "Wipe corrupted party data" section that only surfaces when the current-party blob fails Zod parse at mount time; clicking wipes just that slot, clears the pointer, and navigates to `/hub`. New `apps/web/src/store/hydrate.test.ts` covers the four boot outcomes (empty, stale pointer, valid, corrupted). Web suite 759/759 green.
+
+##### RH5.2 — Notes
+
+> **Filed 2026-07-03.** The corruption UX detection lives client-side (`persistedBlobSchema.safeParse` at mount) rather than server-side because corruption is a Dexie-local phenomenon — the server's canonical state is by definition valid. In server mode, the recovery path is trivially "wipe the local blob; next `pullState` re-fetches." In local mode, the recovery path is JSON backup import (`ReplaceAllConfirmDialog` — RH5.1's migration ensures it uses the keyed slot).
+>
+> **Boot-time toast vs recovery button.** The boot-time toast (in `hydrate.ts`) is the user's first signal that something is wrong; it points them at Settings. The Settings button re-runs the parse on mount so the affordance is only visible when there's actually something to recover — no dead button dangling for users without corrupted data. Symmetric with `openLocalParty` in Hub: attempting to activate a corrupted party surfaces its own toast + short-circuits.
+>
+> **Multi-party detection is intentionally limited.** Settings only inspects the CURRENT party's slot (`meta.currentPartyId`). If Party B is corrupted but the user is currently on Party A, Party B's recovery doesn't surface until they Hub-switch to it (Hub's `openLocalParty` toast) or manually activate it via Settings. Accepted as a scope limit — full multi-party enumeration would need a background scan of every `appState:*` key on mount, adding cost for the vast majority of users with zero corrupted parties.
+>
+> **Test migration side-effects.** Nine callsites in `reducer.test.ts` + one in `ItemDetail.test.tsx` previously used arg-less `loadAppState()` post-flush. Migrated to `loadAppState(useStore.getState().appState!.party.id)` — the store's party is available immediately post-dispatch, so no fixture surgery was needed. The "Nothing written yet" assertion also gained an `expect(await listKnownPartyIds()).toEqual([])` for clarity that no keyed slot exists during the debounce window (previously implied by the arg-less loader hitting the retired legacy slot).
 
 #### RH5.3 — Test migration
 
 **Tests (`apps/web/src/db/persistence.test.ts` + downstream)**
-- [ ] Audit every callsite of `loadAppState()` in `apps/web/src/**/*.test.ts` (and `*.test.tsx`). Migrate any call that previously relied on the legacy fallbacks to pass an explicit `partyId`.
-- [ ] Add a test for the corruption-detection path: seed a Dexie blob with an invalid shape → `hydrate.ts` returns `appState: null` + surfaces the corruption toast, does NOT silently fall through to another slot.
-- [ ] Add a test for the "no current party" boot: empty Dexie → `hydrate.ts` returns `appState: null`; Hub renders the create-party CTA. Locks in the "single-path" contract.
-- [ ] Delete tests that exercised the removed fallback tiers (they'll fail once the fallbacks are gone; deletion is the right response, not adaptation).
+- [x] Audit every callsite of `loadAppState()` in `apps/web/src/**/*.test.ts` (and `*.test.tsx`). Migrate any call that previously relied on the legacy fallbacks to pass an explicit `partyId`. *Nine callsites in `reducer.test.ts` + one in `ItemDetail.test.tsx` migrated in RH5.2.*
+- [x] Add a test for the corruption-detection path: seed a Dexie blob with an invalid shape → `hydrate.ts` returns `appState: null` + surfaces the corruption toast, does NOT silently fall through to another slot. *`hydrate.test.ts` — "corrupted blob → store stays empty + toast surfaces" (RH5.2).*
+- [x] Add a test for the "no current party" boot: empty Dexie → `hydrate.ts` returns `appState: null`; Hub renders the create-party CTA. Locks in the "single-path" contract. *`hydrate.test.ts` — "no `currentPartyId` pointer → store stays empty" (RH5.2).*
+- [x] Delete tests that exercised the removed fallback tiers (they'll fail once the fallbacks are gone; deletion is the right response, not adaptation). *Persistence-test rewrite in RH5.1 deleted "loadAppState returns null when nothing is stored" (arg-less), "saveAppState then loadAppState round-trips an opaque blob" (arg-less), "listKnownPartyIds returns empty when only the legacy unkeyed slot is set", and "createDebouncedSaver falls back to the unkeyed slot when state is null."*
+
+**Shipped 2026-07-03.** Test-audit safety pass — grep confirms every live `loadAppState(` and `saveAppState(` callsite passes an explicit partyId. Zero stragglers. Doc-comment in `ReplaceAllConfirmDialog.tsx` updated to reflect the new signature. CLAUDE.md gains a "Persistence rules (RH5)" section that captures the single-path contract + null-state no-op + corruption UX. `docs/SECURITY.md` unchanged (corruption UX is client-side UX, not a security invariant).
+
+##### RH5.3 — Notes
+
+> **Filed 2026-07-03.** RH5.3's remit was a safety audit — RH5.1 and RH5.2 had already migrated the live callsites as a side-effect of the typechecker complaining about arg-less `loadAppState()`. RH5.3 verified the grep is clean and closed the doc-cleanup loop (CLAUDE.md + roadmap Notes).
+>
+> **CLAUDE.md placement.** Persistence rules go directly after routing rules (RH4) because the two together form the "URL + Dexie contract": URL is authoritative for `partyId`; Dexie stores blobs keyed by that same `partyId` in local mode. Keeping them adjacent makes the invariant obvious to future contributors.
 
 #### RH5 — Notes
 
@@ -3281,6 +3311,12 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 > **Not blocked by anything.** RH5 is orthogonal to RH1 (id authority), RH2 (determinism), RH3 (GameSession entity), RH4 (URL routing). Can ship whenever the hydrate path is next touched.
 >
 > **Estimated cost.** ~1 afternoon for RH5.1 (design + capture) + ~1 afternoon for RH5.2 (code) + ~1 afternoon for RH5.3 (test migration). Small slice; the design decision is the only real cost.
+>
+> **Shipped 2026-07-03 (three commits).** Actual cost: single afternoon, three separate commits on `refactor/rh5-dexie-hydration-hardening`. Test suite +3 net (web 756 → 759): RH5.1 collapsed 4 legacy-shape persistence tests into 2 RH5.1-shape ones (-2), RH5.2 added 4 new hydrate tests (+4), net +2 web + 1 seeds tracking. Total tests 1372 → 1375. Design decisions:
+>   - **RH5.1** — approach #1 (skip null-state persistence entirely). Rationale: Hub wizard is already component-local `useState`; nothing null-shape in the store carries meaningful payload.
+>   - **RH5.2** — corruption UX = toast + Settings wipe action (not modal, not silent). Rationale: respects existing app chrome; one-click recovery from a persistent, dismissable surface.
+>
+> **`meta.currentPartyId` still lives** as a boot-landing UX hint. Full retirement is out of scope — would need a URL-only replacement (e.g. last-visited partyId in server session) that's beyond RH5's hardening remit.
 
 ---
 

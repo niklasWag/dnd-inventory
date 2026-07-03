@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { UserPlus, Users, Link as LinkIcon } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
+import { z } from 'zod';
 
 import {
   Dialog,
@@ -25,7 +26,18 @@ import { useStore, flushPendingPersist, dispatchMintingAction } from '@/store';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { pullState } from '@/sync/client';
 import { flush as flushSyncQueue } from '@/sync/queue';
-import type { PartyListItem } from '@app/shared';
+import { appStateSchema, transactionLogEntrySchema, type PartyListItem } from '@app/shared';
+
+/**
+ * RH5.2 — Zod schema for the persisted blob shape, mirroring
+ * `hydrate.ts`. Used by `openLocalParty` below to fail-fast on a
+ * corrupted party blob rather than casting `unknown` and hydrating the
+ * store with garbage.
+ */
+const persistedBlobSchema = z.object({
+  appState: z.union([appStateSchema, z.null()]),
+  log: z.array(transactionLogEntrySchema),
+});
 
 /**
  * R3.5 — Hub screen. Universal front door per OUTLINE §3.1.
@@ -236,10 +248,22 @@ export function Hub(): ReactElement {
         toast.error('Could not find that party in local storage.');
         return;
       }
-      const persisted = raw as { appState: unknown; log: unknown[] };
+      // RH5.2 — Zod-parse the raw blob before hydrating. A corrupted
+      // party blob (schema mismatch post-RH0.1's .strict()) surfaces
+      // as a user-visible error rather than crashing the store with
+      // an invalid shape.
+      const parsed = persistedBlobSchema.safeParse(raw);
+      if (!parsed.success) {
+        console.error('openLocalParty: persisted blob failed schema validation', {
+          partyId,
+          error: parsed.error,
+        });
+        toast.error("This party's local data is corrupted.");
+        return;
+      }
       useStore.getState().hydrate({
-        appState: persisted.appState as ReturnType<typeof useStore.getState>['appState'],
-        log: persisted.log as ReturnType<typeof useStore.getState>['log'],
+        appState: parsed.data.appState,
+        log: parsed.data.log,
       });
       const id = getOwnCharacter(useStore.getState().appState)?.id;
       if (id !== undefined) {

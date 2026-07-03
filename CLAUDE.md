@@ -69,6 +69,13 @@ If you find anything in code that contradicts these docs, **the docs win** — u
 - **`meta.currentPartyId` in Dexie** is a UX hint for the pre-URL landing screen (which party to show first on boot), NOT the source of truth in server mode. Only local-mode boot hydration reads it.
 - **Auth routes stay unscoped:** `/`, `/hub`, `/login`, `/login/*`, `/settings`. Do NOT add `:partyId` to these.
 
+### Persistence rules (RH5)
+
+- **Dexie persistence is single-path.** `loadAppState(partyId: string)` is required-arg (throws on empty string); `hydrate.ts` resolves partyId via `getCurrentPartyId()` (local-mode boot only — server mode uses URL via `PartyScopeSync`). No legacy unkeyed-slot or first-keyed-blob fallbacks.
+- **Null-state is NOT persisted.** When `state.appState === null` (pre-first-party / mid-swap windows), `createDebouncedSaver.save()` is a no-op. A missing blob at boot returns cleanly (`appState: null` stays; Hub renders the create-party CTA).
+- **Corruption is user-visible.** Post-RH0.1's `.strict()` schemas, a Zod parse failure at boot is a real corruption signal. `hydrate.ts` toasts and leaves the store empty; Settings surfaces a "Wipe corrupted party data" button when the current-party blob fails parse. Server mode recovers via `pullState`; local mode recovers via JSON backup import (`ReplaceAllConfirmDialog`).
+- **All persistence writes are keyed.** Every write goes to `appState:<partyId>`. `saveAppState(state, partyId)` requires an explicit partyId; the debounced saver derives it from `state.appState.party.id`.
+
 ### Permissions / behavior rules (see `docs/OUTLINE.md` §3.14 + §8)
 
 - DM never silently edits a player's character. Every cross-character mutation goes through an explicit action that is logged.
