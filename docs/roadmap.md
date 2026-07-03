@@ -3343,9 +3343,9 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 ##### R5.1.b — Client socket consumer + inbound reconciliation
 
-- [ ] Websocket party-room subscription (server pushes action diffs)
-- [ ] Optimistic UI: web applies action locally, reconciles on server ack
-- [ ] Conflict resolution policy documented and implemented (server is authoritative)
+- [x] Websocket party-room subscription (server pushes action diffs) — `socket.io-client` connects on server-mode boot; auto-joins are enforced server-side.
+- [x] Optimistic UI: web applies action locally, reconciles on server ack — dispatched actions go through the existing R3.5 queue (unchanged); broadcasts from other clients apply via `applyBroadcast()` which re-runs the reducer for state mutation + appends server's `applied[]` verbatim via `appendServerLogEntries` (RH2.6 log-authority).
+- [x] Conflict resolution policy documented and implemented (server is authoritative) — dedupe by log-entry id handles self-echo; `applyBroadcast` short-circuits when the current in-memory partyId doesn't match the broadcast (viewing another party). Reducer re-run is deterministic per RH2. Missed broadcasts (never received live) are picked up by R5.1.c's `GET /sync/log?sinceLogId=`.
 
 ##### R5.1.c — Outbox + retry + reconnect replay
 
@@ -3383,6 +3383,20 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 > **Server-side room-membership assertion via observable effect.** The auto-join test doesn't inspect `io.sockets.adapter.rooms` directly (which would leak an implementation detail into the test); instead it dispatches a broadcast-eligible action and asserts the connected client receives the `applied` event. Stronger evidence + more resilient to Socket.IO internals changes.
 >
 > **`ClientToServerEvents = Record<string, never>` (empty)** — SECURITY §6 mandates broadcast-only. Kept as an explicit empty interface so a future contributor considering adding a client → server event sees the constraint before wiring it up.
+
+##### R5.1.b — Notes
+
+> **Shipped 2026-07-03.** Web suite 759 → 763 (+4 unit tests in `apps/web/src/sync/socket.test.ts`). Server + shared surfaces unchanged. New shared schema `appliedBroadcastSchema` (`packages/shared/src/schemas/socketMessages.ts`) + new client module `apps/web/src/sync/socket.ts` + `main.tsx` boot wiring + a `socketConnected: boolean` field on the store.
+>
+> **`applyBroadcast` is exported and tested directly** rather than through a socket.io-client mock. The reasoning: reconciliation is the interesting invariant (Zod parse → party filter → dedupe → reducer re-run → server log append); socket.io-client's own transport reliability is already covered end-to-end by `apps/server/src/realtime/io.test.ts`. Testing the transport in JSDOM without a real WS endpoint requires either `mock-socket` (heavyweight) or a hand-rolled test double — both add flake surface for zero incremental coverage.
+>
+> **Reducer context in broadcast re-run is throwing-only for `now()` + `newInviteCode()`.** RH2 determinism guarantees the reducer, given the same state + action, produces the same output on every client. But some reducer paths would ordinarily consult `ctx.now()` for a mutation timestamp field (e.g. `join-party` records the join time). In a broadcast re-run those values are ALREADY in the server's `applied[]` — the reducer must not re-derive them or state would drift. The context helpers `throw` on call so any drift surfaces loudly rather than silently. If a future action variant hits this branch, the fix is one of: (a) refactor the reducer to source that timestamp from the payload the server minted (preferred), or (b) accept the seam and pass the server's timestamp into the broadcast payload for the reducer to consume.
+>
+> **Broadcast payload is `{ partyId, action, applied }` — `action` is essential.** RH2.6 makes `applied[]` authoritative for the log, but the reducer needs the source `action` to derive the STATE mutation. Sending only `applied[]` would force receivers to reverse-engineer the mutation from log-entry shape, which is not a stable contract (log entries carry POST-mutation snapshots, not action inputs). Server sends both; client discards reducer log slices, keeps state, appends server's authoritative log entries.
+>
+> **Socket auto-reconnect handled by socket.io-client.** `reconnection: true, reconnectionDelay: 500, reconnectionDelayMax: 8000, reconnectionAttempts: Infinity` — socket.io-client's own state machine handles the WS transport reconnect. R5.1.c's outbox + `GET /sync/log?sinceLogId=` handle the DATA reconnect (drain buffered writes + replay missed broadcasts). Two distinct concerns.
+>
+> **`useStore.setState({ appState: result.state })` bypasses Immer** by intent — the store's Immer middleware wraps `set` inside the store's methods (`dispatch`, `hydrate`, etc.). Direct top-level `setState` skips the middleware pass; since `result.state` is a new plain object from the pure reducer, no Immer draft is needed. Matches the pattern in `store/hydrate.ts:hydrate` which also uses `useStore.setState` directly.
 
 #### R5.2 — Sessions entity + log tagging
 

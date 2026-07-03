@@ -8,6 +8,7 @@ import { useSession } from '@/store/session';
 import { hydrateFromDexie } from '@/store/hydrate';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { attachUnloadFlush, configureQueue } from '@/sync/queue';
+import { connectSocket } from '@/sync/socket';
 import '@/index.css';
 
 const rootEl = document.getElementById('root');
@@ -63,6 +64,16 @@ async function boot(): Promise<void> {
     },
   });
   attachUnloadFlush();
+
+  // R5.1.b — in server mode, open the Socket.IO connection so live
+  // broadcasts from other party members flow into the store as they
+  // happen. Local mode returns null (no server to connect to).
+  // Kept AFTER `configureQueue` so the store + queue are wired before
+  // the first inbound broadcast can arrive.
+  if (isServerMode) {
+    const socket = connectSocket();
+    socket?.connect();
+  }
 
   createRoot(rootEl!).render(
     <StrictMode>

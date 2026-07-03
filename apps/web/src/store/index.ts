@@ -25,6 +25,16 @@ import type { Action, AppState, TransactionLogEntry } from './types';
 export interface StoreState {
   appState: AppState;
   log: TransactionLogEntry[];
+  /**
+   * R5.1.b — mirror of the Socket.IO client's connection state. `true`
+   * once the auth handshake succeeds; `false` on disconnect. Set from
+   * `apps/web/src/sync/socket.ts`. UI can subscribe to drive an inline
+   * indicator; R5.1.c reads this to gate the outbox drain (only drain
+   * once we've reconnected).
+   *
+   * Always `false` in local mode — no socket to connect.
+   */
+  socketConnected: boolean;
   dispatch: (action: Action) => void;
   hydrate: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
   restoreSnapshot: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
@@ -136,6 +146,7 @@ export const useStore = create<StoreState>()(
   immer((set, get) => ({
     appState: null,
     log: [],
+    socketConnected: false,
     dispatch: (action) => {
       // BUG-003 — capture the pre-mutation snapshot NOW so the sync
       // queue can roll back to it on 422 rejection. Must run before
