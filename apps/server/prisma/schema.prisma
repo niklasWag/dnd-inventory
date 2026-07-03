@@ -148,6 +148,9 @@ model Party {
   inviteCode           String   @unique
   recoveredLootStashId String
   // MVP writes null (no Banker until 2+ members per OUTLINE §3.14).
+  // RH2.5 — Party_banker_not_owner_check CHECK constraint enforces
+  // `bankerUserId != ownerUserId` (DM can't self-appoint). See
+  // prisma/migrations/20260703131254_rh25_invariants/migration.sql.
   bankerUserId         String?
   // R4.1 — `isSoloShortcut` column dropped (migration `r41_drop_party_isSoloShortcut`).
   // Hub UI derives the "solo" badge from `memberCount === 1` per OUTLINE §4 amendment 2026-06-24.
@@ -255,6 +258,11 @@ model Stash {
 
   // Stash 3-arm scope/owner/party/isCarried invariant enforced by CHECK
   // constraint in migration tail (see prisma/migrations/<ts>_init/migration.sql).
+  //
+  // RH2.5 — two partial UNIQUE indexes enforce uniqueness invariants:
+  //   Stash_inventory_per_character_uniq       — one Inventory per character
+  //   Stash_recovered_loot_per_party_uniq      — one Recovered Loot per party
+  // See prisma/migrations/20260703131254_rh25_invariants/migration.sql.
 
   @@index([ownerCharacterId])
   @@index([partyId])
@@ -301,9 +309,17 @@ model ItemInstance {
   ownerType           String
   // stashId (the only currently-legal owner type).
   ownerId             String
+  // RH2.5 — one-level-deep container invariant (OUTLINE §3.6) enforced by
+  // trigger `ItemInstance_container_depth_check_trg`. See
+  // prisma/migrations/20260703131254_rh25_invariants/migration.sql.
   containerInstanceId String?
   // CHECK: > 0 in migration tail.
   quantity            Int
+  // RH2.5 — `equipped=true OR attuned=true` requires parent Stash to be an
+  // Inventory (scope='character' AND isCarried=true), enforced by trigger
+  // `ItemInstance_equip_attune_check_trg`. `currentCharges` is intentionally
+  // NOT part of the check — items leaving Inventory keep their charges
+  // (R2.3 amendment; see packages/rules/src/reducer/index.ts:1490).
   equipped            Boolean
   attuned             Boolean
   identified          Boolean

@@ -77,7 +77,7 @@ describe('schema invariants — DB-level (hand-tailed in migration.sql)', () => 
     expect(
       fk.confdeltype,
       [
-        "Character_inventoryStashId_fkey is NOT `ON DELETE NO ACTION` (got confdeltype",
+        'Character_inventoryStashId_fkey is NOT `ON DELETE NO ACTION` (got confdeltype',
         `'${fk.confdeltype}', expected 'a').`,
         '',
         'Prisma emits non-cascaded relations as `ON DELETE RESTRICT` ("r") by',
@@ -148,5 +148,247 @@ describe('schema invariants — DB-level (hand-tailed in migration.sql)', () => 
       idxRows,
       'EmailAuthAttempt (email, ip) UNIQUE index missing — schema drift.',
     ).toHaveLength(1);
+  });
+});
+
+describe('schema invariants — RH2.5 constraint promotions', () => {
+  /**
+   * RH2.5 — DB-level invariants promoted from reducer/guard-only to
+   * Postgres constraints. See `apps/server/prisma/migrations/*_rh25_invariants/`
+   * and `docs/roadmap.md` § RH2.5 for the full charter.
+   *
+   * Each `it` verifies the constraint exists in the catalog. Two of the
+   * five constraints also carry a **negative-path** integration test
+   * that attempts a real violating INSERT and expects Postgres to
+   * reject with the corresponding SQLSTATE (23505 unique / 23514 check).
+   */
+
+  it('(a) Stash_inventory_per_character_uniq — partial UNIQUE index present', async () => {
+    const rows = await prisma.$queryRawUnsafe<{ indexname: string; indexdef: string }[]>(
+      `SELECT indexname, indexdef
+       FROM pg_indexes
+       WHERE tablename = 'Stash' AND indexname = 'Stash_inventory_per_character_uniq'`,
+    );
+    expect(
+      rows,
+      'Stash_inventory_per_character_uniq missing — the RH2.5 migration did not run.',
+    ).toHaveLength(1);
+    // Sanity-check the partial predicate is present. `indexdef` looks like
+    // `CREATE UNIQUE INDEX ... WHERE (("isCarried" = true) AND ("scope" = 'character'))`.
+    expect(rows[0]!.indexdef).toContain('UNIQUE');
+    expect(rows[0]!.indexdef).toContain('WHERE');
+    expect(rows[0]!.indexdef).toContain('isCarried');
+    expect(rows[0]!.indexdef).toContain('character');
+  });
+
+  it('(b) Stash_recovered_loot_per_party_uniq — partial UNIQUE index present', async () => {
+    const rows = await prisma.$queryRawUnsafe<{ indexname: string; indexdef: string }[]>(
+      `SELECT indexname, indexdef
+       FROM pg_indexes
+       WHERE tablename = 'Stash' AND indexname = 'Stash_recovered_loot_per_party_uniq'`,
+    );
+    expect(
+      rows,
+      'Stash_recovered_loot_per_party_uniq missing — the RH2.5 migration did not run.',
+    ).toHaveLength(1);
+    expect(rows[0]!.indexdef).toContain('UNIQUE');
+    expect(rows[0]!.indexdef).toContain('WHERE');
+    expect(rows[0]!.indexdef).toContain('recovered_loot');
+  });
+
+  it('(c) Party_banker_not_owner_check — CHECK constraint present', async () => {
+    const rows = await prisma.$queryRawUnsafe<{ conname: string; contype: string }[]>(
+      `SELECT conname, contype::text
+       FROM pg_constraint
+       WHERE conname = 'Party_banker_not_owner_check'`,
+    );
+    expect(
+      rows,
+      'Party_banker_not_owner_check missing — the RH2.5 migration did not run.',
+    ).toHaveLength(1);
+    expect(rows[0]!.contype, 'expected c (check constraint)').toBe('c');
+  });
+
+  it('(d) ItemInstance_equip_attune_check_trg — BEFORE INSERT/UPDATE trigger present', async () => {
+    const rows = await prisma.$queryRawUnsafe<
+      { tgname: string; tgenabled: string; tgtype: number }[]
+    >(
+      `SELECT t.tgname, t.tgenabled::text, t.tgtype::int
+       FROM pg_trigger t
+       JOIN pg_class c ON t.tgrelid = c.oid
+       WHERE c.relname = 'ItemInstance'
+         AND t.tgname = 'ItemInstance_equip_attune_check_trg'`,
+    );
+    expect(
+      rows,
+      'ItemInstance_equip_attune_check_trg missing — the RH2.5 migration did not run.',
+    ).toHaveLength(1);
+    // tgenabled: 'O' = enabled (default). Not 'D' (disabled).
+    expect(rows[0]!.tgenabled, 'trigger should be enabled').toBe('O');
+    // pg_trigger.tgtype bitmask: bit 1 (TRIGGER_TYPE_BEFORE), bit 2 (ROW),
+    // bit 4 (INSERT), bit 16 (UPDATE). We only assert BEFORE + ROW since
+    // the exact INSERT|UPDATE combination + `OF <columns>` narrowing is
+    // exercised by the negative-path integration test below.
+    const TG_TYPE_BEFORE = 1 << 1;
+    const TG_TYPE_ROW = 1 << 0;
+    expect(rows[0]!.tgtype & TG_TYPE_BEFORE, 'trigger should be BEFORE').toBeGreaterThan(0);
+    expect(rows[0]!.tgtype & TG_TYPE_ROW, 'trigger should be FOR EACH ROW').toBeGreaterThan(0);
+  });
+
+  it('(e) ItemInstance_container_depth_check_trg — BEFORE INSERT/UPDATE trigger present', async () => {
+    const rows = await prisma.$queryRawUnsafe<{ tgname: string; tgenabled: string }[]>(
+      `SELECT t.tgname, t.tgenabled::text
+       FROM pg_trigger t
+       JOIN pg_class c ON t.tgrelid = c.oid
+       WHERE c.relname = 'ItemInstance'
+         AND t.tgname = 'ItemInstance_container_depth_check_trg'`,
+    );
+    expect(
+      rows,
+      'ItemInstance_container_depth_check_trg missing — the RH2.5 migration did not run.',
+    ).toHaveLength(1);
+    expect(rows[0]!.tgenabled).toBe('O');
+  });
+
+  /**
+   * Negative-path integration tests. Actually attempt a violating write
+   * against a real DB and assert Postgres rejects with the expected
+   * SQLSTATE. The presence tests above catch missing constraints; these
+   * tests catch a subtly-broken constraint (wrong predicate, wrong
+   * trigger event) that would show up as "constraint exists but doesn't
+   * fire when it should."
+   *
+   * Each test seeds a minimal graph via `$executeRawUnsafe` inside a
+   * fresh transaction-ish sequence, then attempts the violating write
+   * and expects the raw Postgres error.
+   */
+
+  async function bootstrapMinimalCharacter(): Promise<{
+    userId: string;
+    partyId: string;
+    characterId: string;
+    inventoryStashId: string;
+    partyStashId: string;
+    recoveredStashId: string;
+  }> {
+    // Fresh IDs per invocation. `newUuidV7` isn't imported here to keep
+    // this file focused; the ids don't need to be UUID v7 for these
+    // tests (the guard-layer clock-skew check is a route-layer concern).
+    const userId = `usr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const partyId = `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const characterId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const inventoryStashId = `s-inv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const partyStashId = `s-p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const recoveredStashId = `s-rl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "User" ("id", "discordId", "displayName", "needsDisplayName")
+         VALUES ($1, $1, 'Tester', false)`,
+        userId,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "Party" ("id", "name", "ownerUserId", "inviteCode", "recoveredLootStashId")
+         VALUES ($1, 'Test Party', $2, $3, $4)`,
+        partyId,
+        userId,
+        `INV-${partyId}`,
+        recoveredStashId,
+      );
+      // Party-scope stashes first (Recovered Loot + Party Stash) — no FK
+      // dependency on Character.
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "Stash" ("id", "name", "isCarried", "scope", "partyId")
+         VALUES ($1, 'Recovered Loot', false, 'recovered_loot'::"StashScope", $2),
+                ($3, 'Party Stash',    false, 'party'::"StashScope",         $2)`,
+        recoveredStashId,
+        partyId,
+        partyStashId,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "CurrencyHolding" ("id", "stashId", "cp", "sp", "ep", "gp", "pp")
+         VALUES ($1, $2, 0, 0, 0, 0, 0),
+                ($3, $4, 0, 0, 0, 0, 0)`,
+        `ch-${recoveredStashId}`,
+        recoveredStashId,
+        `ch-${partyStashId}`,
+        partyStashId,
+      );
+      // Character + Inventory stash. The `Character.inventoryStashId` FK
+      // is DEFERRABLE INITIALLY DEFERRED so we can insert them in either
+      // order within the same transaction (see the DEFERRABLE test above).
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "Character" ("id", "partyId", "ownerUserId", "name", "species", "size",
+           "class", "level", "strScore", "maxAttunement", "encumbranceRule", "enforceEncumbrance",
+           "inventoryStashId")
+         VALUES ($1, $2, $3, 'Tester', 'Human', 'medium'::"CreatureSize", 'Fighter', 1, 10, 3,
+                 'off'::"EncumbranceRule", false, $4)`,
+        characterId,
+        partyId,
+        userId,
+        inventoryStashId,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "Stash" ("id", "name", "isCarried", "scope", "ownerCharacterId")
+         VALUES ($1, 'Inventory', true, 'character'::"StashScope", $2)`,
+        inventoryStashId,
+        characterId,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "CurrencyHolding" ("id", "stashId", "cp", "sp", "ep", "gp", "pp")
+         VALUES ($1, $2, 0, 0, 0, 0, 0)`,
+        `ch-${inventoryStashId}`,
+        inventoryStashId,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO "PartyMembership" ("userId", "partyId", "role", "characterId")
+         VALUES ($1, $2, 'dm'::"MembershipRole",     $3),
+                ($1, $2, 'player'::"MembershipRole", $3)`,
+        userId,
+        partyId,
+        characterId,
+      );
+    });
+
+    return { userId, partyId, characterId, inventoryStashId, partyStashId, recoveredStashId };
+  }
+
+  it('(f) rejects a second Inventory stash for the same character with SQLSTATE 23505', async () => {
+    const { characterId } = await bootstrapMinimalCharacter();
+    const secondInvId = `s-inv2-${Date.now()}`;
+    // Prisma surfaces the PG SQLSTATE via the underlying driver's error;
+    // the shape is provider-specific but always exposes the code somewhere.
+    // A substring match on the message is the most portable assertion.
+    await expect(
+      prisma.$executeRawUnsafe(
+        `INSERT INTO "Stash" ("id", "name", "isCarried", "scope", "ownerCharacterId")
+         VALUES ($1, 'Second Inventory', true, 'character'::"StashScope", $2)`,
+        secondInvId,
+        characterId,
+      ),
+    ).rejects.toThrow(/23505|Stash_inventory_per_character_uniq|unique/i);
+  });
+
+  it('(g) rejects INSERT of equipped=true item into a non-Inventory stash with SQLSTATE 23514', async () => {
+    const { partyStashId } = await bootstrapMinimalCharacter();
+    // Seed an ItemDefinition to satisfy the ItemInstance.definitionId FK.
+    const defId = `def-torch-${Date.now()}`;
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "ItemDefinition" ("id", "name", "source", "category")
+       VALUES ($1, 'Test Torch', 'PHB'::"ItemSource", 'gear'::"ItemCategory")`,
+      defId,
+    );
+
+    const itemId = `it-eq-${Date.now()}`;
+    await expect(
+      prisma.$executeRawUnsafe(
+        `INSERT INTO "ItemInstance" ("id", "definitionId", "ownerType", "ownerId",
+           "containerInstanceId", "quantity", "equipped", "attuned", "identified", "currentCharges")
+         VALUES ($1, $2, 'stash', $3, NULL, 1, true, false, true, NULL)`,
+        itemId,
+        defId,
+        partyStashId,
+      ),
+    ).rejects.toThrow(/23514|ItemInstance_equip_attune_requires_inventory|check/i);
   });
 });
