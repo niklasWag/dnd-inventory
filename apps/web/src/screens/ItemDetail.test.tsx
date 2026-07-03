@@ -121,7 +121,7 @@ describe('ItemDetail (M2.5)', () => {
 
     // Force the debounced persist to land in Dexie, then simulate a reload.
     await flushPendingPersist();
-    const persisted = (await loadAppState()) as {
+    const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
       log: unknown[];
     } | null;

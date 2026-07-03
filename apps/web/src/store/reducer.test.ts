@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import { useStore, flushPendingPersist } from './index';
-import { loadAppState } from '@/db/load';
+import { listKnownPartyIds, loadAppState } from '@/db/load';
 import { wipeAll } from '@/db/wipe';
 import { newUuidV7, appStateSchema, transactionLogEntrySchema } from '@app/shared';
 import { SEED_VERSION, loadPhbSeed } from '@app/seeds';
@@ -207,12 +207,16 @@ describe('reducer: create-character (M1)', () => {
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
-    // Nothing written yet (debounce window still open).
-    expect(await loadAppState()).toBeNull();
+    const partyId = useStore.getState().appState!.party.id;
+    // Nothing written yet (debounce window still open). Post-RH5.1
+    // there is no legacy unkeyed slot — the keyed slot is what would
+    // have been written, and it hasn't been.
+    expect(await loadAppState(partyId)).toBeNull();
+    expect(await listKnownPartyIds()).toEqual([]);
 
     await flushPendingPersist();
 
-    const persisted = (await loadAppState()) as {
+    const persisted = (await loadAppState(partyId)) as {
       appState: unknown;
       log: unknown[];
     } | null;
@@ -314,7 +318,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
       },
     });
     await flushPendingPersist();
-    const persisted = (await loadAppState()) as {
+    const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
       log: unknown[];
     } | null;
@@ -2406,7 +2410,7 @@ describe('reducer: transfer (M5)', () => {
       },
     });
     await flushPendingPersist();
-    const loaded = await loadAppState();
+    const loaded = await loadAppState(useStore.getState().appState!.party.id);
     expect(loaded).not.toBeNull();
     const wrapped = loaded as { appState: unknown; log: unknown };
     expect(wrapped.appState).toEqual(useStore.getState().appState);
@@ -2871,7 +2875,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
       },
     });
     await flushPendingPersist();
-    const loaded = await loadAppState();
+    const loaded = await loadAppState(useStore.getState().appState!.party.id);
     expect(loaded).not.toBeNull();
     const wrapped = loaded as { appState: unknown; log: unknown };
     expect(wrapped.appState).toEqual(useStore.getState().appState);
@@ -6902,7 +6906,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const { characterId } = localBootstrap();
     useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
     await flushPendingPersist();
-    const persisted = (await loadAppState()) as {
+    const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
       log: unknown[];
     } | null;
@@ -7118,7 +7122,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
     bootstrapWithSecondMember('dm');
     useStore.getState().dispatch({ type: 'leave-party', payload: {} });
     await flushPendingPersist();
-    const persisted = (await loadAppState()) as {
+    const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
       log: unknown[];
     } | null;
@@ -7352,7 +7356,7 @@ describe('reducer: kick-player (R4.1.d)', () => {
     const { kickedUserId } = bootstrapWithKickTarget();
     useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
     await flushPendingPersist();
-    const persisted = (await loadAppState()) as {
+    const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
       log: unknown[];
     } | null;

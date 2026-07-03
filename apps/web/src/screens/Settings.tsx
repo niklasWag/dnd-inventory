@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ReactElement } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Download, LogOut, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, Download, LogOut, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +16,9 @@ import {
 import { LinkedAccounts } from '@/components/auth/LinkedAccounts';
 import { EncumbranceRuleField } from '@/components/settings/EncumbranceRuleField';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
+import { loadAppState } from '@/db/load';
+import { clearCurrentPartyId, getCurrentPartyId } from '@/db/meta';
+import { deleteAppStateForParty } from '@/db/save';
 import { wipeAll } from '@/db/wipe';
 import { exportToFile, type ExportSnapshot } from '@/io/export';
 import { importFromText, type ImportResult } from '@/io/import';
@@ -23,6 +27,17 @@ import { getOwnCharacter } from '@/lib/ownCharacter';
 import { APP_VERSION } from '@/lib/version';
 import { useStore } from '@/store';
 import { useSession } from '@/store/session';
+import { appStateSchema, transactionLogEntrySchema } from '@app/shared';
+
+/**
+ * RH5.2 — persisted blob schema (mirrors `hydrate.ts`). Used below to
+ * detect a corrupted current-party blob at mount time so the recovery
+ * button can surface.
+ */
+const persistedBlobSchema = z.object({
+  appState: z.union([appStateSchema, z.null()]),
+  log: z.array(transactionLogEntrySchema),
+});
 
 /**
  * Settings (MVP §7 screen 9 — final M7 cut). Sections:
@@ -79,6 +94,48 @@ export function Settings(): ReactElement {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  // RH5.2 — corruption-recovery state. When the current-party blob in
+  // Dexie fails Zod parse, surface a "Wipe corrupted party data" button
+  // that clears just that keyed slot (leaving other parties intact).
+  // The detection is best-effort: only checks the CURRENT party pointer;
+  // other parties surface their corruption via boot-time toast when the
+  // user activates them from Hub.
+  const [corruptedPartyId, setCorruptedPartyId] = useState<string | null>(null);
+  const [corruptionRecoveryOpen, setCorruptionRecoveryOpen] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const partyId = await getCurrentPartyId();
+      if (partyId === null) return;
+      const raw = await loadAppState(partyId);
+      if (raw === null) return; // pointer stale — not a corruption case
+      const parsed = persistedBlobSchema.safeParse(raw);
+      if (!parsed.success && !cancelled) {
+        setCorruptedPartyId(partyId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleConfirmCorruptionRecovery(): Promise<void> {
+    if (corruptedPartyId === null) return;
+    setRecovering(true);
+    try {
+      await deleteAppStateForParty(corruptedPartyId);
+      await clearCurrentPartyId();
+      useStore.setState({ appState: null, log: [] });
+      setCorruptionRecoveryOpen(false);
+      setCorruptedPartyId(null);
+      toast.success('Corrupted party data wiped.');
+      void navigate('/hub', { replace: true });
+    } finally {
+      setRecovering(false);
+    }
+  }
 
   async function handleConfirmWipe(): Promise<void> {
     setWiping(true);
@@ -252,6 +309,35 @@ export function Settings(): ReactElement {
         </section>
       ) : null}
 
+      {/* RH5.2 — corruption-recovery. Only surfaces when the current-
+          party Dexie blob fails Zod parse (boot-time toast points the
+          user here). Wipes JUST that party's slot, leaving other parties
+          intact. In server mode the next `pullState` will re-hydrate
+          the blob canonical-from-server; in local mode the party is
+          effectively lost (JSON backup import is the recovery path). */}
+      {corruptedPartyId !== null ? (
+        <section className="space-y-3 rounded-lg border border-destructive/60 bg-destructive/5 p-4">
+          <div>
+            <h2 className="flex items-center gap-2 font-semibold">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              Corrupted party data
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              The local blob for this party failed to load. Wipe it to reset — in server mode a
+              fresh copy will be pulled on next visit.
+            </p>
+          </div>
+          <Button
+            variant="destructive"
+            onClick={() => setCorruptionRecoveryOpen(true)}
+            data-testid="wipe-corrupted-party-btn"
+          >
+            <Trash2 className="h-4 w-4" />
+            Wipe corrupted party data
+          </Button>
+        </section>
+      ) : null}
+
       <section className="space-y-3 rounded-lg border border-border p-4">
         <div>
           <h2 className="font-semibold">Wipe data</h2>
@@ -285,6 +371,37 @@ export function Settings(): ReactElement {
               disabled={wiping}
             >
               {wiping ? 'Wiping…' : 'Wipe'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={corruptionRecoveryOpen} onOpenChange={setCorruptionRecoveryOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Wipe corrupted party data?</DialogTitle>
+            <DialogDescription>
+              This deletes the local blob for party <code>{corruptedPartyId}</code>. Other parties
+              are unaffected. In server mode the party will be re-fetched from the server on next
+              visit; in local mode you'll need to restore from a JSON backup.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCorruptionRecoveryOpen(false)}
+              disabled={recovering}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                void handleConfirmCorruptionRecovery();
+              }}
+              disabled={recovering}
+            >
+              {recovering ? 'Wiping…' : 'Wipe'}
             </Button>
           </DialogFooter>
         </DialogContent>
