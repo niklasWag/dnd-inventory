@@ -3291,10 +3291,18 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 #### RH5.3 — Test migration
 
 **Tests (`apps/web/src/db/persistence.test.ts` + downstream)**
-- [ ] Audit every callsite of `loadAppState()` in `apps/web/src/**/*.test.ts` (and `*.test.tsx`). Migrate any call that previously relied on the legacy fallbacks to pass an explicit `partyId`.
-- [ ] Add a test for the corruption-detection path: seed a Dexie blob with an invalid shape → `hydrate.ts` returns `appState: null` + surfaces the corruption toast, does NOT silently fall through to another slot.
-- [ ] Add a test for the "no current party" boot: empty Dexie → `hydrate.ts` returns `appState: null`; Hub renders the create-party CTA. Locks in the "single-path" contract.
-- [ ] Delete tests that exercised the removed fallback tiers (they'll fail once the fallbacks are gone; deletion is the right response, not adaptation).
+- [x] Audit every callsite of `loadAppState()` in `apps/web/src/**/*.test.ts` (and `*.test.tsx`). Migrate any call that previously relied on the legacy fallbacks to pass an explicit `partyId`. *Nine callsites in `reducer.test.ts` + one in `ItemDetail.test.tsx` migrated in RH5.2.*
+- [x] Add a test for the corruption-detection path: seed a Dexie blob with an invalid shape → `hydrate.ts` returns `appState: null` + surfaces the corruption toast, does NOT silently fall through to another slot. *`hydrate.test.ts` — "corrupted blob → store stays empty + toast surfaces" (RH5.2).*
+- [x] Add a test for the "no current party" boot: empty Dexie → `hydrate.ts` returns `appState: null`; Hub renders the create-party CTA. Locks in the "single-path" contract. *`hydrate.test.ts` — "no `currentPartyId` pointer → store stays empty" (RH5.2).*
+- [x] Delete tests that exercised the removed fallback tiers (they'll fail once the fallbacks are gone; deletion is the right response, not adaptation). *Persistence-test rewrite in RH5.1 deleted "loadAppState returns null when nothing is stored" (arg-less), "saveAppState then loadAppState round-trips an opaque blob" (arg-less), "listKnownPartyIds returns empty when only the legacy unkeyed slot is set", and "createDebouncedSaver falls back to the unkeyed slot when state is null."*
+
+**Shipped 2026-07-03.** Test-audit safety pass — grep confirms every live `loadAppState(` and `saveAppState(` callsite passes an explicit partyId. Zero stragglers. Doc-comment in `ReplaceAllConfirmDialog.tsx` updated to reflect the new signature. CLAUDE.md gains a "Persistence rules (RH5)" section that captures the single-path contract + null-state no-op + corruption UX. `docs/SECURITY.md` unchanged (corruption UX is client-side UX, not a security invariant).
+
+##### RH5.3 — Notes
+
+> **Filed 2026-07-03.** RH5.3's remit was a safety audit — RH5.1 and RH5.2 had already migrated the live callsites as a side-effect of the typechecker complaining about arg-less `loadAppState()`. RH5.3 verified the grep is clean and closed the doc-cleanup loop (CLAUDE.md + roadmap Notes).
+>
+> **CLAUDE.md placement.** Persistence rules go directly after routing rules (RH4) because the two together form the "URL + Dexie contract": URL is authoritative for `partyId`; Dexie stores blobs keyed by that same `partyId` in local mode. Keeping them adjacent makes the invariant obvious to future contributors.
 
 #### RH5 — Notes
 
@@ -3303,6 +3311,12 @@ Pulling the entity + schema widening + the "Untagged" routing rule into RH3 mean
 > **Not blocked by anything.** RH5 is orthogonal to RH1 (id authority), RH2 (determinism), RH3 (GameSession entity), RH4 (URL routing). Can ship whenever the hydrate path is next touched.
 >
 > **Estimated cost.** ~1 afternoon for RH5.1 (design + capture) + ~1 afternoon for RH5.2 (code) + ~1 afternoon for RH5.3 (test migration). Small slice; the design decision is the only real cost.
+>
+> **Shipped 2026-07-03 (three commits).** Actual cost: single afternoon, three separate commits on `refactor/rh5-dexie-hydration-hardening`. Test suite +3 net (web 756 → 759): RH5.1 collapsed 4 legacy-shape persistence tests into 2 RH5.1-shape ones (-2), RH5.2 added 4 new hydrate tests (+4), net +2 web + 1 seeds tracking. Total tests 1372 → 1375. Design decisions:
+>   - **RH5.1** — approach #1 (skip null-state persistence entirely). Rationale: Hub wizard is already component-local `useState`; nothing null-shape in the store carries meaningful payload.
+>   - **RH5.2** — corruption UX = toast + Settings wipe action (not modal, not silent). Rationale: respects existing app chrome; one-click recovery from a persistent, dismissable surface.
+>
+> **`meta.currentPartyId` still lives** as a boot-landing UX hint. Full retirement is out of scope — would need a URL-only replacement (e.g. last-visited partyId in server session) that's beyond RH5's hardening remit.
 
 ---
 
