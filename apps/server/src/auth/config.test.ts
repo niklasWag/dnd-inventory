@@ -6,7 +6,12 @@ import type { Account, Profile } from '@auth/core/types';
 import type { Env } from '../config/env.js';
 import type { PrismaClient } from '../../prisma/generated/prisma/client.js';
 
-import { buildAuthConfig, isDiscordAuthEnabled, isEmailAuthEnabled, useSecureCookies } from './config.js';
+import {
+  buildAuthConfig,
+  isDiscordAuthEnabled,
+  isEmailAuthEnabled,
+  useSecureCookies,
+} from './config.js';
 import { makeAdapter } from './adapter-overrides.js';
 
 /**

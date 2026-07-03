@@ -28,7 +28,12 @@ function setup(initialName: string): { stashId: string; rerender: () => void } {
   const { characterId } = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: characterId, name: initialName , ...createStashIds() , ...createStashIds() },
+    payload: {
+      ownerCharacterId: characterId,
+      name: initialName,
+      ...createStashIds(),
+      ...createStashIds(),
+    },
   });
   const stashId = useStore.getState().appState!.stashes.at(-1)!.id;
   const view = render(

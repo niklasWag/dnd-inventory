@@ -45,7 +45,8 @@ function setupWithStack(quantity: number, notes?: string): SetupResult {
       quantity,
       source: 'catalog-add',
       ...(notes !== undefined ? { notes } : {}),
-      ...acquireIds(), },
+      ...acquireIds(),
+    },
   });
   const itemInstanceId = useStore.getState().appState!.items[0]!.id;
   return { itemInstanceId, inventoryStashId };

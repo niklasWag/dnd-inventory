@@ -40,7 +40,8 @@ function setupTorchAndBackpack(): Fixture {
       definitionId: backpack.id,
       quantity: 1,
       source: 'catalog-add',
-      ...acquireIds(), },
+      ...acquireIds(),
+    },
   });
   useStore.getState().dispatch({
     type: 'acquire',
@@ -49,7 +50,8 @@ function setupTorchAndBackpack(): Fixture {
       definitionId: torch.id,
       quantity: 1,
       source: 'catalog-add',
-      ...acquireIds(), },
+      ...acquireIds(),
+    },
   });
   const backpackId = useStore
     .getState()
@@ -87,7 +89,8 @@ describe('PackItemModal', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
@@ -96,7 +99,8 @@ describe('PackItemModal', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const backpacks = useStore
       .getState()
@@ -129,7 +133,8 @@ describe('PackItemModal', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const torchId = useStore.getState().appState!.items[0]!.id;
 

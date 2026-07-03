@@ -89,12 +89,7 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
 
     await prisma.$transaction(async (tx) => {
       // 1. Create the membership row.
-      await applyDelta(
-        tx,
-        asReducerAction({ type: 'join-party', payload: {} }),
-        actor,
-        ctx,
-      );
+      await applyDelta(tx, asReducerAction({ type: 'join-party', payload: {} }), actor, ctx);
       // 2. Append the matching log entry. We synthesise the slice
       //    inline rather than running the reducer (which would need
       //    an AppState the joining user can't load yet).
@@ -193,17 +188,8 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
       };
 
       await prisma.$transaction(async (tx) => {
-        await applyDelta(
-          tx,
-          asReducerAction({ type: 'leave-party', payload: {} }),
-          actor,
-          ctx,
-        );
-        const result = reduce(
-          state,
-          asReducerAction({ type: 'leave-party', payload: {} }),
-          ctx,
-        );
+        await applyDelta(tx, asReducerAction({ type: 'leave-party', payload: {} }), actor, ctx);
+        const result = reduce(state, asReducerAction({ type: 'leave-party', payload: {} }), ctx);
         for (const slice of result.logEntries) {
           // RH2.1a — pass pre-reduce state so the shared role deriver
           // sees the party's bankerUserId at dispatch time.

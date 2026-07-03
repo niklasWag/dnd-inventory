@@ -120,7 +120,9 @@ function setupTwoMemberBankerParty(poolGp: number): SetupResult {
       appState: {
         ...prev.appState,
         memberships: prev.appState.memberships.map((m) =>
-          m.userId === bankerUserId && m.role === 'dm' ? { ...m, leftAt: new Date().toISOString() } : m,
+          m.userId === bankerUserId && m.role === 'dm'
+            ? { ...m, leftAt: new Date().toISOString() }
+            : m,
         ),
       },
     };
@@ -265,7 +267,11 @@ describe('SplitEvenlyModal (R4.2.e)', () => {
       new Set([ownCharId, bankerCharId]),
     );
     expect(terminal.payload.sharePerRecipient).toEqual({
-      cp: 0, sp: 0, ep: 0, gp: 50, pp: 0,
+      cp: 0,
+      sp: 0,
+      ep: 0,
+      gp: 50,
+      pp: 0,
     });
   });
 });

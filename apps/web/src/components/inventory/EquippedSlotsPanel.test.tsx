@@ -35,7 +35,8 @@ function bootstrapWithTorches(count: number): { characterId: string; rowIds: str
         quantity: 1,
         source: 'catalog-add',
         notes: `slot-${i}`,
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
   }
   const rowIds: string[] = [];
@@ -62,7 +63,8 @@ function bootstrapWithMagicItems(count: number): { characterId: string; rowIds: 
         quantity: 1,
         source: 'catalog-add',
         notes: `slot-${i}`,
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
   }
   const rowIds: string[] = [];
@@ -121,7 +123,8 @@ describe('EquippedSlotsPanel (R1.2)', () => {
         definitionId: cloak.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const cloakId = useStore
       .getState()
@@ -149,7 +152,8 @@ describe('EquippedSlotsPanel (R1.2)', () => {
         definitionId: cloak.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const cloakId = useStore
       .getState()

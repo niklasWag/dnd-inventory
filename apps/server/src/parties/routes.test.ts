@@ -114,7 +114,8 @@ async function bootstrapParty(
             class: 'Wizard',
             level: 1,
             str: 10,
-            ...createCharacterIds(), },
+            ...createCharacterIds(),
+          },
         },
       ],
     },
@@ -363,7 +364,8 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
                 class: 'Rogue',
                 level: 2,
                 str: 12,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -434,7 +436,7 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
           actions: [
             {
               type: 'create-character',
-              payload: { dmOnly: true, partyName: 'DM Sandbox' , ...createCharacterIds() },
+              payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterIds() },
             },
           ],
         },
@@ -466,7 +468,8 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
                 class: 'Bard',
                 level: 1,
                 str: 10,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -541,7 +544,8 @@ describe('BUG-001 — character cascade on departure (kick + leave)', () => {
                 class: 'Rogue',
                 level: 1,
                 str: 10,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -608,7 +612,8 @@ describe('BUG-001 — character cascade on departure (kick + leave)', () => {
                 class: 'Rogue',
                 level: 1,
                 str: 10,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -982,7 +987,8 @@ describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
               class: 'Rogue',
               level: 1,
               str: 10,
-              ...createCharacterIds(), },
+              ...createCharacterIds(),
+            },
           },
         ],
       },
@@ -1041,7 +1047,11 @@ describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
           actions: [
             {
               type: 'currency-change',
-              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 }, reason: 'withdraw' },
+              payload: {
+                stashId: partyStashId,
+                delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 },
+                reason: 'withdraw',
+              },
             },
           ],
         },
@@ -1081,7 +1091,11 @@ describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
           actions: [
             {
               type: 'currency-change',
-              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 }, reason: 'withdraw' },
+              payload: {
+                stashId: partyStashId,
+                delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 },
+                reason: 'withdraw',
+              },
             },
           ],
         },
@@ -1116,7 +1130,11 @@ describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
           actions: [
             {
               type: 'currency-change',
-              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 }, reason: 'withdraw' },
+              payload: {
+                stashId: partyStashId,
+                delta: { cp: 0, sp: 0, ep: 0, gp: -1, pp: 0 },
+                reason: 'withdraw',
+              },
             },
           ],
         },
@@ -1189,7 +1207,11 @@ describe('R4.2.c — Banker-mediated shared-pool gate on /sync/actions', () => {
           actions: [
             {
               type: 'currency-change',
-              payload: { stashId: partyStashId, delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 }, reason: 'deposit' },
+              payload: {
+                stashId: partyStashId,
+                delta: { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 },
+                reason: 'deposit',
+              },
             },
           ],
         },
@@ -1252,7 +1274,8 @@ describe('R4.2.d — split-evenly on /sync/actions', () => {
               class: 'Rogue',
               level: 1,
               str: 10,
-              ...createCharacterIds(), },
+              ...createCharacterIds(),
+            },
           },
         ],
       },
@@ -1420,7 +1443,8 @@ describe('R4.2.d — split-evenly on /sync/actions', () => {
                 class: 'Cleric',
                 level: 1,
                 str: 10,
-                ...createCharacterIds(), },
+                ...createCharacterIds(),
+              },
             },
           ],
         },
@@ -1452,15 +1476,27 @@ describe('R4.2.d — split-evenly on /sync/actions', () => {
         where: { stashId: partyStashId },
       });
       expect({ cp: pool.cp, sp: pool.sp, ep: pool.ep, gp: pool.gp, pp: pool.pp }).toEqual({
-        cp: 1, sp: 0, ep: 0, gp: 0, pp: 0,
+        cp: 1,
+        sp: 0,
+        ep: 0,
+        gp: 0,
+        pp: 0,
       });
 
-      for (const invId of [userA.inventoryStashId, userB.inventoryStashId, cChar.inventoryStashId]) {
+      for (const invId of [
+        userA.inventoryStashId,
+        userB.inventoryStashId,
+        cChar.inventoryStashId,
+      ]) {
         const inv = await prisma.currencyHolding.findUniqueOrThrow({
           where: { stashId: invId },
         });
         expect({ cp: inv.cp, sp: inv.sp, ep: inv.ep, gp: inv.gp, pp: inv.pp }).toEqual({
-          cp: 3, sp: 3, ep: 0, gp: 33, pp: 0,
+          cp: 3,
+          sp: 3,
+          ep: 0,
+          gp: 33,
+          pp: 0,
         });
       }
     } finally {

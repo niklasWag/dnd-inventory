@@ -44,7 +44,12 @@ function setupWithStacks(quantity: number): SetupResult {
   const base = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: base.characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
+    payload: {
+      ownerCharacterId: base.characterId,
+      name: 'Chest at home',
+      ...createStashIds(),
+      ...createStashIds(),
+    },
   });
   const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
   const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -55,7 +60,8 @@ function setupWithStacks(quantity: number): SetupResult {
       definitionId: torch.id,
       quantity,
       source: 'catalog-add',
-      ...acquireIds(), },
+      ...acquireIds(),
+    },
   });
   const itemInstanceId = useStore.getState().appState!.items[0]!.id;
   return {
@@ -237,7 +243,8 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
         definitionId: magic.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const magicItemId = useStore
       .getState()

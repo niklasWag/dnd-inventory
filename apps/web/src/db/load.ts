@@ -50,7 +50,5 @@ export async function listKnownPartyIds(): Promise<string[]> {
   const rows = await db.meta
     .filter((r) => typeof r.key === 'string' && r.key.startsWith(`${APP_STATE_KEY}:`))
     .toArray();
-  return rows
-    .map((r) => r.key.slice(APP_STATE_KEY.length + 1))
-    .filter((id) => id.length > 0);
+  return rows.map((r) => r.key.slice(APP_STATE_KEY.length + 1)).filter((id) => id.length > 0);
 }

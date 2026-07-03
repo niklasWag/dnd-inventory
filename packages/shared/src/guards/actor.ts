@@ -97,27 +97,21 @@ export function deriveActorRoleForSlice(
       // §3.14 forbids DM === banker, so 'dm' is always structurally
       // correct here regardless of `bankerUserId`.
       if (state === null) {
-        throw new Error(
-          `deriveActorRoleForSlice: ${slice.type} requires populated AppState`,
-        );
+        throw new Error(`deriveActorRoleForSlice: ${slice.type} requires populated AppState`);
       }
       return 'dm';
     case 'split-evenly':
       // Banker-only per §8.1. Guards reject non-Banker actors upstream;
       // this branch records the Banker hat.
       if (state === null) {
-        throw new Error(
-          `deriveActorRoleForSlice: ${slice.type} requires populated AppState`,
-        );
+        throw new Error(`deriveActorRoleForSlice: ${slice.type} requires populated AppState`);
       }
       return 'banker';
     default: {
       // Every remaining variant is player-driven. Actor is the banker
       // if `state.party.bankerUserId === state.user.id`, else player.
       if (state === null) {
-        throw new Error(
-          `deriveActorRoleForSlice: ${slice.type} requires populated AppState`,
-        );
+        throw new Error(`deriveActorRoleForSlice: ${slice.type} requires populated AppState`);
       }
       return playerOrBanker(state);
     }

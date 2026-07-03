@@ -74,7 +74,8 @@ describe('CharacterSheet (M1)', () => {
         class: 'Fighter',
         level: 3,
         str: 16,
-        ...createCharacterIds(), },
+        ...createCharacterIds(),
+      },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
 
@@ -88,7 +89,15 @@ describe('CharacterSheet (M1)', () => {
   it('renders all four tabs', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
+      payload: {
+        name: 'A',
+        species: 'B',
+        size: 'medium',
+        class: 'C',
+        level: 1,
+        str: 10,
+        ...createCharacterIds(),
+      },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
 
@@ -126,7 +135,8 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
 
     renderAt(`/character/${id}`);
@@ -147,7 +157,8 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     dispatch({
       type: 'acquire',
@@ -156,7 +167,8 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
 
     renderAt(`/character/${id}`);
@@ -178,7 +190,8 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 2,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
 
     renderAt(`/character/${id}`);
@@ -205,7 +218,13 @@ describe('CharacterSheet (M2)', () => {
     const { characterId: id } = bootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: id, name: 'Vault of Waterdeep' , ...createStashIds() , ...createStashIds() , ...createStashIds() },
+      payload: {
+        ownerCharacterId: id,
+        name: 'Vault of Waterdeep',
+        ...createStashIds(),
+        ...createStashIds(),
+        ...createStashIds(),
+      },
     });
     renderAt(`/character/${id}`);
 
@@ -225,7 +244,8 @@ describe('CharacterSheet (M2)', () => {
         definitionId: torch.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
 
     renderAt(`/character/${id}`);
@@ -242,7 +262,15 @@ describe('CharacterSheet (M4)', () => {
   it('renders a CurrencyRow on the Inventory tab', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
+      payload: {
+        name: 'A',
+        species: 'B',
+        size: 'medium',
+        class: 'C',
+        level: 1,
+        str: 10,
+        ...createCharacterIds(),
+      },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
     renderAt(`/character/${id}`);
@@ -257,7 +285,15 @@ describe('CharacterSheet (M4)', () => {
     const user = userEvent.setup();
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
+      payload: {
+        name: 'A',
+        species: 'B',
+        size: 'medium',
+        class: 'C',
+        level: 1,
+        str: 10,
+        ...createCharacterIds(),
+      },
     });
     const id = useStore.getState().appState!.characters[0]!.id;
     renderAt(`/character/${id}`);
@@ -315,7 +351,8 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     return { characterId: base.characterId };
   }
@@ -400,7 +437,8 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
         definitionId: decanter.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const decanterId = useStore
       .getState()
@@ -429,7 +467,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
 // -------------------------------------------------------------------- //
 
 describe('CharacterSheet — R4.5 cross-character DM cue', () => {
-  it('shows an editing-cue banner when a DM views another player\'s character', () => {
+  it("shows an editing-cue banner when a DM views another player's character", () => {
     // Bootstrap gives a solo party with u1 as DM+player of char-me.
     // Convert to a 2-member party where the DM (me) is viewing another
     // player's character (Bob).
@@ -495,7 +533,7 @@ describe('CharacterSheet — R4.5 cross-character DM cue', () => {
     expect(screen.queryByRole('note')).toBeNull();
   });
 
-  it('does NOT show the cue for a non-DM viewer looking at another player\'s character', () => {
+  it("does NOT show the cue for a non-DM viewer looking at another player's character", () => {
     // Solo bootstrap, then flip actor to non-DM AND change owner of the
     // current character to someone else. The cue should still not show
     // because the viewer isn't the DM.

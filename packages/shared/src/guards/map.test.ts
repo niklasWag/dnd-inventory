@@ -1511,17 +1511,23 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
   // NOTE: uses makeBankerState with bankerUserId=null to avoid the
   // R4.2.c Banker gate short-circuiting on the shared-pool tests.
 
-  it('DM can acquire into another player\'s Inventory', () => {
+  it("DM can acquire into another player's Inventory", () => {
     const state = makeBankerState(null);
     const result = guards.acquire(
       state,
-      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add', ...acquireIds() },
+      {
+        stashId: 'inv',
+        definitionId: 'phb-2024:rope',
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
       makeActor('dm-user', 'dm'),
     );
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can consume an item from another player\'s Inventory', () => {
+  it("DM can consume an item from another player's Inventory", () => {
     // Base state's items include 'i1' at ownerId: 'inv' (u2's).
     const state = makeBankerState(null);
     const result = guards.consume(
@@ -1532,7 +1538,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can transfer an item from another player\'s Inventory to Party Stash', () => {
+  it("DM can transfer an item from another player's Inventory to Party Stash", () => {
     const state = makeBankerState(null);
     const result = guards.transfer(
       state,
@@ -1542,7 +1548,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can transfer an item from Party Stash to another player\'s Inventory (deposit unaffected)', () => {
+  it("DM can transfer an item from Party Stash to another player's Inventory (deposit unaffected)", () => {
     const state = makeBankerState(null);
     // Add an item to Party Stash for the transfer OUT.
     const s = {
@@ -1571,11 +1577,17 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     expect(result).toEqual({ ok: true });
   });
 
-  it('Player still cannot acquire into another player\'s Inventory (§8.1 preserved)', () => {
+  it("Player still cannot acquire into another player's Inventory (§8.1 preserved)", () => {
     const state = makeBankerState(null);
     const result = guards.acquire(
       state,
-      { stashId: 'inv', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add', ...acquireIds() },
+      {
+        stashId: 'inv',
+        definitionId: 'phb-2024:rope',
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
       // u2 acting as player, targeting their own inventory is allowed;
       // banker-user acting as player, targeting u2's inventory is NOT.
       makeActor('banker-user', 'player'),
@@ -1583,7 +1595,7 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     expect(result).toMatchObject({ ok: false, code: 'not_own_stash' });
   });
 
-  it('Player still cannot consume from another player\'s Inventory (§8.1 preserved)', () => {
+  it("Player still cannot consume from another player's Inventory (§8.1 preserved)", () => {
     const state = makeBankerState(null);
     const result = guards.consume(
       state,
@@ -1624,7 +1636,13 @@ describe('guards — R4.3.c DM cross-character acquire/consume/transfer', () => 
     };
     const result = guards.acquire(
       s,
-      { stashId: 'inv-foreign', definitionId: 'phb-2024:rope', quantity: 1, source: 'catalog-add', ...acquireIds() },
+      {
+        stashId: 'inv-foreign',
+        definitionId: 'phb-2024:rope',
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
       makeActor('dm-user', 'dm'),
     );
     expect(result).toMatchObject({ ok: false, code: 'not_own_stash' });
@@ -1640,7 +1658,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
   // R4.3.d widens `ownsCharacter` to allow actor.role === 'dm' when
   // character.partyId === actor.partyId per OUTLINE §8.1.
 
-  it('DM can equip an item on another player\'s character', () => {
+  it("DM can equip an item on another player's character", () => {
     const state = makeBankerState(null);
     const result = guards.equip(
       state,
@@ -1650,7 +1668,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can unequip an item on another player\'s character', () => {
+  it("DM can unequip an item on another player's character", () => {
     const state = makeBankerState(null);
     const result = guards.unequip(
       state,
@@ -1660,7 +1678,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can attune an item on another player\'s character', () => {
+  it("DM can attune an item on another player's character", () => {
     const state = makeBankerState(null);
     const result = guards.attune(
       state,
@@ -1670,7 +1688,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can unattune an item on another player\'s character', () => {
+  it("DM can unattune an item on another player's character", () => {
     const state = makeBankerState(null);
     const result = guards.unattune(
       state,
@@ -1680,7 +1698,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can use-charge on an item in another player\'s Inventory', () => {
+  it("DM can use-charge on an item in another player's Inventory", () => {
     const state = makeBankerState(null);
     const result = guards['use-charge'](
       state,
@@ -1706,7 +1724,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toMatchObject({ ok: false, code: 'use_charge_only_in_inventory' });
   });
 
-  it('DM can recharge (single-mode) an item in another player\'s Inventory', () => {
+  it("DM can recharge (single-mode) an item in another player's Inventory", () => {
     const state = makeBankerState(null);
     const result = guards.recharge(
       state,
@@ -1716,7 +1734,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can recharge (batch-mode) another player\'s character', () => {
+  it("DM can recharge (batch-mode) another player's character", () => {
     const state = makeBankerState(null);
     const result = guards.recharge(
       state,
@@ -1726,7 +1744,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toEqual({ ok: true });
   });
 
-  it('DM can rename another player\'s character', () => {
+  it("DM can rename another player's character", () => {
     const state = makeBankerState(null);
     const result = guards['rename-character'](
       state,
@@ -1736,7 +1754,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toEqual({ ok: true });
   });
 
-  it('Player still cannot equip on another player\'s character (§8.1 preserved)', () => {
+  it("Player still cannot equip on another player's character (§8.1 preserved)", () => {
     const state = makeBankerState(null);
     const result = guards.equip(
       state,
@@ -1746,7 +1764,7 @@ describe('guards — R4.3.d DM cross-character equip/attune/use-charge/recharge/
     expect(result).toMatchObject({ ok: false, code: 'not_own_character' });
   });
 
-  it('Player still cannot rename another player\'s character (§8.1 preserved)', () => {
+  it("Player still cannot rename another player's character (§8.1 preserved)", () => {
     const state = makeBankerState(null);
     const result = guards['rename-character'](
       state,

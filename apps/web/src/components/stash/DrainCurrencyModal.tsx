@@ -114,8 +114,8 @@ export function DrainCurrencyModal({
           <DialogTitle>Drain from {stashLabel}</DialogTitle>
           <DialogDescription>
             Remove currency for gameplay reasons (magical drain, NPC tax, theft, etc.). This
-            bypasses the Banker gate — use it only for world-level effects, not to
-            distribute currency to a specific player.
+            bypasses the Banker gate — use it only for world-level effects, not to distribute
+            currency to a specific player.
           </DialogDescription>
         </DialogHeader>
 
@@ -134,9 +134,7 @@ export function DrainCurrencyModal({
                 onChange={(e) => setDenom(d, e.target.value)}
                 aria-label={`Drain ${DENOM_LABEL[d]}`}
               />
-              <span className="text-xs text-muted-foreground tabular-nums">
-                / {holding[d]}
-              </span>
+              <span className="text-xs text-muted-foreground tabular-nums">/ {holding[d]}</span>
             </div>
           ))}
         </div>
@@ -149,7 +147,11 @@ export function DrainCurrencyModal({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="destructive" disabled={!someNonZero || overspending} onClick={handleConfirm}>
+          <Button
+            variant="destructive"
+            disabled={!someNonZero || overspending}
+            onClick={handleConfirm}
+          >
             Drain
           </Button>
         </DialogFooter>

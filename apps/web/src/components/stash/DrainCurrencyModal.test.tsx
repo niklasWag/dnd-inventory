@@ -104,7 +104,11 @@ describe('DrainCurrencyModal (R4.2.e)', () => {
     if (last?.type !== 'currency-change') throw new Error('expected currency-change');
     expect(last.payload.reason).toBe('gameplay-drain');
     expect(last.payload.delta).toEqual({
-      cp: 0, sp: 0, ep: 0, gp: -3, pp: 0,
+      cp: 0,
+      sp: 0,
+      ep: 0,
+      gp: -3,
+      pp: 0,
     });
     expect(last.payload.stashId).toBe(partyStashId);
   });

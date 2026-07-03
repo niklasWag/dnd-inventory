@@ -143,7 +143,6 @@ function checkBankerGate(
   };
 }
 
-
 // -------------------- guard implementations --------------------
 
 const createCharacterGuard: Guard<Extract<Action, { type: 'create-character' }>> = (
@@ -802,8 +801,7 @@ const kickPlayerGuard: Guard<Extract<Action, { type: 'kick-player' }>> = (
     return { ok: false, code: 'dm_only', message: 'Only the DM can kick a player.' };
   }
   const targetActive = state.memberships.some(
-    (m) =>
-      m.userId === payload.kickedUserId && m.partyId === actor.partyId && m.leftAt === null,
+    (m) => m.userId === payload.kickedUserId && m.partyId === actor.partyId && m.leftAt === null,
   );
   if (!targetActive) {
     return {

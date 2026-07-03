@@ -123,7 +123,7 @@ describe('getOwnCharacter', () => {
     expect(getOwnCharacter(state)).toBeNull();
   });
 
-  it('returns the actor\'s own character even when another player\'s character is first in the array', () => {
+  it("returns the actor's own character even when another player's character is first in the array", () => {
     const state = makeAppState({
       actorUserId: 'u2',
       memberships: [

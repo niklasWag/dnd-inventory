@@ -315,17 +315,13 @@ function createCharacterInExistingParty(
       m.characterId !== null,
   );
   if (existingPlayerWithCharacter !== undefined) {
-    throw new Error(
-      'create-character: actor already has an active player character in this party',
-    );
+    throw new Error('create-character: actor already has an active player character in this party');
   }
 
   // Locate the existing party-scope stash ids so the log entry can echo
   // them in the same shape as the legacy bootstrap branch (consumers can
   // reconstruct the same payload across both variants).
-  const partyStash = state.stashes.find(
-    (s) => s.scope === 'party' && s.partyId === state.party.id,
-  );
+  const partyStash = state.stashes.find((s) => s.scope === 'party' && s.partyId === state.party.id);
   if (partyStash === undefined) {
     throw new Error('create-character: party stash missing — state is structurally invalid');
   }
@@ -385,9 +381,7 @@ function createCharacterInExistingParty(
 
   const nextMemberships =
     existingNullPlayer !== undefined
-      ? state.memberships.map((m) =>
-          m === existingNullPlayer ? { ...m, characterId } : m,
-        )
+      ? state.memberships.map((m) => (m === existingNullPlayer ? { ...m, characterId } : m))
       : [
           ...state.memberships,
           {
@@ -626,7 +620,15 @@ function createCharacter(
     catalog: [],
     items: [],
     currencies: [
-      { id: payload.newCurrencyHoldingId, stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+      {
+        id: payload.newCurrencyHoldingId,
+        stashId: inventoryStashId,
+        cp: 0,
+        sp: 0,
+        ep: 0,
+        gp: 0,
+        pp: 0,
+      },
       partyStashCurrency,
       recoveredLootCurrency,
     ],
@@ -3369,10 +3371,7 @@ function joinParty(state: AppState, ctx: ReducerContext): ReducerResult {
 
   const existingActivePlayer = s.memberships.find(
     (m) =>
-      m.userId === actorUserId &&
-      m.partyId === partyId &&
-      m.role === 'player' &&
-      m.leftAt === null,
+      m.userId === actorUserId && m.partyId === partyId && m.role === 'player' && m.leftAt === null,
   );
   if (existingActivePlayer !== undefined) {
     throw new Error('join-party: actor already has an active player membership in this party');
@@ -3388,10 +3387,7 @@ function joinParty(state: AppState, ctx: ReducerContext): ReducerResult {
   // Rejoin is a state transition on the existing row.
   const existingSoftDeletedPlayerIndex = s.memberships.findIndex(
     (m) =>
-      m.userId === actorUserId &&
-      m.partyId === partyId &&
-      m.role === 'player' &&
-      m.leftAt !== null,
+      m.userId === actorUserId && m.partyId === partyId && m.role === 'player' && m.leftAt !== null,
   );
 
   if (existingSoftDeletedPlayerIndex !== -1) {
@@ -3459,10 +3455,7 @@ function joinParty(state: AppState, ctx: ReducerContext): ReducerResult {
  * store middleware via `deriveActorRole`; for this action it always
  * resolves to `'dm'`.
  */
-function appointBanker(
-  state: AppState,
-  payload: { bankerUserId: string },
-): ReducerResult {
+function appointBanker(state: AppState, payload: { bankerUserId: string }): ReducerResult {
   const s = requireState(state, 'appoint-banker');
   const actorUserId = s.user.id;
   const partyId = s.party.id;
@@ -3471,10 +3464,7 @@ function appointBanker(
   // DM guard.
   const actorIsDm = s.memberships.some(
     (m) =>
-      m.userId === actorUserId &&
-      m.partyId === partyId &&
-      m.role === 'dm' &&
-      m.leftAt === null,
+      m.userId === actorUserId && m.partyId === partyId && m.role === 'dm' && m.leftAt === null,
   );
   if (!actorIsDm) {
     throw new Error('appoint-banker: dm_only (actor must be an active DM of this party)');
@@ -3511,9 +3501,7 @@ function appointBanker(
   // memberCount ≥ 2 guard. Count distinct active user ids across all
   // membership rows (a creator's dm + player rows count as one user).
   const activeUserIds = new Set(
-    s.memberships
-      .filter((m) => m.partyId === partyId && m.leftAt === null)
-      .map((m) => m.userId),
+    s.memberships.filter((m) => m.partyId === partyId && m.leftAt === null).map((m) => m.userId),
   );
   if (activeUserIds.size < 2) {
     throw new Error(
@@ -3555,19 +3543,14 @@ function revokeBanker(
 
   const actorIsDm = s.memberships.some(
     (m) =>
-      m.userId === actorUserId &&
-      m.partyId === partyId &&
-      m.role === 'dm' &&
-      m.leftAt === null,
+      m.userId === actorUserId && m.partyId === partyId && m.role === 'dm' && m.leftAt === null,
   );
   if (!actorIsDm) {
     throw new Error('revoke-banker: dm_only (actor must be an active DM of this party)');
   }
 
   if (s.party.bankerUserId === null) {
-    throw new Error(
-      'revoke-banker: banker_membership_forbidden (no Banker is currently set)',
-    );
+    throw new Error('revoke-banker: banker_membership_forbidden (no Banker is currently set)');
   }
 
   return {
@@ -3630,10 +3613,7 @@ function dmTransfer(
   // Guard 1: actor must be an active DM.
   const actorIsDm = s.memberships.some(
     (m) =>
-      m.userId === actorUserId &&
-      m.partyId === partyId &&
-      m.role === 'dm' &&
-      m.leftAt === null,
+      m.userId === actorUserId && m.partyId === partyId && m.role === 'dm' && m.leftAt === null,
   );
   if (!actorIsDm) {
     throw new Error('dm-transfer: dm_only (actor must be an active DM of this party)');
@@ -3647,10 +3627,7 @@ function dmTransfer(
   // Guard 3: target must be an active player.
   const targetIsActivePlayer = s.memberships.some(
     (m) =>
-      m.userId === newDmUserId &&
-      m.partyId === partyId &&
-      m.role === 'player' &&
-      m.leftAt === null,
+      m.userId === newDmUserId && m.partyId === partyId && m.role === 'player' && m.leftAt === null,
   );
   if (!targetIsActivePlayer) {
     throw new Error(
@@ -3671,12 +3648,7 @@ function dmTransfer(
 
   const nextMemberships = s.memberships.map((m) => {
     // Outgoing DM's dm row → soft-delete.
-    if (
-      m.userId === actorUserId &&
-      m.partyId === partyId &&
-      m.role === 'dm' &&
-      m.leftAt === null
-    ) {
+    if (m.userId === actorUserId && m.partyId === partyId && m.role === 'dm' && m.leftAt === null) {
       return { ...m, leftAt: now };
     }
     // Track outgoing DM's active player row (leave it as-is).
@@ -3690,12 +3662,7 @@ function dmTransfer(
       return m;
     }
     // Incoming DM's historical dm row → reactivate (BUG-002 upsert).
-    if (
-      m.userId === newDmUserId &&
-      m.partyId === partyId &&
-      m.role === 'dm' &&
-      m.leftAt !== null
-    ) {
+    if (m.userId === newDmUserId && m.partyId === partyId && m.role === 'dm' && m.leftAt !== null) {
       incomingDmHadHistoricalDmRow = true;
       return { ...m, leftAt: null, joinedAt: now, characterId: null };
     }

@@ -52,7 +52,7 @@ function renderWith(characterId: string): void {
 function createOne(characterId: string, name: string): string {
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: characterId, name , ...createStashIds() , ...createStashIds() },
+    payload: { ownerCharacterId: characterId, name, ...createStashIds(), ...createStashIds() },
   });
   return useStore.getState().appState!.stashes.at(-1)!.id;
 }
@@ -102,11 +102,25 @@ describe('StorageStashList (M3)', () => {
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId, definitionId: torch.id, quantity: 3, source: 'catalog-add' , ...acquireIds() , ...acquireIds() },
+      payload: {
+        stashId,
+        definitionId: torch.id,
+        quantity: 3,
+        source: 'catalog-add',
+        ...acquireIds(),
+        ...acquireIds(),
+      },
     });
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId, definitionId: rope.id, quantity: 1, source: 'catalog-add' , ...acquireIds() , ...acquireIds() },
+      payload: {
+        stashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+        ...acquireIds(),
+      },
     });
     renderWith(characterId);
 

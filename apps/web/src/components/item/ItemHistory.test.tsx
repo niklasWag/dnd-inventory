@@ -150,7 +150,12 @@ describe('ItemHistory', () => {
     // ownerCharacterId.
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
+      payload: {
+        ownerCharacterId: characterId,
+        name: 'Chest at home',
+        ...createStashIds(),
+        ...createStashIds(),
+      },
     });
     const fromStashId = useStore.getState().appState!.stashes.at(-1)!.id;
 
@@ -454,7 +459,8 @@ describe('ItemHistory', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const backpackId = useStore
       .getState()
@@ -489,7 +495,8 @@ describe('ItemHistory', () => {
         definitionId: backpack.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     useStore.setState({
       log: [
@@ -519,7 +526,12 @@ describe('ItemHistory', () => {
     const { characterId, recoveredLootStashId } = bootstrap();
     useStore.getState().dispatch({
       type: 'create-stash',
-      payload: { ownerCharacterId: characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
+      payload: {
+        ownerCharacterId: characterId,
+        name: 'Chest at home',
+        ...createStashIds(),
+        ...createStashIds(),
+      },
     });
     const fromStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     useStore.setState({

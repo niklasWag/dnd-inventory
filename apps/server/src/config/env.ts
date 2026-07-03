@@ -149,21 +149,18 @@ export function loadEnv(): Env {
     ].filter((s): s is string => s !== null);
 
     if (missingDiscord.length > 0) {
-       
       console.warn(
         `[env] Discord OAuth is DISABLED: missing ${missingDiscord.join(', ')}. ` +
           `The /auth/discord/* routes will return 503 and the web Login button is hidden.`,
       );
     }
     if (missingSmtp.length > 0) {
-       
       console.warn(
         `[env] Email OTP is DISABLED: missing ${missingSmtp.join(', ')}. ` +
           `The /auth/email/* routes will return 503 and the web Login button is hidden.`,
       );
     }
     if (missingDiscord.length > 0 && missingSmtp.length > 0) {
-       
       console.warn(
         `[env] NO sign-in methods are configured. Users cannot log in until ` +
           `Discord OAuth or SMTP env vars are provided.`,

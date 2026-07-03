@@ -111,14 +111,15 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
   // undefined) get the full default control set. Shared pools consult
   // the flags per role.
   const showTransferConvert =
-    bankerContext === undefined || (!bankerContext.userIsGatedFromPool && !bankerContext.userIsDmWithBankerActive);
+    bankerContext === undefined ||
+    (!bankerContext.userIsGatedFromPool && !bankerContext.userIsDmWithBankerActive);
   const showWithdrawInline =
-    bankerContext === undefined || (!bankerContext.userIsGatedFromPool && !bankerContext.userIsDmWithBankerActive);
+    bankerContext === undefined ||
+    (!bankerContext.userIsGatedFromPool && !bankerContext.userIsDmWithBankerActive);
   const showDepositInline = bankerContext === undefined || !bankerContext.userIsGatedFromPool;
   const showSplitButton =
     bankerContext !== undefined && bankerContext.userIsBanker && bankerContext.isPartyStash;
-  const showDrainButton =
-    bankerContext !== undefined && bankerContext.userIsDmWithBankerActive;
+  const showDrainButton = bankerContext !== undefined && bankerContext.userIsDmWithBankerActive;
 
   return (
     <section className="space-y-2 rounded-lg border border-border bg-card p-3">
@@ -128,22 +129,12 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
         </h3>
         <div className="flex items-center gap-1">
           {showSplitButton ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setSplitOpen(true)}
-            >
+            <Button type="button" size="sm" variant="outline" onClick={() => setSplitOpen(true)}>
               Split evenly
             </Button>
           ) : null}
           {showDrainButton ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setDrainOpen(true)}
-            >
+            <Button type="button" size="sm" variant="outline" onClick={() => setDrainOpen(true)}>
               Drain
             </Button>
           ) : null}

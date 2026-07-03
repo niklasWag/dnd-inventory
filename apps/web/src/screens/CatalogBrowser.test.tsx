@@ -66,7 +66,15 @@ describe('CatalogBrowser', () => {
   it('renders the full PHB list when the catalog is seeded', () => {
     useStore.getState().dispatch({
       type: 'create-character',
-      payload: { name: 'A', species: 'B', size: 'medium', class: 'C', level: 1, str: 10 , ...createCharacterIds() },
+      payload: {
+        name: 'A',
+        species: 'B',
+        size: 'medium',
+        class: 'C',
+        level: 1,
+        str: 10,
+        ...createCharacterIds(),
+      },
     });
     useStore.getState().dispatch({
       type: 'seed-catalog',
@@ -148,7 +156,8 @@ describe('CatalogBrowser', () => {
         definitionId: homebrewDefId,
         quantity: 2,
         source: 'custom-create',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     renderBrowser();
 

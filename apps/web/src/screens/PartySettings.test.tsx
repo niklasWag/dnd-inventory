@@ -40,10 +40,9 @@ beforeEach(async () => {
  * rename surfaces that local mode needs to work.
  */
 function renderPartySettings(): void {
-  const router = createMemoryRouter(
-    [{ path: '/party/settings', Component: PartySettings }],
-    { initialEntries: ['/party/settings'] },
-  );
+  const router = createMemoryRouter([{ path: '/party/settings', Component: PartySettings }], {
+    initialEntries: ['/party/settings'],
+  });
   render(
     <>
       <RouterProvider router={router} />
@@ -153,9 +152,7 @@ describe('PartySettings — Create your character CTA (R4.1.f)', () => {
     renderPartySettings();
 
     // The CTA section heading and button are visible.
-    expect(
-      screen.getByRole('heading', { name: /create your character/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /create your character/i })).toBeInTheDocument();
     const ctaButton = screen.getByRole('button', { name: /^create character$/i });
     expect(ctaButton).toBeInTheDocument();
 
@@ -258,9 +255,7 @@ describe('PartySettings — Create your character CTA (R4.1.f)', () => {
           user: { ...s.appState.user, id: player2UserId, displayName: 'Player Two' },
           memberships: [
             // Keep player 1's dm + player rows.
-            ...s.appState.memberships.map((m) =>
-              m.userId === player1UserId ? m : m,
-            ),
+            ...s.appState.memberships.map((m) => (m.userId === player1UserId ? m : m)),
             // Add player 2's player row with characterId: null.
             {
               userId: player2UserId,
@@ -282,11 +277,7 @@ describe('PartySettings — Create your character CTA (R4.1.f)', () => {
     // The CTA must be visible because the actor (player 2) has no
     // character of their own, even though characters[0] exists (it's
     // player 1's).
-    expect(
-      screen.getByRole('heading', { name: /create your character/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /^create character$/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /create your character/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^create character$/i })).toBeInTheDocument();
   });
 });

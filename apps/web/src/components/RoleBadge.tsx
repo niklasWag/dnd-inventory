@@ -19,9 +19,7 @@ import type { ReactElement } from 'react';
  */
 export function RoleBadge({ role }: { role: 'dm' | 'player' | 'banker' }): ReactElement {
   const { label, styles } = ROLE_PRESETS[role];
-  return (
-    <span className={`rounded px-2 py-0.5 text-xs font-medium ${styles}`}>{label}</span>
-  );
+  return <span className={`rounded px-2 py-0.5 text-xs font-medium ${styles}`}>{label}</span>;
 }
 
 const ROLE_PRESETS: Record<'dm' | 'player' | 'banker', { label: string; styles: string }> = {

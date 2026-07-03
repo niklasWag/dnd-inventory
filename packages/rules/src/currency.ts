@@ -224,4 +224,3 @@ export function splitEvenly(pool: Currency, n: number): { share: Currency; remai
 
   return { share, remainder: working };
 }
-

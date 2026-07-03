@@ -62,7 +62,9 @@ function dbToAdapterUser(row: DbUserRow): AdapterUser {
   } as unknown as AdapterUser;
 }
 
-function adapterToDbUser(data: Partial<AdapterUser> & Record<string, unknown>): Record<string, unknown> {
+function adapterToDbUser(
+  data: Partial<AdapterUser> & Record<string, unknown>,
+): Record<string, unknown> {
   // Translate AdapterUser fields → schema columns. Auth.js's `createUser`
   // contract guarantees `email` and `emailVerified` are present (possibly
   // null); `name`/`image` are optional. Discord profile callbacks will
@@ -112,7 +114,10 @@ export function makeAdapter(prisma: PrismaClient): Adapter {
   const p = prisma as unknown as {
     user: {
       create: (args: { data: Record<string, unknown> }) => Promise<DbUserRow>;
-      update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<DbUserRow>;
+      update: (args: {
+        where: { id: string };
+        data: Record<string, unknown>;
+      }) => Promise<DbUserRow>;
       findUnique: (args: { where: { id?: string; email?: string } }) => Promise<DbUserRow | null>;
       delete: (args: { where: { id: string } }) => Promise<DbUserRow>;
     };

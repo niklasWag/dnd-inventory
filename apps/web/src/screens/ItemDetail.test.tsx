@@ -192,7 +192,8 @@ describe('ItemDetail — R2.1 rarity + attunement display', () => {
         definitionId: def.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const itemInstanceId = useStore
       .getState()
@@ -249,7 +250,14 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
       throw new Error(`bootstrapWithChargedRow: ${definitionId} not in catalog`);
     useStore.getState().dispatch({
       type: 'acquire',
-      payload: { stashId: base.inventoryStashId, definitionId, quantity: 1, source: 'catalog-add' , ...acquireIds() , ...acquireIds() },
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+        ...acquireIds(),
+      },
     });
     const itemInstanceId = useStore
       .getState()
@@ -283,7 +291,13 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
     // Move the wand to the Party Stash; currentCharges clears via cascade.
     useStore.getState().dispatch({
       type: 'transfer',
-      payload: { itemInstanceId, toStashId: partyStashId, quantity: 1 , ...transferIds() , ...transferIds() },
+      payload: {
+        itemInstanceId,
+        toStashId: partyStashId,
+        quantity: 1,
+        ...transferIds(),
+        ...transferIds(),
+      },
     });
     const movedId = useStore.getState().appState!.items.find((i) => i.ownerId === partyStashId)!.id;
     renderAt(`/item/${movedId}`);
@@ -413,7 +427,8 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
         definitionId: cloak.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const itemInstanceId = useStore
       .getState()
@@ -523,7 +538,8 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
         definitionId: wand.id,
         quantity: 1,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     useStore.getState().dispatch({

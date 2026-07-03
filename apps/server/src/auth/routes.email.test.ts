@@ -267,7 +267,9 @@ describe('POST /auth/email/verify-otp (R3.3)', () => {
         headers: { cookie: cookieHeader },
       });
       expect(sessionRes.statusCode).toBe(200);
-      const sessionBody = sessionRes.json<{ user?: { id: string; displayName: string; needsDisplayName: boolean } }>();
+      const sessionBody = sessionRes.json<{
+        user?: { id: string; displayName: string; needsDisplayName: boolean };
+      }>();
       expect(sessionBody.user?.id).toBe(body.user.id);
       expect(sessionBody.user?.displayName).toBe('');
       expect(sessionBody.user?.needsDisplayName).toBe(true);

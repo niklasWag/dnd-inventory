@@ -101,8 +101,8 @@ export function Login(): ReactElement {
 
       {noMethods ? (
         <p className="text-center text-sm text-muted-foreground">
-          No sign-in methods are configured on this server. Ask the operator to set up Discord
-          OAuth or SMTP email.
+          No sign-in methods are configured on this server. Ask the operator to set up Discord OAuth
+          or SMTP email.
         </p>
       ) : (
         <div className="flex flex-col gap-3">

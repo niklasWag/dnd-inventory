@@ -179,8 +179,14 @@ describe('queue — 422 rollback restores PRE-mutation snapshot (BUG-003)', () =
     const queue = await loadQueue();
     // Simulate the dispatch order: caller captures snapshot BEFORE
     // mutating, then applies the mutation, then enqueues.
-    const preSnapshot: FakeSnapshot = { appState: { party: { id: 'party-1' } }, log: [{ marker: 'PRE' }] };
-    const postSnapshot: FakeSnapshot = { appState: { party: { id: 'party-1' } }, log: [{ marker: 'POST' }] };
+    const preSnapshot: FakeSnapshot = {
+      appState: { party: { id: 'party-1' } },
+      log: [{ marker: 'PRE' }],
+    };
+    const postSnapshot: FakeSnapshot = {
+      appState: { party: { id: 'party-1' } },
+      log: [{ marker: 'POST' }],
+    };
     let current: FakeSnapshot = preSnapshot;
 
     queue.configureQueue({

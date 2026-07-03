@@ -106,9 +106,9 @@ export function Hub(): ReactElement {
       const rows: { id: string; name: string }[] = [];
       for (const id of ids) {
         try {
-          const raw = (await loadAppState(id)) as
-            | { appState?: { party?: { id: string; name: string } } }
-            | null;
+          const raw = (await loadAppState(id)) as {
+            appState?: { party?: { id: string; name: string } };
+          } | null;
           const party = raw?.appState?.party;
           if (party !== undefined && typeof party.name === 'string') {
             rows.push({ id, name: party.name });
@@ -237,12 +237,10 @@ export function Hub(): ReactElement {
         return;
       }
       const persisted = raw as { appState: unknown; log: unknown[] };
-      useStore
-        .getState()
-        .hydrate({
-          appState: persisted.appState as ReturnType<typeof useStore.getState>['appState'],
-          log: persisted.log as ReturnType<typeof useStore.getState>['log'],
-        });
+      useStore.getState().hydrate({
+        appState: persisted.appState as ReturnType<typeof useStore.getState>['appState'],
+        log: persisted.log as ReturnType<typeof useStore.getState>['log'],
+      });
       const id = getOwnCharacter(useStore.getState().appState)?.id;
       if (id !== undefined) {
         void navigate(`/character/${id}`);

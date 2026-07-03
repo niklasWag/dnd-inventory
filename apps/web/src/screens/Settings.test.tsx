@@ -128,7 +128,8 @@ describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
         definitionId: homebrewDefId,
         quantity: 2,
         source: 'custom-create',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     const snapshot = {
       appState: useStore.getState().appState,

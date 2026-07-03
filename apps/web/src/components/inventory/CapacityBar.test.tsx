@@ -56,7 +56,8 @@ function loadInventoryWith(weightLbsEach: number, quantity: number): string {
       definitionId: homebrewDefId,
       quantity,
       source: 'custom-create',
-      ...acquireIds(), },
+      ...acquireIds(),
+    },
   });
   return homebrewDefId;
 }

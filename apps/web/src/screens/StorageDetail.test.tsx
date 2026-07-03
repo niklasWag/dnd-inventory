@@ -73,7 +73,7 @@ function bootstrapWithStorage(name = 'Chest at home'): {
   const base = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: base.characterId, name , ...createStashIds() , ...createStashIds() },
+    payload: { ownerCharacterId: base.characterId, name, ...createStashIds(), ...createStashIds() },
   });
   const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
   return { ...base, storageStashId };
@@ -155,7 +155,8 @@ describe('StorageDetail (M3)', () => {
         definitionId: torch.id,
         quantity: 3,
         source: 'catalog-add',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     renderAt(`/storage/${storageStashId}`);
 

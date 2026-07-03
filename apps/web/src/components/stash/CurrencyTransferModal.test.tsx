@@ -39,7 +39,12 @@ function setupWith(): SetupResult {
   const base = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: base.characterId, name: 'Chest at home' , ...createStashIds() , ...createStashIds() },
+    payload: {
+      ownerCharacterId: base.characterId,
+      name: 'Chest at home',
+      ...createStashIds(),
+      ...createStashIds(),
+    },
   });
   const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
   // Seed Inventory with 10 gp directly into state (no currency-change UI in

@@ -46,21 +46,15 @@ import type { PartyMemberItem } from '@app/shared';
  */
 export function PartySettings(): ReactElement {
   const navigate = useNavigate();
-  const partyId = useStore(
-    useShallow((s) => (s.appState !== null ? s.appState.party.id : null)),
-  );
+  const partyId = useStore(useShallow((s) => (s.appState !== null ? s.appState.party.id : null)));
   const partyName = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.party.name : null)),
   );
   const bankerUserId = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.party.bankerUserId : null)),
   );
-  const character = useStore(
-    useShallow((s) => getOwnCharacter(s.appState)),
-  );
-  const myUserId = useStore(
-    useShallow((s) => (s.appState !== null ? s.appState.user.id : null)),
-  );
+  const character = useStore(useShallow((s) => getOwnCharacter(s.appState)));
+  const myUserId = useStore(useShallow((s) => (s.appState !== null ? s.appState.user.id : null)));
 
   const [members, setMembers] = useState<PartyMemberItem[] | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -307,8 +301,7 @@ export function PartySettings(): ReactElement {
   // Server-mode loading: members + invite code are async-fetched. We
   // still render the rename surfaces synchronously below; the
   // server-only block toggles between "Loading…" and the full UI.
-  const serverDataLoading =
-    isServerMode && (members === null || inviteCode === null);
+  const serverDataLoading = isServerMode && (members === null || inviteCode === null);
 
   return (
     <div className="mx-auto max-w-3xl space-y-8 py-10">
@@ -332,12 +325,7 @@ export function PartySettings(): ReactElement {
             Rename your party{character !== null ? ' or character' : ''}. Changes are logged.
           </p>
         </div>
-        <RenameField
-          target="party"
-          entityId={partyId}
-          currentName={partyName}
-          label="Party name"
-        />
+        <RenameField target="party" entityId={partyId} currentName={partyName} label="Party name" />
         {character !== null ? (
           <RenameField
             target="character"
@@ -405,8 +393,7 @@ export function PartySettings(): ReactElement {
                 // (userId, role); the target's player row is where
                 // the button lives (transferring hands over the dm
                 // role while leaving the player row untouched).
-                const canBeTransferredTo =
-                  iAmDm && !isSolo && !isMe && m.role === 'player';
+                const canBeTransferredTo = iAmDm && !isSolo && !isMe && m.role === 'player';
                 const transferDmBusy = busy === `transfer-dm-${m.userId}`;
                 return (
                   <li
@@ -416,9 +403,7 @@ export function PartySettings(): ReactElement {
                     <div className="flex items-center gap-3">
                       <span className="font-medium">{m.displayName}</span>
                       <RoleBadge role={m.role} />
-                      {isThisRowBanker && m.role === 'player' ? (
-                        <RoleBadge role="banker" />
-                      ) : null}
+                      {isThisRowBanker && m.role === 'player' ? <RoleBadge role="banker" /> : null}
                       {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
                       {m.characterName !== null && m.characterId !== null ? (
                         <button
@@ -534,10 +519,7 @@ export function PartySettings(): ReactElement {
         </>
       )}
 
-      <Dialog
-        open={createCharacterOpen}
-        onOpenChange={(o) => setCreateCharacterOpen(o)}
-      >
+      <Dialog open={createCharacterOpen} onOpenChange={(o) => setCreateCharacterOpen(o)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create your character</DialogTitle>
@@ -558,8 +540,8 @@ export function PartySettings(): ReactElement {
           <DialogHeader>
             <DialogTitle>Leave this party?</DialogTitle>
             <DialogDescription>
-              Your character&apos;s items and currency will be moved to Recovered Loot. This
-              cannot be undone (but the party log will still record everything).
+              Your character&apos;s items and currency will be moved to Recovered Loot. This cannot
+              be undone (but the party log will still record everything).
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -580,12 +562,10 @@ export function PartySettings(): ReactElement {
       <Dialog open={confirmKick !== null} onOpenChange={(o) => !o && setConfirmKick(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              Kick {confirmKick !== null ? confirmKick.displayName : ''}?
-            </DialogTitle>
+            <DialogTitle>Kick {confirmKick !== null ? confirmKick.displayName : ''}?</DialogTitle>
             <DialogDescription>
-              Their character&apos;s items and currency will be moved to Recovered Loot. This
-              cannot be undone.
+              Their character&apos;s items and currency will be moved to Recovered Loot. This cannot
+              be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -615,9 +595,10 @@ export function PartySettings(): ReactElement {
               Transfer DM to {confirmTransferDm !== null ? confirmTransferDm.displayName : ''}?
             </DialogTitle>
             <DialogDescription>
-              You will become a regular player. {confirmTransferDm !== null ? confirmTransferDm.displayName : 'They'} will take
-              over DM responsibilities. If they are the current Banker, the Banker role will be
-              cleared automatically.
+              You will become a regular player.{' '}
+              {confirmTransferDm !== null ? confirmTransferDm.displayName : 'They'} will take over
+              DM responsibilities. If they are the current Banker, the Banker role will be cleared
+              automatically.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

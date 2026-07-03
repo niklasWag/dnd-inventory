@@ -372,9 +372,7 @@ async function persistAddCharacterToExistingParty(
   // Reject dmOnly defensively — the reducer + guard already do, but if a
   // future regression slips one through, refuse here too.
   if (payload.dmOnly === true) {
-    throw new Error(
-      'persistAddCharacterToExistingParty: dmOnly is bootstrap-only',
-    );
+    throw new Error('persistAddCharacterToExistingParty: dmOnly is bootstrap-only');
   }
 
   const now = new Date(ctx.now());
@@ -416,7 +414,15 @@ async function persistAddCharacterToExistingParty(
   });
 
   await tx.currencyHolding.create({
-    data: { id: payload.newCurrencyHoldingId, stashId: inventoryStashId, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+    data: {
+      id: payload.newCurrencyHoldingId,
+      stashId: inventoryStashId,
+      cp: 0,
+      sp: 0,
+      ep: 0,
+      gp: 0,
+      pp: 0,
+    },
   });
 
   // Patch the existing role='player' row (joiner / post-delete case) or
@@ -1175,10 +1181,7 @@ async function persistAppointBanker(
  * `persistKickPlayer` directly (those already null the column inline),
  * so this function only fires on direct DM dispatches.
  */
-async function persistRevokeBanker(
-  tx: Prisma.TransactionClient,
-  actor: Actor,
-): Promise<void> {
+async function persistRevokeBanker(tx: Prisma.TransactionClient, actor: Actor): Promise<void> {
   await tx.party.update({
     where: { id: actor.partyId },
     data: { bankerUserId: null },

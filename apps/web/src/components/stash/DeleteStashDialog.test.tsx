@@ -34,7 +34,12 @@ function setup(
   const { characterId } = bootstrap();
   useStore.getState().dispatch({
     type: 'create-stash',
-    payload: { ownerCharacterId: characterId, name: stashName , ...createStashIds() , ...createStashIds() },
+    payload: {
+      ownerCharacterId: characterId,
+      name: stashName,
+      ...createStashIds(),
+      ...createStashIds(),
+    },
   });
   const stashId = useStore.getState().appState!.stashes.at(-1)!.id;
   const onDeleted = vi.fn();

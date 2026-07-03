@@ -114,7 +114,8 @@ describe('round-trip identity (MVP DoD)', () => {
         definitionId: homebrewDefId,
         quantity: 3,
         source: 'custom-create',
-        ...acquireIds(), },
+        ...acquireIds(),
+      },
     });
     useStore.getState().dispatch({
       type: 'currency-change',

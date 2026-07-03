@@ -123,7 +123,11 @@ export function SplitEvenlyModal({
   // Preview via the same cascade helper the reducer + server use. When
   // no one is selected, N=0 would throw; short-circuit with a
   // placeholder preview until the user picks at least one recipient.
-  const preview = useMemo((): { share: Record<Denom, number>; remainder: Record<Denom, number>; n: number } => {
+  const preview = useMemo((): {
+    share: Record<Denom, number>;
+    remainder: Record<Denom, number>;
+    n: number;
+  } => {
     const n = selected.size;
     if (n === 0) {
       return { share: ZERO, remainder: pool, n: 0 };
@@ -161,8 +165,8 @@ export function SplitEvenlyModal({
         <DialogHeader>
           <DialogTitle>Split the pot</DialogTitle>
           <DialogDescription>
-            Distributes Party Stash currency evenly across the selected characters.
-            Leftover copper stays in the pool.
+            Distributes Party Stash currency evenly across the selected characters. Leftover copper
+            stays in the pool.
           </DialogDescription>
         </DialogHeader>
 
@@ -211,10 +215,12 @@ export function SplitEvenlyModal({
               ) : (
                 <>
                   <p className="mt-1">
-                    Each recipient gets: <span className="tabular-nums">{formatCurrency(preview.share)}</span>
+                    Each recipient gets:{' '}
+                    <span className="tabular-nums">{formatCurrency(preview.share)}</span>
                   </p>
                   <p className="mt-1 text-muted-foreground">
-                    Party Stash retains: <span className="tabular-nums">{formatCurrency(preview.remainder)}</span>
+                    Party Stash retains:{' '}
+                    <span className="tabular-nums">{formatCurrency(preview.remainder)}</span>
                   </p>
                 </>
               )}
