@@ -1,5 +1,6 @@
 /**
  * R3.5 — Sync action queue (server-mode optimistic dispatch).
+ * R5.1.c — retry-with-backoff + persisted outbox for network resilience.
  *
  * Sits BETWEEN the gameplay store and the network. Every dispatch in
  * server mode lands here via `enqueue(action)`. The queue:
@@ -9,31 +10,36 @@
  *   2. Debounces 200ms so quick consecutive clicks (acquire → equip)
  *      ride together.
  *   3. POSTs to `/sync/actions` with up to 100 actions per request.
- *   4. On 200: drops the snapshot, continues. RH1.3 removed the
- *      post-flush re-pull — the client mints all entity ids ahead of
- *      time (RH1.2), so the server's `applied[]` echo carries the
- *      SAME ids the local reducer already produced. No canonicalize
- *      step is required.
+ *   4. On 200: drops the snapshot, removes the outbox row if the batch
+ *      was replayed from one, appends the server's `applied[]` echo
+ *      via `appendServerLogEntries`.
  *   5. On 422 `BatchRejectedError`: restores the pre-batch snapshot
- *      (rolls back optimistic state) and surfaces a toast.
- *   6. On 401: clears the session — `ProtectedRoute` will redirect
- *      to /login.
- *   7. On 409 `display_name_required`: clears state and lets
- *      `ProtectedRoute` redirect to /login/display-name.
- *   8. On network error: keeps the snapshot in place, surfaces a
- *      transient toast, drops the batch. R5 hardens retry semantics.
+ *      (rolls back optimistic state) and surfaces a toast. Removes
+ *      the outbox row — a rejected batch shouldn't sit forever.
+ *   6. On 401 / 409 (`display_name_required`): rollback + redirect;
+ *      outbox row is KEPT so a re-auth drain can replay it.
+ *   7. On network error: persist the batch to the Dexie outbox if
+ *      not already (survives tab close), then schedule an
+ *      exponential-backoff retry (500ms → 8s, ±25% jitter). After
+ *      MAX_ATTEMPTS = 5 consecutive failures, the batch stays in the
+ *      outbox and the queue stops auto-retrying — `drainOutbox()`
+ *      picks it up on next `socket.on('connect')`.
  *
  * Flushed on `beforeunload` so a user who closes the tab mid-batch
  * doesn't lose work — the request goes out as a `fetch` (browsers
- * keep flight requests during unload for a short time).
+ * keep flight requests during unload for a short time). Any in-
+ * flight batch that fails during unload survives via the outbox row
+ * (persisted BEFORE the retry loop kicks in).
  */
 import { toast } from 'sonner';
 
 import { ApiError } from '@/lib/api';
+import { computeBackoff, MAX_ATTEMPTS } from '@/lib/backoff';
 import { useSession } from '@/store/session';
 import type { Action, AppState, TransactionLogEntry } from '@/store/types';
 
 import { BatchRejectedError, pushActions } from './client';
+import { enqueueToOutbox, removeOutbox, updateOutboxAttempt } from './outbox';
 
 const DEBOUNCE_MS = 200;
 const MAX_BATCH = 100;
@@ -44,50 +50,44 @@ interface PendingFlushSnapshot {
 }
 
 export interface QueueDeps {
-  /**
-   * Returns the current store snapshot. Used by `flush` to capture the
-   * pre-flight state for rollback.
-   */
   getSnapshot: () => PendingFlushSnapshot;
-  /**
-   * Replace the store state wholesale (rollback OR canonical re-hydrate
-   * from `pullState`). Implementations should NOT trigger another
-   * enqueue / Dexie save — this is for restoring known-good state.
-   */
   restoreSnapshot: (snapshot: PendingFlushSnapshot) => void;
-  /**
-   * RH2.6 — post-flush hook. After `POST /sync/actions` returns
-   * `applied[]`, the queue passes the array to this dep so the store
-   * can append the server-emitted log entries to `state.log`. In
-   * server mode this is the SOLE path by which `state.log` grows;
-   * the store's dispatch middleware discards the reducer's local
-   * `logEntries` slice output (see `apps/web/src/store/index.ts`).
-   *
-   * Optional so tests that don't care about post-flush log growth
-   * can omit it; production wiring in `main.tsx` always supplies it.
-   */
   appendServerLogEntries?: (applied: readonly TransactionLogEntry[]) => void;
 }
 
 let queue: { action: Action; partyId: string }[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Resolver for the currently-pending retry-delay promise. `resetQueue`
+ * flips `cancelled = true` and resolves this so the awaiter unwinds
+ * without firing another attempt.
+ */
+let retryResolver: (() => void) | null = null;
+let cancelled = false;
 let inflight: Promise<void> | null = null;
 let preBatchSnapshot: PendingFlushSnapshot | null = null;
 let deps: QueueDeps | null = null;
 
-/**
- * Wire the queue's dependencies. Called once at app boot. Lets tests
- * inject fakes without re-importing.
- */
 export function configureQueue(d: QueueDeps): void {
   deps = d;
+  cancelled = false;
 }
 
 export function resetQueue(): void {
   queue = [];
+  cancelled = true;
   if (timer !== null) {
     clearTimeout(timer);
     timer = null;
+  }
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  if (retryResolver !== null) {
+    retryResolver();
+    retryResolver = null;
   }
   inflight = null;
   preBatchSnapshot = null;
@@ -95,17 +95,9 @@ export function resetQueue(): void {
 
 /**
  * BUG-003 (2026-07-01) — capture the pre-batch snapshot from the
- * caller BEFORE the reducer applies its mutation to the store. Prior
- * to this fix, `enqueue()` captured the snapshot via
- * `deps.getSnapshot()` at first-in-batch time — but by that point the
- * dispatcher had already applied the mutation, so the snapshot was
- * post-mutation and 422 rollbacks were no-ops.
- *
- * The store's `dispatch` MUST call this BEFORE calling `reduce()`.
- * Subsequent calls within the same debounce window are no-ops (the
- * first snapshot in the batch is the one we want to restore to).
- * `resetQueue()` clears the snapshot; a successful push also clears
- * it via the normal `preBatchSnapshot = null` step in `flush()`.
+ * caller BEFORE the reducer applies its mutation to the store. The
+ * store's `dispatch` MUST call this BEFORE calling `reduce()`.
+ * Subsequent calls within the same debounce window are no-ops.
  */
 export function captureRollbackSnapshot(): void {
   if (deps === null) return;
@@ -114,41 +106,19 @@ export function captureRollbackSnapshot(): void {
 }
 
 /**
- * Append an action to the pending batch. The pre-batch snapshot is
- * expected to have been captured by `captureRollbackSnapshot()` before
- * the caller applied the mutation to the store (see BUG-003). If it
- * wasn't (tests that don't call the capture step, or a caller that
- * forgets), fall back to the post-mutation snapshot from
- * `deps.getSnapshot()` — same behaviour as pre-fix but with the caveat
- * that rollback restores the mutated state.
- *
- * RH4.2 — `partyId` is now passed explicitly per enqueue. Previously
- * the queue asked its `getActivePartyId` dep at flush time, which
- * round-tripped through Dexie's `meta.currentPartyId`. Post-RH4.2 the
- * URL is authoritative for partyId; the dispatcher reads
- * `state.appState.party.id` (kept URL-synced by PartyScopeSync) at
- * dispatch time and threads it here. Zero Dexie meta reads on the
- * flush path in server mode.
+ * Append an action to the pending batch. RH4.2 — `partyId` is passed
+ * explicitly (URL-authoritative). See the store's `dispatch` for the
+ * source.
  */
 export function enqueue(action: Action, partyId: string): void {
   if (deps === null) {
     throw new Error('queue.enqueue: configureQueue was never called');
   }
-  // `seed-catalog` is a local-only optimistic seed (`store/seed.ts`):
-  // it populates the client's `appState.catalog` mirror so the UI has
-  // items to show immediately after `create-character`. The server
-  // already has the canonical PHB+DMG catalog (seed-runner writes it
-  // at boot; `/sync/state` returns it). Pushing seed-catalog here would
-  // (a) duplicate the data and (b) confuse the server's bootstrap
-  // path in `apps/server/src/sync/routes.ts` (bootstrap dispatch keys
-  // on `party.findUnique === null` — a seed-catalog against a not-yet-
-  // existing party would slip past the router with no useful semantics).
+  // `seed-catalog` is a local-only optimistic seed — the server already
+  // has the canonical PHB+DMG catalog. See the R3.5 rationale (retained
+  // from pre-R5.1.c code).
   if (action.type === 'seed-catalog') return;
   if (queue.length === 0 && preBatchSnapshot === null) {
-    // Fallback for callers that didn't call captureRollbackSnapshot
-    // first. This is the pre-BUG-003 behaviour; log-only paths and
-    // tests may end up here. Real dispatch flows call the capture
-    // helper.
     preBatchSnapshot = deps.getSnapshot();
   }
   queue.push({ action, partyId });
@@ -164,124 +134,42 @@ function scheduleFlush(): void {
 }
 
 /**
- * Flush the pending batch immediately. Awaited by Hub's submit
- * handler so the bootstrap pull lands before navigation, and by
- * `beforeunload` to drain on tab close.
+ * Flush the pending batch immediately. Awaited by Hub's submit handler
+ * so the bootstrap pull lands before navigation, and by `beforeunload`
+ * to drain on tab close.
  */
 export async function flush(): Promise<void> {
   if (deps === null) return;
-  if (inflight !== null) {
-    // Coalesce — caller can `await` the in-flight promise.
-    return inflight;
-  }
+  if (inflight !== null) return inflight;
   if (queue.length === 0) return;
 
-  // Capture the narrowed `deps` for use inside the async lock callback.
-  // TypeScript's control-flow analysis doesn't survive across the
-  // callback boundary, so we bind `d` here (guaranteed non-null by the
-  // early return above) rather than re-checking `deps !== null` at
-  // every use site inside the callback.
   const d = deps;
-
-  // Splice up to MAX_BATCH off the head; leftovers stay for the next
-  // tick.
   const batch = queue.splice(0, MAX_BATCH);
   const snapshot = preBatchSnapshot;
   preBatchSnapshot = null;
 
+  // Group by partyId — every entry in a single POST must share a party.
+  const first = batch[0];
+  if (first === undefined) return;
+  const partyId = first.partyId;
+  const sameParty = batch.filter((b) => b.partyId === partyId);
+  const otherParty = batch.filter((b) => b.partyId !== partyId);
+  if (otherParty.length > 0) {
+    // Requeue at the head; the next flush handles them.
+    queue.unshift(...otherParty);
+  }
+  const actions = sameParty.map((b) => b.action);
+
   inflight = navigator.locks.request<void>(
     'sync-queue-flush',
-    // The `LockGrantedCallback<T>` DOM type is `(lock) => T`, which
-    // TS type-checks fine against an async callback (Promise<void> is
-    // assignable to void). ESLint's `no-misused-promises` doesn't see
-    // that Web Locks accepts async callbacks natively — the runtime
-    // awaits the returned promise. Suppressing this one call site.
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     async () => {
-      // RH2.3 — same-origin multi-tab coordinator. `navigator.locks`
-      // FIFO-queues requests to the same name across tabs so only ONE
-      // tab issues a `POST /sync/actions` at a time. The lock releases
-      // automatically when this callback settles or the tab closes; no
-      // manual heartbeat / leader-election protocol needed. Baseline
-      // Widely Available since March 2022 (all 4 major browsers). The
-      // test env uses the FIFO shim in `apps/web/src/test/setup.ts`.
       try {
-        // RH4.2 — partyId comes from the enqueue call site (dispatcher
-        // reads it from `state.appState.party.id`, which PartyScopeSync
-        // keeps URL-synced). No Dexie meta round-trip. Every entry in
-        // the batch carries its own partyId; splitting the batch by
-        // party is unlikely in practice (each URL identifies one party)
-        // but the queue defends against it — we flush all entries that
-        // share the first entry's partyId and leave the rest for the
-        // next tick.
-        const first = batch[0];
-        if (first === undefined) return; // defensive; length checked above
-        const partyId = first.partyId;
-        const sameParty = batch.filter((b) => b.partyId === partyId);
-        const otherParty = batch.filter((b) => b.partyId !== partyId);
-        if (otherParty.length > 0) {
-          // Requeue at the head; the next flush handles them.
-          queue.unshift(...otherParty);
-        }
-        const actions = sameParty.map((b) => b.action);
-
-        await pushActions(partyId, actions).then((response) => {
-          // RH2.6 — server-authoritative log-authority in server mode.
-          // The server's `applied[]` echo is the sole source of truth
-          // for TransactionLog contents; the store's dispatch
-          // middleware discards the reducer's local logEntries in
-          // server mode, so this call is the only path by which
-          // `state.log` grows. Skipped when the dep is absent (test
-          // fakes that don't care about log growth).
-          if (d.appendServerLogEntries !== undefined) {
-            d.appendServerLogEntries(response.applied);
-          }
-        });
-
-        // RH1.3 — no post-flush re-pull. The server's reducer runs with
-        // NO id-minting authority (the RH1.2 contract removed `ctx.newId`
-        // server-side); every id in the server's `applied[]` echo is the
-        // same client-minted UUID v7 that's already in local state. The
-        // pre-RH1.3 re-pull was necessary because the server's reducer
-        // used to mint its own randomUUIDs — that divergence is gone.
-      } catch (err) {
-        if (err instanceof BatchRejectedError) {
-          if (snapshot !== null) d.restoreSnapshot(snapshot);
-          toast.error(`Action rejected: ${err.rejectedCode}`, {
-            description: err.rejectedMessage,
-          });
-          return;
-        }
-        if (err instanceof ApiError) {
-          if (err.code === 'unauthenticated') {
-            if (snapshot !== null) d.restoreSnapshot(snapshot);
-            await useSession.getState().signOut();
-            return;
-          }
-          if (err.code === 'display_name_required') {
-            if (snapshot !== null) d.restoreSnapshot(snapshot);
-            // The session store's status will already be `authenticated`
-            // — flip it so ProtectedRoute reroutes.
-            const user = useSession.getState().user;
-            if (user !== null) {
-              useSession.getState().setUserPatch({ ...user, needsDisplayName: true });
-            }
-            return;
-          }
-          toast.error(`Sync error: ${err.code}`);
-          // Don't roll back on transient errors — the user can retry.
-          return;
-        }
-        // Network error: keep optimistic state, drop the batch.
-
-        console.warn('[queue] flush failed; keeping optimistic state', err);
-        toast.error('Network error — your changes may not have saved.');
+        await flushBatchWithRetry(d, partyId, actions, snapshot, undefined, 0);
       } finally {
         inflight = null;
-        // If more actions arrived while we were in-flight, drain them.
+        // Drain leftovers that arrived during our flight.
         if (queue.length > 0) {
-          // The next flush captures its own snapshot from the (already
-          // server-confirmed) current state.
           preBatchSnapshot = d.getSnapshot();
           scheduleFlush();
         }
@@ -289,6 +177,154 @@ export async function flush(): Promise<void> {
     },
   );
   return inflight;
+}
+
+/**
+ * R5.1.c — Attempt one flush of a batch, with retry semantics on
+ * network failure and outbox persistence for tab-close survival.
+ *
+ * `outboxId`: if the batch is being retried from a previously
+ * persisted outbox row (either an intra-session retry or a
+ * reconnect-drain replay), pass the row id so it can be cleaned up
+ * on success or 422. If undefined and a network error hits, we
+ * persist a NEW outbox row.
+ *
+ * `attempt`: 0-indexed retry counter. After MAX_ATTEMPTS consecutive
+ * network failures we surface a "paused" toast and leave the batch
+ * in the outbox for reconnect drain.
+ *
+ * `snapshot`: pre-batch state for rollback on 422. Not consulted on
+ * network errors — the batch is presumed retryable, not rejected.
+ */
+async function flushBatchWithRetry(
+  d: QueueDeps,
+  partyId: string,
+  actions: readonly Action[],
+  snapshot: PendingFlushSnapshot | null,
+  outboxId: number | undefined,
+  attempt: number,
+): Promise<void> {
+  try {
+    const response = await pushActions(partyId, actions);
+    // 200 — drained. Remove outbox row if we had one.
+    if (outboxId !== undefined) {
+      await removeOutbox(outboxId);
+    }
+    if (d.appendServerLogEntries !== undefined) {
+      d.appendServerLogEntries(response.applied);
+    }
+    return;
+  } catch (err) {
+    if (err instanceof BatchRejectedError) {
+      // 422 — server permanently rejected. Roll back optimistic state
+      // + drop the outbox row (no point re-sending). Surface a toast.
+      if (snapshot !== null) d.restoreSnapshot(snapshot);
+      if (outboxId !== undefined) {
+        await removeOutbox(outboxId);
+      }
+      toast.error(`Action rejected: ${err.rejectedCode}`, {
+        description: err.rejectedMessage,
+      });
+      return;
+    }
+    if (err instanceof ApiError) {
+      if (err.code === 'unauthenticated') {
+        if (snapshot !== null) d.restoreSnapshot(snapshot);
+        // KEEP the outbox row — post-login drain will replay it.
+        await useSession.getState().signOut();
+        return;
+      }
+      if (err.code === 'display_name_required') {
+        if (snapshot !== null) d.restoreSnapshot(snapshot);
+        const user = useSession.getState().user;
+        if (user !== null) {
+          useSession.getState().setUserPatch({ ...user, needsDisplayName: true });
+        }
+        return;
+      }
+      // Other 4xx / 5xx: treat as transient. Don't rollback (user can
+      // retry the action manually). Don't retry auto-magically either
+      // — a 500 on the server side is a signal to stop hammering.
+      toast.error(`Sync error: ${err.code}`);
+      return;
+    }
+    // Network error (fetch throw, offline, DNS fail, etc.). Persist
+    // to outbox on first hit; then schedule a retry with backoff.
+    let currentOutboxId = outboxId;
+    if (currentOutboxId === undefined) {
+      currentOutboxId = await enqueueToOutbox(partyId, actions);
+    } else {
+      await updateOutboxAttempt(currentOutboxId);
+    }
+
+    const nextAttempt = attempt + 1;
+    if (nextAttempt >= MAX_ATTEMPTS) {
+      // Give up auto-retrying. Row stays in the outbox for reconnect
+      // drain. Do NOT roll back — solo parties + offline sessions
+      // depend on optimistic state persisting across the disconnect.
+      console.warn('[queue] max retry attempts reached, parking in outbox', {
+        partyId,
+        attempts: nextAttempt,
+      });
+      toast.error('Sync paused — will retry on reconnect.');
+      return;
+    }
+
+    const delay = computeBackoff(attempt);
+    await new Promise<void>((resolve) => {
+      retryResolver = resolve;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        retryResolver = null;
+        resolve();
+      }, delay);
+    });
+    if (cancelled) return; // resetQueue was called mid-retry
+    // Recursive tail call — the outer `try` block's error paths
+    // handle all subsequent outcomes.
+    await flushBatchWithRetry(d, partyId, actions, snapshot, currentOutboxId, nextAttempt);
+  }
+}
+
+/**
+ * R5.1.c — Drain-time flush entrypoint used by `reconnect.ts`. Called
+ * once per outbox row (in FIFO order); shares the same retry semantics
+ * as the inline flush path but starts with a known `outboxId`.
+ *
+ * Returns `true` on success (row removed), `false` on any failure
+ * (row remains in outbox). The caller uses the return value to decide
+ * whether to continue draining the queue or stop and let normal retry
+ * take over.
+ */
+export async function replayOutboxRow(
+  partyId: string,
+  actions: readonly Action[],
+  outboxId: number,
+): Promise<boolean> {
+  if (deps === null) return false;
+  const d = deps;
+  try {
+    const response = await pushActions(partyId, actions);
+    await removeOutbox(outboxId);
+    if (d.appendServerLogEntries !== undefined) {
+      d.appendServerLogEntries(response.applied);
+    }
+    return true;
+  } catch (err) {
+    if (err instanceof BatchRejectedError) {
+      // Rejected batch: server refused. Remove the row (retry won't help)
+      // and toast. Don't roll back — the local state may have been
+      // hydrated from server after the disconnect, so there's nothing to
+      // roll back TO. This matches the R3.5 "422 error surface" contract.
+      await removeOutbox(outboxId);
+      toast.error(`Action rejected: ${err.rejectedCode}`, {
+        description: err.rejectedMessage,
+      });
+      return false;
+    }
+    // Network / 5xx / auth errors → leave row in outbox for next drain.
+    return false;
+  }
 }
 
 /**

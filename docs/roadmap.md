@@ -3345,13 +3345,13 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 - [x] Websocket party-room subscription (server pushes action diffs) — `socket.io-client` connects on server-mode boot; auto-joins are enforced server-side.
 - [x] Optimistic UI: web applies action locally, reconciles on server ack — dispatched actions go through the existing R3.5 queue (unchanged); broadcasts from other clients apply via `applyBroadcast()` which re-runs the reducer for state mutation + appends server's `applied[]` verbatim via `appendServerLogEntries` (RH2.6 log-authority).
-- [x] Conflict resolution policy documented and implemented (server is authoritative) — dedupe by log-entry id handles self-echo; `applyBroadcast` short-circuits when the current in-memory partyId doesn't match the broadcast (viewing another party). Reducer re-run is deterministic per RH2. Missed broadcasts (never received live) are picked up by R5.1.c's `GET /sync/log?sinceLogId=`.
+- [x] Conflict resolution policy documented and implemented (server is authoritative) — dedupe by log-entry id handles self-echo; `applyBroadcast` short-circuits when the current in-memory partyId doesn't match the broadcast (viewing another party). Reducer re-run is deterministic per RH2. Missed broadcasts (never received live) are picked up by R5.1.c's `GET /sync/state` catch-up on socket reconnect.
 
 ##### R5.1.c — Outbox + retry + reconnect replay
 
-- [ ] Reconnect flow replays missed events
-- [ ] **Offline-first Dexie cache for solo parties** — **carryforward from R3.5**. Today the web sync queue keeps optimistic state on a network error but drops the batch; solo parties should survive a full offline session by replaying the queue when connectivity returns. (Source: R3.5 Notes.)
-- [ ] **Sync queue retry semantics** — R3.5 surfaces a transient toast on network errors and drops the batch. R5 should add bounded retry with exponential backoff and an "outbox" persisted to Dexie so a tab close doesn't lose work. Inline pointer: `apps/web/src/sync/queue.ts:22, 192`. **Carryforward from R3.5.**
+- [x] Reconnect flow replays missed events — on socket `on('connect')`, `drainOutbox()` re-hydrates the store via `GET /sync/state?partyId=` (server-authoritative snapshot) then drains any Dexie outbox rows via `POST /sync/actions`.
+- [x] **Offline-first Dexie cache for solo parties** — the queue now persists any batch that fails the initial POST to a new `outbox` Dexie table (schema v2). Solo parties can accumulate arbitrarily many buffered writes; they drain on next connect.
+- [x] **Sync queue retry semantics** — new `computeBackoff(attempt)` in `apps/web/src/lib/backoff.ts` implements 500ms → 8s exponential curve with ±25% jitter. `MAX_ATTEMPTS = 5` — after that, the batch parks in the outbox for reconnect drain. `queue.ts::flushBatchWithRetry` is the new retry loop; `queue.ts::resetQueue` sets a cancellation flag so pending retry promises unwind cleanly on test teardown / Dexie wipe.
 
 ##### R5.1.d — Offline write-block + auto-resume
 
@@ -3363,7 +3363,7 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 >
 > **Design decisions locked with user 2026-07-03:**
 >   - **Broadcast payload shape:** `{ partyId, action, applied }`. Receivers re-run the reducer against `action` for state mutation, then discard reducer log entries and append server's `applied[]` (RH2.6 log-authority pattern). Deterministic per RH2.
->   - **Reconnect replay:** new `GET /sync/log?partyId=&sinceLogId=` endpoint (added in R5.1.c). Cheap indexed query, bounded response, precise resume.
+>   - **Reconnect catch-up:** re-hydrate via `GET /sync/state?partyId=` on socket connect (the endpoint `PartyScopeSync` already uses). The plan originally called for a paginated `GET /sync/log?sinceLogId=` endpoint; implementation surfaced that log-entry payloads aren't isomorphic to action payloads for id-minting actions (log carries resolved `itemInstanceId`, action carries `newItemInstanceId`), so state-repull is simpler and reuses proven code. See R5.1.c Notes.
 >   - **Outbox:** new Dexie `outbox` table on schema v2. Rows keyed by `partyId + createdAt`; carry `attemptCount + lastAttemptAt`.
 >   - **Retry backoff:** exponential w/ ±25% jitter, 5 attempts (500ms → 8s ceiling). After 5th failure, batch stays in outbox and drains on next `socket.on('connect')`.
 >   - **Write-block:** centralized `useStore.getState().canDispatch()` returns `false` when `(isServerMode && !online && memberCount >= 2)`. Solo (memberCount === 1) stays writable + queues to outbox.
@@ -3378,7 +3378,7 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 >
 > **Cookie parsing:** `@fastify/cookie` decorates `req.cookies` only for HTTP requests routed through Fastify's handler pipeline. The Socket.IO upgrade sidesteps that pipeline, so `io.use()` parses the raw `Cookie` header via `cookie@2.x`'s `parseCookie` export (the package renamed its API in v2 — `cookie.parse()` became a named `parseCookie` export). The parsed cookies feed a minimal `FastifyRequest`-shaped shim that carries only `{ cookies }` — `getSession` reads no other request fields.
 >
-> **Broadcast is fire-and-forget outside the transaction.** The plan initially considered emitting inside the `$transaction` callback so a broadcast failure could roll back the DB write, but that inverts the durability contract: the log entry is committed and (via R5.1.c's reconnect replay) will eventually reach every party member via `GET /sync/log?sinceLogId=`. A missed live broadcast is just eventual consistency, not a correctness bug. Emit errors log via `app.log.error` and swallow.
+> **Broadcast is fire-and-forget outside the transaction.** The plan initially considered emitting inside the `$transaction` callback so a broadcast failure could roll back the DB write, but that inverts the durability contract: the log entry is committed and (via R5.1.c's reconnect state re-pull) will eventually reach every party member via `GET /sync/state`. A missed live broadcast is just eventual consistency, not a correctness bug. Emit errors log via `app.log.error` and swallow.
 >
 > **Server-side room-membership assertion via observable effect.** The auto-join test doesn't inspect `io.sockets.adapter.rooms` directly (which would leak an implementation detail into the test); instead it dispatches a broadcast-eligible action and asserts the connected client receives the `applied` event. Stronger evidence + more resilient to Socket.IO internals changes.
 >
@@ -3394,9 +3394,23 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 >
 > **Broadcast payload is `{ partyId, action, applied }` — `action` is essential.** RH2.6 makes `applied[]` authoritative for the log, but the reducer needs the source `action` to derive the STATE mutation. Sending only `applied[]` would force receivers to reverse-engineer the mutation from log-entry shape, which is not a stable contract (log entries carry POST-mutation snapshots, not action inputs). Server sends both; client discards reducer log slices, keeps state, appends server's authoritative log entries.
 >
-> **Socket auto-reconnect handled by socket.io-client.** `reconnection: true, reconnectionDelay: 500, reconnectionDelayMax: 8000, reconnectionAttempts: Infinity` — socket.io-client's own state machine handles the WS transport reconnect. R5.1.c's outbox + `GET /sync/log?sinceLogId=` handle the DATA reconnect (drain buffered writes + replay missed broadcasts). Two distinct concerns.
+> **Socket auto-reconnect handled by socket.io-client.** `reconnection: true, reconnectionDelay: 500, reconnectionDelayMax: 8000, reconnectionAttempts: Infinity` — socket.io-client's own state machine handles the WS transport reconnect. R5.1.c's outbox + `GET /sync/state` re-pull on connect handle the DATA reconnect (drain buffered writes + catch up on missed state). Two distinct concerns.
 >
 > **`useStore.setState({ appState: result.state })` bypasses Immer** by intent — the store's Immer middleware wraps `set` inside the store's methods (`dispatch`, `hydrate`, etc.). Direct top-level `setState` skips the middleware pass; since `result.state` is a new plain object from the pure reducer, no Immer draft is needed. Matches the pattern in `store/hydrate.ts:hydrate` which also uses `useStore.setState` directly.
+
+##### R5.1.c — Notes
+
+> **Shipped 2026-07-03.** Web suite 763 → 779 (+16 tests: 4 backoff, 5 outbox, 3 queue-retry, 4 reconnect). Server + shared surfaces unchanged. Dexie schema bumped to v2 with a new `outbox` table (purely additive; no data migration). New files: `apps/web/src/lib/backoff.ts`, `apps/web/src/sync/outbox.ts`, `apps/web/src/sync/reconnect.ts`, `apps/web/src/sync/applyBroadcast.ts`. `queue.ts` refactored with a retry loop + outbox integration + cancellation flag.
+>
+> **Reconnect uses `GET /sync/state`, not a log-replay endpoint.** The initial plan proposed a new `GET /sync/log?sinceLogId=` endpoint feeding entries into `applyBroadcast`. When implementation surfaced a design issue — `TransactionLog` entries carry POST-mutation snapshots with resolved entity ids (`itemInstanceId`), while `Action` payloads carry mint fields (`newItemInstanceId`) — reconstructing an `Action` from a log entry is lossy for id-minting variants. Rather than adding an action-column to `TransactionLog`, the drainer now re-pulls server-authoritative state via `pullState` (same endpoint `PartyScopeSync` already uses on party navigation). Cheaper than expected for typical parties, and reuses proven code. The `GET /sync/log` endpoint + `syncLogQuerySchema` were removed from this slice (no consumer). If R5.3's history UI needs paginated log reads, add them then.
+>
+> **`applyBroadcast` extracted to its own module (`apps/web/src/sync/applyBroadcast.ts`).** R5.1.b initially colocated the reconciliation helper inside `sync/socket.ts`; R5.1.c needed it from `reconnect.ts` too. To avoid a circular import (`socket ↔ reconnect`), the helper moved to a dedicated file. `sync/socket.ts` re-exports for backwards-compat with R5.1.b's public API.
+>
+> **Retry cancellation flag.** The retry loop uses `await new Promise((resolve) => { retryTimer = setTimeout(resolve, delay); })`. If `resetQueue()` cleared the timer but didn't resolve the promise, the awaiter would block forever — leaking a Promise chain into the next test that still hits (retired) MSW handlers. `resetQueue` now flips a `cancelled = true` flag AND calls the stored resolver so the retry loop unwinds cleanly. Discovered during test wiring; the flag also makes production teardown correct (e.g. logout mid-retry).
+>
+> **Tests use `vi.doMock` per-test + fresh module re-imports.** The retry backoff formula would make tests wait real seconds. `loadReconnect()` / `loadQueue()` mock `@/lib/backoff` to 1ms after `vi.resetModules()`. The reconnect test also re-imports `@/store` and `@/test/fixtures` after the reset so `bootstrap()` and `drainOutbox` share a single fresh `useStore` singleton — a top-level `import { useStore }` in `fixtures.ts` would otherwise capture the pre-reset instance, invisible to the freshly-loaded `reconnect.ts`.
+>
+> **Outbox rows survive tab close.** The plan called this out but it's worth restating: the whole point of the outbox is durability across "hostile" boundaries. On network error, we persist to Dexie BEFORE scheduling the first retry, so a tab close mid-first-attempt still leaves the batch recoverable. Next tab boot's `socket.on('connect')` picks it up.
 
 #### R5.2 — Sessions entity + log tagging
 
