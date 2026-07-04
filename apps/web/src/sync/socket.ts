@@ -90,3 +90,42 @@ export function resetSocket(): void {
 export function getSocket(): Socket | null {
   return socket;
 }
+
+/**
+ * R5.2.a — Gate the socket connect on session status. The server's
+ * `io.use()` middleware rejects unauthenticated upgrades, producing
+ * a noisy `connect_error: unauthenticated` on every login-screen
+ * visit if we auto-connect before hydration settles.
+ *
+ * This helper is idempotent: safe to call from a `useSession.subscribe`
+ * callback that fires on every status transition.
+ *
+ *   - `authenticated` / `needsDisplayName` → build (once) + connect
+ *     (once). `needsDisplayName` still holds a valid session cookie
+ *     that `io.use()` accepts; the `GET /sync/*` gate on displayName
+ *     is a per-route concern, not a socket-level one.
+ *   - Any other status (`loading`, `anonymous`) → disconnect + tear
+ *     down the module singleton so the next authenticated transition
+ *     starts fresh (avoids stale listeners after signOut → signIn).
+ */
+export function syncSocketWithSession(
+  status: 'loading' | 'anonymous' | 'authenticated' | 'needsDisplayName',
+): void {
+  const authenticated = status === 'authenticated' || status === 'needsDisplayName';
+  if (authenticated) {
+    // First authenticated transition: build the client, then connect.
+    // Subsequent authenticated re-emits (e.g. displayName patch) are
+    // idempotent: socket.io-client's `.connect()` on an already-open
+    // socket is a no-op.
+    if (socket === null) {
+      const built = connectSocket();
+      built?.connect();
+    } else {
+      socket.connect();
+    }
+    return;
+  }
+  // Anonymous / loading — tear down so the next auth transition
+  // rebuilds cleanly.
+  resetSocket();
+}

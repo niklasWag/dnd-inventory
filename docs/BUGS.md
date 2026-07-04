@@ -80,6 +80,38 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-006 — Socket.IO connects on the login screen before the user is authenticated; two red console errors greet every fresh visitor
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04 (branch: `feat/r5-live-sync-history`; R5.1 followup)
+- **Severity:** low (cosmetic — the server correctly rejects the unauthenticated upgrade per SECURITY §6; no data leak, no broken functionality. But two red-flagged console errors on every fresh /login visit is noise that trains users to ignore the console, and it wastes one round-trip per boot before the socket gives up.)
+- **Status:** fixed
+- **Affected slice:** R5.1.b (client socket consumer). Present since 2026-07-03 when the boot-time `connectSocket()` landed.
+
+**Symptom.** Server mode, first visit to the app (no session cookie). Two red errors appear in the browser console before the user has done anything:
+
+```
+WebSocket connection to 'ws://localhost:8080/socket.io/?EIO=4&transport=websocket&sid=...' failed: WebSocket is closed before the connection is established.
+[socket] connect_error: unauthenticated
+```
+
+Once the user signs in, the socket connects cleanly (any subsequent broadcasts work). But the initial-visit console pollution is confusing — a new user might think something is broken.
+
+**Root cause.** `apps/web/src/main.tsx:84-87` unconditionally called `connectSocket()` + `socket.connect()` at boot in server mode, regardless of session status. The server's Socket.IO middleware (`apps/server/src/realtime/io.ts::io.use()`) reads the session cookie via `getSession()`; when the user has none, it invokes `next(new Error('unauthenticated'))`, which surfaces client-side as a `connect_error`. The underlying WS handshake also gets torn down mid-upgrade, producing the raw browser-level "closed before connection established" warning.
+
+**Fix.** Auth-gate the connect. `apps/web/src/sync/socket.ts` gains `syncSocketWithSession(status)` — a small state-machine helper:
+
+- `'authenticated'` / `'needsDisplayName'` → build (once) + connect. `needsDisplayName` still holds a valid session cookie that `io.use()` accepts.
+- Any other status (`'loading'`, `'anonymous'`) → `resetSocket()` (tear down the module singleton so the next auth transition rebuilds cleanly).
+
+`main.tsx` boots by calling `syncSocketWithSession(useSession.getState().status)` once and subscribing to `useSession` for transition-triggered re-syncs. On sign-in the session flips `anonymous` → `authenticated` and the helper connects; on sign-out it flips back and the helper tears down.
+
+**Tests.** `apps/web/src/sync/socket.test.ts` gains 6 new tests: anonymous / loading → no build; authenticated / needsDisplayName → build + connect; authenticated → anonymous → tear-down; idempotent re-authenticate.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
+
 ### BUG-004 — Server persistor mints a different UUID than the reducer for new item rows; Item Detail history is empty right after `acquire` / `split`
 
 - **Filed:** 2026-07-01

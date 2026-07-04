@@ -8,7 +8,7 @@ import { useSession } from '@/store/session';
 import { hydrateFromDexie } from '@/store/hydrate';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { attachUnloadFlush, configureQueue } from '@/sync/queue';
-import { connectSocket } from '@/sync/socket';
+import { syncSocketWithSession } from '@/sync/socket';
 import '@/index.css';
 
 const rootEl = document.getElementById('root');
@@ -81,9 +81,19 @@ async function boot(): Promise<void> {
   // happen. Local mode returns null (no server to connect to).
   // Kept AFTER `configureQueue` so the store + queue are wired before
   // the first inbound broadcast can arrive.
+  //
+  // R5.2.a — connect ONLY when the session has a valid cookie
+  // (`authenticated` / `needsDisplayName`). Prevents a noisy
+  // `connect_error: unauthenticated` on every login-screen visit
+  // before the user signs in. Re-runs on every session-status flip
+  // (login → connect, signOut → disconnect + tear down).
   if (isServerMode) {
-    const socket = connectSocket();
-    socket?.connect();
+    syncSocketWithSession(useSession.getState().status);
+    useSession.subscribe((state, prev) => {
+      if (state.status !== prev.status) {
+        syncSocketWithSession(state.status);
+      }
+    });
   }
 
   createRoot(rootEl!).render(

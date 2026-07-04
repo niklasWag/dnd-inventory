@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { newUuidV7 } from '@app/shared';
 
-import { applyBroadcast } from './socket';
+import { applyBroadcast, getSocket, syncSocketWithSession, resetSocket } from './socket';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
 import { bootstrap } from '@/test/fixtures';
@@ -195,5 +195,58 @@ describe('R5.1.b — applyBroadcast', () => {
     expect(after.appState).toBe(preAppState);
     expect(after.log).toBe(preLog);
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+describe('R5.2.a — syncSocketWithSession (auth-gated connect)', () => {
+  beforeEach(() => {
+    resetSocket();
+    // Server-mode URL required for `connectSocket()` to build the client.
+    vi.stubEnv('VITE_SERVER_URL', 'http://localhost:8080');
+  });
+
+  afterEach(() => {
+    resetSocket();
+    vi.unstubAllEnvs();
+  });
+
+  it('does not build a socket when status is anonymous', () => {
+    syncSocketWithSession('anonymous');
+    expect(getSocket()).toBeNull();
+  });
+
+  it('does not build a socket when status is loading', () => {
+    syncSocketWithSession('loading');
+    expect(getSocket()).toBeNull();
+  });
+
+  it('builds + connects the socket when status is authenticated', () => {
+    syncSocketWithSession('authenticated');
+    const s = getSocket();
+    expect(s).not.toBeNull();
+    // socket.io-client sets `active` once `.connect()` is called (even
+    // if the transport hasn't finished the WS upgrade yet).
+    expect(s!.active).toBe(true);
+  });
+
+  it('builds + connects the socket when status is needsDisplayName (valid session cookie)', () => {
+    syncSocketWithSession('needsDisplayName');
+    expect(getSocket()).not.toBeNull();
+  });
+
+  it('tears down the socket on transition authenticated → anonymous (sign out)', () => {
+    syncSocketWithSession('authenticated');
+    expect(getSocket()).not.toBeNull();
+    syncSocketWithSession('anonymous');
+    expect(getSocket()).toBeNull();
+  });
+
+  it('is idempotent when called with the same authenticated status twice', () => {
+    syncSocketWithSession('authenticated');
+    const first = getSocket();
+    syncSocketWithSession('authenticated');
+    const second = getSocket();
+    // Same singleton — no rebuild on repeated authenticated calls.
+    expect(second).toBe(first);
   });
 });
