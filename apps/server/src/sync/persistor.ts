@@ -103,11 +103,11 @@ export async function applyDelta(
     case 'equip':
       return persistEquip(tx, action.payload);
     case 'unequip':
-      return persistSetEquipped(tx, action.payload.itemInstanceId, false);
+      return persistUnequip(tx, action.payload.itemInstanceId);
     case 'attune':
       return persistAttune(tx, action.payload);
     case 'unattune':
-      return persistSetAttuned(tx, action.payload.itemInstanceId, false);
+      return persistUnattune(tx, action.payload.itemInstanceId);
     case 'use-charge':
       return persistUseCharge(tx, action.payload);
     case 'recharge':
@@ -760,22 +760,6 @@ async function persistSetEncumbrance(
   });
 }
 
-async function persistSetEquipped(
-  tx: Prisma.TransactionClient,
-  itemInstanceId: string,
-  equipped: boolean,
-): Promise<void> {
-  await tx.itemInstance.update({ where: { id: itemInstanceId }, data: { equipped } });
-}
-
-async function persistSetAttuned(
-  tx: Prisma.TransactionClient,
-  itemInstanceId: string,
-  attuned: boolean,
-): Promise<void> {
-  await tx.itemInstance.update({ where: { id: itemInstanceId }, data: { attuned } });
-}
-
 /**
  * BUG-008 — `equip` persistor with auto-split. When the source row has
  * quantity > 1, splits off a fresh quantity-1 row (using
@@ -874,6 +858,91 @@ async function persistAttune(
         ? { conditionOverrides: source.conditionOverrides }
         : {}),
     },
+  });
+}
+
+/**
+ * BUG-008 completion — `unequip` with re-stack. Flips `equipped: false`
+ * and attempts to merge the row back into a matching mundane stack in
+ * the same location. Symmetric to the reducer's
+ * `applyFlagFlipWithRestack` helper.
+ *
+ * Merge only fires when both flags are false AND `currentCharges` is
+ * null — mirrors the reducer's guard so client + server converge.
+ */
+async function persistUnequip(tx: Prisma.TransactionClient, itemInstanceId: string): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({ where: { id: itemInstanceId } });
+  const patched = { ...source, equipped: false };
+  await restackOrPatch(tx, patched);
+}
+
+/**
+ * BUG-008 completion — `unattune` with re-stack. Mirrors `persistUnequip`.
+ */
+async function persistUnattune(
+  tx: Prisma.TransactionClient,
+  itemInstanceId: string,
+): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({ where: { id: itemInstanceId } });
+  const patched = { ...source, attuned: false };
+  await restackOrPatch(tx, patched);
+}
+
+/**
+ * BUG-008 completion — shared helper for the unequip/unattune persistors.
+ * Given a row with the flag already patched (in memory), either:
+ *   - Merge into a matching mundane stack (delete source, bump target),
+ *     OR
+ *   - Persist the patched row (simple update on the source's id).
+ */
+async function restackOrPatch(
+  tx: Prisma.TransactionClient,
+  patched: {
+    id: string;
+    ownerId: string;
+    definitionId: string;
+    notes: string | null;
+    containerInstanceId: string | null;
+    equipped: boolean;
+    attuned: boolean;
+    currentCharges: number | null;
+    quantity: number;
+  },
+): Promise<void> {
+  const nowMundane =
+    patched.equipped === false && patched.attuned === false && patched.currentCharges === null;
+  if (!nowMundane) {
+    await tx.itemInstance.update({
+      where: { id: patched.id },
+      data: { equipped: patched.equipped, attuned: patched.attuned },
+    });
+    return;
+  }
+  const target = await tx.itemInstance.findFirst({
+    where: {
+      id: { not: patched.id },
+      ownerId: patched.ownerId,
+      definitionId: patched.definitionId,
+      notes: patched.notes,
+      containerInstanceId: patched.containerInstanceId,
+      equipped: false,
+      attuned: false,
+      currentCharges: null,
+    },
+  });
+  if (target === null) {
+    // No merge target — persist the flag flip on the source.
+    await tx.itemInstance.update({
+      where: { id: patched.id },
+      data: { equipped: patched.equipped, attuned: patched.attuned },
+    });
+    return;
+  }
+  // Merge: delete source, bump target quantity.
+  await tx.itemInstance.delete({ where: { id: patched.id } });
+  await tx.itemInstance.update({
+    where: { id: target.id },
+    data: { quantity: target.quantity + patched.quantity },
   });
 }
 

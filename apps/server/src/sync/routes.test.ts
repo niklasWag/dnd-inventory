@@ -1478,4 +1478,117 @@ describe('POST /sync/actions — BUG-008 equip auto-split repro', () => {
       await app.close();
     }
   });
+
+  it('unequipping a solo equipped row merges it back into the matching mundane stack', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      const bootstrapIds = createCharacterIds();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Fighter',
+                level: 3,
+                str: 14,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+      const characterId = bootstrapIds.newCharacterId;
+
+      // Acquire 2 longswords → mundane stack of 2.
+      const stackedItemId = newUuidV7();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:longsword',
+                quantity: 2,
+                source: 'catalog-add',
+                newItemInstanceId: stackedItemId,
+              },
+            },
+          ],
+        },
+      });
+
+      // Equip → auto-split → 2 DB rows.
+      const equippedRowId = newUuidV7();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'equip',
+              payload: {
+                characterId,
+                itemInstanceId: stackedItemId,
+                newItemInstanceId: equippedRowId,
+              },
+            },
+          ],
+        },
+      });
+      const preUnequip = await prisma.itemInstance.findMany({
+        where: { ownerId: inventoryStashId, definitionId: 'phb-2024:longsword' },
+      });
+      expect(preUnequip).toHaveLength(2);
+
+      // Unequip the equipped row → should re-merge back into the mundane stack.
+      const unequipRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'unequip',
+              payload: { characterId, itemInstanceId: equippedRowId },
+            },
+          ],
+        },
+      });
+      expect(unequipRes.statusCode).toBe(200);
+
+      // DB: only 1 row left, qty=2, equipped=false.
+      const afterUnequip = await prisma.itemInstance.findMany({
+        where: { ownerId: inventoryStashId, definitionId: 'phb-2024:longsword' },
+      });
+      expect(afterUnequip).toHaveLength(1);
+      expect(afterUnequip[0]!.id).toBe(stackedItemId);
+      expect(afterUnequip[0]!.quantity).toBe(2);
+      expect(afterUnequip[0]!.equipped).toBe(false);
+      // The equipped row is gone.
+      const gone = await prisma.itemInstance.findUnique({ where: { id: equippedRowId } });
+      expect(gone).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
 });

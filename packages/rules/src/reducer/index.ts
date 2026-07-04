@@ -2293,6 +2293,68 @@ function resolveInventoryRow(
 }
 
 /**
+ * BUG-008 completion — after flipping `equipped` or `attuned` on `rowId`,
+ * apply the flag change; then if the resulting row is fully "flags-cleared"
+ * (both `equipped` and `attuned` are false) AND has no meaningful state
+ * that would prevent stacking (`currentCharges === null`), attempt to
+ * merge it into a matching mundane stack in the same location.
+ *
+ * Merge key mirrors `acquire`'s auto-stack predicate:
+ *   `(ownerId, definitionId, notes ?? "", containerInstanceId)`
+ * plus target must also be `equipped: false, attuned: false,
+ * currentCharges === null` (matching invariant). `customName` is NOT
+ * part of the key — this matches acquire's behavior.
+ *
+ * When a merge target exists: target's `quantity` bumps by the source
+ * row's quantity (always 1 in practice — equipped/attuned rows are
+ * always qty=1 post-BUG-008); source row is dropped. When no target
+ * exists: source stays as a standalone quantity-1 row with the flag
+ * cleared.
+ *
+ * Merge is SILENT (no extra log entry). This mirrors `acquire`'s
+ * silent stack-collapse behavior — the `unequip` / `unattune` log
+ * entry already captures the state transition; the row-merge is a
+ * downstream display collapse, not a semantically distinct event.
+ */
+function applyFlagFlipWithRestack(
+  items: ReadonlyArray<ItemInstance>,
+  rowId: string,
+  patch: { equipped?: boolean; attuned?: boolean },
+): ItemInstance[] {
+  const source = items.find((i) => i.id === rowId);
+  if (source === undefined) {
+    // Defensive: caller already resolved the row upstream. If this fires
+    // it means state drifted between resolve + flip. Fall back to the
+    // simple map path so callers still see a deterministic result.
+    return items.map((i) => (i.id === rowId ? { ...i, ...patch } : i));
+  }
+  const patched: ItemInstance = { ...source, ...patch };
+  const nowMundane =
+    patched.equipped === false && patched.attuned === false && patched.currentCharges === null;
+  if (!nowMundane) {
+    return items.map((i) => (i.id === rowId ? patched : i));
+  }
+  const target = items.find(
+    (i) =>
+      i.id !== source.id &&
+      i.ownerId === source.ownerId &&
+      i.definitionId === source.definitionId &&
+      (i.notes ?? '') === (source.notes ?? '') &&
+      (i.containerInstanceId ?? null) === (source.containerInstanceId ?? null) &&
+      i.equipped === false &&
+      i.attuned === false &&
+      i.currentCharges === null,
+  );
+  if (target === undefined) {
+    return items.map((i) => (i.id === rowId ? patched : i));
+  }
+  // Merge: drop the source, bump the target's quantity.
+  return items
+    .filter((i) => i.id !== source.id)
+    .map((i) => (i.id === target.id ? { ...i, quantity: i.quantity + patched.quantity } : i));
+}
+
+/**
  * Flips `ItemInstance.equipped` on an Inventory row. One reducer for
  * both `equip` (target = true) and `unequip` (target = false) — the
  * shape is identical apart from the discriminant. Rejects no-ops so the
@@ -2383,7 +2445,7 @@ function equipOrUnequip(
   return {
     state: {
       ...s,
-      items: s.items.map((i) => (i.id === row.id ? { ...i, equipped: target } : i)),
+      items: applyFlagFlipWithRestack(s.items, row.id, { equipped: target }),
     },
     logEntries: [
       {
@@ -2536,7 +2598,7 @@ function attuneOrUnattune(
   return {
     state: {
       ...s,
-      items: s.items.map((i) => (i.id === row.id ? { ...i, attuned: target } : i)),
+      items: applyFlagFlipWithRestack(s.items, row.id, { attuned: target }),
     },
     logEntries: [
       {

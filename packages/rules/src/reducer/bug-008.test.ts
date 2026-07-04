@@ -74,21 +74,17 @@ function seed(): {
       id: longswordDefId,
       name: 'Longsword',
       category: 'weapon',
-      partyId: null,
-      source: 'phb',
+      source: 'PHB',
       weight: 3,
       requiresAttunement: false,
-      identified: true,
     },
     {
       id: magicRingDefId,
       name: 'Ring of Protection',
-      category: 'wondrous',
-      partyId: null,
-      source: 'dmg',
+      category: 'magic',
+      source: 'DMG',
       weight: 0,
       requiresAttunement: true,
-      identified: true,
     },
   ];
   state = reduce(
@@ -505,5 +501,314 @@ describe('BUG-008 (3) — attune auto-splits a stacked row', () => {
     expect(state.items.find((i) => i.id === ringId)?.attuned).toBe(true);
     expect(after.logEntries).toHaveLength(1);
     expect(after.logEntries[0]!.type).toBe('attune');
+  });
+});
+
+describe('BUG-008 (4) — unequip auto-restacks into a matching mundane row', () => {
+  it('unequipping merges the row back into an existing mundane stack (same stash, same def, same notes)', () => {
+    const s = seed();
+    // Grow the mundane stack to 2 (one from seed + acquire 1 more).
+    let state: NonNullable<AppState> = reduce(
+      s.state,
+      {
+        type: 'acquire',
+        payload: {
+          stashId: s.inventoryStashId,
+          definitionId: s.longswordDefId,
+          quantity: 1,
+          source: 'catalog-add',
+          newItemInstanceId: newUuidV7(),
+        },
+      },
+      ctx,
+    ).state as NonNullable<AppState>;
+    // Stack is now qty=2. Equip → auto-split → source qty=1, new row qty=1 equipped.
+    const equippedRowId = newUuidV7();
+    state = reduce(
+      state,
+      {
+        type: 'equip',
+        payload: {
+          characterId: s.characterId,
+          itemInstanceId: s.longswordId,
+          newItemInstanceId: equippedRowId,
+        },
+      },
+      ctx,
+    ).state as NonNullable<AppState>;
+    const preUnequip = state.items.filter(
+      (i) => i.ownerId === s.inventoryStashId && i.definitionId === s.longswordDefId,
+    );
+    expect(preUnequip).toHaveLength(2);
+
+    // Unequip the equipped quantity-1 row → merges back into the mundane stack (qty=1 → 2).
+    const after = reduce(
+      state,
+      {
+        type: 'unequip',
+        payload: { characterId: s.characterId, itemInstanceId: equippedRowId },
+      },
+      ctx,
+    );
+    const next = after.state as NonNullable<AppState>;
+    const longswords = next.items.filter(
+      (i) => i.ownerId === s.inventoryStashId && i.definitionId === s.longswordDefId,
+    );
+    // Merged: one row, qty=2 (was 1 + the newly-unequipped 1), equipped=false.
+    expect(longswords).toHaveLength(1);
+    expect(longswords[0]!.id).toBe(s.longswordId);
+    expect(longswords[0]!.quantity).toBe(2);
+    expect(longswords[0]!.equipped).toBe(false);
+    // Only ONE log entry — the `unequip`. Merge is silent (mirrors acquire).
+    expect(after.logEntries).toHaveLength(1);
+    expect(after.logEntries[0]!.type).toBe('unequip');
+  });
+
+  it('unequip leaves the row standalone when no merge target exists', () => {
+    const s = seed();
+    // Equip the single longsword (qty=1, no auto-split needed).
+    const equipped = reduce(
+      s.state,
+      {
+        type: 'equip',
+        payload: { characterId: s.characterId, itemInstanceId: s.longswordId },
+      },
+      ctx,
+    );
+    const state = equipped.state as NonNullable<AppState>;
+    expect(state.items.find((i) => i.id === s.longswordId)?.equipped).toBe(true);
+
+    // Unequip — no other longsword in inventory, so no merge target.
+    const after = reduce(
+      state,
+      {
+        type: 'unequip',
+        payload: { characterId: s.characterId, itemInstanceId: s.longswordId },
+      },
+      ctx,
+    );
+    const next = after.state as NonNullable<AppState>;
+    const longswords = next.items.filter(
+      (i) => i.ownerId === s.inventoryStashId && i.definitionId === s.longswordDefId,
+    );
+    expect(longswords).toHaveLength(1);
+    expect(longswords[0]!.id).toBe(s.longswordId);
+    expect(longswords[0]!.quantity).toBe(1);
+    expect(longswords[0]!.equipped).toBe(false);
+  });
+
+  it('unequip does NOT merge when the row is still attuned (both flags must clear)', () => {
+    const s = seed();
+    // Grow the stack to 2, then equip → auto-split → source qty=1, new row equipped=true.
+    let state: NonNullable<AppState> = reduce(
+      s.state,
+      {
+        type: 'acquire',
+        payload: {
+          stashId: s.inventoryStashId,
+          definitionId: s.longswordDefId,
+          quantity: 1,
+          source: 'catalog-add',
+          newItemInstanceId: newUuidV7(),
+        },
+      },
+      ctx,
+    ).state as NonNullable<AppState>;
+    const equippedRowId = newUuidV7();
+    state = reduce(
+      state,
+      {
+        type: 'equip',
+        payload: {
+          characterId: s.characterId,
+          itemInstanceId: s.longswordId,
+          newItemInstanceId: equippedRowId,
+        },
+      },
+      ctx,
+    ).state as NonNullable<AppState>;
+    // Force `attuned: true` on the equipped row (edge case: state coming
+    // in mid-equipped-and-attuned. This can happen for magic weapons
+    // where the character both equips AND attunes them separately.).
+    state = {
+      ...state,
+      items: state.items.map((i) => (i.id === equippedRowId ? { ...i, attuned: true } : i)),
+    };
+
+    const after = reduce(
+      state,
+      {
+        type: 'unequip',
+        payload: { characterId: s.characterId, itemInstanceId: equippedRowId },
+      },
+      ctx,
+    );
+    const next = after.state as NonNullable<AppState>;
+    // Row stays standalone — still attuned=true, so must remain qty=1.
+    const equippedRow = next.items.find((i) => i.id === equippedRowId);
+    expect(equippedRow).toBeDefined();
+    expect(equippedRow?.equipped).toBe(false);
+    expect(equippedRow?.attuned).toBe(true);
+    expect(equippedRow?.quantity).toBe(1);
+    // Source row still qty=1 (no merge).
+    expect(next.items.find((i) => i.id === s.longswordId)?.quantity).toBe(1);
+  });
+
+  it('unequip does NOT merge a row with non-null currentCharges (charge-count safety)', () => {
+    const s = seed();
+    // Create a stack of 2 charged items via acquire + reducer path.
+    // For simplicity we hand-craft the state with a charged equipped row
+    // and a matching mundane row.
+    const chargedId = newUuidV7();
+    const mundaneId = newUuidV7();
+    const stateWithCharges: NonNullable<AppState> = {
+      ...s.state,
+      items: [
+        // Delete the seeded longsword; replace with our two rows.
+        ...s.state.items.filter((i) => i.id !== s.longswordId),
+        {
+          id: chargedId,
+          definitionId: s.longswordDefId,
+          ownerType: 'stash',
+          ownerId: s.inventoryStashId,
+          containerInstanceId: null,
+          quantity: 1,
+          equipped: true,
+          attuned: false,
+          identified: true,
+          currentCharges: 5,
+        },
+        {
+          id: mundaneId,
+          definitionId: s.longswordDefId,
+          ownerType: 'stash',
+          ownerId: s.inventoryStashId,
+          containerInstanceId: null,
+          quantity: 3,
+          equipped: false,
+          attuned: false,
+          identified: true,
+          currentCharges: null,
+        },
+      ],
+    };
+
+    const after = reduce(
+      stateWithCharges,
+      {
+        type: 'unequip',
+        payload: { characterId: s.characterId, itemInstanceId: chargedId },
+      },
+      ctx,
+    );
+    const next = after.state as NonNullable<AppState>;
+    // Charged row stays standalone; mundane stack untouched.
+    expect(next.items.find((i) => i.id === chargedId)).toBeDefined();
+    expect(next.items.find((i) => i.id === chargedId)?.currentCharges).toBe(5);
+    expect(next.items.find((i) => i.id === mundaneId)?.quantity).toBe(3);
+  });
+});
+
+describe('BUG-008 (4) — unattune auto-restacks', () => {
+  it('unattuning merges into an existing mundane stack when both flags become false', () => {
+    const s = seed();
+    // Set up: an attuned magic ring (qty=1) + a mundane stack of the same ring (qty=2).
+    const attunedId = newUuidV7();
+    const mundaneId = newUuidV7();
+    const state: NonNullable<AppState> = {
+      ...s.state,
+      items: [
+        ...s.state.items,
+        {
+          id: attunedId,
+          definitionId: s.ringDefId,
+          ownerType: 'stash',
+          ownerId: s.inventoryStashId,
+          containerInstanceId: null,
+          quantity: 1,
+          equipped: false,
+          attuned: true,
+          identified: true,
+          currentCharges: null,
+        },
+        {
+          id: mundaneId,
+          definitionId: s.ringDefId,
+          ownerType: 'stash',
+          ownerId: s.inventoryStashId,
+          containerInstanceId: null,
+          quantity: 2,
+          equipped: false,
+          attuned: false,
+          identified: true,
+          currentCharges: null,
+        },
+      ],
+    };
+
+    const after = reduce(
+      state,
+      {
+        type: 'unattune',
+        payload: { characterId: s.characterId, itemInstanceId: attunedId },
+      },
+      ctx,
+    );
+    const next = after.state as NonNullable<AppState>;
+    // Merged: attunedId is gone; mundane stack is now qty=3.
+    expect(next.items.find((i) => i.id === attunedId)).toBeUndefined();
+    expect(next.items.find((i) => i.id === mundaneId)?.quantity).toBe(3);
+  });
+
+  it('unattune leaves the row standalone if it is still equipped', () => {
+    const s = seed();
+    // Attuned + equipped magic ring (qty=1) alongside a mundane stack.
+    const attunedId = newUuidV7();
+    const mundaneId = newUuidV7();
+    const state: NonNullable<AppState> = {
+      ...s.state,
+      items: [
+        ...s.state.items,
+        {
+          id: attunedId,
+          definitionId: s.ringDefId,
+          ownerType: 'stash',
+          ownerId: s.inventoryStashId,
+          containerInstanceId: null,
+          quantity: 1,
+          equipped: true,
+          attuned: true,
+          identified: true,
+          currentCharges: null,
+        },
+        {
+          id: mundaneId,
+          definitionId: s.ringDefId,
+          ownerType: 'stash',
+          ownerId: s.inventoryStashId,
+          containerInstanceId: null,
+          quantity: 1,
+          equipped: false,
+          attuned: false,
+          identified: true,
+          currentCharges: null,
+        },
+      ],
+    };
+
+    const after = reduce(
+      state,
+      {
+        type: 'unattune',
+        payload: { characterId: s.characterId, itemInstanceId: attunedId },
+      },
+      ctx,
+    );
+    const next = after.state as NonNullable<AppState>;
+    // Row still equipped=true, so must NOT merge.
+    expect(next.items.find((i) => i.id === attunedId)?.equipped).toBe(true);
+    expect(next.items.find((i) => i.id === attunedId)?.attuned).toBe(false);
+    expect(next.items.find((i) => i.id === attunedId)?.quantity).toBe(1);
+    expect(next.items.find((i) => i.id === mundaneId)?.quantity).toBe(1);
   });
 });
