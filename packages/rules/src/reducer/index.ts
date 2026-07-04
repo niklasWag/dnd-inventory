@@ -169,6 +169,8 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return startGameSession(state, action.payload, ctx);
     case 'end-game-session':
       return endGameSession(state);
+    case 'edit-game-session-notes':
+      return editGameSessionNotes(state, action.payload);
   }
 }
 
@@ -3961,6 +3963,63 @@ function endGameSession(state: AppState): ReducerResult {
         payload: {
           gameSessionId: current.id,
           number: current.number,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * R5.2 — `edit-game-session-notes`. DM edits the free-text notes on
+ * any `GameSession` (current or past). Mirrors the `rename-stash` /
+ * `rename-character` shape: reject unknown id + reject no-op writes so
+ * every dispatch appends exactly one log entry.
+ *
+ * Empty string is a legal `notes` value — clearing the notes is a
+ * meaningful edit. The no-op check compares raw values (no trim); the
+ * caller should trim client-side if desired, matching how the DM UI
+ * currently displays notes verbatim.
+ */
+function editGameSessionNotes(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-game-session-notes' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-game-session-notes');
+
+  const session = s.gameSessions.find((gs) => gs.id === payload.gameSessionId);
+  if (session === undefined) {
+    throw new Error(`edit-game-session-notes: unknown gameSessionId ${payload.gameSessionId}`);
+  }
+
+  const oldNotes = session.notes ?? '';
+  const newNotes = payload.notes;
+  if (oldNotes === newNotes) {
+    // Matches the M3 rename-stash invariant: every dispatch appends
+    // exactly one log entry — a no-op edit can't satisfy that.
+    throw new Error('edit-game-session-notes: notes unchanged');
+  }
+
+  return {
+    state: {
+      ...s,
+      gameSessions: s.gameSessions.map((gs) => {
+        if (gs.id !== session.id) return gs;
+        // Clearing notes → drop the field; setting notes → carry it.
+        // Matches `startGameSession`'s shape (notes is optional on
+        // `GameSession` and only present when non-empty).
+        const { notes: _prevNotes, ...rest } = gs;
+        void _prevNotes;
+        return newNotes.length === 0 ? rest : { ...rest, notes: newNotes };
+      }),
+    },
+    logEntries: [
+      {
+        type: 'edit-game-session-notes',
+        payload: {
+          gameSessionId: session.id,
+          number: session.number,
+          oldNotes,
+          newNotes,
         },
       },
     ],

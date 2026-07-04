@@ -3452,14 +3452,41 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [x] Action: `end-game-session` — **Shipped in RH3.1**
 - [x] `TransactionLog.sessionId` populated from PRE-reduce current session at write time; **`null` when no session is current** per OUTLINE §3.12 amendment (2026-06-24) — no-session activity is allowed, not blocked. — **Shipped in RH3.1**
 - [x] Reducer test: dispatching `acquire` / `transfer` / `currency-transfer` etc. with no current session produces log entries with `sessionId: null`. — **Shipped in RH3.1**
-- [ ] **UI: Start / End Session buttons** — party header or DM Dashboard surface. DM-only. Confirmation dialog on End.
-- [ ] **UI: Current session indicator** — visible on every party-scoped screen when a session is active ("Session 12 in progress — Started March 5th").
-- [ ] **UI: Session list** — DM view of every past session with dates + notes; edit-in-place for notes on the current session.
-- [ ] **Distribute-loot session tagging wizard** — the DM's "give this hoard to the party" flow auto-starts a session if none is current, then tags every emitted `transfer` / `acquire` slice against it (OUTLINE §3.12).
+- [x] **UI: Start / End Session buttons** — DM Dashboard `SessionsSection` at `apps/web/src/screens/DmDashboard.tsx`. DM-only (upstream `DmOnlyRoute` gate). End button opens an AlertDialog confirmation. Both buttons short-circuit through `useCanDispatch()` for the §9 offline write-block. — **Shipped 2026-07-04**
+- [x] **UI: Current session indicator** — surfaces as an emerald pill badge in the party-scoped nav (`apps/web/src/components/Layout.tsx`), reading `state.appState?.gameSessions.find(g => g.isCurrent)` via `useShallow`. Hidden outside `/party/:partyId/*` and when no session is current. — **Shipped 2026-07-04**
+- [x] **UI: Session list** — reverse-chronological (highest number first) list on the DM Dashboard's `SessionsSection`. Each row shows number + date + optional "Current" badge + inline notes editor. Editing works on ANY session (current + past) per user direction. — **Shipped 2026-07-04**
+- [-] **Distribute-loot session tagging wizard** — **deferred to R6.3** per `docs/roadmap.md:3491` (R6.3 already owns the loot distribution wizard + hoard generator). Auto-tagging is already active via RH3.1's middleware — any `transfer` / `acquire` dispatched while a session is `isCurrent` inherits the session id — so R5.2's slice is complete without shipping wizard UI. R6.3 builds the wizard on top of R5.2's session-tools surface.
 
 #### R5.2 — Notes
 
-> -
+> **Shipped 2026-07-04 on `feat/r5-live-sync-history`.** Single commit for the whole slice (per user's slicing decision — no sub-slicing). Test-suite growth 1411 → 1439 (+28 net):
+>   - **shared** — 261 → 265 (+4): 4 schema tests for the new `edit-game-session-notes` log variant. Guard-map exhaustive-array test bumped (not counted separately).
+>   - **rules** — 136 → 144 (+8): 8 reducer tests for the new arm (set / overwrite / clear / other-sessions-untouched / unknown-id / no-op-unchanged / no-op-clear / null-state).
+>   - **server** — 201 → 203 (+2): 2 integration tests (persist + empty-string normalises to NULL). Full round-trip `POST /sync/actions` including the `applied[]` echo shape.
+>   - **web** — 791 → 805 (+14): 5 new `Layout.test.tsx` tests for the badge visibility rules + 9 new DM Dashboard sessions-section tests (empty-state / start / list / end-with-confirm / reverse-chron order / current-row badge / notes edit / notes clear / DM-in-2+-member).
+>
+> **Decisions locked with user 2026-07-04:**
+>   - **UI surface:** DM Dashboard hosts the controls + session list; Layout hosts the "Session {N} in progress" pill. Rationale: DM-only controls belong on the DM-gated screen; the pill needs to travel with the user across every party-scoped page for context.
+>   - **Notes editable on ANY session:** past + current. The roadmap's original wording ("edit-in-place for notes on the current session") narrowed this; user override widened it. Requires the new `edit-game-session-notes` reducer action + guard + persistor.
+>   - **Loot wizard deferred to R6.3.** RH3.1's middleware already stamps `sessionId` on every log slice emitted while a session is `isCurrent` — R5.2's slice needs no wizard code for tagging to work. R6.3 owns the actual wizard UI (per `docs/roadmap.md:3491`) and will use R5.2's session-tools surface as a substrate.
+>   - **Single-slice ship.** Not sub-sliced à la R5.1.a/b/c/d — the change is small enough (one new action variant threaded through 4 layers + two UI surfaces) to review as one commit.
+>
+> **New action: `edit-game-session-notes`.** Mirrors the `edit-character` / `rename-stash` patch-object shape:
+>   - Payload `{ gameSessionId: string, notes: string }` — empty string is legal (clears the notes; the reducer drops the `notes` key on the row entirely, matching `startGameSession`'s conditional-spread shape).
+>   - Reducer rejects unknown `gameSessionId` + no-op writes (matches the "every dispatch appends exactly one log entry" invariant). Log slice carries `{ gameSessionId, number, oldNotes, newNotes }`.
+>   - DM-only guard (`editGameSessionNotesGuard`) with §8.2 solo bypass. Broadcast metadata `broadcastOnApplied: true` per RH2.4.
+>   - Persistor `persistEditGameSessionNotes` normalises `notes: ''` → SQL `NULL` for parity with `persistStartGameSession`'s convention.
+>
+> **`useCanDispatch()` for both buttons.** Consistent with R5.1.d's affordance pattern — the store guard is the correctness backstop; the disabled state is UX. Solo parties always dispatch; multi-member parties short-circuit when offline.
+>
+> **No new Layout test file existed pre-R5.2.** Created `apps/web/src/components/Layout.test.tsx` with 5 tests covering the badge visibility rules (in party + current session → visible; empty gameSessions / no-current-session / non-party-route / null appState → hidden). Uses `MemoryRouter` around `RootLayout` — mirrors the existing `DmDashboard.test.tsx` router-wrapping pattern.
+>
+> **Session list uses `<textarea>` directly instead of a shared Textarea primitive.** No shadcn-generated `textarea.tsx` exists yet in `apps/web/src/components/ui/`; adding one for a single call site would be premature. If a second textarea call site lands later, that's the right time to `pnpm dlx shadcn-ui add textarea`.
+>
+> **Not shipped (deferred to R5.3 / R6.3):**
+>   - History-view session filter with "Untagged" bucket — R5.3.
+>   - Loot distribution wizard — R6.3.
+>   - `edit-game-session-date` action — no user need surfaced; dates are set at creation. If retro-editing becomes desirable, follow-up slice.
 
 #### R5.3 — History UI + permission rules
 

@@ -1217,3 +1217,162 @@ describe('POST /sync/actions — RH3.1 GameSession sessionId stamping', () => {
     }
   });
 });
+
+describe('POST /sync/actions — R5.2 edit-game-session-notes', () => {
+  it('persists updated notes on the target GameSession + echoes the log entry', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      const bootstrapIds = createCharacterIds();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'DM',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 1,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      const partyId = bootstrapIds.newPartyId;
+
+      const newGameSessionId = newUuidV7();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'start-game-session',
+              payload: { newGameSessionId, notes: 'Initial notes' },
+            },
+          ],
+        },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'edit-game-session-notes',
+              payload: { gameSessionId: newGameSessionId, notes: 'Revised notes' },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{
+        applied: {
+          type: string;
+          sessionId: string | null;
+          payload: { gameSessionId: string; number: number; oldNotes: string; newNotes: string };
+        }[];
+      }>();
+      expect(body.applied).toHaveLength(1);
+      expect(body.applied[0]!.type).toBe('edit-game-session-notes');
+      expect(body.applied[0]!.payload).toEqual({
+        gameSessionId: newGameSessionId,
+        number: 1,
+        oldNotes: 'Initial notes',
+        newNotes: 'Revised notes',
+      });
+      // Middleware stamps sessionId from PRE-reduce state; the current
+      // session (the row being edited) has isCurrent=true, so the entry
+      // carries its own id.
+      expect(body.applied[0]!.sessionId).toBe(newGameSessionId);
+
+      // Direct DB check.
+      const row = await prisma.gameSession.findUnique({ where: { id: newGameSessionId } });
+      expect(row?.notes).toBe('Revised notes');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('normalizes empty notes to NULL in the DB', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      const bootstrapIds = createCharacterIds();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'DM',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 1,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      const partyId = bootstrapIds.newPartyId;
+
+      const newGameSessionId = newUuidV7();
+      await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'start-game-session',
+              payload: { newGameSessionId, notes: 'To be cleared' },
+            },
+          ],
+        },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'edit-game-session-notes',
+              payload: { gameSessionId: newGameSessionId, notes: '' },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const row = await prisma.gameSession.findUnique({ where: { id: newGameSessionId } });
+      expect(row?.notes).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+});

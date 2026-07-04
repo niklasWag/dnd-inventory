@@ -686,6 +686,19 @@ export type Action =
       // `state.gameSessions`.
       type: 'end-game-session';
       payload: Record<string, never>;
+    }
+  | {
+      // R5.2: DM edits the free-text notes on any `GameSession` (current
+      // or past). Follows the `edit-character` patch-object shape but
+      // with a single field. Reducer rejects unknown `gameSessionId` +
+      // no-op writes (the `rename-stash` invariant: every dispatch
+      // appends exactly one log entry). Empty string is legal (clears
+      // the notes).
+      type: 'edit-game-session-notes';
+      payload: {
+        gameSessionId: string;
+        notes: string;
+      };
     };
 
 /**

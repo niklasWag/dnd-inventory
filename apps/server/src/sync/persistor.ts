@@ -136,6 +136,8 @@ export async function applyDelta(
       return persistStartGameSession(tx, action.payload, actor, ctx);
     case 'end-game-session':
       return persistEndGameSession(tx, actor);
+    case 'edit-game-session-notes':
+      return persistEditGameSessionNotes(tx, action.payload);
   }
 }
 
@@ -1450,5 +1452,28 @@ async function persistEndGameSession(tx: Prisma.TransactionClient, actor: Actor)
   await tx.gameSession.updateMany({
     where: { partyId: actor.partyId, isCurrent: true },
     data: { isCurrent: false },
+  });
+}
+
+/**
+ * R5.2 — persist `edit-game-session-notes`. Updates the notes column
+ * on the target `GameSession`. Empty-string `notes` is normalized to
+ * `NULL` in the DB (matches `persistStartGameSession`'s
+ * `notes: payload.notes ?? null` convention — the schema column is
+ * nullable, and NULL represents "no notes").
+ *
+ * The reducer rejects unknown ids + no-ops, so an update landing here
+ * should always find a matching row; if it doesn't, Prisma surfaces
+ * the mismatch via `RecordNotFound` which propagates back to the
+ * client as a 500 (matches the RH2.3 "should never happen"
+ * defence-in-depth pattern).
+ */
+async function persistEditGameSessionNotes(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'edit-game-session-notes' }>['payload'],
+): Promise<void> {
+  await tx.gameSession.update({
+    where: { id: payload.gameSessionId },
+    data: { notes: payload.notes.length === 0 ? null : payload.notes },
   });
 }

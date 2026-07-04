@@ -1,12 +1,27 @@
-import { type ReactElement, useMemo } from 'react';
+import { type ReactElement, useMemo, useState, useEffect } from 'react';
 import { Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { Coins, Package, Users } from 'lucide-react';
+import { Calendar, Coins, Package, Play, Square, Users } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { currency } from '@app/rules';
-import type { Character, CurrencyHolding, ItemInstance, Stash } from '@app/shared';
+import type { Character, CurrencyHolding, GameSession, ItemInstance, Stash } from '@app/shared';
+import { newUuidV7 } from '@app/shared';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 
 /** Stable empty-array references for the Zustand selector fallback when
@@ -17,6 +32,7 @@ const EMPTY_CHARACTERS: readonly Character[] = [];
 const EMPTY_STASHES: readonly Stash[] = [];
 const EMPTY_CURRENCIES: readonly CurrencyHolding[] = [];
 const EMPTY_ITEMS: readonly ItemInstance[] = [];
+const EMPTY_GAME_SESSIONS: readonly GameSession[] = [];
 
 /**
  * R4.5 — Route guard for the DM Dashboard (§5.9).
@@ -49,12 +65,13 @@ export function DmOnlyRoute(): ReactElement {
 export function DmDashboard(): ReactElement {
   const navigate = useNavigate();
   const partyId = useCurrentPartyId();
-  const { characters, stashes, currencies, items } = useStore(
+  const { characters, stashes, currencies, items, gameSessions } = useStore(
     useShallow((s) => ({
       characters: s.appState?.characters ?? EMPTY_CHARACTERS,
       stashes: s.appState?.stashes ?? EMPTY_STASHES,
       currencies: s.appState?.currencies ?? EMPTY_CURRENCIES,
       items: s.appState?.items ?? EMPTY_ITEMS,
+      gameSessions: s.appState?.gameSessions ?? EMPTY_GAME_SESSIONS,
     })),
   );
 
@@ -173,6 +190,8 @@ export function DmDashboard(): ReactElement {
           </div>
         )}
       </section>
+
+      <SessionsSection sessions={gameSessions} />
     </div>
   );
 }
@@ -204,4 +223,218 @@ function formatGp(gp: number): string {
   // Preserve up to one decimal (e.g. "15.2 gp") but drop trailing .0.
   const rounded = Math.round(gp * 10) / 10;
   return Number.isInteger(rounded) ? `${rounded} gp` : `${rounded.toFixed(1)} gp`;
+}
+
+/**
+ * R5.2 — Session tools surface for the DM Dashboard (OUTLINE §3.12).
+ *
+ * Three affordances in one section:
+ *   1. Start / End Session controls (top row). Start when no session
+ *      is current; End (with AlertDialog confirmation) when one is.
+ *      Both buttons short-circuit through `useCanDispatch()` so the
+ *      §9 offline write-block is honored.
+ *   2. Session list — reverse-chronological (newest number first) with
+ *      an inline notes editor for each row. Empty state when no
+ *      sessions have been started yet.
+ *
+ * DM-only guarding is enforced upstream by `DmOnlyRoute`; this
+ * component doesn't re-check permission (defence-in-depth lives in the
+ * reducer + server guard).
+ */
+function SessionsSection({ sessions }: { sessions: readonly GameSession[] }): ReactElement {
+  const dispatch = useStore((s) => s.dispatch);
+  const canDispatch = useCanDispatch();
+  const [endDialogOpen, setEndDialogOpen] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  const current = sessions.find((s) => s.isCurrent) ?? null;
+  const sortedSessions = useMemo(
+    () => [...sessions].sort((a, b) => b.number - a.number),
+    [sessions],
+  );
+
+  function startSession(): void {
+    try {
+      setStartError(null);
+      dispatch({
+        type: 'start-game-session',
+        payload: { newGameSessionId: newUuidV7() },
+      });
+      toast.success('Session started');
+    } catch (err) {
+      setStartError(err instanceof Error ? err.message : 'Unknown error');
+    }
+  }
+
+  function endSession(): void {
+    if (current === null) return;
+    try {
+      dispatch({ type: 'end-game-session', payload: {} });
+      toast.success(`Session ${current.number} ended`);
+      setEndDialogOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to end session');
+    }
+  }
+
+  return (
+    <section
+      role="region"
+      aria-label="Sessions"
+      className="space-y-3 rounded-md border border-border p-4"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Calendar className="h-4 w-4" aria-hidden />
+          Sessions
+        </div>
+        {current === null ? (
+          <Button
+            size="sm"
+            onClick={startSession}
+            disabled={!canDispatch}
+            aria-label="Start session"
+          >
+            <Play className="h-4 w-4" aria-hidden />
+            Start Session
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setEndDialogOpen(true);
+            }}
+            disabled={!canDispatch}
+            aria-label={`End session ${current.number}`}
+          >
+            <Square className="h-4 w-4" aria-hidden />
+            End Session {current.number}
+          </Button>
+        )}
+      </div>
+
+      {startError !== null ? (
+        <p className="text-sm text-destructive" role="alert">
+          {startError}
+        </p>
+      ) : null}
+
+      {sortedSessions.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No sessions yet. Start a session to tag future events.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {sortedSessions.map((session) => (
+            <SessionRow key={session.id} session={session} />
+          ))}
+        </ul>
+      )}
+
+      {current !== null ? (
+        <AlertDialog open={endDialogOpen} onOpenChange={setEndDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>End Session {current.number}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Future events will land under &ldquo;Untagged&rdquo; until you start another
+                session. Existing history keeps its session tag.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={endSession}>End session</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * R5.2 — One row per `GameSession` in the DM Dashboard's session list.
+ * Renders the session's number + date + optional current-session
+ * badge, plus an inline notes editor.
+ *
+ * Notes editor follows the `RenameField` shape: local text state,
+ * `disabled` Save button on no-op writes (matches the reducer's
+ * `notes unchanged` reject), toast + error surface on submit.
+ */
+function SessionRow({ session }: { session: GameSession }): ReactElement {
+  const dispatch = useStore((s) => s.dispatch);
+  const canDispatch = useCanDispatch();
+  const initialNotes = session.notes ?? '';
+  const [draft, setDraft] = useState(initialNotes);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Re-sync draft when the upstream `session.notes` changes (e.g. after
+  // a successful save round-trips through the store). Matches the
+  // `RenameField` effect pattern.
+  useEffect(() => {
+    setDraft(initialNotes);
+    setSubmitError(null);
+  }, [initialNotes]);
+
+  const isNoOp = draft === initialNotes;
+  const inputId = `session-notes-${session.id}`;
+
+  function saveNotes(): void {
+    if (isNoOp) return;
+    try {
+      setSubmitError(null);
+      dispatch({
+        type: 'edit-game-session-notes',
+        payload: { gameSessionId: session.id, notes: draft },
+      });
+      toast.success('Session notes saved');
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
+    }
+  }
+
+  return (
+    <li className="rounded-md border border-border/60 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Session {session.number}</span>
+          <span className="text-xs text-muted-foreground">{session.date}</span>
+        </div>
+        {session.isCurrent ? (
+          <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            Current
+          </span>
+        ) : null}
+      </div>
+      <Label htmlFor={inputId} className="sr-only">
+        Session {session.number} notes
+      </Label>
+      <textarea
+        id={inputId}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+        }}
+        rows={2}
+        placeholder="Notes (optional)"
+        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <div className="mt-2 flex items-center justify-end gap-2">
+        {submitError !== null ? (
+          <p className="mr-auto text-xs text-destructive" role="alert">
+            {submitError}
+          </p>
+        ) : null}
+        <Button
+          size="sm"
+          onClick={saveNotes}
+          disabled={isNoOp || !canDispatch}
+          aria-label={`Save session ${session.number} notes`}
+        >
+          Save notes
+        </Button>
+      </div>
+    </li>
+  );
 }

@@ -88,6 +88,7 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   // Game-session actions (RH3.1)
   'start-game-session': { broadcastOnApplied: true },
   'end-game-session': { broadcastOnApplied: true },
+  'edit-game-session-notes': { broadcastOnApplied: true },
 
   // Item / stash mutation actions
   acquire: { broadcastOnApplied: true },

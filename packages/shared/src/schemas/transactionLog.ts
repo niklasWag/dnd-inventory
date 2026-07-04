@@ -938,6 +938,30 @@ const endGameSessionEntry = z.object({
 });
 
 /**
+ * `edit-game-session-notes` — R5.2. DM edits the free-text notes on
+ * any `GameSession` (current or past). Mirrors `rename-stash`'s
+ * old/new delta shape.
+ *
+ * `number` is captured for history-view rendering ("Session 12 notes
+ * updated") without joining against the `GameSession` table.
+ *
+ * `oldNotes` / `newNotes` are the pre/post free-text values; either
+ * may be `''` (empty is a legal value that clears the notes). The
+ * reducer rejects no-op writes so both fields differing is a
+ * schema-level invariant.
+ */
+const editGameSessionNotesEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('edit-game-session-notes'),
+  payload: z.object({
+    gameSessionId: z.string().min(1),
+    number: z.number().int().positive(),
+    oldNotes: z.string(),
+    newNotes: z.string(),
+  }),
+});
+
+/**
  * R4.2.d — Banker split-evenly terminal log entry. Emitted by the
  * `split-evenly` reducer arm as the audit anchor; the N child
  * `currency-transfer` entries (one per recipient) carry the atomic
@@ -1000,6 +1024,7 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   splitEvenlyEntry,
   startGameSessionEntry,
   endGameSessionEntry,
+  editGameSessionNotesEntry,
 ]);
 
 export type TransactionLogEntry = z.infer<typeof transactionLogEntrySchema>;

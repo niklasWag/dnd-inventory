@@ -604,6 +604,24 @@ const endGameSessionAction = z.object({
   payload: z.object({}),
 });
 
+/**
+ * R5.2 — `edit-game-session-notes`. DM edits the free-text notes on
+ * any `GameSession` (current or past). Follows the same patch-object
+ * shape as `edit-character` but with a single field.
+ *
+ * Reducer rejects unknown `gameSessionId` and rejects no-op writes
+ * (matches the `rename-stash` / `rename-character` invariant that
+ * every dispatch appends exactly one log entry). Empty string is a
+ * legal value — it clears the notes.
+ */
+const editGameSessionNotesAction = z.object({
+  type: z.literal('edit-game-session-notes'),
+  payload: z.object({
+    gameSessionId: z.string().min(1),
+    notes: z.string(),
+  }),
+});
+
 export const actionSchema = z.discriminatedUnion('type', [
   createCharacterAction,
   acquireAction,
@@ -641,6 +659,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   splitEvenlyAction,
   startGameSessionAction,
   endGameSessionAction,
+  editGameSessionNotesAction,
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
