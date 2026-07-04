@@ -211,6 +211,10 @@ export function isUntaggedLogEntry(entry: TransactionLogEntry): boolean {
  *
  * Rules (evaluated in order — first matching branch wins):
  *
+ * 0. **Solo bypass (OUTLINE §8.2).** When the party has exactly one
+ *    unique active member the viewer wears both DM and player hats
+ *    (§8.2 union-of-rights) — everything is visible.
+ *
  * 1. **Banker widening.** Entries authored with `actorRole: 'banker'`
  *    are visible to ALL party members regardless of the item's
  *    current location. Banker actions on Party Stash / Recovered
@@ -261,6 +265,11 @@ export function canSeeLogEntry(
   entry: TransactionLogEntry,
   ctx: { currentUserId: string; isDm: boolean; state: AppState },
 ): boolean {
+  // Solo bypass (OUTLINE §8.2) — the sole active party member wears
+  // BOTH the DM and player hats, and by the amendment §3.4 rule DMs
+  // see everything, so short-circuit here.
+  if (isSolo(ctx.state.memberships)) return true;
+
   // Rule 1 — banker widening.
   if (entry.actorRole === 'banker') return true;
 

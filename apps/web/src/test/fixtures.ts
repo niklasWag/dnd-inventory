@@ -196,14 +196,16 @@ export function bootstrapWithHomebrew(
 export function makeEntry<T extends TransactionLogEntry['type']>(
   type: T,
   payload: Extract<TransactionLogEntry, { type: T }>['payload'],
-  overrides: Partial<Pick<TransactionLogEntry, 'id' | 'timestamp' | 'actorRole'>> = {},
+  overrides: Partial<
+    Pick<TransactionLogEntry, 'id' | 'timestamp' | 'actorRole' | 'actorUserId'>
+  > = {},
 ): TransactionLogEntry {
   const candidate: unknown = {
     id: overrides.id ?? crypto.randomUUID(),
     partyId: 'party-fixture',
     sessionId: null,
     timestamp: overrides.timestamp ?? new Date().toISOString(),
-    actorUserId: 'user-fixture',
+    actorUserId: overrides.actorUserId ?? 'user-fixture',
     actorRole: overrides.actorRole ?? 'player',
     type,
     payload,

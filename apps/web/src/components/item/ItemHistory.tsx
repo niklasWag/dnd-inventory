@@ -5,6 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '@/store';
 import { buildStashLabels, shortStashId } from '@/lib/stashLabels';
 import { RoleBadge } from '@/components/RoleBadge';
+import { canSeeLogEntry } from '@app/shared';
 import type { ItemDefinition, ItemInstance, TransactionLogEntry } from '@app/shared';
 
 interface ItemHistoryProps {
@@ -36,8 +37,14 @@ const EMPTY_DEFS: readonly ItemDefinition[] = [];
  * resets per mount, which is the right ergonomic default for "I'm
  * inspecting one item right now."
  *
- * Permission gating (owner + DM only per OUTLINE §8) lands in R4/R5 —
- * single-user MVP shows the full slice.
+ * Permission gating (R5.3.b) per OUTLINE §3.4 amendment: for items
+ * currently in a character's Inventory or Storage, per-item history is
+ * visible only to the owner + DM; for items in Party Stash or
+ * Recovered Loot every party member sees the full history. Banker-
+ * authored entries widen visibility to all party members regardless of
+ * where the item currently lives. The gate lives in `canSeeLogEntry`
+ * in `@app/shared`; a footer surfaces how many entries were hidden by
+ * permission so viewers know the log isn't exhaustive.
  *
  * `useShallow` on the log filter is mandatory: `.filter()` returns a
  * fresh array every render, and without shallow-equality Zustand would
@@ -123,17 +130,37 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
   // Zustand if cross-navigation persistence becomes a real need.
   const [showAll, setShowAll] = useState(false);
 
-  const entries = useStore(
+  // R5.3.b — permission gate needs the full AppState for stash/character
+  // ownership lookups. `useShallow` on the reference (`appState`) is
+  // fine because `canSeeLogEntry` reads properties without mutating.
+  const appState = useStore((s) => s.appState);
+
+  const allEntries = useStore(
     useShallow((s) =>
       s.log.filter((e): e is ItemEntry => isItemEntry(e) && entryReferencesItem(e, itemInstanceId)),
     ),
   );
 
+  // R5.3.b — apply the §3.4 permission gate BEFORE the show-all toggle
+  // so `hiddenByPermission` reflects the audit-invisible slice
+  // regardless of the user's own toggle state.
+  const permittedEntries = useMemo(() => {
+    if (appState === null) return allEntries;
+    const currentUserId = appState.user.id;
+    const isDm = appState.memberships.some(
+      (m) => m.userId === currentUserId && m.role === 'dm' && m.leftAt === null,
+    );
+    const ctx = { currentUserId, isDm, state: appState };
+    return allEntries.filter((e) => canSeeLogEntry(e, ctx));
+  }, [allEntries, appState]);
+  const permissionHiddenCount = allEntries.length - permittedEntries.length;
+
   const visibleEntries = useMemo(
-    () => (showAll ? entries : entries.filter((e) => DEFAULT_FILTER_TYPES.has(e.type))),
-    [entries, showAll],
+    () =>
+      showAll ? permittedEntries : permittedEntries.filter((e) => DEFAULT_FILTER_TYPES.has(e.type)),
+    [permittedEntries, showAll],
   );
-  const hiddenCount = entries.length - visibleEntries.length;
+  const hiddenCount = permittedEntries.length - visibleEntries.length;
 
   // Stash + character lookups for the `transfer` / `split` summarizers.
   // Raw arrays come through `useShallow`; the per-id dictionary is
@@ -168,13 +195,20 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
     return out;
   }, [items, catalog]);
 
-  if (entries.length === 0) {
+  if (permittedEntries.length === 0) {
     return (
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           History
         </h2>
-        <p className="text-sm text-muted-foreground">No log entries for this item yet.</p>
+        {permissionHiddenCount > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {permissionHiddenCount} entr{permissionHiddenCount === 1 ? 'y is' : 'ies are'} hidden by
+            permission.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">No log entries for this item yet.</p>
+        )}
       </section>
     );
   }
@@ -222,6 +256,12 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
           ))}
         </ul>
       )}
+      {permissionHiddenCount > 0 ? (
+        <p className="text-xs italic text-muted-foreground">
+          {permissionHiddenCount} entr{permissionHiddenCount === 1 ? 'y' : 'ies'} hidden by
+          permission.
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -322,6 +322,37 @@ describe('isUntaggedLogEntry', () => {
   });
 });
 
+// -------------------- canSeeLogEntry — solo bypass --------------------
+
+describe('canSeeLogEntry — solo bypass', () => {
+  it('sole active member sees everything even in an "item deleted" fallback', () => {
+    const soloState: AppState = {
+      ...state,
+      memberships: [
+        {
+          userId: 'u-solo',
+          partyId: 'p1',
+          role: 'dm',
+          characterId: null,
+          joinedAt: BASE_TS,
+          leftAt: null,
+        },
+        {
+          userId: 'u-solo',
+          partyId: 'p1',
+          role: 'player',
+          characterId: 'char-a',
+          joinedAt: BASE_TS,
+          leftAt: null,
+        },
+      ],
+    };
+    const entry = makeAcquire('missing-item');
+    const asSolo = { currentUserId: 'u-solo', isDm: false, state: soloState };
+    expect(canSeeLogEntry(entry, asSolo)).toBe(true);
+  });
+});
+
 // -------------------- canSeeLogEntry — item entries --------------------
 
 describe('canSeeLogEntry — item in Party Stash', () => {
