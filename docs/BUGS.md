@@ -80,6 +80,42 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-008 — Equipped/attuned items stack; split copies flags; server desyncs
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04 (branch: `feat/r5-live-sync-history`)
+- **Severity:** high (three related client-server divergences; each yields user-visible bad state and a 500 on some follow-up dispatches. Symptom class: "the UI shows one thing, the server sees another, and the next action fails.")
+- **Status:** fixed
+- **Affected slice:** cross-cutting — reducer `acquire` / `split` / `equip` / `attune` arms; server persistor `equip` / `attune` arms; client dispatch site for equip/attune buttons; shared action schemas for `equip` + `attune`. Design pre-dated R2.1 (`attune`) and R1.2 (`equip`); surfaced together during R5.1 manual testing when live server-authoritative sync amplified the divergence.
+
+**Symptoms.** All observed 2026-07-04 during server-mode testing:
+
+1. **Acquire onto an equipped row stacks quantity.** With a single Longsword equipped, clicking `+` (a fresh `acquire { quantity: 1 }` against the auto-stack key `(definitionId, notes ?? "")`) rolls the new copy into the existing equipped row, yielding "quantity 2, equipped: true" — nonsense per OUTLINE §3.4 ("you can't equip two of a kind").
+2. **Split copies `equipped` / `attuned` from source; server clears them.** Splitting an equipped stack surfaces the new row with `equipped: true` in the client optimistic state, but the server-side `persistSplit` (`apps/server/src/sync/persistor.ts`) hard-codes `equipped: false, attuned: false` on the new row. Clicking "Unequip" on the split-off row then fires a 500: the server sees a row that's already `equipped: false` and the reducer no-op guard rejects.
+3. **Equip on a stack keeps the stack.** With 3 Longswords in Inventory, clicking Equip flips `equipped: true` on the whole stack (`quantity: 3, equipped: true`) — same "you can't equip two of a kind" violation.
+
+**Root cause.** Three defects in the same invariant family:
+
+- `packages/rules/src/reducer/index.ts::acquire` — auto-stack predicate at line ~721 matched only on `(ownerId, definitionId, notes)`, ignoring the `equipped` / `attuned` flags on the candidate row.
+- `packages/rules/src/reducer/index.ts::split` — new-row builder at line ~1759 spread `{ ...source, id, quantity }`, carrying `equipped` / `attuned` from the source. Server-side `persistSplit` correctly hard-codes both to `false`, but the client optimistic state disagreed.
+- `packages/rules/src/reducer/index.ts::equipOrUnequip` — flag flip at line ~2314 mutated the source row in place regardless of `quantity`. No auto-split path existed; the reducer accepted `equip` on a stacked row without complaint. Same defect on `attune` (`attuneOrUnattune`, line ~2411).
+
+**Fix.** All three surfaces, in one slice, enforcing the invariant "an equipped or attuned row always has quantity=1":
+
+1. **`acquire`** — extended the auto-stack predicate to require `existing.equipped === false && existing.attuned === false`. Fresh acquires onto an equipped/attuned row now land as a new row (quantity 1), preserving the invariant.
+2. **`split`** — new-row builder now always sets `equipped: false, attuned: false`, aligning with the server persistor.
+3. **`equip` / `attune` auto-split.** When the source row has `quantity > 1`, the reducer auto-splits off a fresh `quantity: 1` row (using a new optional `newItemInstanceId` on the action payload) and flips the flag on the NEW row. The old row keeps its remaining quantity and stays unequipped/unattuned. The log emits `split` + `equip` (or `attune`) as two entries; dispatch site (`apps/web/src/components/stash/StashItemsTable.tsx`) routes through `dispatchMintingAction` so the UUID is minted unconditionally. Server persistors (`persistEquip` / `persistAttune`) mirror the same split-then-flip logic.
+
+**Wire schema change (backwards-compat additive).** `equipAction` and `attuneAction` gain an optional `newItemInstanceId` field. Existing clients not passing it work fine for the `quantity: 1` case; the reducer only requires the field when the auto-split path is entered.
+
+**Tests.** `packages/rules/src/reducer/bug-008.test.ts` — 9 new reducer tests covering all three defect vectors + happy paths + the required-field guard. Rules suite 144 → 153. Full test-suite growth 1449 → 1458.
+
+**Not addressed:** existing DB rows written under the pre-fix regime may have `equipped: true, quantity > 1` or `attuned: true, quantity > 1`. No back-fill migration ships with this slice — the schema-level CHECK is deferred. Users hitting this in dev data can either: (a) `pnpm --filter @app/server db:reset` for a clean slate, or (b) manually adjust the row via `pnpm --filter @app/server db:studio`. If the corruption is seen in real (non-dev) data later, add a follow-up migration.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
+
 ### BUG-007 — Server-mode self-echo double-applies dispatched actions (quantity doubles, consume removes, split rejected)
 
 - **Filed:** 2026-07-04

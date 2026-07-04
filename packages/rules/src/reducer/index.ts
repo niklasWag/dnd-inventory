@@ -717,12 +717,22 @@ function acquire(
         : undefined;
 
   // Auto-stack key: (definitionId, notes ?? "").
+  //
+  // BUG-008: DO NOT stack onto a row that is `equipped` or `attuned`.
+  // The equipped/attuned invariant per OUTLINE §3.4 is that those
+  // flags only make sense for a single physical item — you can't equip
+  // two of a kind. Stacking a fresh acquire onto an equipped row would
+  // create a "3 equipped longswords" row and desync from server-side
+  // reality (server-side split forces `equipped:false` on new rows).
+  // Fall through to the "new row" branch instead.
   const notesKey = effectiveNotes ?? '';
   const existing = s.items.find(
     (i) =>
       i.ownerId === payload.stashId &&
       i.definitionId === payload.definitionId &&
-      (i.notes ?? '') === notesKey,
+      (i.notes ?? '') === notesKey &&
+      i.equipped === false &&
+      i.attuned === false,
   );
 
   let resolvedItemId: string;
@@ -1754,12 +1764,16 @@ function split(
   inventory.validateSplit(source, payload.quantity);
 
   const newId = payload.newItemInstanceId;
-  // Spread source to inherit notes / customName / conditionOverrides;
-  // overwrite id + quantity.
+  // Spread source to inherit notes / customName / conditionOverrides /
+  // currentCharges; overwrite id + quantity + always clear
+  // equipped/attuned (BUG-008 — the new row is a fresh physical item,
+  // matches server-side persistSplit which also hard-codes false).
   const newRow: ItemInstance = {
     ...source,
     id: newId,
     quantity: payload.quantity,
+    equipped: false,
+    attuned: false,
   };
   const nextItems: ItemInstance[] = [
     ...s.items.map((i) =>
@@ -2302,6 +2316,70 @@ function equipOrUnequip(
     throw new Error(`${type}: row ${payload.itemInstanceId} already equipped=${target}`);
   }
 
+  // BUG-008: when equipping (target=true) a stacked row (quantity > 1),
+  // auto-split off a fresh quantity-1 row and flip `equipped:true` on
+  // the NEW row. The old row stays with quantity-1 and equipped=false.
+  // This enforces the invariant per OUTLINE §3.4: equipped rows always
+  // have quantity=1 ("you can't equip two of a kind").
+  //
+  // `newItemInstanceId` is expected on the action payload when the
+  // caller anticipates a possible auto-split (dispatchers should mint
+  // it unconditionally; the reducer only uses it when quantity > 1).
+  // Absent + quantity > 1 → reject rather than silently pick a
+  // fallback id (RH1 discipline: no server-side id minting).
+  //
+  // Unequip is exempt: an equipped row is always quantity=1 by
+  // construction, so there's nothing to split. Trying to unequip a
+  // stacked row means the invariant already failed upstream — the
+  // regular flip proceeds and the surrounding code paths will surface
+  // the divergence.
+  if (type === 'equip' && row.quantity > 1) {
+    const newId = (payload as { newItemInstanceId?: string }).newItemInstanceId;
+    if (newId === undefined) {
+      throw new Error(
+        `equip: source row has quantity ${String(row.quantity)}; dispatcher must supply newItemInstanceId so the reducer can split off a quantity-1 row before equipping.`,
+      );
+    }
+    if (!isValidUuidV7(newId)) {
+      throw new Error('equip: newItemInstanceId must be a valid UUID v7');
+    }
+    const equippedRow: ItemInstance = {
+      ...row,
+      id: newId,
+      quantity: 1,
+      equipped: true,
+      attuned: false,
+    };
+    return {
+      state: {
+        ...s,
+        items: [
+          ...s.items.map((i) => (i.id === row.id ? { ...i, quantity: i.quantity - 1 } : i)),
+          equippedRow,
+        ],
+      },
+      logEntries: [
+        {
+          type: 'split',
+          payload: {
+            sourceInstanceId: row.id,
+            newInstanceId: newId,
+            quantity: 1,
+            stashId: row.ownerId,
+          },
+        },
+        {
+          type,
+          payload: {
+            itemInstanceId: newId,
+            characterId: payload.characterId,
+            ...(payload.slot !== undefined ? { slot: payload.slot } : {}),
+          },
+        },
+      ],
+    };
+  }
+
   return {
     state: {
       ...s,
@@ -2403,6 +2481,57 @@ function attuneOrUnattune(
     (payload as { overrideCap?: boolean }).overrideCap === true
       ? { overrideCap: true }
       : {};
+
+  // BUG-008: same auto-split rationale as `equip` — an attuned row must
+  // have quantity=1 (attunement is 1:1 with a magic item, not a stack).
+  // When attuning a stacked row (quantity > 1), split off a fresh
+  // quantity-1 row and attune THAT.
+  if (type === 'attune' && row.quantity > 1) {
+    const newId = (payload as { newItemInstanceId?: string }).newItemInstanceId;
+    if (newId === undefined) {
+      throw new Error(
+        `attune: source row has quantity ${String(row.quantity)}; dispatcher must supply newItemInstanceId so the reducer can split off a quantity-1 row before attuning.`,
+      );
+    }
+    if (!isValidUuidV7(newId)) {
+      throw new Error('attune: newItemInstanceId must be a valid UUID v7');
+    }
+    const attunedRow: ItemInstance = {
+      ...row,
+      id: newId,
+      quantity: 1,
+      equipped: false,
+      attuned: true,
+    };
+    return {
+      state: {
+        ...s,
+        items: [
+          ...s.items.map((i) => (i.id === row.id ? { ...i, quantity: i.quantity - 1 } : i)),
+          attunedRow,
+        ],
+      },
+      logEntries: [
+        {
+          type: 'split',
+          payload: {
+            sourceInstanceId: row.id,
+            newInstanceId: newId,
+            quantity: 1,
+            stashId: row.ownerId,
+          },
+        },
+        {
+          type,
+          payload: {
+            itemInstanceId: newId,
+            characterId: payload.characterId,
+            ...overrideCapForLog,
+          },
+        },
+      ],
+    };
+  }
 
   return {
     state: {

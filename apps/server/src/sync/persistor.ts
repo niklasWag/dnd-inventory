@@ -101,11 +101,11 @@ export async function applyDelta(
     case 'set-encumbrance':
       return persistSetEncumbrance(tx, action.payload);
     case 'equip':
-      return persistSetEquipped(tx, action.payload.itemInstanceId, true);
+      return persistEquip(tx, action.payload);
     case 'unequip':
       return persistSetEquipped(tx, action.payload.itemInstanceId, false);
     case 'attune':
-      return persistSetAttuned(tx, action.payload.itemInstanceId, true);
+      return persistAttune(tx, action.payload);
     case 'unattune':
       return persistSetAttuned(tx, action.payload.itemInstanceId, false);
     case 'use-charge':
@@ -774,6 +774,107 @@ async function persistSetAttuned(
   attuned: boolean,
 ): Promise<void> {
   await tx.itemInstance.update({ where: { id: itemInstanceId }, data: { attuned } });
+}
+
+/**
+ * BUG-008 — `equip` persistor with auto-split. When the source row has
+ * quantity > 1, splits off a fresh quantity-1 row (using
+ * `newItemInstanceId` from the action payload) and equips THAT.
+ * When quantity is already 1 (no split needed), degrades to the plain
+ * flag flip on the source row. Mirrors the reducer arm's behavior so
+ * client + server converge on the same rows.
+ */
+async function persistEquip(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'equip' }>['payload'],
+): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({
+    where: { id: payload.itemInstanceId },
+  });
+  if (source.quantity <= 1) {
+    await tx.itemInstance.update({
+      where: { id: source.id },
+      data: { equipped: true },
+    });
+    return;
+  }
+  if (payload.newItemInstanceId === undefined) {
+    throw new Error(
+      `equip: source row has quantity ${String(source.quantity)}; payload must include newItemInstanceId for the auto-split path.`,
+    );
+  }
+  await tx.itemInstance.update({
+    where: { id: source.id },
+    data: { quantity: source.quantity - 1 },
+  });
+  await tx.itemInstance.create({
+    data: {
+      id: payload.newItemInstanceId,
+      definitionId: source.definitionId,
+      ownerType: source.ownerType,
+      ownerId: source.ownerId,
+      containerInstanceId: source.containerInstanceId,
+      quantity: 1,
+      equipped: true,
+      attuned: false,
+      identified: source.identified,
+      hint: source.hint,
+      currentCharges: source.currentCharges,
+      customName: source.customName,
+      notes: source.notes,
+      ...(source.conditionOverrides !== null && source.conditionOverrides !== undefined
+        ? { conditionOverrides: source.conditionOverrides }
+        : {}),
+    },
+  });
+}
+
+/**
+ * BUG-008 — `attune` persistor with auto-split. Mirrors `persistEquip`.
+ */
+async function persistAttune(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'attune' }>['payload'],
+): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({
+    where: { id: payload.itemInstanceId },
+  });
+  if (source.quantity <= 1) {
+    await tx.itemInstance.update({
+      where: { id: source.id },
+      data: { attuned: true },
+    });
+    return;
+  }
+  if (payload.newItemInstanceId === undefined) {
+    throw new Error(
+      `attune: source row has quantity ${String(source.quantity)}; payload must include newItemInstanceId for the auto-split path.`,
+    );
+  }
+  await tx.itemInstance.update({
+    where: { id: source.id },
+    data: { quantity: source.quantity - 1 },
+  });
+  await tx.itemInstance.create({
+    data: {
+      id: payload.newItemInstanceId,
+      definitionId: source.definitionId,
+      ownerType: source.ownerType,
+      ownerId: source.ownerId,
+      containerInstanceId: source.containerInstanceId,
+      quantity: 1,
+      equipped: false,
+      attuned: true,
+      identified: source.identified,
+      hint: source.hint,
+      currentCharges: source.currentCharges,
+      customName: source.customName,
+      notes: source.notes,
+      ...(source.conditionOverrides !== null && source.conditionOverrides !== undefined
+        ? { conditionOverrides: source.conditionOverrides }
+        : {}),
+    },
+  });
 }
 
 async function persistUseCharge(

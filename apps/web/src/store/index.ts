@@ -405,6 +405,12 @@ type MintingActionInput =
   | (Omit<Extract<Action, { type: 'transfer' }>, 'payload'> & {
       payload: Omit<Extract<Action, { type: 'transfer' }>['payload'], 'newItemInstanceId'>;
     })
+  | (Omit<Extract<Action, { type: 'equip' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'equip' }>['payload'], 'newItemInstanceId'>;
+    })
+  | (Omit<Extract<Action, { type: 'attune' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'attune' }>['payload'], 'newItemInstanceId'>;
+    })
   | (Omit<Extract<Action, { type: 'create-character' }>, 'payload'> & {
       payload:
         | Omit<
@@ -457,6 +463,20 @@ function injectMintedIds(action: MintingActionInput | Exclude<Action, MintingAct
         payload: { ...action.payload, newDefinitionId: newUuidV7() },
       };
     case 'transfer':
+      return {
+        ...action,
+        payload: { ...action.payload, newItemInstanceId: newUuidV7() },
+      };
+    case 'equip':
+      // BUG-008 — reducer only USES this id when the source row has
+      // quantity > 1 (auto-split path). Minted unconditionally so the
+      // caller doesn't need to inspect state.
+      return {
+        ...action,
+        payload: { ...action.payload, newItemInstanceId: newUuidV7() },
+      };
+    case 'attune':
+      // BUG-008 — same rationale as `equip`.
       return {
         ...action,
         payload: { ...action.payload, newItemInstanceId: newUuidV7() },

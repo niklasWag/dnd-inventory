@@ -324,6 +324,13 @@ const equipAction = z.object({
     itemInstanceId: z.string().min(1),
     characterId: z.string().min(1),
     slot: z.string().optional(),
+    // BUG-008 — when the source row has quantity > 1, the reducer
+    // auto-splits off a fresh quantity-1 row and flips `equipped:true`
+    // on it (invariant: equipped rows always have quantity=1 per
+    // OUTLINE §3.4 — you can't equip two of a kind). Client mints
+    // this UUID v7 per RH1 id-authority; reducer ignores it when
+    // quantity is already 1 (no split needed).
+    newItemInstanceId: z.string().min(1).optional(),
   }),
 });
 
@@ -346,6 +353,9 @@ const attuneAction = z.object({
     // rejects non-DM actors setting this flag. Absent / false = normal
     // cap enforcement.
     overrideCap: z.boolean().optional(),
+    // BUG-008 — see `equipAction.payload.newItemInstanceId`. Same
+    // auto-split rationale.
+    newItemInstanceId: z.string().min(1).optional(),
   }),
 });
 
