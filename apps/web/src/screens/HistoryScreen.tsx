@@ -480,8 +480,10 @@ function applyFilters(args: {
 
   // Reverse-chronological (newest first). Log is stable-timestamped
   // by the middleware; sort keeps the list monotone even when
-  // out-of-order broadcasts land.
-  return filtered.sort((a, b) =>
+  // out-of-order broadcasts land. Copy first so the sort doesn't
+  // mutate the array returned to the caller — cheap safety since a
+  // mutated memoized value is a rendering-bug hazard.
+  return [...filtered].sort((a, b) =>
     a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0,
   );
 }

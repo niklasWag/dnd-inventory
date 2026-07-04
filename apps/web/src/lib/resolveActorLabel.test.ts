@@ -50,11 +50,39 @@ function makeState(): AppState {
 describe('resolveActorLabel', () => {
   const state = makeState();
 
-  it('returns current user displayName', () => {
+  it('current user with a character resolves to character name (BUG-010 uniformity)', () => {
+    // Add a character owned by `me` so the character-first rule fires.
+    const stateWithMyChar: AppState = {
+      ...state,
+      characters: [
+        ...state.characters,
+        {
+          id: 'char-me',
+          partyId: 'p1',
+          ownerUserId: 'me',
+          name: 'My Wizard',
+          species: 'Human',
+          size: 'medium',
+          class: 'Wizard',
+          level: 1,
+          abilityScores: { STR: 10 },
+          maxAttunement: 3,
+          encumbranceRule: 'off',
+          enforceEncumbrance: false,
+          inventoryStashId: 'inv-me',
+        },
+      ],
+    };
+    expect(resolveActorLabel('me', stateWithMyChar)).toBe('My Wizard');
+  });
+
+  it('current user without a character resolves to displayName', () => {
+    // No character owned by `me` in makeState(); falls through to
+    // displayName.
     expect(resolveActorLabel('me', state)).toBe('Me the DM');
   });
 
-  it('returns character name for a party player', () => {
+  it('returns character name for a party player (other user with a character)', () => {
     expect(resolveActorLabel('u-player-a', state)).toBe('Aeryn');
   });
 

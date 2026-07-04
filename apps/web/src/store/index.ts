@@ -323,12 +323,27 @@ export const useStore = create<StoreState>()(
      * `state.log` in server mode grows exclusively through this seam.
      * In local mode this method is never called (dispatch appends
      * client-built entries directly).
+     *
+     * **BUG-009 — idempotent by `entry.id`.** Two writers land here in
+     * server mode: the queue after a successful `POST /sync/actions`
+     * and `applyBroadcast` after a WebSocket broadcast. The broadcast
+     * almost always beats the HTTP response (single WS push vs
+     * round-trip), so `applyBroadcast` already dedupes against
+     * `store.log` before appending — but the queue does NOT (it only
+     * ever fires post-response and used to be the only writer). When
+     * both writers arrive for the same batch, the second push
+     * duplicates every entry. Deduping HERE covers both paths without
+     * having to plumb a shared seen-set through queue.ts and
+     * applyBroadcast.ts.
      */
     appendServerLogEntries: (applied) => {
       if (applied.length === 0) return;
       set((draft) => {
+        const seen = new Set(draft.log.map((e) => e.id));
         for (const entry of applied) {
+          if (seen.has(entry.id)) continue;
           draft.log.push(entry);
+          seen.add(entry.id);
         }
       });
     },

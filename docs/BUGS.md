@@ -80,6 +80,69 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-010 — History screen shows the current user's `displayName` but other players' `character.name`
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04
+- **Severity:** low (cosmetic inconsistency; no data corruption).
+- **Status:** fixed
+- **Affected slice:** R5.3.a — `apps/web/src/lib/resolveActorLabel.ts`.
+
+**Symptom.** On the Party History screen the current user's rows render with their **login display name** (`Alice`) while other players' rows render with their **character name** (`Baelor the Wise`). Two identity systems on the same table.
+
+**Root cause.** `resolveActorLabel` was written to prefer `state.user.displayName` for the current user and fall back to the character name for other party members — inconsistent. The character name is the identity that's known for EVERY party member (via `state.characters[].ownerUserId`), so a character-first order gives a uniform label.
+
+**Fix.** Flipped the resolution order in `resolveActorLabel`:
+
+1. Character name (uniform for every party member with a character).
+2. `state.user.displayName` (only when the current user has no character yet — fresh party join / DM-only bootstrap).
+3. Short-uuid prefix (unknown-actor fallback for banker-authored entries with no character bound, other-user actors with no character, etc.).
+
+Tests in `apps/web/src/lib/resolveActorLabel.test.ts` were updated to assert the new order.
+
+---
+
+### BUG-009 — History screen duplicates entries when a filter is toggled
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04
+- **Severity:** high (visible bad state; users see the same row twice; feels like data corruption).
+- **Status:** fixed
+- **Affected slice:** R5.3.a — `apps/web/src/store/index.ts::appendServerLogEntries`.
+
+**Symptom.** In server mode, on the Party History screen, toggling any action-type checkbox on and off causes duplicate rows to appear for entries that were dispatched during the session. The duplicates disappear on a hard refresh (they never persisted to Dexie in a bad shape — the underlying `state.log` in memory carried duplicates).
+
+**Root cause.** Two writers push into `state.log` via `appendServerLogEntries`:
+
+1. `sync/queue.ts:214` — after a successful `POST /sync/actions`, appends the server's `applied[]` echo.
+2. `sync/applyBroadcast.ts:112` — after a WebSocket `applied` broadcast, appends the server's echoed entries (already deduped locally before the append).
+
+The WebSocket broadcast almost always beats the HTTP response (a single WS push vs one round-trip). When it does, the broadcast handler's dedupe against `store.log` sees no match and appends. Then the HTTP response returns and `queue.ts` blindly appends the SAME entries a second time. Two copies of every entry in `state.log`. The React memoized filter pipeline correctly re-filters both, so the user sees the row twice.
+
+The reason "toggle a filter" was the reliable trigger: `applyFilters` is a `useMemo` — it only re-runs when its deps change. Simply having duplicates in `state.log` isn't enough for the visible symptom to show up until a filter change forces a re-derive. Once it did, both duplicates satisfied the same predicates and both rendered.
+
+**Fix.** Deduped at the funnel — `appendServerLogEntries` is now idempotent by `entry.id`:
+
+```ts
+appendServerLogEntries: (applied) => {
+  if (applied.length === 0) return;
+  set((draft) => {
+    const seen = new Set(draft.log.map((e) => e.id));
+    for (const entry of applied) {
+      if (seen.has(entry.id)) continue;
+      draft.log.push(entry);
+      seen.add(entry.id);
+    }
+  });
+},
+```
+
+Single-writer path stays fully-additive; both writers converge to the same log. `apps/web/src/store/log-authority.test.ts` gains a `BUG-009 — appendServerLogEntries is idempotent by entry.id` case asserting: single push adds one row; double push of the same id adds zero more rows; mixed batch of (already-seen + novel) adds only the novel one.
+
+**Bonus hygiene** — `HistoryScreen.applyFilters` was calling `.sort()` on the filtered array. `.filter()` returns a new array so the mutation is self-contained, but the mutated result then becomes the `useMemo` return value — a subtle rendering-bug hazard if any downstream memo capture happens. Swapped to `[...filtered].sort(...)` so the sort operates on a fresh copy.
+
+---
+
 ### BUG-008 — Equipped/attuned items stack; split copies flags; server desyncs
 
 - **Filed:** 2026-07-04

@@ -214,6 +214,47 @@ describe('RH2.6 — mode-aware log-authority split', () => {
     }
     queue.resetQueue();
   });
+
+  it('BUG-009 — appendServerLogEntries is idempotent by entry.id', async () => {
+    const { store } = await loadModules(true);
+    // Seed a minimal AppState so appendServerLogEntries has somewhere
+    // to land. The specific shape doesn't matter — the method only
+    // reads `draft.log`.
+    store.useStore.setState({ log: [] });
+
+    const nowIso = '2026-07-04T12:00:00.000Z';
+    const entry = {
+      id: '01000000-0000-7000-8000-000000000001',
+      partyId: 'p1',
+      sessionId: null,
+      timestamp: nowIso,
+      actorUserId: 'u1',
+      actorRole: 'player' as const,
+      type: 'acquire' as const,
+      payload: {
+        stashId: 's1',
+        itemInstanceId: 'i1',
+        definitionId: 'phb-2024:torch',
+        quantity: 1,
+        source: 'catalog-add' as const,
+      },
+    };
+
+    // First push: entry lands.
+    store.useStore.getState().appendServerLogEntries([entry]);
+    expect(store.useStore.getState().log).toHaveLength(1);
+
+    // Second push of the SAME id: dedupe, no growth.
+    store.useStore.getState().appendServerLogEntries([entry]);
+    expect(store.useStore.getState().log).toHaveLength(1);
+
+    // Mixed batch: a novel entry + the already-seen one. Only the
+    // novel one gets appended.
+    const novel = { ...entry, id: '01000000-0000-7000-8000-000000000002' };
+    store.useStore.getState().appendServerLogEntries([entry, novel]);
+    expect(store.useStore.getState().log).toHaveLength(2);
+    expect(store.useStore.getState().log.map((e) => e.id)).toEqual([entry.id, novel.id]);
+  });
 });
 
 /**
