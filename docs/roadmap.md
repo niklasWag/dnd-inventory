@@ -3490,20 +3490,33 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 #### R5.3 — History UI + permission rules
 
-- [ ] Party log timeline view (§5.8)
-- [ ] Filters: session / character / item / action type / actorRole
-- [ ] **Session filter has an explicit "Untagged" bucket** that surfaces entries with `sessionId: null` per OUTLINE §3.12. Component test: a no-session entry appears under "Untagged" in the filter dropdown and renders in the list when "Untagged" is selected.
-- [ ] Per-item history queried directly from log (no separate table, per §4)
-- [ ] **Permission rule** per OUTLINE §3.4 amendment (2026-06-24): per-item history is visible to (a) the current owner + DM for items in a character's Inventory or Storage, and (b) **every party member** for items currently in **Party Stash** or **Recovered Loot** (matches §3.15 transparency on shared pools).
-- [ ] Component test: player A's Inventory item history is hidden from player B (only A + DM see it).
-- [ ] Component test: an item currently in Party Stash has its history visible to every party member.
-- [ ] Component test: an item moved from a player's Inventory → Party Stash → back to a different player's Inventory has each segment of its history visible to the right audience at the time it was held there (the visibility rule reads the item's CURRENT `ownerId` for the gating decision; the history rows themselves are immutable).
-- [ ] Virtualized list / pagination for long histories
-- [ ] Banker actions tagged `actorRole: "banker"` visible to all members (§3.14)
+- [x] Party log timeline view (§5.8) — **R5.3.a**
+- [x] Filters: session / character / item / action type / actorRole — **R5.3.a**
+- [x] **Session filter has an explicit "Untagged" bucket** that surfaces entries with `sessionId: null` per OUTLINE §3.12. Component test: a no-session entry appears under "Untagged" in the filter dropdown and renders in the list when "Untagged" is selected. — **R5.3.a**
+- [ ] Per-item history queried directly from log (no separate table, per §4) — **R5.3.b** (existing surface; permission gating pending)
+- [x] **Permission rule** per OUTLINE §3.4 amendment (2026-06-24): per-item history is visible to (a) the current owner + DM for items in a character's Inventory or Storage, and (b) **every party member** for items currently in **Party Stash** or **Recovered Loot** (matches §3.15 transparency on shared pools). — **helper `canSeeLogEntry` shipped in R5.3.a; applied to HistoryScreen; ItemHistory in R5.3.b**
+- [x] Component test: player A's Inventory item history is hidden from player B (only A + DM see it). — **R5.3.a** (HistoryScreen)
+- [x] Component test: an item currently in Party Stash has its history visible to every party member. — **R5.3.a** (HistoryScreen)
+- [ ] Component test: an item moved from a player's Inventory → Party Stash → back to a different player's Inventory has each segment of its history visible to the right audience at the time it was held there (the visibility rule reads the item's CURRENT `ownerId` for the gating decision; the history rows themselves are immutable). — **R5.3.b** (per-item view is the natural site for this)
+- [x] Virtualized list / pagination for long histories — **R5.3.a**: simple "Load more" pagination (PAGE_SIZE=100). Virtualization deferred; adequate at expected campaign scale.
+- [x] Banker actions tagged `actorRole: "banker"` visible to all members (§3.14) — **R5.3.a** (banker-widening rule in `canSeeLogEntry`; HistoryScreen component test asserts non-owner sees banker-authored entries on other-player Inventory)
 
 #### R5.3 — Notes
 
-> -
+> **R5.3.a shipped 2026-07-04.** Party History timeline at `/party/:partyId/history`, accessible to every party member via a top-nav History button. Permission gating (`canSeeLogEntry` in `@app/shared`) enforces OUTLINE §3.4 amendment client-side. Server-authoritative gating deferred — history is derived from `state.log` which is already broadcast-filtered per SECURITY §6 (WebSocket subscriptions scoped to party membership; log entries never leak across parties).
+>
+> **Locked decisions:**
+>   - **Slicing:** two sub-slices per user decision — R5.3.a (screen + helper + HistoryScreen tests); R5.3.b (ItemHistory rework to apply the same gate). Keeps the diff focused per slice.
+>   - **Nav placement:** top-nav Layout button, visible to ALL party members (not DM-only). Screen filters permission-hidden rows inside via `canSeeLogEntry` rather than gating at the route.
+>   - **Filter UX:** hybrid — native `<select>` dropdowns for Session / Character / Item / Actor role; checkbox group for Action Type with a default "ownership transitions" subset matching `ItemHistory.DEFAULT_FILTER_TYPES`.
+>   - **Pagination:** simple "Load more" (100 initial, +100 per click). No virtualization dep; adequate at D&D-campaign scale.
+>   - **Summary helper:** extracted `apps/web/src/lib/summarizeLogEntry.ts` covering all 36 log-entry variants. Shared with `ItemHistory` in R5.3.b (currently it still has inline `summarize` — R5.3.b swaps it).
+>   - **Actor label:** `apps/web/src/lib/resolveActorLabel.ts` — resolves `actorUserId` to a name via `state.user.displayName` → `character.name` → short-uuid fallback. Web store never carries other users' full `User` rows, so a full member-name resolver would need a server endpoint (out of scope for read-only history).
+>   - **Banker widening interpretation:** entries authored with `actorRole: 'banker'` are visible to ALL party members, EVEN when the item currently lives in another player's Inventory. Rationale: banker actions on private stashes still fall under the "fiduciary transparency" reading of §3.14 — a player can't audit a banker who moved coin/items on their behalf if they can't see it. Consumers: `canSeeLogEntry` in `@app/shared`.
+>
+> **Delta vs pre-slice test counts:** +34 in `@app/shared` (`actor.test.ts`), +28 in `@app/web` (`summarizeLogEntry.test.ts`), +3 in `@app/web` (`resolveActorLabel.test.ts`), +12 in `@app/web` (`HistoryScreen.test.tsx`), +3 in `@app/web` (`Layout.test.tsx`).
+>
+> **R5.3.b (pending):** rework `ItemHistory.tsx` to (1) apply `canSeeLogEntry` gate — otherwise Item Detail's history section leaks other-player Inventory rows to non-DM viewers; and (2) delegate summarization to `summarizeLogEntry` for a single source of truth.
 
 #### R5 — Notes
 

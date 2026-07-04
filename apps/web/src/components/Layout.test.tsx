@@ -120,3 +120,26 @@ describe('RootLayout — current session indicator (R5.2)', () => {
     expect(screen.queryByLabelText(/session .* in progress/i)).toBeNull();
   });
 });
+
+describe('RootLayout — History nav button (R5.3.a)', () => {
+  beforeEach(() => {
+    useStore.setState({ appState: null, log: [] });
+  });
+
+  it('renders the History button in the party subtree', () => {
+    useStore.setState({ appState: makeState([]), log: [] });
+    renderInParty('/party/p1/dm');
+    expect(screen.getByRole('button', { name: /^history$/i })).toBeInTheDocument();
+  });
+
+  it('hides the History button outside the party subtree', () => {
+    useStore.setState({ appState: makeState([]), log: [] });
+    renderInParty('/hub');
+    expect(screen.queryByRole('button', { name: /^history$/i })).toBeNull();
+  });
+
+  it('hides the History button when appState is null (no party loaded)', () => {
+    renderInParty('/party/p1/dm');
+    expect(screen.queryByRole('button', { name: /^history$/i })).toBeNull();
+  });
+});

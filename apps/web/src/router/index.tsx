@@ -7,6 +7,7 @@ import { ProtectedRoute, PublicOnlyRoute } from '@/components/auth/ProtectedRout
 import { CharacterSheet } from '@/screens/CharacterSheet';
 import { CatalogBrowser } from '@/screens/CatalogBrowser';
 import { DmDashboard, DmOnlyRoute } from '@/screens/DmDashboard';
+import { HistoryScreen } from '@/screens/HistoryScreen';
 import { Hub } from '@/screens/Hub';
 import { ItemDetail } from '@/screens/ItemDetail';
 import { Login } from '@/screens/Login';
@@ -102,6 +103,7 @@ export const router = createBrowserRouter([
                   { path: 'settings', Component: PartySettings },
                   { path: 'character/:id', Component: CharacterSheet },
                   { path: 'catalog', Component: CatalogBrowser },
+                  { path: 'history', Component: HistoryScreen },
                   { path: 'item/:itemInstanceId', Component: ItemDetail },
                   { path: 'stash/:stashId', Component: StorageDetail },
                   {

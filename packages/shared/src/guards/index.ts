@@ -87,12 +87,15 @@ export type GuardRejectionCode =
   | 'id_already_exists';
 
 export {
+  canSeeLogEntry,
   currentGameSessionId,
   deriveActorRole,
   deriveActorRoleForSlice,
   isMember,
   isSolo,
   isUntaggedLogEntry,
+  matchesCharacter,
+  matchesItemInstance,
 } from './actor';
 export { guards, checkGuard } from './map';
 

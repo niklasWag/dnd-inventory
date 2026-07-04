@@ -193,3 +193,202 @@ export function currentGameSessionId(state: AppState | null): string | null {
 export function isUntaggedLogEntry(entry: TransactionLogEntry): boolean {
   return entry.sessionId === null;
 }
+
+/**
+ * R5.3 — history-view permission gate per OUTLINE §3.4 amendment
+ * (2026-06-24), quoted in roadmap.md:3497:
+ *
+ * > Per-item history is visible to (a) the current owner + DM for
+ * > items in a character's Inventory or Storage, and (b) every party
+ * > member for items currently in Party Stash or Recovered Loot.
+ *
+ * Consumed by:
+ *   - `apps/web/src/screens/HistoryScreen.tsx` — the party-wide
+ *     filterable timeline. Applied as the final filter after the
+ *     user's session / character / item / role / type filters.
+ *   - `apps/web/src/components/item/ItemHistory.tsx` (R5.3.b) — the
+ *     per-item history section on `ItemDetail`.
+ *
+ * Rules (evaluated in order — first matching branch wins):
+ *
+ * 1. **Banker widening.** Entries authored with `actorRole: 'banker'`
+ *    are visible to ALL party members regardless of the item's
+ *    current location. Banker actions on Party Stash / Recovered
+ *    Loot are transparent by §3.14; extending that transparency to
+ *    banker-authored writes on Inventory / Storage is the "banker
+ *    is a fiduciary" reading of the amendment.
+ *
+ * 2. **Non-item entries.** Entries with no `itemInstanceId` in their
+ *    payload (session start/end, edit-game-session-notes,
+ *    create-character, delete-character, rename-*, currency-change,
+ *    currency-transfer, create/edit/delete-homebrew, seed-catalog,
+ *    join/leave-party, kick-player, appoint/revoke-banker,
+ *    dm-transfer, split-evenly, set-encumbrance, edit-character,
+ *    create-stash, delete-stash, rename-stash) are always visible
+ *    to every party member.
+ *
+ *    Note: `create-stash` / `delete-stash` / `rename-stash` reference
+ *    a stash, not an item. Even though a Storage stash is
+ *    character-scoped, we surface these to all members because:
+ *      - stash creation ⇒ player learned "X has a Storage stash", not
+ *        the item contents;
+ *      - stash deletion ⇒ cascade transfers to Recovered Loot which
+ *        is party-visible;
+ *      - stash rename ⇒ same shape as `create-stash`.
+ *    OUTLINE §3.4 amendment scopes the private/public rule to
+ *    item-carrying entries.
+ *
+ * 3. **Item entries — locate the item's CURRENT stash.**
+ *    - stash.scope === 'party' | 'recovered-loot' → visible to all
+ *    - stash.scope === 'character' → owner (via
+ *      character.ownerUserId) + DM only
+ *
+ * 4. **Fallback (item not found / stash not found).** The item was
+ *    consumed / deleted; we no longer know where it lived. Safe
+ *    default: visible to DM only. Consumers can still show these
+ *    entries to the current owner if they can reconstruct ownership
+ *    from log history — that's out of scope for this helper.
+ *
+ * Note: this helper reads the item's CURRENT stash (roadmap
+ * invariant line 3500) — the log rows themselves are immutable, but
+ * ownership can change over time, and it's the "who can see this
+ * NOW" question that drives the gate. If a private item moves to
+ * Party Stash the party gains visibility to its whole history; if a
+ * public item moves back into someone's Inventory the party loses
+ * visibility.
+ */
+export function canSeeLogEntry(
+  entry: TransactionLogEntry,
+  ctx: { currentUserId: string; isDm: boolean; state: AppState },
+): boolean {
+  // Rule 1 — banker widening.
+  if (entry.actorRole === 'banker') return true;
+
+  // Rule 3 — item entries: locate the current stash.
+  const itemInstanceId = extractItemInstanceId(entry);
+  if (itemInstanceId === null) {
+    // Rule 2 — non-item entries: visible to all.
+    return true;
+  }
+
+  const item = ctx.state.items.find((i) => i.id === itemInstanceId);
+  if (item === undefined) {
+    // Rule 4 — item deleted/consumed. Fallback: DM only.
+    return ctx.isDm;
+  }
+
+  const stash = ctx.state.stashes.find((s) => s.id === item.ownerId);
+  if (stash === undefined) {
+    // Rule 4 — orphaned item (should not happen; defensive).
+    return ctx.isDm;
+  }
+
+  if (stash.scope === 'party' || stash.scope === 'recovered-loot') {
+    return true;
+  }
+
+  // scope === 'character' — owner + DM only.
+  if (ctx.isDm) return true;
+  const character = ctx.state.characters.find((c) => c.id === stash.ownerCharacterId);
+  if (character === undefined) return ctx.isDm; // defensive
+  return character.ownerUserId === ctx.currentUserId;
+}
+
+/**
+ * R5.3 helper — returns the `itemInstanceId` referenced by a log
+ * entry's payload, or `null` for entries that don't reference an
+ * item. For `split` entries, returns the SOURCE instance id
+ * (`sourceInstanceId`); callers that need to match the NEW row's id
+ * should use {@link matchesItemInstance} instead.
+ *
+ * This function is the single source of truth for "which log-entry
+ * variants carry an item reference" — keeping it here (rather than
+ * inlined at both call sites) means adding a new item-referencing
+ * variant only needs to be reflected in one place.
+ */
+function extractItemInstanceId(entry: TransactionLogEntry): string | null {
+  switch (entry.type) {
+    case 'acquire':
+    case 'consume':
+    case 'edit-item-instance':
+    case 'transfer':
+    case 'equip':
+    case 'unequip':
+    case 'attune':
+    case 'unattune':
+    case 'use-charge':
+    case 'recharge':
+    case 'identify':
+      return entry.payload.itemInstanceId;
+    case 'split':
+      return entry.payload.sourceInstanceId;
+    default:
+      return null;
+  }
+}
+
+/**
+ * R5.3 helper — true iff a log entry references the given
+ * `itemInstanceId` in ANY position of its payload (source AND new
+ * row for `split`). Callers use this for the "per-item filter" in
+ * `HistoryScreen` and inside `ItemHistory` itself.
+ */
+export function matchesItemInstance(entry: TransactionLogEntry, itemInstanceId: string): boolean {
+  switch (entry.type) {
+    case 'acquire':
+    case 'consume':
+    case 'edit-item-instance':
+    case 'transfer':
+    case 'equip':
+    case 'unequip':
+    case 'attune':
+    case 'unattune':
+    case 'use-charge':
+    case 'recharge':
+    case 'identify':
+      return entry.payload.itemInstanceId === itemInstanceId;
+    case 'split':
+      return (
+        entry.payload.sourceInstanceId === itemInstanceId ||
+        entry.payload.newInstanceId === itemInstanceId
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * R5.3 helper — true iff a log entry references the given
+ * `characterId` in its payload OR is authored by the character's
+ * owner user. Callers use this for the "per-character filter" in
+ * `HistoryScreen`. Returns false when the entry has no character
+ * link (currency-* across party stashes with no character context,
+ * seed-catalog, homebrew, session events).
+ */
+export function matchesCharacter(
+  entry: TransactionLogEntry,
+  characterId: string,
+  ownerUserId: string,
+): boolean {
+  if (entry.actorUserId === ownerUserId) return true;
+  switch (entry.type) {
+    case 'equip':
+    case 'unequip':
+    case 'attune':
+    case 'unattune':
+    case 'use-charge':
+    case 'recharge':
+    case 'rename-character':
+    case 'set-encumbrance':
+    case 'edit-character':
+      return entry.payload.characterId === characterId;
+    case 'create-character':
+    case 'delete-character':
+      return entry.payload.characterId === characterId;
+    case 'leave-party':
+    case 'join-party':
+      return entry.payload.characterId === characterId;
+    default:
+      return false;
+  }
+}

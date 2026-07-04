@@ -2,6 +2,7 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import type { ReactElement } from 'react';
 import {
   BookOpen,
+  History,
   LayoutDashboard,
   LogOut,
   Play,
@@ -98,6 +99,19 @@ export function RootLayout(): ReactElement {
               >
                 <Users className="h-4 w-4" />
                 <span className="sr-only sm:not-sr-only">Party</span>
+              </Button>
+            ) : null}
+            {hasParty && partyId !== null ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void navigate(`/party/${partyId}/history`);
+                }}
+                aria-label="History"
+              >
+                <History className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only">History</span>
               </Button>
             ) : null}
             {canSeeDmDashboard && partyId !== null ? (
