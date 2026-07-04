@@ -80,6 +80,67 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-007 — Server-mode self-echo double-applies dispatched actions (quantity doubles, consume removes, split rejected)
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04 (branch: `feat/r5-live-sync-history`; R5.1 followup — sits alongside BUG-006)
+- **Severity:** high (user-visible data desync — every dispatched action in server mode has its state mutation applied TWICE on the acting client. Not just cosmetic: subsequent actions read the wrong optimistic state and either fail server-side validation or produce further wrong writes. Server-authoritative state stays correct, so `pullState` restores sanity — but a fresh visit / manual refresh is the only workaround.)
+- **Status:** fixed
+- **Affected slice:** R5.1.b (broadcast reconciliation). Present since 2026-07-03 when RH2.6's log-authority split retired client-side log-entry emission in server mode; the pre-existing dedupe was designed around client-emitted log ids as its self-echo sentinel and stopped working the moment client-emit stopped.
+
+**Symptoms.** All three observed by the user 2026-07-04 in server mode after starting fresh:
+
+1. **Acquire shows quantity 2 in the UI when 1 was selected.** Optimistic dispatch adds quantity 1 → server broadcasts back → `applyBroadcast` re-runs the reducer against the already-mutated state → quantity becomes 2.
+2. **Pressing "-" on the item removes it from the inventory.** Same defect on `consume`: dispatch drops quantity by 1 (2 → 1 in the doubled state) → broadcast re-runs → 1 → 0 → row removed.
+3. **Split rejected as "qty 1 must be less than source quantity 1".** UI thinks source is 2 (doubled), submits `split qty: 1`, server sees the actual quantity 1 and rejects with the reducer's split invariant.
+
+All three are the same defect from three angles.
+
+**Root cause.** `apps/web/src/sync/applyBroadcast.ts` (pre-fix) filtered `applied[]` by log-entry id against `store.log`:
+
+```
+const seenIds = new Set(store.log.map((e) => e.id));
+const novel = applied.filter((e) => !seenIds.has(e.id));
+```
+
+This design assumed the acting client had ALREADY appended the entry (with the server-canonical id) via its HTTP-response path before the broadcast arrived. In the pre-RH2.6 world the client emitted its OWN log entries (with client-minted ids that didn't match the server's) and the dedupe was actually a fingerprint-match. Post-RH2.6 (2026-07-03) the client stopped emitting log entries in server mode entirely — `appendServerLogEntries` only runs from the HTTP-response path. Two consequences:
+
+1. In the pre-RH2.6 world, the log entry was already in `store.log` before the broadcast handler ran (client-emit was synchronous during dispatch), so the dedupe blocked the reducer re-run.
+2. Post-RH2.6, `state.log` is empty until the HTTP-response path resolves. The socket broadcast reliably beats the HTTP round-trip (one push vs one round-trip), so `seenIds` never contains the incoming entry and the reducer re-run always fires.
+
+The reducer re-run applies the action to the ALREADY-mutated state, doubling every mutation.
+
+**Fix.** In `applyBroadcast`, detect self-echo by `actorUserId`. When every novel entry's `actorUserId` matches the store's current `state.appState.user.id`, this broadcast is the server confirming an action THIS client just dispatched. Skip the reducer re-run (state already optimistically applied); still append the log entries via `appendServerLogEntries` so RH2.6 log-authority is preserved.
+
+```ts
+const selfUserId = store.appState?.user.id ?? null;
+const isSelfEcho =
+  selfUserId !== null && novel.every((e) => e.actorUserId === selfUserId);
+
+if (!isSelfEcho) {
+  const result = reduce(store.appState, reducerAction, broadcastReducerCtx);
+  useStore.setState({ appState: result.state });
+}
+
+store.appendServerLogEntries(novel);
+```
+
+Peer broadcasts (different `actorUserId`) still re-run the reducer as before — those are events the local reducer hasn't seen yet.
+
+**Multi-tab edge case (not fixed here).** If the same user has two tabs open, tab B sees a broadcast from tab A's dispatch with a matching `actorUserId` and short-circuits — but tab B never optimistically ran the reducer. Tab B will miss the mutation until it re-hydrates on next `pullState` (route change / reconnect). Trade-off: acceptable for the common single-tab case; multi-tab drift is a known R5.x constraint. A future fix could tag dispatches with a client-nonce broadcast back verbatim so tab B distinguishes tab A's dispatch from its own; deferred until multi-tab shows up as a real user need.
+
+**Tests.** `apps/web/src/sync/socket.test.ts` gains 4 new tests (14 total, was 10):
+- Self-echo does not double-apply an acquire (quantity stays 1).
+- Self-echo still appends the server log entry (RH2.6 log-authority preserved).
+- Peer broadcast (different `actorUserId`) still re-runs the reducer.
+- End-to-end reproduction: dispatch → self-echo → final state matches server.
+
+Two existing tests updated: the pre-BUG-007 "peer broadcast" tests used `base.userId` as `actorUserId` (accidentally exercising self-echo path); both now use a distinct `peerUserId` to correctly exercise the reducer-re-run branch.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
+
 ### BUG-006 — Socket.IO connects on the login screen before the user is authenticated; two red console errors greet every fresh visitor
 
 - **Filed:** 2026-07-04

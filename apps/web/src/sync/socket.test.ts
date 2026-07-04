@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe('R5.1.b — applyBroadcast', () => {
-  it('mutates state + appends server log entries for a broadcast that matches the current party', () => {
+  it('mutates state + appends server log entries for a peer broadcast on the current party', () => {
     const base = bootstrap();
     const preLogLen = useStore.getState().log.length;
     const stashInInventory = base.inventoryStashId;
@@ -50,6 +50,10 @@ describe('R5.1.b — applyBroadcast', () => {
 
     // Simulate the server broadcasting a peer's `acquire` action: item
     // is added to the inventory stash, log entry is server-echoed.
+    // `actorUserId` intentionally DIFFERENT from `base.userId` so this
+    // exercises the peer-broadcast path (reducer re-run) rather than
+    // BUG-007's self-echo short-circuit.
+    const peerUserId = newUuidV7();
     const newItemInstanceId = newUuidV7();
     const action = {
       type: 'acquire' as const,
@@ -66,7 +70,7 @@ describe('R5.1.b — applyBroadcast', () => {
       partyId: base.partyId,
       sessionId: null,
       timestamp: '2026-07-03T12:34:56.789Z',
-      actorUserId: base.userId,
+      actorUserId: peerUserId,
       actorRole: 'player' as const,
       type: 'acquire' as const,
       payload: {
@@ -99,13 +103,14 @@ describe('R5.1.b — applyBroadcast', () => {
     expect(appended.timestamp).toBe(serverLogEntry.timestamp);
   });
 
-  it('dedupes: the same broadcast delivered twice appends only once (self-echo protection)', () => {
+  it('dedupes: the same peer broadcast delivered twice appends only once', () => {
     const base = bootstrap();
     const stashInInventory = base.inventoryStashId;
     const torchDef = base.catalog.find((d) => d.id === 'phb-2024:torch');
     if (torchDef === undefined) return;
 
     const preLogLen = useStore.getState().log.length;
+    const peerUserId = newUuidV7();
     const newItemInstanceId = newUuidV7();
     const action = {
       type: 'acquire' as const,
@@ -122,7 +127,7 @@ describe('R5.1.b — applyBroadcast', () => {
       partyId: base.partyId,
       sessionId: null,
       timestamp: '2026-07-03T12:34:56.789Z',
-      actorUserId: base.userId,
+      actorUserId: peerUserId,
       actorRole: 'player' as const,
       type: 'acquire' as const,
       payload: {
@@ -195,6 +200,234 @@ describe('R5.1.b — applyBroadcast', () => {
     expect(after.appState).toBe(preAppState);
     expect(after.log).toBe(preLog);
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+describe('BUG-007 — applyBroadcast self-echo short-circuit', () => {
+  it('skips the reducer re-run when actorUserId matches the store user (does not double-apply an acquire)', () => {
+    // Scenario: this client dispatched `acquire quantity 1`, which
+    // optimistically added an item. The server broadcasts back to
+    // every party member INCLUDING this one. Without the self-echo
+    // short-circuit, `applyBroadcast` would re-run the reducer
+    // against the already-mutated state and end up with quantity 2.
+    const base = bootstrap();
+    const stashInInventory = base.inventoryStashId;
+    const torchDef = base.catalog.find((d) => d.id === 'phb-2024:torch');
+    if (torchDef === undefined) return;
+
+    // Step 1: simulate the optimistic dispatch — the reducer already
+    // ran and put quantity 1 into inventory.
+    const newItemInstanceId = newUuidV7();
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: stashInInventory,
+        definitionId: torchDef.id,
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId,
+      },
+    });
+    const preLogLen = useStore.getState().log.length;
+    const preItem = useStore.getState().appState!.items.find((i) => i.id === newItemInstanceId);
+    expect(preItem?.quantity).toBe(1);
+
+    // Step 2: server's `applied` broadcast arrives echoing this
+    // client's own action. `actorUserId` is the store's own user id.
+    const serverLogEntry = {
+      id: newUuidV7(),
+      partyId: base.partyId,
+      sessionId: null,
+      timestamp: '2026-07-03T12:34:56.789Z',
+      actorUserId: base.userId, // ← self-echo
+      actorRole: 'player' as const,
+      type: 'acquire' as const,
+      payload: {
+        stashId: stashInInventory,
+        definitionId: torchDef.id,
+        quantity: 1,
+        source: 'catalog-add' as const,
+        itemInstanceId: newItemInstanceId,
+      },
+    };
+    applyBroadcast({
+      partyId: base.partyId,
+      action: {
+        type: 'acquire',
+        payload: {
+          stashId: stashInInventory,
+          definitionId: torchDef.id,
+          quantity: 1,
+          source: 'catalog-add',
+          newItemInstanceId,
+        },
+      },
+      applied: [serverLogEntry],
+    });
+
+    const after = useStore.getState();
+    // Quantity stayed at 1, NOT doubled to 2.
+    const item = after.appState!.items.find((i) => i.id === newItemInstanceId);
+    expect(item?.quantity).toBe(1);
+    // Log grew by exactly the one server-echoed entry.
+    expect(after.log.length).toBe(preLogLen + 1);
+    expect(after.log[after.log.length - 1]!.id).toBe(serverLogEntry.id);
+  });
+
+  it('appends server log entries even on self-echo (log-authority under RH2.6)', () => {
+    // RH2.6 mandates the server's `applied[]` is the sole source of
+    // truth for `state.log`. Self-echo must still append these
+    // entries, only skipping the STATE re-run.
+    const base = bootstrap();
+    const stashInInventory = base.inventoryStashId;
+    const torchDef = base.catalog.find((d) => d.id === 'phb-2024:torch');
+    if (torchDef === undefined) return;
+
+    const preLogLen = useStore.getState().log.length;
+    const serverLogEntry = {
+      id: newUuidV7(),
+      partyId: base.partyId,
+      sessionId: null,
+      timestamp: '2026-07-03T12:34:56.789Z',
+      actorUserId: base.userId,
+      actorRole: 'player' as const,
+      type: 'acquire' as const,
+      payload: {
+        stashId: stashInInventory,
+        definitionId: torchDef.id,
+        quantity: 1,
+        source: 'catalog-add' as const,
+        itemInstanceId: newUuidV7(),
+      },
+    };
+    applyBroadcast({
+      partyId: base.partyId,
+      action: {
+        type: 'acquire',
+        payload: {
+          stashId: stashInInventory,
+          definitionId: torchDef.id,
+          quantity: 1,
+          source: 'catalog-add',
+          newItemInstanceId: serverLogEntry.payload.itemInstanceId,
+        },
+      },
+      applied: [serverLogEntry],
+    });
+
+    const after = useStore.getState();
+    expect(after.log.length).toBe(preLogLen + 1);
+    expect(after.log[after.log.length - 1]!.actorUserId).toBe(base.userId);
+  });
+
+  it('does NOT short-circuit when actorUserId differs (peer broadcast still re-runs reducer)', () => {
+    // Sanity: the fix must not break the peer-broadcast path.
+    const base = bootstrap();
+    const stashInInventory = base.inventoryStashId;
+    const torchDef = base.catalog.find((d) => d.id === 'phb-2024:torch');
+    if (torchDef === undefined) return;
+
+    const preLogLen = useStore.getState().log.length;
+    const peerUserId = newUuidV7();
+    const newItemInstanceId = newUuidV7();
+    applyBroadcast({
+      partyId: base.partyId,
+      action: {
+        type: 'acquire',
+        payload: {
+          stashId: stashInInventory,
+          definitionId: torchDef.id,
+          quantity: 5,
+          source: 'catalog-add',
+          newItemInstanceId,
+        },
+      },
+      applied: [
+        {
+          id: newUuidV7(),
+          partyId: base.partyId,
+          sessionId: null,
+          timestamp: '2026-07-03T12:34:56.789Z',
+          actorUserId: peerUserId, // ← different user
+          actorRole: 'player' as const,
+          type: 'acquire',
+          payload: {
+            stashId: stashInInventory,
+            definitionId: torchDef.id,
+            quantity: 5,
+            source: 'catalog-add',
+            itemInstanceId: newItemInstanceId,
+          },
+        },
+      ],
+    });
+
+    const after = useStore.getState();
+    // Reducer ran → item added with quantity 5.
+    const item = after.appState!.items.find((i) => i.id === newItemInstanceId);
+    expect(item?.quantity).toBe(5);
+    expect(after.log.length).toBe(preLogLen + 1);
+  });
+
+  it('handles the full round-trip: dispatch → broadcast self-echo → subsequent split does not double-apply', () => {
+    // This is the end-to-end symptom BUG-007 filed against:
+    //   1. Dispatch `acquire quantity 1`.
+    //   2. Server broadcasts back (self-echo).
+    //   3. Client state must reflect quantity 1 (not 2).
+    //   4. A `split qty: 1` MUST be rejected by the local reducer as
+    //      "must be less than source" — proving state is consistent
+    //      with what the server sees.
+    const base = bootstrap();
+    const stashInInventory = base.inventoryStashId;
+    const torchDef = base.catalog.find((d) => d.id === 'phb-2024:torch');
+    if (torchDef === undefined) return;
+
+    const newItemInstanceId = newUuidV7();
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: stashInInventory,
+        definitionId: torchDef.id,
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId,
+      },
+    });
+    applyBroadcast({
+      partyId: base.partyId,
+      action: {
+        type: 'acquire',
+        payload: {
+          stashId: stashInInventory,
+          definitionId: torchDef.id,
+          quantity: 1,
+          source: 'catalog-add',
+          newItemInstanceId,
+        },
+      },
+      applied: [
+        {
+          id: newUuidV7(),
+          partyId: base.partyId,
+          sessionId: null,
+          timestamp: '2026-07-03T12:34:56.789Z',
+          actorUserId: base.userId,
+          actorRole: 'player' as const,
+          type: 'acquire',
+          payload: {
+            stashId: stashInInventory,
+            definitionId: torchDef.id,
+            quantity: 1,
+            source: 'catalog-add',
+            itemInstanceId: newItemInstanceId,
+          },
+        },
+      ],
+    });
+
+    // Quantity should still be 1 post-self-echo.
+    const item = useStore.getState().appState!.items.find((i) => i.id === newItemInstanceId);
+    expect(item?.quantity).toBe(1);
   });
 });
 
