@@ -1376,3 +1376,106 @@ describe('POST /sync/actions — R5.2 edit-game-session-notes', () => {
     }
   });
 });
+
+describe('POST /sync/actions — BUG-008 equip auto-split repro', () => {
+  it('equipping a stack-of-2 with newItemInstanceId succeeds (server creates the split row + equips it)', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      const bootstrapIds = createCharacterIds();
+      const bootstrapRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: 'irrelevant',
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Fighter',
+                level: 3,
+                str: 14,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const partyId = bootstrapIds.newPartyId;
+      const inventoryStashId = bootstrapIds.newInventoryStashId;
+      const characterId = bootstrapIds.newCharacterId;
+
+      // Acquire 2 longswords into inventory (auto-stacks to a single row).
+      const stackedItemId = newUuidV7();
+      const acquireRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'acquire',
+              payload: {
+                stashId: inventoryStashId,
+                definitionId: 'phb-2024:longsword',
+                quantity: 2,
+                source: 'catalog-add',
+                newItemInstanceId: stackedItemId,
+              },
+            },
+          ],
+        },
+      });
+      expect(acquireRes.statusCode).toBe(200);
+      const stacked = await prisma.itemInstance.findUnique({ where: { id: stackedItemId } });
+      expect(stacked?.quantity).toBe(2);
+      expect(stacked?.equipped).toBe(false);
+
+      // Now equip: this is the reported repro. Server must auto-split
+      // and equip the NEW row.
+      const equippedRowId = newUuidV7();
+      const equipRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'equip',
+              payload: {
+                characterId,
+                itemInstanceId: stackedItemId,
+                newItemInstanceId: equippedRowId,
+              },
+            },
+          ],
+        },
+      });
+      // The user reported 422 "item instance not found" — this test
+      // pins the correct behavior: 200 + row split.
+      expect(equipRes.statusCode).toBe(200);
+
+      const sourceAfter = await prisma.itemInstance.findUnique({
+        where: { id: stackedItemId },
+      });
+      expect(sourceAfter?.quantity).toBe(1);
+      expect(sourceAfter?.equipped).toBe(false);
+      const newRow = await prisma.itemInstance.findUnique({
+        where: { id: equippedRowId },
+      });
+      expect(newRow).not.toBeNull();
+      expect(newRow?.quantity).toBe(1);
+      expect(newRow?.equipped).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+});
