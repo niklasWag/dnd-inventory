@@ -2,7 +2,7 @@
 
 A **private-use** D&D 5e (2024) inventory manager. Local-first browser app with an optional self-hosted backend (Discord OAuth / email OTP, authoritative sync, live party broadcast).
 
-> ⚠️ **Private use only.** This project does not ship seed data derived from the **2024 Player's Handbook** and **Dungeon Master's Guide**. PHB/DMG content is **not redistributed** — seed JSON files live outside git and the repo never includes them in any public history.
+> ⚠️ **Private use only.** This project does not ship seed data derived from the **2024 Player's Handbook** and **Dungeon Master's Guide**. PHB/DMG content is **not redistributed** — seed JSON files live outside git and the repo never includes them in any public history. See [`packages/seeds/data/examples/`](packages/seeds/data/examples/) for the expected file shape (safe-to-share stubs you can copy into `packages/seeds/data/` and extend for your private fork).
 
 See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut, `docs/TECH_STACK.md` for technology choices, and `docs/SECURITY.md` for the threat model and mitigations.
 
@@ -36,19 +36,27 @@ See `docs/OUTLINE.md` for the full product scope, `docs/MVP.md` for the MVP cut,
 - **RH4** — URL-scoped routing (`/party/:partyId/*` is authoritative for the active party; `PartyScopeSync` reconciles URL ↔ state)
 - **RH5** — Dexie hydration hardening (single-path loader, null-state not persisted, corruption UX with Settings "Wipe corrupted party data")
 
-**R5.1 — Live sync + reconnect** ✅ (post-RH-chain, per `docs/OUTLINE.md` §10 M5)
+**R5.1 — Live sync + reconnect** ✅ (per `docs/OUTLINE.md` §10 M5)
 
 - **R5.1.a** — Socket.IO party-room broadcast. Server attaches Socket.IO to Fastify's HTTP server; `io.use()` middleware reuses the session cookie via `getSession()`, rejects unauthenticated upgrades, auto-joins the connecting user to `party:<partyId>` for every active `PartyMembership`. `POST /sync/actions` emits an `applied` broadcast to the party room after each transaction commits (fire-and-forget, filtered by the shared `getActionMetadata(type).broadcastOnApplied` flag).
 - **R5.1.b** — Client socket consumer + inbound reconciliation. `sync/socket.ts` connects `socket.io-client` on server-mode boot; `applyBroadcast()` Zod-parses the broadcast, dedupes by log-entry id, re-runs the reducer against the source `action` for state mutation, and appends the server's `applied[]` verbatim via `appendServerLogEntries()` (RH2.6 log-authority pattern).
 - **R5.1.c** — Persisted outbox + bounded retry + reconnect state re-pull. Failed batches persist to a new Dexie `outbox` table (schema v2); the queue retries with exponential backoff (500ms → 8s, ±25% jitter, 5 attempts) and parks the row for next reconnect after that. On `socket.on('connect')`, `drainOutbox()` re-hydrates state via `GET /sync/state?partyId=` and flushes any buffered writes via `POST /sync/actions`.
 - **R5.1.d** — Offline write-block + auto-resume. Store guard `dispatch()` short-circuits + toasts when `(isServerMode && !online && memberCount >= 2)` — matches OUTLINE §9. Solo parties (memberCount === 1) stay writable and buffer to the outbox. `useCanDispatch()` reactive hook exposes the same predicate for UI affordance. Auto-resume via the R5.1.c reconnect drain.
 
-**Coming next (unblocked by R5.1):**
+**R5.2 — Sessions UI** ✅ (per `docs/OUTLINE.md` §3.12 + §5.9)
 
-- **R5.2** — Session-tools UI on top of RH3's `GameSession` model (Start/End buttons, current-session indicator, session list, distribute-loot session-tagging wizard).
-- **R5.3** — History timeline + filters (session, character, item, action-type, actorRole; per-item history with the OUTLINE §3.4 amendment permission rule).
+- DM Dashboard hosts Start / End Session controls plus a per-party session list with inline notes editing.
+- Layout header surfaces a "Session {N} in progress" pill on every party-scoped screen (visible to every party member).
+- New reducer action `edit-game-session-notes` (DM-only, no-op-rejecting) with matching schema variant + server persistor.
+- Middleware stamps `TransactionLog.sessionId` on every log entry from the pre-reduce `currentGameSessionId(state)` — every mutation dispatched while a session is `isCurrent` inherits its id automatically (unblocked R5.3's history filter).
 
-See `docs/roadmap.md` for the full slice history + upcoming plans.
+**R5.3 — History timeline + permission gating** ✅ (per `docs/OUTLINE.md` §3.4 amendment + §5.8)
+
+- **R5.3.a** — Party History timeline at `/party/:partyId/history`. Hybrid filter bar (Session / Character / Item / Actor role dropdowns + Action-type multi-select checkboxes with an "ownership transitions" default subset), simple "Load more" pagination (PAGE_SIZE=100), reverse-chronological order. Nav entry from the top-nav Layout button (visible to every party member). Shared `summarizeLogEntry` helper covers all 36 log-entry variants; `resolveActorLabel` maps `actorUserId` to a display name via `state.user.displayName` → `character.name` → short-uuid fallback.
+- **R5.3.b** — Per-item history on `ItemDetail` now applies the same `canSeeLogEntry` gate (in `@app/shared`) before the show-all-events toggle. Empty state and footer surface "N entries hidden by permission" so viewers know the log isn't exhaustive. Solo bypass (OUTLINE §8.2 union-of-rights) short-circuits the gate for parties of one.
+- **Permission rule** (§3.4 amendment): items currently in a character's Inventory or Storage → owner + DM only; items in Party Stash or Recovered Loot → every member. Banker-authored entries widen visibility to all members regardless of the item's current location (§3.14 transparency).
+
+See `docs/roadmap.md` for the full slice history + upcoming plans. R6 (DM tools — loot distribution wizard, hoard generator, shop manager, identification flow) is next.
 
 ## Local-only vs server modes
 
@@ -124,7 +132,7 @@ This app is designed to run on **a single Linux box behind a reverse proxy** —
 - A Linux server (Debian / Ubuntu / Alpine — anything that runs Docker). Proxmox LXC containers work fine; give the container ≥ 2 GB RAM.
 - Docker + Docker Compose v2.
 - A domain name pointed at the server (`dnd.example.com` in the examples below).
-- TLS certificates — easiest via [Caddy](https://caddyserver.com/) (auto-issues Let's Encrypt) or [nginx + certbot](https://certbot.eff.org/).
+- TLS certificates — easiest via [Caddy](https://caddyserver.com/) (auto-issues Let's Encrypt), [Traefik](https://traefik.io/traefik/) (Docker-native labels + built-in ACME), or [nginx + certbot](https://certbot.eff.org/).
 - **At least one login provider.** The server boots successfully with any combination of Discord OAuth, email OTP, or both (leave the unused set of env vars blank; the corresponding Login button is hidden). Options:
   - A Discord application registered at [https://discord.com/developers/applications](https://discord.com/developers/applications) — see step 2.
   - An SMTP relay for email-OTP login (R3.3): [Postmark](https://postmarkapp.com/), [AWS SES](https://aws.amazon.com/ses/), [Mailgun](https://www.mailgun.com/), [SendGrid](https://sendgrid.com/), or self-hosted Postfix. For local testing: [Mailpit](https://github.com/axllent/mailpit) via `docker run -p 1025:1025 -p 8025:8025 axllent/mailpit` (or the `--profile mail` compose target, which spins up the same image inside the compose network).
@@ -209,9 +217,9 @@ The Fastify server binds inside the container only; it expects a reverse proxy t
 | `/parties/*`   | `/leave`, `/kick`, `/invite/rotate`, `GET /:partyId/members` (R4.1.e)                |
 | `/socket.io/*` | **R5.1 WebSocket transport** — Engine.IO polling + WS upgrade                        |
 
-**R5.1 gotcha:** if `/socket.io/*` is missing from the proxy config, the client's polling handshake falls through to the SPA reverse-proxy, returns `index.html`, and the client emits `[socket] connect_error: server error` every reconnect tick. Both examples below include this path.
+**R5.1 gotcha:** if `/socket.io/*` is missing from the proxy config, the client's polling handshake falls through to the SPA reverse-proxy, returns `index.html`, and the client emits `[socket] connect_error: server error` every reconnect tick. All three examples below include this path.
 
-**Trust-host requirement** (Auth.js v5): the proxy must pass the canonical `Host` header so Auth.js can build correct callback URLs. Don't blindly forward `X-Forwarded-Host` from clients — that's a Host-header injection vector. The examples below are safe.
+**Trust-host requirement** (Auth.js v5): the proxy must pass the canonical `Host` header so Auth.js can build correct callback URLs. Don't blindly forward `X-Forwarded-Host` from clients — that's a Host-header injection vector. All three examples below are safe.
 
 #### Same-origin requirement (why a proxy is mandatory for server mode)
 
@@ -313,6 +321,78 @@ server {
 ```
 
 Issue certs with `sudo certbot --nginx -d dnd.example.com`.
+
+#### Traefik (Docker-native — labels on the compose services)
+
+Traefik discovers routes via Docker labels rather than a separate config file, so the proxy definition lives next to the services it fronts. This example assumes a **host-level** Traefik container (one shared instance in front of everything on the box) with a `web` (HTTP-80) and `websecure` (HTTPS-443) entrypoint and Let's Encrypt via the `dnd` certResolver — adjust names to match your existing Traefik setup.
+
+Add these labels to the `server` and `web` services in `infra/docker/docker-compose.yml` (or in a compose override file so upstream changes don't clobber them):
+
+```yaml
+services:
+  server:
+    # ...existing service definition...
+    labels:
+      - 'traefik.enable=true'
+      # Server-owned paths — routed to Fastify on the internal
+      # SERVER_PORT (default 3000). PathPrefix matches all sub-paths,
+      # so /auth/foo, /sync/actions, /parties/join, /socket.io/... all
+      # resolve here. `Path()` (not `PathPrefix`) is used for the two
+      # exact routes to avoid /partiesXYZ leaking through.
+      - 'traefik.http.routers.dnd-server.rule=Host(`dnd.example.com`) && (Path(`/healthz`) || PathPrefix(`/auth`) || PathPrefix(`/sync`) || Path(`/parties`) || PathPrefix(`/parties/`) || PathPrefix(`/socket.io`))'
+      - 'traefik.http.routers.dnd-server.entrypoints=websecure'
+      - 'traefik.http.routers.dnd-server.tls=true'
+      - 'traefik.http.routers.dnd-server.tls.certresolver=dnd'
+      - 'traefik.http.services.dnd-server.loadbalancer.server.port=3000'
+
+  web:
+    # ...existing service definition...
+    labels:
+      - 'traefik.enable=true'
+      # SPA fallback — everything not owned by the server. Lower
+      # priority so the server router above always wins on overlapping
+      # paths. Traefik's default priority is the rule length; setting
+      # this explicit low value keeps the SPA out of the way.
+      - 'traefik.http.routers.dnd-web.rule=Host(`dnd.example.com`)'
+      - 'traefik.http.routers.dnd-web.priority=1'
+      - 'traefik.http.routers.dnd-web.entrypoints=websecure'
+      - 'traefik.http.routers.dnd-web.tls=true'
+      - 'traefik.http.routers.dnd-web.tls.certresolver=dnd'
+      - 'traefik.http.services.dnd-web.loadbalancer.server.port=5173'
+```
+
+**WebSocket handling.** Traefik auto-detects the `Upgrade: websocket` header and streams the connection end-to-end — no extra config needed. The `/socket.io` PathPrefix on the server router covers both the initial polling transport and the WS upgrade.
+
+**Trust-host requirement** (Auth.js v5): by default Traefik forwards the original `Host` header, so the canonical hostname reaches Fastify unchanged. If your Traefik has a `passHostHeader: false` service override anywhere, remove it for the server router — Auth.js needs the client's `Host` to build correct callback URLs.
+
+**HTTP → HTTPS redirect.** If your global Traefik entrypoint config already redirects `web` → `websecure`, you're done. Otherwise attach a middleware:
+
+```yaml
+- 'traefik.http.routers.dnd-web-http.rule=Host(`dnd.example.com`)'
+- 'traefik.http.routers.dnd-web-http.entrypoints=web'
+- 'traefik.http.routers.dnd-web-http.middlewares=dnd-https-redirect'
+- 'traefik.http.middlewares.dnd-https-redirect.redirectscheme.scheme=https'
+- 'traefik.http.middlewares.dnd-https-redirect.redirectscheme.permanent=true'
+```
+
+**Traefik network.** The Traefik container and the compose services must share a Docker network. Either attach the app services to Traefik's existing network with an `external: true` block, or move Traefik into `infra/docker/docker-compose.yml`. Common pattern:
+
+```yaml
+networks:
+  traefik:
+    external: true
+    name: traefik_proxy # <-- whatever your Traefik network is called
+
+services:
+  server:
+    networks: [default, traefik]
+    # ...labels above...
+  web:
+    networks: [default, traefik]
+    # ...labels above...
+```
+
+**Verify** the same way as the nginx / Caddy sections — the WebSocket smoke check below applies to all three proxies.
 
 **Verifying WebSocket end-to-end:**
 

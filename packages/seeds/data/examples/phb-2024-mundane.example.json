@@ -1,0 +1,47 @@
+[
+  {
+    "slug": "rope-hempen-50ft",
+    "name": "Rope, Hempen (50 ft)",
+    "category": "gear",
+    "weight": 10,
+    "cost": { "amount": 1, "currency": "gp" },
+    "description": "A coil of hempen rope. Has 2 hit points and can be burst with a DC 17 Strength check.",
+    "tags": ["adventuring-gear", "utility"]
+  },
+  {
+    "slug": "torch",
+    "name": "Torch",
+    "category": "gear",
+    "weight": 1,
+    "cost": { "amount": 1, "currency": "cp" },
+    "description": "A torch burns for 1 hour, casting bright light in a 20-foot radius and dim light for an additional 20 feet.",
+    "tags": ["adventuring-gear", "light"]
+  },
+  {
+    "slug": "shortsword",
+    "name": "Shortsword",
+    "category": "weapon",
+    "weight": 2,
+    "cost": { "amount": 10, "currency": "gp" },
+    "description": "Martial melee weapon. 1d6 piercing, Finesse, Light.",
+    "tags": ["weapon", "martial", "melee"]
+  },
+  {
+    "slug": "chain-mail",
+    "name": "Chain Mail",
+    "category": "armor",
+    "weight": 55,
+    "cost": { "amount": 75, "currency": "gp" },
+    "description": "Heavy armor. AC 16; Strength 13 required; disadvantage on Stealth.",
+    "tags": ["armor", "heavy"]
+  },
+  {
+    "slug": "healers-kit",
+    "name": "Healer's Kit",
+    "category": "tool",
+    "weight": 3,
+    "cost": { "amount": 5, "currency": "gp" },
+    "description": "Ten charges of bandages, salves, and splints. Spend one charge to stabilize a creature at 0 HP.",
+    "tags": ["kit", "healing"]
+  }
+]

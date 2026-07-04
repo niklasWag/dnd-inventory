@@ -1,0 +1,51 @@
+[
+  {
+    "slug": "potion-of-healing",
+    "name": "Potion of Healing",
+    "category": "consumable",
+    "rarity": "common",
+    "weight": 0.5,
+    "cost": { "amount": 50, "currency": "gp" },
+    "description": "You regain 2d4+2 hit points when you drink this potion.",
+    "tags": ["potion", "healing"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "wand-of-magic-missiles",
+    "name": "Wand of Magic Missiles",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "requiresAttunement": false,
+    "description": "This wand has 7 charges. Expend 1 or more to cast Magic Missile.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "bag-of-holding-like",
+    "name": "Example Extradimensional Bag",
+    "category": "container",
+    "rarity": "uncommon",
+    "weight": 15,
+    "description": "This example bag ignores the weight of items placed inside it — only its own weight counts toward encumbrance.",
+    "tags": ["container", "extradimensional"],
+    "flatWeight": true
+  },
+  {
+    "slug": "ring-of-warmth-like",
+    "name": "Example Warmth Ring",
+    "category": "magic",
+    "rarity": "uncommon",
+    "requiresAttunement": true,
+    "attunementPrereq": "Requires attunement",
+    "description": "Example ring — carrying it protects the wearer from cold environments while attuned.",
+    "tags": ["ring", "attunement"]
+  }
+]
