@@ -219,6 +219,8 @@ The Fastify server binds inside the container only; it expects a reverse proxy t
 
 **R5.1 gotcha:** if `/socket.io/*` is missing from the proxy config, the client's polling handshake falls through to the SPA reverse-proxy, returns `index.html`, and the client emits `[socket] connect_error: server error` every reconnect tick. All three examples below include this path.
 
+**Vite host allow-list gotcha:** the web container runs `vite preview`, which since Vite 5 rejects reverse-proxied requests with `Blocked request. This host ("dnd.example.com") is not allowed.` Set `VITE_ALLOWED_HOSTS` to a comma-separated list of the public domains fronting the container — read at runtime, no rebuild needed. Behind a trusted proxy that's the only ingress, `VITE_ALLOWED_HOSTS=*` is a safe shortcut (Fastify's CORS still gates the API via `WEB_ORIGIN` independently). Full docs on the setting live in `apps/web/vite.config.ts`.
+
 **Trust-host requirement** (Auth.js v5): the proxy must pass the canonical `Host` header so Auth.js can build correct callback URLs. Don't blindly forward `X-Forwarded-Host` from clients — that's a Host-header injection vector. All three examples below are safe.
 
 #### Same-origin requirement (why a proxy is mandatory for server mode)
