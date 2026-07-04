@@ -2,18 +2,31 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { server, TEST_SERVER_ORIGIN } from '../test/msw';
+import { db } from '@/db/schema';
+import { wipeAll } from '@/db/wipe';
 import type * as QueueModule from './queue';
 import type { QueueDeps } from './queue';
+import type * as BackoffModule from '@/lib/backoff';
 
 async function loadQueue(): Promise<typeof QueueModule> {
   vi.stubEnv('VITE_SERVER_URL', TEST_SERVER_ORIGIN);
   vi.resetModules();
+  // R5.1.c — mock the backoff to be effectively-instant so retry
+  // tests don't wait real seconds. The formula itself is covered
+  // in `apps/web/src/lib/backoff.test.ts`. Must run AFTER
+  // `resetModules` so the mock applies to the fresh module graph.
+  vi.doMock('@/lib/backoff', async () => {
+    const actual = await vi.importActual<typeof BackoffModule>('@/lib/backoff');
+    return { ...actual, computeBackoff: () => 1 };
+  });
   return import('./queue.js');
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs();
   vi.resetModules();
+  vi.useRealTimers();
+  await wipeAll();
 });
 
 interface FakeSnapshot {
@@ -346,6 +359,125 @@ describe('queue — RH4.2 explicit partyId per enqueue', () => {
       { partyId: 'party-A', actionCount: 2 },
       { partyId: 'party-B', actionCount: 1 },
     ]);
+    queue.resetQueue();
+  });
+});
+
+// ------------------------------------------------------------------ //
+// R5.1.c — network-error retry with outbox persistence + bounded
+// exponential backoff. The pre-R5.1.c queue "kept optimistic state
+// but dropped the batch" on any network error — a tab close mid-
+// disconnect would silently lose the user's work. R5.1.c persists
+// the batch to Dexie's `outbox` table on first failure, retries up
+// to MAX_ATTEMPTS times with backoff, and finally leaves it in the
+// outbox for reconnect drain.
+//
+// `loadQueue()` above mocks `computeBackoff` to 1ms so retries fire
+// fast — the backoff formula itself is covered in
+// `apps/web/src/lib/backoff.test.ts`.
+// ------------------------------------------------------------------ //
+
+describe('R5.1.c — network-error retry + outbox persistence', () => {
+  it('on network error, persists the batch to the outbox on the first attempt', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
+    queue.configureQueue(deps);
+
+    // Simulate a network failure: MSW's `HttpResponse.error()` throws
+    // a network error rather than returning a response body.
+    server.use(http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () => HttpResponse.error()));
+
+    // Kick off the flush but don't await — it'll block on the retry
+    // setTimeout. We inspect the outbox mid-flight.
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-1');
+    const flushPromise = queue.flush();
+
+    // Wait for the first POST to have failed + the outbox row to have
+    // been written. Poll briefly; the first attempt is synchronous
+    // modulo MSW's fetch resolve.
+    for (let i = 0; i < 20; i++) {
+      const count = await db.outbox.count();
+      if (count > 0) break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(await db.outbox.count()).toBe(1);
+    const row = (await db.outbox.toArray())[0]!;
+    expect(row.partyId).toBe('party-1');
+    expect(row.actions).toHaveLength(1);
+
+    // Clean up — resetQueue signals cancellation so the pending retry
+    // promise unwinds (see queue.ts::resetQueue). Await the detached
+    // flushPromise so the test doesn't leak an inflight retry loop
+    // into the next test.
+    queue.resetQueue();
+    await flushPromise;
+  });
+
+  it('on eventual 200 success after transient failure, removes the outbox row', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
+    queue.configureQueue(deps);
+
+    // First POST fails; second succeeds. MSW handlers are FIFO
+    // per-request when defined as an array; we alternate manually
+    // via a counter.
+    let attempt = 0;
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () => {
+        attempt++;
+        if (attempt === 1) return HttpResponse.error();
+        return HttpResponse.json({ applied: [], serverTime: '2026-07-03T00:00:00.000Z' });
+      }),
+    );
+
+    queue.enqueue({ type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0], 'party-1');
+    await queue.flush();
+
+    // Row was created on first failure + removed after second success.
+    expect(await db.outbox.count()).toBe(0);
+    expect(attempt).toBeGreaterThanOrEqual(2);
+    queue.resetQueue();
+  });
+
+  it('on 422 rejection, removes the outbox row (no point re-sending)', async () => {
+    const queue = await loadQueue();
+    const preSnapshot: FakeSnapshot = {
+      appState: { party: { id: 'party-1' } },
+      log: [{ marker: 'PRE' }],
+    };
+    let current: FakeSnapshot = preSnapshot;
+    queue.configureQueue({
+      getSnapshot: () => current as unknown as ReturnType<QueueDeps['getSnapshot']>,
+      restoreSnapshot: (s) => {
+        const cast = s as unknown as FakeSnapshot;
+        current = cast;
+      },
+    });
+
+    // Force a network failure first (writes outbox row) then a 422.
+    let attempt = 0;
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () => {
+        attempt++;
+        if (attempt === 1) return HttpResponse.error();
+        return HttpResponse.json(
+          { rejected: { index: 0, code: 'banker_required_for_claim', message: 'nope' } },
+          { status: 422 },
+        );
+      }),
+    );
+
+    queue.captureRollbackSnapshot();
+    queue.enqueue(
+      { type: 'transfer' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'party-1',
+    );
+    await queue.flush();
+
+    // Outbox cleared (server rejected — retrying won't help).
+    expect(await db.outbox.count()).toBe(0);
+    // Rollback still fired.
+    expect(current.log).toEqual([{ marker: 'PRE' }]);
     queue.resetQueue();
   });
 });

@@ -8,6 +8,7 @@ import { useSession } from '@/store/session';
 import { hydrateFromDexie } from '@/store/hydrate';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { attachUnloadFlush, configureQueue } from '@/sync/queue';
+import { syncSocketWithSession } from '@/sync/socket';
 import '@/index.css';
 
 const rootEl = document.getElementById('root');
@@ -63,6 +64,37 @@ async function boot(): Promise<void> {
     },
   });
   attachUnloadFlush();
+
+  // R5.1.d — mirror `navigator.onLine` into the store so `canDispatch()`
+  // + `OfflineBanner` derive from a single source. Listeners are
+  // process-lifetime; no cleanup needed.
+  window.addEventListener('online', () => {
+    useStore.getState().setOnline(true);
+  });
+  window.addEventListener('offline', () => {
+    useStore.getState().setOnline(false);
+  });
+  useStore.getState().setOnline(navigator.onLine);
+
+  // R5.1.b — in server mode, open the Socket.IO connection so live
+  // broadcasts from other party members flow into the store as they
+  // happen. Local mode returns null (no server to connect to).
+  // Kept AFTER `configureQueue` so the store + queue are wired before
+  // the first inbound broadcast can arrive.
+  //
+  // R5.2.a — connect ONLY when the session has a valid cookie
+  // (`authenticated` / `needsDisplayName`). Prevents a noisy
+  // `connect_error: unauthenticated` on every login-screen visit
+  // before the user signs in. Re-runs on every session-status flip
+  // (login → connect, signOut → disconnect + tear down).
+  if (isServerMode) {
+    syncSocketWithSession(useSession.getState().status);
+    useSession.subscribe((state, prev) => {
+      if (state.status !== prev.status) {
+        syncSocketWithSession(state.status);
+      }
+    });
+  }
 
   createRoot(rootEl!).render(
     <StrictMode>

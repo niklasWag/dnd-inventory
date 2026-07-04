@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { toast } from 'sonner';
 
 import { newUuidV7, currentGameSessionId, deriveActorRoleForSlice } from '@app/shared';
 
@@ -25,6 +26,27 @@ import type { Action, AppState, TransactionLogEntry } from './types';
 export interface StoreState {
   appState: AppState;
   log: TransactionLogEntry[];
+  /**
+   * R5.1.b — mirror of the Socket.IO client's connection state. `true`
+   * once the auth handshake succeeds; `false` on disconnect. Set from
+   * `apps/web/src/sync/socket.ts`. UI can subscribe to drive an inline
+   * indicator; R5.1.c reads this to gate the outbox drain (only drain
+   * once we've reconnected).
+   *
+   * Always `false` in local mode — no socket to connect.
+   */
+  socketConnected: boolean;
+  /**
+   * R5.1.d — mirror of `navigator.onLine`. Kept in the store (not a
+   * per-component `useState`) so the `canDispatch()` selector can
+   * derive its verdict without every consumer wiring its own event
+   * listener. `main.tsx` attaches the `window` `online`/`offline`
+   * listeners on boot; they call `setOnline(true|false)`.
+   *
+   * Always mirrors the browser; local mode ignores this field for
+   * write-block purposes (see `canDispatch()`).
+   */
+  online: boolean;
   dispatch: (action: Action) => void;
   hydrate: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
   restoreSnapshot: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
@@ -46,6 +68,12 @@ export interface StoreState {
    * server mode eliminates that divergence axis entirely.
    */
   appendServerLogEntries: (applied: readonly TransactionLogEntry[]) => void;
+  /**
+   * R5.1.d — connectivity state setter. Called from `main.tsx`'s
+   * `online`/`offline` window listeners so `canDispatch()` re-derives
+   * on every connectivity flip.
+   */
+  setOnline: (v: boolean) => void;
 }
 
 const saver = createDebouncedSaver();
@@ -132,11 +160,72 @@ function buildLogEntry(state: AppState, slice: LogEntrySlice): TransactionLogEnt
   };
 }
 
+/**
+ * R5.1.d — active-member count for a party. Uses `leftAt === null`
+ * for "active" (same filter as OfflineBanner and `GET /sync/parties`)
+ * and de-duplicates by userId so a party-of-one with both `dm` +
+ * `player` membership rows correctly counts as `1`.
+ *
+ * Exported so the `canDispatch` predicate + `OfflineBanner` share a
+ * single source of truth; also exported for unit tests.
+ */
+export function activeMemberCount(appState: AppState): number {
+  if (appState === null) return 0;
+  return new Set(appState.memberships.filter((m) => m.leftAt === null).map((m) => m.userId)).size;
+}
+
+/**
+ * R5.1.d — the offline write-block predicate.
+ *
+ * Returns `false` when a dispatch would be a silent optimistic-only
+ * mutation in a multi-member server-mode party without connectivity —
+ * the exact condition OUTLINE §9 forbids. Returns `true` in every
+ * other configuration:
+ *
+ *   - Local mode: no server, so no sync concern — writes go straight
+ *     to Dexie.
+ *   - Solo (memberCount === 1): OUTLINE §9 explicitly allows
+ *     party-of-one offline work; buffered writes drain to the outbox
+ *     (R5.1.c) and flush on reconnect.
+ *   - Online + multi-member: normal operation.
+ *
+ * Kept as a pure function of `(isServerMode, online, memberCount)` so
+ * tests can drive every combination without instantiating a store.
+ */
+export function canDispatchFor(isServer: boolean, online: boolean, memberCount: number): boolean {
+  if (!isServer) return true;
+  if (online) return true;
+  if (memberCount < 2) return true;
+  return false;
+}
+
 export const useStore = create<StoreState>()(
   immer((set, get) => ({
     appState: null,
     log: [],
+    socketConnected: false,
+    // Initial value read from the browser. `main.tsx` wires listeners
+    // to keep this in sync on connectivity flips.
+    online: typeof navigator !== 'undefined' ? navigator.onLine : true,
     dispatch: (action) => {
+      // R5.1.d — write-block guard. In server mode, when the browser is
+      // offline AND the party has 2+ active members, OUTLINE §9 says
+      // writes are forbidden (they'd desync from other members). We
+      // short-circuit here + surface a toast so any consumer that
+      // programmatically dispatches (not just Save buttons) is caught.
+      // UI-level `useCanDispatch()` disables the primary Save buttons
+      // for user affordance; this guard is the correctness backstop.
+      //
+      // `seed-catalog` is a local-only bootstrap seed (see queue.ts
+      // rationale) — it's allowed regardless.
+      const state = get();
+      if (
+        action.type !== 'seed-catalog' &&
+        !canDispatchFor(isServerMode, state.online, activeMemberCount(state.appState))
+      ) {
+        toast.error('Offline — changes are disabled until you reconnect.');
+        return;
+      }
       // BUG-003 — capture the pre-mutation snapshot NOW so the sync
       // queue can roll back to it on 422 rejection. Must run before
       // any `set()` mutation below; the queue module guarantees
@@ -243,6 +332,11 @@ export const useStore = create<StoreState>()(
         }
       });
     },
+    setOnline: (v) => {
+      set((draft) => {
+        draft.online = v;
+      });
+    },
   })),
 );
 
@@ -311,6 +405,12 @@ type MintingActionInput =
   | (Omit<Extract<Action, { type: 'transfer' }>, 'payload'> & {
       payload: Omit<Extract<Action, { type: 'transfer' }>['payload'], 'newItemInstanceId'>;
     })
+  | (Omit<Extract<Action, { type: 'equip' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'equip' }>['payload'], 'newItemInstanceId'>;
+    })
+  | (Omit<Extract<Action, { type: 'attune' }>, 'payload'> & {
+      payload: Omit<Extract<Action, { type: 'attune' }>['payload'], 'newItemInstanceId'>;
+    })
   | (Omit<Extract<Action, { type: 'create-character' }>, 'payload'> & {
       payload:
         | Omit<
@@ -363,6 +463,20 @@ function injectMintedIds(action: MintingActionInput | Exclude<Action, MintingAct
         payload: { ...action.payload, newDefinitionId: newUuidV7() },
       };
     case 'transfer':
+      return {
+        ...action,
+        payload: { ...action.payload, newItemInstanceId: newUuidV7() },
+      };
+    case 'equip':
+      // BUG-008 — reducer only USES this id when the source row has
+      // quantity > 1 (auto-split path). Minted unconditionally so the
+      // caller doesn't need to inspect state.
+      return {
+        ...action,
+        payload: { ...action.payload, newItemInstanceId: newUuidV7() },
+      };
+    case 'attune':
+      // BUG-008 — same rationale as `equip`.
       return {
         ...action,
         payload: { ...action.payload, newItemInstanceId: newUuidV7() },

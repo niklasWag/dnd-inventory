@@ -192,3 +192,172 @@ describe('reducer — end-game-session (RH3.1)', () => {
     );
   });
 });
+
+describe('reducer — edit-game-session-notes (R5.2)', () => {
+  function seedWithSession(notes?: string): {
+    state: NonNullable<AppState>;
+    gameSessionId: string;
+  } {
+    const state = bootstrap();
+    const gameSessionId = newUuidV7();
+    const result = reduce(
+      state,
+      {
+        type: 'start-game-session',
+        payload: {
+          newGameSessionId: gameSessionId,
+          ...(notes !== undefined ? { notes } : {}),
+        },
+      },
+      ctx,
+    );
+    return { state: result.state as NonNullable<AppState>, gameSessionId };
+  }
+
+  it('sets notes on a session that had none + emits a log slice', () => {
+    const { state, gameSessionId } = seedWithSession();
+
+    const result = reduce(
+      state,
+      {
+        type: 'edit-game-session-notes',
+        payload: { gameSessionId, notes: 'Boss fight!' },
+      },
+      ctx,
+    );
+
+    const next = result.state as NonNullable<AppState>;
+    const target = next.gameSessions.find((s) => s.id === gameSessionId)!;
+    expect(target.notes).toBe('Boss fight!');
+    expect(target.isCurrent).toBe(true); // unchanged
+    expect(target.number).toBe(1); // unchanged
+
+    expect(result.logEntries).toHaveLength(1);
+    const slice = result.logEntries[0]!;
+    expect(slice.type).toBe('edit-game-session-notes');
+    expect(slice.payload).toEqual({
+      gameSessionId,
+      number: 1,
+      oldNotes: '',
+      newNotes: 'Boss fight!',
+    });
+  });
+
+  it('overwrites existing notes with a new value', () => {
+    const { state, gameSessionId } = seedWithSession('First draft');
+    const result = reduce(
+      state,
+      {
+        type: 'edit-game-session-notes',
+        payload: { gameSessionId, notes: 'Second draft' },
+      },
+      ctx,
+    );
+    const next = result.state as NonNullable<AppState>;
+    expect(next.gameSessions.find((s) => s.id === gameSessionId)!.notes).toBe('Second draft');
+    expect(result.logEntries[0]!.payload).toEqual({
+      gameSessionId,
+      number: 1,
+      oldNotes: 'First draft',
+      newNotes: 'Second draft',
+    });
+  });
+
+  it('clears notes when newNotes is empty (drops the field)', () => {
+    const { state, gameSessionId } = seedWithSession('First draft');
+    const result = reduce(
+      state,
+      { type: 'edit-game-session-notes', payload: { gameSessionId, notes: '' } },
+      ctx,
+    );
+    const next = result.state as NonNullable<AppState>;
+    const target = next.gameSessions.find((s) => s.id === gameSessionId)!;
+    expect(target.notes).toBeUndefined();
+    expect(result.logEntries[0]!.payload).toEqual({
+      gameSessionId,
+      number: 1,
+      oldNotes: 'First draft',
+      newNotes: '',
+    });
+  });
+
+  it('does not touch other GameSession rows', () => {
+    const state = bootstrap();
+    const first = newUuidV7();
+    const afterFirst = reduce(
+      state,
+      { type: 'start-game-session', payload: { newGameSessionId: first, notes: 'S1' } },
+      ctx,
+    );
+    const second = newUuidV7();
+    const afterSecond = reduce(
+      afterFirst.state,
+      {
+        type: 'start-game-session',
+        payload: { newGameSessionId: second, endCurrentFirst: true, notes: 'S2' },
+      },
+      ctx,
+    );
+
+    const result = reduce(
+      afterSecond.state,
+      { type: 'edit-game-session-notes', payload: { gameSessionId: first, notes: 'S1 revised' } },
+      ctx,
+    );
+    const next = result.state as NonNullable<AppState>;
+    const firstSession = next.gameSessions.find((s) => s.id === first)!;
+    const secondSession = next.gameSessions.find((s) => s.id === second)!;
+    expect(firstSession.notes).toBe('S1 revised');
+    expect(secondSession.notes).toBe('S2');
+    expect(secondSession.isCurrent).toBe(true);
+  });
+
+  it('rejects unknown gameSessionId', () => {
+    const { state } = seedWithSession();
+    expect(() =>
+      reduce(
+        state,
+        {
+          type: 'edit-game-session-notes',
+          payload: { gameSessionId: newUuidV7(), notes: 'x' },
+        },
+        ctx,
+      ),
+    ).toThrow(/unknown gameSessionId/);
+  });
+
+  it('rejects no-op writes (unchanged notes)', () => {
+    const { state, gameSessionId } = seedWithSession('Same');
+    expect(() =>
+      reduce(
+        state,
+        { type: 'edit-game-session-notes', payload: { gameSessionId, notes: 'Same' } },
+        ctx,
+      ),
+    ).toThrow(/notes unchanged/);
+  });
+
+  it('rejects no-op clear on a session with no notes', () => {
+    const { state, gameSessionId } = seedWithSession();
+    expect(() =>
+      reduce(
+        state,
+        { type: 'edit-game-session-notes', payload: { gameSessionId, notes: '' } },
+        ctx,
+      ),
+    ).toThrow(/notes unchanged/);
+  });
+
+  it('rejects when state is null', () => {
+    expect(() =>
+      reduce(
+        null,
+        {
+          type: 'edit-game-session-notes',
+          payload: { gameSessionId: newUuidV7(), notes: 'x' },
+        },
+        ctx,
+      ),
+    ).toThrow(/edit-game-session-notes/);
+  });
+});

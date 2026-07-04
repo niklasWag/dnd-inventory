@@ -10,6 +10,7 @@ export * from './itemDefinition';
 export * from './itemInstance';
 export * from './party';
 export * from './partyMembership';
+export * from './socketMessages';
 export * from './stash';
 export * from './transactionLog';
 export * from './user';

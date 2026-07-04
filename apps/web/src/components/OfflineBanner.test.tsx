@@ -7,12 +7,15 @@ import { useStore } from '@/store';
 
 /**
  * R4.4.d — offline banner for multi-member parties per OUTLINE §9.
+ * R5.1.d — banner now reads `online` from the store (single source of
+ * truth); `main.tsx` wires the `window` listeners. Tests drive
+ * connectivity via `useStore.setState({ online })` instead of firing
+ * browser events.
  *
  * Visibility rules:
  *   - Server mode only. Local mode never shows the banner (no network,
  *     no sync — offline is the normal state).
- *   - `navigator.onLine === false`. Uses the browser's online/offline
- *     events to react to state transitions.
+ *   - `store.online === false`.
  *   - `memberCount >= 2`. Solo parties work offline indefinitely per
  *     §9; the banner is misleading noise for them.
  *
@@ -20,27 +23,10 @@ import { useStore } from '@/store';
  * render.
  */
 
-// Mock the serverMode module — `isServerMode` is captured at module
-// load time from `import.meta.env`. `bootstrap()` isn't reachable here
-// because it dispatches through the store's server-mode enqueue path,
-// which requires a configured sync queue. Instead the tests build a
-// minimal but fully-typed AppState by hand (no `as any`) — the shape
-// is small enough that this is cheaper than wiring the queue.
 vi.mock('@/lib/serverMode', () => ({ isServerMode: true }));
 
 function setOnline(value: boolean): void {
-  Object.defineProperty(navigator, 'onLine', {
-    configurable: true,
-    get: () => value,
-  });
-}
-
-function fireOnlineEvent(): void {
-  window.dispatchEvent(new Event('online'));
-}
-
-function fireOfflineEvent(): void {
-  window.dispatchEvent(new Event('offline'));
+  useStore.setState({ online: value });
 }
 
 /** Build a fully-typed AppState with N distinct-userId memberships. */
@@ -86,7 +72,7 @@ function seedMembers(count: number): void {
   useStore.setState({ appState: makeAppStateFixture(count), log: [] });
 }
 
-describe('OfflineBanner (R4.4.d)', () => {
+describe('OfflineBanner (R4.4.d + R5.1.d)', () => {
   beforeEach(() => {
     setOnline(true);
     useStore.setState({ appState: null, log: [] });
@@ -108,6 +94,8 @@ describe('OfflineBanner (R4.4.d)', () => {
     render(<OfflineBanner />);
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent(/offline/i);
+    // R5.1.d — banner surfaces the write-block reason.
+    expect(alert).toHaveTextContent(/disabled/i);
   });
 
   it('renders nothing when offline in a solo party (memberCount === 1)', () => {
@@ -123,7 +111,7 @@ describe('OfflineBanner (R4.4.d)', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('appears when the browser fires the offline event, disappears on online', () => {
+  it('appears when the store flips offline, disappears when it flips online', () => {
     setOnline(true);
     seedMembers(2);
     render(<OfflineBanner />);
@@ -131,13 +119,11 @@ describe('OfflineBanner (R4.4.d)', () => {
 
     act(() => {
       setOnline(false);
-      fireOfflineEvent();
     });
     expect(screen.getByRole('alert')).toBeInTheDocument();
 
     act(() => {
       setOnline(true);
-      fireOnlineEvent();
     });
     expect(screen.queryByRole('alert')).toBeNull();
   });

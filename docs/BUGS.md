@@ -80,6 +80,135 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-008 — Equipped/attuned items stack; split copies flags; server desyncs
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04 (branch: `feat/r5-live-sync-history`)
+- **Severity:** high (three related client-server divergences; each yields user-visible bad state and a 500 on some follow-up dispatches. Symptom class: "the UI shows one thing, the server sees another, and the next action fails.")
+- **Status:** fixed
+- **Affected slice:** cross-cutting — reducer `acquire` / `split` / `equip` / `attune` arms; server persistor `equip` / `attune` arms; client dispatch site for equip/attune buttons; shared action schemas for `equip` + `attune`. Design pre-dated R2.1 (`attune`) and R1.2 (`equip`); surfaced together during R5.1 manual testing when live server-authoritative sync amplified the divergence.
+
+**Symptoms.** All observed 2026-07-04 during server-mode testing:
+
+1. **Acquire onto an equipped row stacks quantity.** With a single Longsword equipped, clicking `+` (a fresh `acquire { quantity: 1 }` against the auto-stack key `(definitionId, notes ?? "")`) rolls the new copy into the existing equipped row, yielding "quantity 2, equipped: true" — nonsense per OUTLINE §3.4 ("you can't equip two of a kind").
+2. **Split copies `equipped` / `attuned` from source; server clears them.** Splitting an equipped stack surfaces the new row with `equipped: true` in the client optimistic state, but the server-side `persistSplit` (`apps/server/src/sync/persistor.ts`) hard-codes `equipped: false, attuned: false` on the new row. Clicking "Unequip" on the split-off row then fires a 500: the server sees a row that's already `equipped: false` and the reducer no-op guard rejects.
+3. **Equip on a stack keeps the stack.** With 3 Longswords in Inventory, clicking Equip flips `equipped: true` on the whole stack (`quantity: 3, equipped: true`) — same "you can't equip two of a kind" violation.
+
+**Root cause.** Three defects in the same invariant family:
+
+- `packages/rules/src/reducer/index.ts::acquire` — auto-stack predicate at line ~721 matched only on `(ownerId, definitionId, notes)`, ignoring the `equipped` / `attuned` flags on the candidate row.
+- `packages/rules/src/reducer/index.ts::split` — new-row builder at line ~1759 spread `{ ...source, id, quantity }`, carrying `equipped` / `attuned` from the source. Server-side `persistSplit` correctly hard-codes both to `false`, but the client optimistic state disagreed.
+- `packages/rules/src/reducer/index.ts::equipOrUnequip` — flag flip at line ~2314 mutated the source row in place regardless of `quantity`. No auto-split path existed; the reducer accepted `equip` on a stacked row without complaint. Same defect on `attune` (`attuneOrUnattune`, line ~2411).
+
+**Fix.** All three surfaces, in one slice, enforcing the invariant "an equipped or attuned row always has quantity=1":
+
+1. **`acquire`** — extended the auto-stack predicate to require `existing.equipped === false && existing.attuned === false`. Fresh acquires onto an equipped/attuned row now land as a new row (quantity 1), preserving the invariant.
+2. **`split`** — new-row builder now always sets `equipped: false, attuned: false`, aligning with the server persistor.
+3. **`equip` / `attune` auto-split.** When the source row has `quantity > 1`, the reducer auto-splits off a fresh `quantity: 1` row (using a new optional `newItemInstanceId` on the action payload) and flips the flag on the NEW row. The old row keeps its remaining quantity and stays unequipped/unattuned. The log emits `split` + `equip` (or `attune`) as two entries; dispatch site (`apps/web/src/components/stash/StashItemsTable.tsx`) routes through `dispatchMintingAction` so the UUID is minted unconditionally. Server persistors (`persistEquip` / `persistAttune`) mirror the same split-then-flip logic.
+
+**Wire schema change (backwards-compat additive).** `equipAction` and `attuneAction` gain an optional `newItemInstanceId` field. Existing clients not passing it work fine for the `quantity: 1` case; the reducer only requires the field when the auto-split path is entered.
+
+**Tests.** `packages/rules/src/reducer/bug-008.test.ts` — 9 new reducer tests covering all three defect vectors + happy paths + the required-field guard. Rules suite 144 → 153. Full test-suite growth 1449 → 1458.
+
+**Not addressed:** existing DB rows written under the pre-fix regime may have `equipped: true, quantity > 1` or `attuned: true, quantity > 1`. No back-fill migration ships with this slice — the schema-level CHECK is deferred. Users hitting this in dev data can either: (a) `pnpm --filter @app/server db:reset` for a clean slate, or (b) manually adjust the row via `pnpm --filter @app/server db:studio`. If the corruption is seen in real (non-dev) data later, add a follow-up migration.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
+
+### BUG-007 — Server-mode self-echo double-applies dispatched actions (quantity doubles, consume removes, split rejected)
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04 (branch: `feat/r5-live-sync-history`; R5.1 followup — sits alongside BUG-006)
+- **Severity:** high (user-visible data desync — every dispatched action in server mode has its state mutation applied TWICE on the acting client. Not just cosmetic: subsequent actions read the wrong optimistic state and either fail server-side validation or produce further wrong writes. Server-authoritative state stays correct, so `pullState` restores sanity — but a fresh visit / manual refresh is the only workaround.)
+- **Status:** fixed
+- **Affected slice:** R5.1.b (broadcast reconciliation). Present since 2026-07-03 when RH2.6's log-authority split retired client-side log-entry emission in server mode; the pre-existing dedupe was designed around client-emitted log ids as its self-echo sentinel and stopped working the moment client-emit stopped.
+
+**Symptoms.** All three observed by the user 2026-07-04 in server mode after starting fresh:
+
+1. **Acquire shows quantity 2 in the UI when 1 was selected.** Optimistic dispatch adds quantity 1 → server broadcasts back → `applyBroadcast` re-runs the reducer against the already-mutated state → quantity becomes 2.
+2. **Pressing "-" on the item removes it from the inventory.** Same defect on `consume`: dispatch drops quantity by 1 (2 → 1 in the doubled state) → broadcast re-runs → 1 → 0 → row removed.
+3. **Split rejected as "qty 1 must be less than source quantity 1".** UI thinks source is 2 (doubled), submits `split qty: 1`, server sees the actual quantity 1 and rejects with the reducer's split invariant.
+
+All three are the same defect from three angles.
+
+**Root cause.** `apps/web/src/sync/applyBroadcast.ts` (pre-fix) filtered `applied[]` by log-entry id against `store.log`:
+
+```
+const seenIds = new Set(store.log.map((e) => e.id));
+const novel = applied.filter((e) => !seenIds.has(e.id));
+```
+
+This design assumed the acting client had ALREADY appended the entry (with the server-canonical id) via its HTTP-response path before the broadcast arrived. In the pre-RH2.6 world the client emitted its OWN log entries (with client-minted ids that didn't match the server's) and the dedupe was actually a fingerprint-match. Post-RH2.6 (2026-07-03) the client stopped emitting log entries in server mode entirely — `appendServerLogEntries` only runs from the HTTP-response path. Two consequences:
+
+1. In the pre-RH2.6 world, the log entry was already in `store.log` before the broadcast handler ran (client-emit was synchronous during dispatch), so the dedupe blocked the reducer re-run.
+2. Post-RH2.6, `state.log` is empty until the HTTP-response path resolves. The socket broadcast reliably beats the HTTP round-trip (one push vs one round-trip), so `seenIds` never contains the incoming entry and the reducer re-run always fires.
+
+The reducer re-run applies the action to the ALREADY-mutated state, doubling every mutation.
+
+**Fix.** In `applyBroadcast`, detect self-echo by `actorUserId`. When every novel entry's `actorUserId` matches the store's current `state.appState.user.id`, this broadcast is the server confirming an action THIS client just dispatched. Skip the reducer re-run (state already optimistically applied); still append the log entries via `appendServerLogEntries` so RH2.6 log-authority is preserved.
+
+```ts
+const selfUserId = store.appState?.user.id ?? null;
+const isSelfEcho =
+  selfUserId !== null && novel.every((e) => e.actorUserId === selfUserId);
+
+if (!isSelfEcho) {
+  const result = reduce(store.appState, reducerAction, broadcastReducerCtx);
+  useStore.setState({ appState: result.state });
+}
+
+store.appendServerLogEntries(novel);
+```
+
+Peer broadcasts (different `actorUserId`) still re-run the reducer as before — those are events the local reducer hasn't seen yet.
+
+**Multi-tab edge case (not fixed here).** If the same user has two tabs open, tab B sees a broadcast from tab A's dispatch with a matching `actorUserId` and short-circuits — but tab B never optimistically ran the reducer. Tab B will miss the mutation until it re-hydrates on next `pullState` (route change / reconnect). Trade-off: acceptable for the common single-tab case; multi-tab drift is a known R5.x constraint. A future fix could tag dispatches with a client-nonce broadcast back verbatim so tab B distinguishes tab A's dispatch from its own; deferred until multi-tab shows up as a real user need.
+
+**Tests.** `apps/web/src/sync/socket.test.ts` gains 4 new tests (14 total, was 10):
+- Self-echo does not double-apply an acquire (quantity stays 1).
+- Self-echo still appends the server log entry (RH2.6 log-authority preserved).
+- Peer broadcast (different `actorUserId`) still re-runs the reducer.
+- End-to-end reproduction: dispatch → self-echo → final state matches server.
+
+Two existing tests updated: the pre-BUG-007 "peer broadcast" tests used `base.userId` as `actorUserId` (accidentally exercising self-echo path); both now use a distinct `peerUserId` to correctly exercise the reducer-re-run branch.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
+
+### BUG-006 — Socket.IO connects on the login screen before the user is authenticated; two red console errors greet every fresh visitor
+
+- **Filed:** 2026-07-04
+- **Fixed:** 2026-07-04 (branch: `feat/r5-live-sync-history`; R5.1 followup)
+- **Severity:** low (cosmetic — the server correctly rejects the unauthenticated upgrade per SECURITY §6; no data leak, no broken functionality. But two red-flagged console errors on every fresh /login visit is noise that trains users to ignore the console, and it wastes one round-trip per boot before the socket gives up.)
+- **Status:** fixed
+- **Affected slice:** R5.1.b (client socket consumer). Present since 2026-07-03 when the boot-time `connectSocket()` landed.
+
+**Symptom.** Server mode, first visit to the app (no session cookie). Two red errors appear in the browser console before the user has done anything:
+
+```
+WebSocket connection to 'ws://localhost:8080/socket.io/?EIO=4&transport=websocket&sid=...' failed: WebSocket is closed before the connection is established.
+[socket] connect_error: unauthenticated
+```
+
+Once the user signs in, the socket connects cleanly (any subsequent broadcasts work). But the initial-visit console pollution is confusing — a new user might think something is broken.
+
+**Root cause.** `apps/web/src/main.tsx:84-87` unconditionally called `connectSocket()` + `socket.connect()` at boot in server mode, regardless of session status. The server's Socket.IO middleware (`apps/server/src/realtime/io.ts::io.use()`) reads the session cookie via `getSession()`; when the user has none, it invokes `next(new Error('unauthenticated'))`, which surfaces client-side as a `connect_error`. The underlying WS handshake also gets torn down mid-upgrade, producing the raw browser-level "closed before connection established" warning.
+
+**Fix.** Auth-gate the connect. `apps/web/src/sync/socket.ts` gains `syncSocketWithSession(status)` — a small state-machine helper:
+
+- `'authenticated'` / `'needsDisplayName'` → build (once) + connect. `needsDisplayName` still holds a valid session cookie that `io.use()` accepts.
+- Any other status (`'loading'`, `'anonymous'`) → `resetSocket()` (tear down the module singleton so the next auth transition rebuilds cleanly).
+
+`main.tsx` boots by calling `syncSocketWithSession(useSession.getState().status)` once and subscribing to `useSession` for transition-triggered re-syncs. On sign-in the session flips `anonymous` → `authenticated` and the helper connects; on sign-out it flips back and the helper tears down.
+
+**Tests.** `apps/web/src/sync/socket.test.ts` gains 6 new tests: anonymous / loading → no build; authenticated / needsDisplayName → build + connect; authenticated → anonymous → tear-down; idempotent re-authenticate.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
+
 ### BUG-004 — Server persistor mints a different UUID than the reducer for new item rows; Item Detail history is empty right after `acquire` / `split`
 
 - **Filed:** 2026-07-01

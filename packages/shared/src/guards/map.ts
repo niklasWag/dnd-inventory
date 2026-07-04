@@ -1092,6 +1092,33 @@ const endGameSessionGuard: Guard<Extract<Action, { type: 'end-game-session' }>> 
   return { ok: true };
 };
 
+/**
+ * R5.2 — `edit-game-session-notes`. DM-only per OUTLINE §3.12 ("the DM
+ * marks the current session"). Editing notes on ANY session (current
+ * or past) is DM territory; §8.2 solo bypass is handled by `checkGuard`
+ * upstream.
+ */
+const editGameSessionNotesGuard: Guard<Extract<Action, { type: 'edit-game-session-notes' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return {
+      ok: false,
+      code: 'state_not_initialized',
+      message: 'edit-game-session-notes: no state.',
+    };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'edit-game-session-notes is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
 export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>> } = {
   'create-character': createCharacterGuard,
   acquire: acquireGuard,
@@ -1129,6 +1156,7 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'split-evenly': splitEvenlyGuard,
   'start-game-session': startGameSessionGuard,
   'end-game-session': endGameSessionGuard,
+  'edit-game-session-notes': editGameSessionNotesGuard,
 };
 
 /**

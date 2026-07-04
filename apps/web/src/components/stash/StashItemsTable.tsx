@@ -376,13 +376,30 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
                           aria-pressed={row.equipped}
                           aria-label={`${row.equipped ? 'Unequip' : 'Equip'} ${displayName}`}
                           onClick={() => {
-                            dispatchOrToast(
-                              {
-                                type: row.equipped ? 'unequip' : 'equip',
-                                payload: { characterId, itemInstanceId: row.id },
-                              },
-                              row.equipped ? 'Could not unequip' : 'Could not equip',
-                            );
+                            // BUG-008 — `equip` mints `newItemInstanceId`
+                            // via `dispatchMintingAction` so the reducer
+                            // can auto-split a stacked row (quantity > 1)
+                            // off into a fresh quantity-1 row before
+                            // flipping `equipped: true` on the new row.
+                            // Ignored by the reducer when quantity is
+                            // already 1.
+                            if (row.equipped) {
+                              dispatchOrToast(
+                                {
+                                  type: 'unequip',
+                                  payload: { characterId, itemInstanceId: row.id },
+                                },
+                                'Could not unequip',
+                              );
+                            } else {
+                              dispatchMintingOrToast(
+                                {
+                                  type: 'equip',
+                                  payload: { characterId, itemInstanceId: row.id },
+                                },
+                                'Could not equip',
+                              );
+                            }
                           }}
                         >
                           {row.equipped ? 'Unequip' : 'Equip'}
@@ -439,13 +456,28 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
                                 setCapOverrideItemId(row.id);
                                 return;
                               }
-                              dispatchOrToast(
-                                {
-                                  type: row.attuned ? 'unattune' : 'attune',
-                                  payload: { characterId, itemInstanceId: row.id },
-                                },
-                                row.attuned ? 'Could not unattune' : 'Could not attune',
-                              );
+                              // BUG-008 — `attune` mints `newItemInstanceId`
+                              // via `dispatchMintingAction` so the reducer
+                              // can auto-split a stacked row before
+                              // attuning. Ignored by the reducer when
+                              // quantity is already 1.
+                              if (row.attuned) {
+                                dispatchOrToast(
+                                  {
+                                    type: 'unattune',
+                                    payload: { characterId, itemInstanceId: row.id },
+                                  },
+                                  'Could not unattune',
+                                );
+                              } else {
+                                dispatchMintingOrToast(
+                                  {
+                                    type: 'attune',
+                                    payload: { characterId, itemInstanceId: row.id },
+                                  },
+                                  'Could not attune',
+                                );
+                              }
                             }}
                           >
                             {row.attuned ? 'Unattune' : 'Attune'}
@@ -583,7 +615,10 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
             <AlertDialogAction
               onClick={() => {
                 if (capOverrideItemId === null || characterId === undefined) return;
-                dispatchOrToast(
+                // BUG-008 — DM cap-override also routes through the
+                // minting dispatch so an over-cap attune on a stacked
+                // row still auto-splits correctly.
+                dispatchMintingOrToast(
                   {
                     type: 'attune',
                     payload: {

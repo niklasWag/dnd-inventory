@@ -324,6 +324,13 @@ const equipAction = z.object({
     itemInstanceId: z.string().min(1),
     characterId: z.string().min(1),
     slot: z.string().optional(),
+    // BUG-008 — when the source row has quantity > 1, the reducer
+    // auto-splits off a fresh quantity-1 row and flips `equipped:true`
+    // on it (invariant: equipped rows always have quantity=1 per
+    // OUTLINE §3.4 — you can't equip two of a kind). Client mints
+    // this UUID v7 per RH1 id-authority; reducer ignores it when
+    // quantity is already 1 (no split needed).
+    newItemInstanceId: z.string().min(1).optional(),
   }),
 });
 
@@ -346,6 +353,9 @@ const attuneAction = z.object({
     // rejects non-DM actors setting this flag. Absent / false = normal
     // cap enforcement.
     overrideCap: z.boolean().optional(),
+    // BUG-008 — see `equipAction.payload.newItemInstanceId`. Same
+    // auto-split rationale.
+    newItemInstanceId: z.string().min(1).optional(),
   }),
 });
 
@@ -604,6 +614,24 @@ const endGameSessionAction = z.object({
   payload: z.object({}),
 });
 
+/**
+ * R5.2 — `edit-game-session-notes`. DM edits the free-text notes on
+ * any `GameSession` (current or past). Follows the same patch-object
+ * shape as `edit-character` but with a single field.
+ *
+ * Reducer rejects unknown `gameSessionId` and rejects no-op writes
+ * (matches the `rename-stash` / `rename-character` invariant that
+ * every dispatch appends exactly one log entry). Empty string is a
+ * legal value — it clears the notes.
+ */
+const editGameSessionNotesAction = z.object({
+  type: z.literal('edit-game-session-notes'),
+  payload: z.object({
+    gameSessionId: z.string().min(1),
+    notes: z.string(),
+  }),
+});
+
 export const actionSchema = z.discriminatedUnion('type', [
   createCharacterAction,
   acquireAction,
@@ -641,6 +669,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   splitEvenlyAction,
   startGameSessionAction,
   endGameSessionAction,
+  editGameSessionNotesAction,
 ]);
 
 export type Action = z.infer<typeof actionSchema>;

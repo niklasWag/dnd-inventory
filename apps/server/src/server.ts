@@ -31,6 +31,7 @@ import { registerAuthRoutes } from './auth/routes.js';
 import { getSession, type SessionAndUser } from './auth/session.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerPartyRoutes } from './parties/routes.js';
+import { attachRealtime, type BroadcastApplied } from './realtime/io.js';
 import { startSnapshotCron } from './snapshots/scheduler.js';
 import { registerSyncRoutes } from './sync/routes.js';
 
@@ -102,6 +103,17 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
     ...(mailService !== undefined ? { mailService } : {}),
     ...(opts.authFetchImpl !== undefined ? { fetchImpl: opts.authFetchImpl } : {}),
   });
+
+  // R5.1.a — attach Socket.IO to the underlying HTTP server and decorate
+  // `app.broadcastApplied` BEFORE `registerSyncRoutes` runs so the route
+  // handler can invoke it after a successful transaction. `close` is
+  // wired via `onClose` so SIGTERM cleans up the io server too.
+  const realtime = attachRealtime(app, opts.prisma, opts.env);
+  app.decorate('broadcastApplied', realtime.broadcastApplied);
+  app.addHook('onClose', async () => {
+    await realtime.close();
+  });
+
   // R3.4.a — domain mutation surface. Reads the session via the
   // `app.getSession` decorator; enforces the §8.1 guard map; runs
   // the shared reducer authoritatively before applying Prisma deltas.
@@ -135,5 +147,6 @@ declare module 'fastify' {
   interface FastifyInstance {
     prisma: PrismaClient;
     getSession: (req: FastifyRequest) => Promise<SessionAndUser | null>;
+    broadcastApplied: BroadcastApplied;
   }
 }

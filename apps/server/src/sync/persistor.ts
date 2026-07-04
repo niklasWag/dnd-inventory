@@ -101,13 +101,13 @@ export async function applyDelta(
     case 'set-encumbrance':
       return persistSetEncumbrance(tx, action.payload);
     case 'equip':
-      return persistSetEquipped(tx, action.payload.itemInstanceId, true);
+      return persistEquip(tx, action.payload);
     case 'unequip':
-      return persistSetEquipped(tx, action.payload.itemInstanceId, false);
+      return persistUnequip(tx, action.payload.itemInstanceId);
     case 'attune':
-      return persistSetAttuned(tx, action.payload.itemInstanceId, true);
+      return persistAttune(tx, action.payload);
     case 'unattune':
-      return persistSetAttuned(tx, action.payload.itemInstanceId, false);
+      return persistUnattune(tx, action.payload.itemInstanceId);
     case 'use-charge':
       return persistUseCharge(tx, action.payload);
     case 'recharge':
@@ -136,6 +136,8 @@ export async function applyDelta(
       return persistStartGameSession(tx, action.payload, actor, ctx);
     case 'end-game-session':
       return persistEndGameSession(tx, actor);
+    case 'edit-game-session-notes':
+      return persistEditGameSessionNotes(tx, action.payload);
   }
 }
 
@@ -758,20 +760,190 @@ async function persistSetEncumbrance(
   });
 }
 
-async function persistSetEquipped(
+/**
+ * BUG-008 — `equip` persistor with auto-split. When the source row has
+ * quantity > 1, splits off a fresh quantity-1 row (using
+ * `newItemInstanceId` from the action payload) and equips THAT.
+ * When quantity is already 1 (no split needed), degrades to the plain
+ * flag flip on the source row. Mirrors the reducer arm's behavior so
+ * client + server converge on the same rows.
+ */
+async function persistEquip(
   tx: Prisma.TransactionClient,
-  itemInstanceId: string,
-  equipped: boolean,
+  payload: Extract<Action, { type: 'equip' }>['payload'],
 ): Promise<void> {
-  await tx.itemInstance.update({ where: { id: itemInstanceId }, data: { equipped } });
+  const source = await tx.itemInstance.findUniqueOrThrow({
+    where: { id: payload.itemInstanceId },
+  });
+  if (source.quantity <= 1) {
+    await tx.itemInstance.update({
+      where: { id: source.id },
+      data: { equipped: true },
+    });
+    return;
+  }
+  if (payload.newItemInstanceId === undefined) {
+    throw new Error(
+      `equip: source row has quantity ${String(source.quantity)}; payload must include newItemInstanceId for the auto-split path.`,
+    );
+  }
+  await tx.itemInstance.update({
+    where: { id: source.id },
+    data: { quantity: source.quantity - 1 },
+  });
+  await tx.itemInstance.create({
+    data: {
+      id: payload.newItemInstanceId,
+      definitionId: source.definitionId,
+      ownerType: source.ownerType,
+      ownerId: source.ownerId,
+      containerInstanceId: source.containerInstanceId,
+      quantity: 1,
+      equipped: true,
+      attuned: false,
+      identified: source.identified,
+      hint: source.hint,
+      currentCharges: source.currentCharges,
+      customName: source.customName,
+      notes: source.notes,
+      ...(source.conditionOverrides !== null && source.conditionOverrides !== undefined
+        ? { conditionOverrides: source.conditionOverrides }
+        : {}),
+    },
+  });
 }
 
-async function persistSetAttuned(
+/**
+ * BUG-008 — `attune` persistor with auto-split. Mirrors `persistEquip`.
+ */
+async function persistAttune(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'attune' }>['payload'],
+): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({
+    where: { id: payload.itemInstanceId },
+  });
+  if (source.quantity <= 1) {
+    await tx.itemInstance.update({
+      where: { id: source.id },
+      data: { attuned: true },
+    });
+    return;
+  }
+  if (payload.newItemInstanceId === undefined) {
+    throw new Error(
+      `attune: source row has quantity ${String(source.quantity)}; payload must include newItemInstanceId for the auto-split path.`,
+    );
+  }
+  await tx.itemInstance.update({
+    where: { id: source.id },
+    data: { quantity: source.quantity - 1 },
+  });
+  await tx.itemInstance.create({
+    data: {
+      id: payload.newItemInstanceId,
+      definitionId: source.definitionId,
+      ownerType: source.ownerType,
+      ownerId: source.ownerId,
+      containerInstanceId: source.containerInstanceId,
+      quantity: 1,
+      equipped: false,
+      attuned: true,
+      identified: source.identified,
+      hint: source.hint,
+      currentCharges: source.currentCharges,
+      customName: source.customName,
+      notes: source.notes,
+      ...(source.conditionOverrides !== null && source.conditionOverrides !== undefined
+        ? { conditionOverrides: source.conditionOverrides }
+        : {}),
+    },
+  });
+}
+
+/**
+ * BUG-008 completion — `unequip` with re-stack. Flips `equipped: false`
+ * and attempts to merge the row back into a matching mundane stack in
+ * the same location. Symmetric to the reducer's
+ * `applyFlagFlipWithRestack` helper.
+ *
+ * Merge only fires when both flags are false AND `currentCharges` is
+ * null — mirrors the reducer's guard so client + server converge.
+ */
+async function persistUnequip(tx: Prisma.TransactionClient, itemInstanceId: string): Promise<void> {
+  const source = await tx.itemInstance.findUniqueOrThrow({ where: { id: itemInstanceId } });
+  const patched = { ...source, equipped: false };
+  await restackOrPatch(tx, patched);
+}
+
+/**
+ * BUG-008 completion — `unattune` with re-stack. Mirrors `persistUnequip`.
+ */
+async function persistUnattune(
   tx: Prisma.TransactionClient,
   itemInstanceId: string,
-  attuned: boolean,
 ): Promise<void> {
-  await tx.itemInstance.update({ where: { id: itemInstanceId }, data: { attuned } });
+  const source = await tx.itemInstance.findUniqueOrThrow({ where: { id: itemInstanceId } });
+  const patched = { ...source, attuned: false };
+  await restackOrPatch(tx, patched);
+}
+
+/**
+ * BUG-008 completion — shared helper for the unequip/unattune persistors.
+ * Given a row with the flag already patched (in memory), either:
+ *   - Merge into a matching mundane stack (delete source, bump target),
+ *     OR
+ *   - Persist the patched row (simple update on the source's id).
+ */
+async function restackOrPatch(
+  tx: Prisma.TransactionClient,
+  patched: {
+    id: string;
+    ownerId: string;
+    definitionId: string;
+    notes: string | null;
+    containerInstanceId: string | null;
+    equipped: boolean;
+    attuned: boolean;
+    currentCharges: number | null;
+    quantity: number;
+  },
+): Promise<void> {
+  const nowMundane =
+    patched.equipped === false && patched.attuned === false && patched.currentCharges === null;
+  if (!nowMundane) {
+    await tx.itemInstance.update({
+      where: { id: patched.id },
+      data: { equipped: patched.equipped, attuned: patched.attuned },
+    });
+    return;
+  }
+  const target = await tx.itemInstance.findFirst({
+    where: {
+      id: { not: patched.id },
+      ownerId: patched.ownerId,
+      definitionId: patched.definitionId,
+      notes: patched.notes,
+      containerInstanceId: patched.containerInstanceId,
+      equipped: false,
+      attuned: false,
+      currentCharges: null,
+    },
+  });
+  if (target === null) {
+    // No merge target — persist the flag flip on the source.
+    await tx.itemInstance.update({
+      where: { id: patched.id },
+      data: { equipped: patched.equipped, attuned: patched.attuned },
+    });
+    return;
+  }
+  // Merge: delete source, bump target quantity.
+  await tx.itemInstance.delete({ where: { id: patched.id } });
+  await tx.itemInstance.update({
+    where: { id: target.id },
+    data: { quantity: target.quantity + patched.quantity },
+  });
 }
 
 async function persistUseCharge(
@@ -1450,5 +1622,28 @@ async function persistEndGameSession(tx: Prisma.TransactionClient, actor: Actor)
   await tx.gameSession.updateMany({
     where: { partyId: actor.partyId, isCurrent: true },
     data: { isCurrent: false },
+  });
+}
+
+/**
+ * R5.2 — persist `edit-game-session-notes`. Updates the notes column
+ * on the target `GameSession`. Empty-string `notes` is normalized to
+ * `NULL` in the DB (matches `persistStartGameSession`'s
+ * `notes: payload.notes ?? null` convention — the schema column is
+ * nullable, and NULL represents "no notes").
+ *
+ * The reducer rejects unknown ids + no-ops, so an update landing here
+ * should always find a matching row; if it doesn't, Prisma surfaces
+ * the mismatch via `RecordNotFound` which propagates back to the
+ * client as a 500 (matches the RH2.3 "should never happen"
+ * defence-in-depth pattern).
+ */
+async function persistEditGameSessionNotes(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'edit-game-session-notes' }>['payload'],
+): Promise<void> {
+  await tx.gameSession.update({
+    where: { id: payload.gameSessionId },
+    data: { notes: payload.notes.length === 0 ? null : payload.notes },
   });
 }

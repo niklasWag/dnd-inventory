@@ -169,6 +169,8 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return startGameSession(state, action.payload, ctx);
     case 'end-game-session':
       return endGameSession(state);
+    case 'edit-game-session-notes':
+      return editGameSessionNotes(state, action.payload);
   }
 }
 
@@ -715,12 +717,22 @@ function acquire(
         : undefined;
 
   // Auto-stack key: (definitionId, notes ?? "").
+  //
+  // BUG-008: DO NOT stack onto a row that is `equipped` or `attuned`.
+  // The equipped/attuned invariant per OUTLINE §3.4 is that those
+  // flags only make sense for a single physical item — you can't equip
+  // two of a kind. Stacking a fresh acquire onto an equipped row would
+  // create a "3 equipped longswords" row and desync from server-side
+  // reality (server-side split forces `equipped:false` on new rows).
+  // Fall through to the "new row" branch instead.
   const notesKey = effectiveNotes ?? '';
   const existing = s.items.find(
     (i) =>
       i.ownerId === payload.stashId &&
       i.definitionId === payload.definitionId &&
-      (i.notes ?? '') === notesKey,
+      (i.notes ?? '') === notesKey &&
+      i.equipped === false &&
+      i.attuned === false,
   );
 
   let resolvedItemId: string;
@@ -1752,12 +1764,16 @@ function split(
   inventory.validateSplit(source, payload.quantity);
 
   const newId = payload.newItemInstanceId;
-  // Spread source to inherit notes / customName / conditionOverrides;
-  // overwrite id + quantity.
+  // Spread source to inherit notes / customName / conditionOverrides /
+  // currentCharges; overwrite id + quantity + always clear
+  // equipped/attuned (BUG-008 — the new row is a fresh physical item,
+  // matches server-side persistSplit which also hard-codes false).
   const newRow: ItemInstance = {
     ...source,
     id: newId,
     quantity: payload.quantity,
+    equipped: false,
+    attuned: false,
   };
   const nextItems: ItemInstance[] = [
     ...s.items.map((i) =>
@@ -2277,6 +2293,68 @@ function resolveInventoryRow(
 }
 
 /**
+ * BUG-008 completion — after flipping `equipped` or `attuned` on `rowId`,
+ * apply the flag change; then if the resulting row is fully "flags-cleared"
+ * (both `equipped` and `attuned` are false) AND has no meaningful state
+ * that would prevent stacking (`currentCharges === null`), attempt to
+ * merge it into a matching mundane stack in the same location.
+ *
+ * Merge key mirrors `acquire`'s auto-stack predicate:
+ *   `(ownerId, definitionId, notes ?? "", containerInstanceId)`
+ * plus target must also be `equipped: false, attuned: false,
+ * currentCharges === null` (matching invariant). `customName` is NOT
+ * part of the key — this matches acquire's behavior.
+ *
+ * When a merge target exists: target's `quantity` bumps by the source
+ * row's quantity (always 1 in practice — equipped/attuned rows are
+ * always qty=1 post-BUG-008); source row is dropped. When no target
+ * exists: source stays as a standalone quantity-1 row with the flag
+ * cleared.
+ *
+ * Merge is SILENT (no extra log entry). This mirrors `acquire`'s
+ * silent stack-collapse behavior — the `unequip` / `unattune` log
+ * entry already captures the state transition; the row-merge is a
+ * downstream display collapse, not a semantically distinct event.
+ */
+function applyFlagFlipWithRestack(
+  items: ReadonlyArray<ItemInstance>,
+  rowId: string,
+  patch: { equipped?: boolean; attuned?: boolean },
+): ItemInstance[] {
+  const source = items.find((i) => i.id === rowId);
+  if (source === undefined) {
+    // Defensive: caller already resolved the row upstream. If this fires
+    // it means state drifted between resolve + flip. Fall back to the
+    // simple map path so callers still see a deterministic result.
+    return items.map((i) => (i.id === rowId ? { ...i, ...patch } : i));
+  }
+  const patched: ItemInstance = { ...source, ...patch };
+  const nowMundane =
+    patched.equipped === false && patched.attuned === false && patched.currentCharges === null;
+  if (!nowMundane) {
+    return items.map((i) => (i.id === rowId ? patched : i));
+  }
+  const target = items.find(
+    (i) =>
+      i.id !== source.id &&
+      i.ownerId === source.ownerId &&
+      i.definitionId === source.definitionId &&
+      (i.notes ?? '') === (source.notes ?? '') &&
+      (i.containerInstanceId ?? null) === (source.containerInstanceId ?? null) &&
+      i.equipped === false &&
+      i.attuned === false &&
+      i.currentCharges === null,
+  );
+  if (target === undefined) {
+    return items.map((i) => (i.id === rowId ? patched : i));
+  }
+  // Merge: drop the source, bump the target's quantity.
+  return items
+    .filter((i) => i.id !== source.id)
+    .map((i) => (i.id === target.id ? { ...i, quantity: i.quantity + patched.quantity } : i));
+}
+
+/**
  * Flips `ItemInstance.equipped` on an Inventory row. One reducer for
  * both `equip` (target = true) and `unequip` (target = false) — the
  * shape is identical apart from the discriminant. Rejects no-ops so the
@@ -2300,10 +2378,74 @@ function equipOrUnequip(
     throw new Error(`${type}: row ${payload.itemInstanceId} already equipped=${target}`);
   }
 
+  // BUG-008: when equipping (target=true) a stacked row (quantity > 1),
+  // auto-split off a fresh quantity-1 row and flip `equipped:true` on
+  // the NEW row. The old row stays with quantity-1 and equipped=false.
+  // This enforces the invariant per OUTLINE §3.4: equipped rows always
+  // have quantity=1 ("you can't equip two of a kind").
+  //
+  // `newItemInstanceId` is expected on the action payload when the
+  // caller anticipates a possible auto-split (dispatchers should mint
+  // it unconditionally; the reducer only uses it when quantity > 1).
+  // Absent + quantity > 1 → reject rather than silently pick a
+  // fallback id (RH1 discipline: no server-side id minting).
+  //
+  // Unequip is exempt: an equipped row is always quantity=1 by
+  // construction, so there's nothing to split. Trying to unequip a
+  // stacked row means the invariant already failed upstream — the
+  // regular flip proceeds and the surrounding code paths will surface
+  // the divergence.
+  if (type === 'equip' && row.quantity > 1) {
+    const newId = (payload as { newItemInstanceId?: string }).newItemInstanceId;
+    if (newId === undefined) {
+      throw new Error(
+        `equip: source row has quantity ${String(row.quantity)}; dispatcher must supply newItemInstanceId so the reducer can split off a quantity-1 row before equipping.`,
+      );
+    }
+    if (!isValidUuidV7(newId)) {
+      throw new Error('equip: newItemInstanceId must be a valid UUID v7');
+    }
+    const equippedRow: ItemInstance = {
+      ...row,
+      id: newId,
+      quantity: 1,
+      equipped: true,
+      attuned: false,
+    };
+    return {
+      state: {
+        ...s,
+        items: [
+          ...s.items.map((i) => (i.id === row.id ? { ...i, quantity: i.quantity - 1 } : i)),
+          equippedRow,
+        ],
+      },
+      logEntries: [
+        {
+          type: 'split',
+          payload: {
+            sourceInstanceId: row.id,
+            newInstanceId: newId,
+            quantity: 1,
+            stashId: row.ownerId,
+          },
+        },
+        {
+          type,
+          payload: {
+            itemInstanceId: newId,
+            characterId: payload.characterId,
+            ...(payload.slot !== undefined ? { slot: payload.slot } : {}),
+          },
+        },
+      ],
+    };
+  }
+
   return {
     state: {
       ...s,
-      items: s.items.map((i) => (i.id === row.id ? { ...i, equipped: target } : i)),
+      items: applyFlagFlipWithRestack(s.items, row.id, { equipped: target }),
     },
     logEntries: [
       {
@@ -2402,10 +2544,61 @@ function attuneOrUnattune(
       ? { overrideCap: true }
       : {};
 
+  // BUG-008: same auto-split rationale as `equip` — an attuned row must
+  // have quantity=1 (attunement is 1:1 with a magic item, not a stack).
+  // When attuning a stacked row (quantity > 1), split off a fresh
+  // quantity-1 row and attune THAT.
+  if (type === 'attune' && row.quantity > 1) {
+    const newId = (payload as { newItemInstanceId?: string }).newItemInstanceId;
+    if (newId === undefined) {
+      throw new Error(
+        `attune: source row has quantity ${String(row.quantity)}; dispatcher must supply newItemInstanceId so the reducer can split off a quantity-1 row before attuning.`,
+      );
+    }
+    if (!isValidUuidV7(newId)) {
+      throw new Error('attune: newItemInstanceId must be a valid UUID v7');
+    }
+    const attunedRow: ItemInstance = {
+      ...row,
+      id: newId,
+      quantity: 1,
+      equipped: false,
+      attuned: true,
+    };
+    return {
+      state: {
+        ...s,
+        items: [
+          ...s.items.map((i) => (i.id === row.id ? { ...i, quantity: i.quantity - 1 } : i)),
+          attunedRow,
+        ],
+      },
+      logEntries: [
+        {
+          type: 'split',
+          payload: {
+            sourceInstanceId: row.id,
+            newInstanceId: newId,
+            quantity: 1,
+            stashId: row.ownerId,
+          },
+        },
+        {
+          type,
+          payload: {
+            itemInstanceId: newId,
+            characterId: payload.characterId,
+            ...overrideCapForLog,
+          },
+        },
+      ],
+    };
+  }
+
   return {
     state: {
       ...s,
-      items: s.items.map((i) => (i.id === row.id ? { ...i, attuned: target } : i)),
+      items: applyFlagFlipWithRestack(s.items, row.id, { attuned: target }),
     },
     logEntries: [
       {
@@ -3961,6 +4154,63 @@ function endGameSession(state: AppState): ReducerResult {
         payload: {
           gameSessionId: current.id,
           number: current.number,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * R5.2 — `edit-game-session-notes`. DM edits the free-text notes on
+ * any `GameSession` (current or past). Mirrors the `rename-stash` /
+ * `rename-character` shape: reject unknown id + reject no-op writes so
+ * every dispatch appends exactly one log entry.
+ *
+ * Empty string is a legal `notes` value — clearing the notes is a
+ * meaningful edit. The no-op check compares raw values (no trim); the
+ * caller should trim client-side if desired, matching how the DM UI
+ * currently displays notes verbatim.
+ */
+function editGameSessionNotes(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-game-session-notes' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-game-session-notes');
+
+  const session = s.gameSessions.find((gs) => gs.id === payload.gameSessionId);
+  if (session === undefined) {
+    throw new Error(`edit-game-session-notes: unknown gameSessionId ${payload.gameSessionId}`);
+  }
+
+  const oldNotes = session.notes ?? '';
+  const newNotes = payload.notes;
+  if (oldNotes === newNotes) {
+    // Matches the M3 rename-stash invariant: every dispatch appends
+    // exactly one log entry — a no-op edit can't satisfy that.
+    throw new Error('edit-game-session-notes: notes unchanged');
+  }
+
+  return {
+    state: {
+      ...s,
+      gameSessions: s.gameSessions.map((gs) => {
+        if (gs.id !== session.id) return gs;
+        // Clearing notes → drop the field; setting notes → carry it.
+        // Matches `startGameSession`'s shape (notes is optional on
+        // `GameSession` and only present when non-empty).
+        const { notes: _prevNotes, ...rest } = gs;
+        void _prevNotes;
+        return newNotes.length === 0 ? rest : { ...rest, notes: newNotes };
+      }),
+    },
+    logEntries: [
+      {
+        type: 'edit-game-session-notes',
+        payload: {
+          gameSessionId: session.id,
+          number: session.number,
+          oldNotes,
+          newNotes,
         },
       },
     ],

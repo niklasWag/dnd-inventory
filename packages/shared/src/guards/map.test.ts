@@ -1897,6 +1897,7 @@ describe('guards — every action has an entry', () => {
       'split-evenly',
       'start-game-session',
       'end-game-session',
+      'edit-game-session-notes',
     ];
     for (const t of expected) {
       expect(typeof guards[t]).toBe('function');

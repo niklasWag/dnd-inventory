@@ -322,11 +322,20 @@ export type Action =
       // isCarried=true` stash, or when the stash's `ownerCharacterId`
       // does not match `characterId`, or when the row is already
       // equipped (no-op). `slot?` is reserved for R2.x slot tracking.
+      //
+      // BUG-008: when the source row has quantity > 1, the reducer
+      // auto-splits off a fresh quantity-1 row (using
+      // `newItemInstanceId`) and flips `equipped:true` on it. The
+      // invariant per OUTLINE §3.4 is that an equipped row always has
+      // quantity=1 ("you can't equip two of a kind"). Dispatchers
+      // should mint a fresh UUID v7 unconditionally; the reducer
+      // ignores it when a split isn't needed.
       type: 'equip';
       payload: {
         itemInstanceId: string;
         characterId: string;
         slot?: string;
+        newItemInstanceId?: string;
       };
     }
   | {
@@ -346,6 +355,9 @@ export type Action =
       // attuned (no-op), OR the character has no free attunement slot
       // (`attunement.hasFreeSlot(currentlyAttunedCount, maxAttunement)`
       // is `false`).
+      //
+      // BUG-008: same auto-split as `equip`. When source quantity > 1,
+      // splits off a fresh quantity-1 row and attunes THAT.
       type: 'attune';
       payload: {
         itemInstanceId: string;
@@ -354,6 +366,7 @@ export type Action =
         // skips the maxAttunement slot-cap check. Guard rejects non-DM
         // actors setting this flag.
         overrideCap?: boolean;
+        newItemInstanceId?: string;
       };
     }
   | {
@@ -686,6 +699,19 @@ export type Action =
       // `state.gameSessions`.
       type: 'end-game-session';
       payload: Record<string, never>;
+    }
+  | {
+      // R5.2: DM edits the free-text notes on any `GameSession` (current
+      // or past). Follows the `edit-character` patch-object shape but
+      // with a single field. Reducer rejects unknown `gameSessionId` +
+      // no-op writes (the `rename-stash` invariant: every dispatch
+      // appends exactly one log entry). Empty string is legal (clears
+      // the notes).
+      type: 'edit-game-session-notes';
+      payload: {
+        gameSessionId: string;
+        notes: string;
+      };
     };
 
 /**

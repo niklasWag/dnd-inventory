@@ -8,6 +8,34 @@ import { wipeAll } from '@/db/wipe';
 
 import { bootstrap, makeEntry } from '@/test/fixtures';
 import { newUuidV7 } from '@app/shared';
+import type { PartyMembership } from '@app/shared';
+
+/**
+ * R5.3.b — solo memberships used by the delete-cascade edge-case
+ * fixtures below (which pre-date the R4.3 solo-detection convention
+ * and previously used `memberships: []`). The `canSeeLogEntry`
+ * permission gate short-circuits on solo per OUTLINE §8.2 so a party
+ * of one always sees every entry — matching the pre-gate behavior
+ * for these tests.
+ */
+const SOLO_MEMBERSHIPS: PartyMembership[] = [
+  {
+    userId: 'u',
+    partyId: 'p',
+    role: 'dm',
+    characterId: null,
+    joinedAt: '2026-01-01T00:00:00.000Z',
+    leftAt: null,
+  },
+  {
+    userId: 'u',
+    partyId: 'p',
+    role: 'player',
+    characterId: null,
+    joinedAt: '2026-01-01T00:00:00.000Z',
+    leftAt: null,
+  },
+];
 
 /**
  * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
@@ -200,7 +228,7 @@ describe('ItemHistory', () => {
           bankerUserId: null,
           createdAt: new Date().toISOString(),
         },
-        memberships: [],
+        memberships: SOLO_MEMBERSHIPS,
         characters: [],
         gameSessions: [],
         stashes: [
@@ -293,7 +321,7 @@ describe('ItemHistory', () => {
           bankerUserId: null,
           createdAt: new Date().toISOString(),
         },
-        memberships: [],
+        memberships: SOLO_MEMBERSHIPS,
         characters: [
           {
             id: characterId,
@@ -379,7 +407,7 @@ describe('ItemHistory', () => {
           bankerUserId: null,
           createdAt: new Date().toISOString(),
         },
-        memberships: [],
+        memberships: SOLO_MEMBERSHIPS,
         characters: [],
         gameSessions: [],
         stashes: [
@@ -691,5 +719,276 @@ describe('ItemHistory', () => {
     });
     render(<ItemHistory itemInstanceId="item-1" />);
     expect(screen.getByText(/Cleared unidentified hint/i)).toBeInTheDocument();
+  });
+
+  // ---------------- R5.3.b — permission gating ----------------
+
+  /** Two-member state where u-a owns char-a with Inventory inv-a, and
+   * u-b owns char-b with Inventory inv-b. Party Stash `ps` and
+   * Recovered Loot `rl` are party-scope. item-1 lives in whichever
+   * stash the caller pins via `ownerId`. */
+  function makePermissionState(opts: {
+    currentUserId: 'u-a' | 'u-b' | 'u-dm';
+    itemOwnerStashId: 'inv-a' | 'inv-b' | 'ps' | 'rl';
+  }) {
+    const nowIso = '2026-07-04T10:00:00.000Z';
+    return {
+      version: 1 as const,
+      seedVersion: 0,
+      user: { id: opts.currentUserId, displayName: opts.currentUserId, createdAt: nowIso },
+      party: {
+        id: 'p1',
+        name: 'Party',
+        ownerUserId: 'u-dm',
+        inviteCode: 'INV-ABCDEF',
+        recoveredLootStashId: 'rl',
+        bankerUserId: null,
+        createdAt: nowIso,
+      },
+      memberships: [
+        {
+          userId: 'u-dm',
+          partyId: 'p1',
+          role: 'dm' as const,
+          characterId: null,
+          joinedAt: nowIso,
+          leftAt: null,
+        },
+        {
+          userId: 'u-a',
+          partyId: 'p1',
+          role: 'player' as const,
+          characterId: 'char-a',
+          joinedAt: nowIso,
+          leftAt: null,
+        },
+        {
+          userId: 'u-b',
+          partyId: 'p1',
+          role: 'player' as const,
+          characterId: 'char-b',
+          joinedAt: nowIso,
+          leftAt: null,
+        },
+      ],
+      characters: [
+        {
+          id: 'char-a',
+          partyId: 'p1',
+          ownerUserId: 'u-a',
+          name: 'Aeryn',
+          species: 'H',
+          size: 'medium' as const,
+          class: 'F',
+          level: 1,
+          abilityScores: { STR: 10 },
+          maxAttunement: 3,
+          encumbranceRule: 'off' as const,
+          enforceEncumbrance: false,
+          inventoryStashId: 'inv-a',
+        },
+        {
+          id: 'char-b',
+          partyId: 'p1',
+          ownerUserId: 'u-b',
+          name: 'Baelor',
+          species: 'H',
+          size: 'medium' as const,
+          class: 'W',
+          level: 1,
+          abilityScores: { STR: 10 },
+          maxAttunement: 3,
+          encumbranceRule: 'off' as const,
+          enforceEncumbrance: false,
+          inventoryStashId: 'inv-b',
+        },
+      ],
+      gameSessions: [],
+      stashes: [
+        {
+          id: 'inv-a',
+          scope: 'character' as const,
+          name: 'Inventory',
+          ownerCharacterId: 'char-a',
+          partyId: null,
+          isCarried: true,
+          createdAt: nowIso,
+        },
+        {
+          id: 'inv-b',
+          scope: 'character' as const,
+          name: 'Inventory',
+          ownerCharacterId: 'char-b',
+          partyId: null,
+          isCarried: true,
+          createdAt: nowIso,
+        },
+        {
+          id: 'ps',
+          scope: 'party' as const,
+          name: 'Party Stash',
+          ownerCharacterId: null,
+          partyId: 'p1',
+          isCarried: false as const,
+          createdAt: nowIso,
+        },
+        {
+          id: 'rl',
+          scope: 'recovered-loot' as const,
+          name: 'Recovered Loot',
+          ownerCharacterId: null,
+          partyId: 'p1',
+          isCarried: false as const,
+          createdAt: nowIso,
+        },
+      ],
+      catalog: [],
+      items: [
+        {
+          id: 'item-1',
+          definitionId: 'phb-2024:rope',
+          ownerType: 'stash' as const,
+          ownerId: opts.itemOwnerStashId,
+          containerInstanceId: null,
+          quantity: 1,
+          equipped: false,
+          attuned: false,
+          identified: true,
+          currentCharges: null,
+        },
+      ],
+      currencies: [],
+      log: [],
+    };
+  }
+
+  it('R5.3.b — Party Stash item history is visible to every party member', () => {
+    useStore.setState({
+      appState: makePermissionState({ currentUserId: 'u-b', itemOwnerStashId: 'ps' }),
+      log: [
+        makeEntry(
+          'acquire',
+          {
+            stashId: 'ps',
+            itemInstanceId: 'item-1',
+            definitionId: 'phb-2024:rope',
+            quantity: 1,
+            source: 'catalog-add',
+          },
+          { actorUserId: 'u-a' },
+        ),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.queryByText(/hidden by permission/i)).toBeNull();
+  });
+
+  it('R5.3.b — Recovered Loot item history is visible to every party member', () => {
+    useStore.setState({
+      appState: makePermissionState({ currentUserId: 'u-b', itemOwnerStashId: 'rl' }),
+      log: [
+        makeEntry(
+          'acquire',
+          {
+            stashId: 'rl',
+            itemInstanceId: 'item-1',
+            definitionId: 'phb-2024:rope',
+            quantity: 1,
+            source: 'catalog-add',
+          },
+          { actorUserId: 'u-a' },
+        ),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  });
+
+  it('R5.3.b — Own Inventory item history visible to owner', () => {
+    useStore.setState({
+      appState: makePermissionState({ currentUserId: 'u-a', itemOwnerStashId: 'inv-a' }),
+      log: [
+        makeEntry(
+          'acquire',
+          {
+            stashId: 'inv-a',
+            itemInstanceId: 'item-1',
+            definitionId: 'phb-2024:rope',
+            quantity: 1,
+            source: 'catalog-add',
+          },
+          { actorUserId: 'u-a' },
+        ),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  });
+
+  it('R5.3.b — Own Inventory item history visible to DM', () => {
+    useStore.setState({
+      appState: makePermissionState({ currentUserId: 'u-dm', itemOwnerStashId: 'inv-a' }),
+      log: [
+        makeEntry(
+          'acquire',
+          {
+            stashId: 'inv-a',
+            itemInstanceId: 'item-1',
+            definitionId: 'phb-2024:rope',
+            quantity: 1,
+            source: 'catalog-add',
+          },
+          { actorUserId: 'u-a' },
+        ),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  });
+
+  it('R5.3.b — Other player Inventory item history HIDDEN from non-owner + non-DM', () => {
+    useStore.setState({
+      appState: makePermissionState({ currentUserId: 'u-a', itemOwnerStashId: 'inv-b' }),
+      log: [
+        makeEntry(
+          'acquire',
+          {
+            stashId: 'inv-b',
+            itemInstanceId: 'item-1',
+            definitionId: 'phb-2024:rope',
+            quantity: 1,
+            source: 'catalog-add',
+          },
+          { actorUserId: 'u-b' },
+        ),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    // Empty state message + hidden-count message combine into
+    // "1 entry is hidden by permission." in the empty-state branch.
+    expect(screen.getByText(/1 entry is hidden by permission/i)).toBeInTheDocument();
+    expect(screen.queryByRole('listitem')).toBeNull();
+  });
+
+  it('R5.3.b — banker widening makes other-player Inventory entry visible', () => {
+    useStore.setState({
+      appState: makePermissionState({ currentUserId: 'u-a', itemOwnerStashId: 'inv-b' }),
+      log: [
+        makeEntry(
+          'acquire',
+          {
+            stashId: 'inv-b',
+            itemInstanceId: 'item-1',
+            definitionId: 'phb-2024:rope',
+            quantity: 1,
+            source: 'catalog-add',
+          },
+          { actorUserId: 'u-b', actorRole: 'banker' },
+        ),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
   });
 });

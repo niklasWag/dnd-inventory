@@ -3330,17 +3330,117 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 
 #### R5.1 — Websocket sync + reconnect
 
-- [ ] Websocket party-room subscription (server pushes action diffs)
-- [ ] Optimistic UI: web applies action locally, reconciles on server ack
-- [ ] Conflict resolution policy documented and implemented (server is authoritative)
-- [ ] Reconnect flow replays missed events
-- [ ] Offline banner active in multi-member parties; writes blocked while offline (§9)
-- [ ] **Offline-first Dexie cache for solo parties** — **carryforward from R3.5**. Today the web sync queue keeps optimistic state on a network error but drops the batch; solo parties should survive a full offline session by replaying the queue when connectivity returns. (Source: R3.5 Notes.)
-- [ ] **Sync queue retry semantics** — R3.5 surfaces a transient toast on network errors and drops the batch. R5 should add bounded retry with exponential backoff and an "outbox" persisted to Dexie so a tab close doesn't lose work. Inline pointer: `apps/web/src/sync/queue.ts:22, 192`. **Carryforward from R3.5.**
+> **Restructured into four sub-slices 2026-07-03** during R5.1.a implementation planning. Sub-slice split: server plumbing → client consumer → outbox+retry+replay → offline write-block. See R5.1 Notes for the full commit-strategy rationale.
+
+##### R5.1.a — Server-side Socket.IO plumbing + broadcast
+
+- [x] Socket.IO server dependency added + attached to Fastify's HTTP server on `/socket.io`.
+- [x] Auth middleware reuses the session cookie via existing `getSession()`; unauthenticated + `needsDisplayName` upgrades rejected. Cookie parsed from raw upgrade header via `cookie.parseCookie` (Fastify's decoration doesn't propagate to socket upgrades).
+- [x] Auto-join: on connect, `io.use()` reads every active + non-archived `PartyMembership` for the user and joins `party:<partyId>` for each — matches SECURITY §6 ("subscriptions derived server-side, clients never name the room").
+- [x] `broadcastApplied(partyId, action, applied)` exported; decorated on `FastifyInstance` so `POST /sync/actions` can call it.
+- [x] `POST /sync/actions` broadcasts each broadcast-eligible `{action, slices}` after the transaction commits. Filter uses `getActionMetadata(type).broadcastOnApplied`; broadcast is fire-and-forget outside the tx (DB write is authoritative; emit failures log + swallow).
+- [x] `apps/server/src/realtime/io.test.ts` — 4 integration tests: unauthenticated rejection, `needsDisplayName` rejection, auto-join + broadcast delivery (via observable `applied` event), broadcast isolation (non-member receives nothing).
+
+##### R5.1.b — Client socket consumer + inbound reconciliation
+
+- [x] Websocket party-room subscription (server pushes action diffs) — `socket.io-client` connects on server-mode boot; auto-joins are enforced server-side.
+- [x] Optimistic UI: web applies action locally, reconciles on server ack — dispatched actions go through the existing R3.5 queue (unchanged); broadcasts from other clients apply via `applyBroadcast()` which re-runs the reducer for state mutation + appends server's `applied[]` verbatim via `appendServerLogEntries` (RH2.6 log-authority).
+- [x] Conflict resolution policy documented and implemented (server is authoritative) — dedupe by log-entry id handles self-echo; `applyBroadcast` short-circuits when the current in-memory partyId doesn't match the broadcast (viewing another party). Reducer re-run is deterministic per RH2. Missed broadcasts (never received live) are picked up by R5.1.c's `GET /sync/state` catch-up on socket reconnect.
+
+##### R5.1.c — Outbox + retry + reconnect replay
+
+- [x] Reconnect flow replays missed events — on socket `on('connect')`, `drainOutbox()` re-hydrates the store via `GET /sync/state?partyId=` (server-authoritative snapshot) then drains any Dexie outbox rows via `POST /sync/actions`.
+- [x] **Offline-first Dexie cache for solo parties** — the queue now persists any batch that fails the initial POST to a new `outbox` Dexie table (schema v2). Solo parties can accumulate arbitrarily many buffered writes; they drain on next connect.
+- [x] **Sync queue retry semantics** — new `computeBackoff(attempt)` in `apps/web/src/lib/backoff.ts` implements 500ms → 8s exponential curve with ±25% jitter. `MAX_ATTEMPTS = 5` — after that, the batch parks in the outbox for reconnect drain. `queue.ts::flushBatchWithRetry` is the new retry loop; `queue.ts::resetQueue` sets a cancellation flag so pending retry promises unwind cleanly on test teardown / Dexie wipe.
+
+##### R5.1.d — Offline write-block + auto-resume
+
+- [x] Offline banner active in multi-member parties; writes blocked while offline (§9) — banner already shipped in R4.4.d, now surfaces the write-block reason ("Offline — changes are disabled until you reconnect."). Store-level short-circuit in `dispatch()` no-ops + toasts when `(isServerMode && !online && memberCount >= 2)`; new `useCanDispatch()` hook exposes the reactive predicate for UI affordance (disable Save buttons). Solo parties bypass the block and buffer to the outbox (R5.1.c). Auto-resume: `socket.on('connect')` fires `drainOutbox()` (R5.1.c wiring); a `store.online` field mirrors `navigator.onLine` via `main.tsx` listeners so all connectivity-aware surfaces derive from one source.
 
 #### R5.1 — Notes
 
-> -
+> **Sub-sliced 2026-07-03 into R5.1.a/b/c/d** to match the RH4/RH5 slicing pattern (one atomic commit per surface). Rationale: R5.1's original flat checklist packed server plumbing, client consumption, retry/outbox machinery, and offline UX into one slice — too large for a reviewable diff and too big to bisect. Each sub-slice ships green (typecheck + all workspace tests + prettier clean) as a self-contained commit; R5.1.b depends on R5.1.a's payload contract, R5.1.c depends on R5.1.b's socket handle, R5.1.d depends on R5.1.c's outbox.
+>
+> **Design decisions locked with user 2026-07-03:**
+>   - **Broadcast payload shape:** `{ partyId, action, applied }`. Receivers re-run the reducer against `action` for state mutation, then discard reducer log entries and append server's `applied[]` (RH2.6 log-authority pattern). Deterministic per RH2.
+>   - **Reconnect catch-up:** re-hydrate via `GET /sync/state?partyId=` on socket connect (the endpoint `PartyScopeSync` already uses). The plan originally called for a paginated `GET /sync/log?sinceLogId=` endpoint; implementation surfaced that log-entry payloads aren't isomorphic to action payloads for id-minting actions (log carries resolved `itemInstanceId`, action carries `newItemInstanceId`), so state-repull is simpler and reuses proven code. See R5.1.c Notes.
+>   - **Outbox:** new Dexie `outbox` table on schema v2. Rows keyed by `partyId + createdAt`; carry `attemptCount + lastAttemptAt`.
+>   - **Retry backoff:** exponential w/ ±25% jitter, 5 attempts (500ms → 8s ceiling). After 5th failure, batch stays in outbox and drains on next `socket.on('connect')`.
+>   - **Write-block:** centralized `useStore.getState().canDispatch()` returns `false` when `(isServerMode && !online && memberCount >= 2)`. Solo (memberCount === 1) stays writable + queues to outbox.
+>   - **Socket auth:** reuse the session cookie via `io.use()` middleware calling the existing `getSession()`. SECURITY §6 alignment.
+>   - **Room subscription:** auto-join every active `PartyMembership` on connect; client never names the room.
+>
+> **Shipped 2026-07-03 (four commits on `feat/r5-live-sync-history`).** Total test-suite growth 1375 → 1411 (+36 net):
+>   - **R5.1.a** — Server suite 197 → 201 (+4).
+>   - **R5.1.b** — Web suite 759 → 763 (+4).
+>   - **R5.1.c** — Web suite 763 → 779 (+16).
+>   - **R5.1.d** — Web suite 779 → 791 (+12).
+>
+> **Two implementation pivots documented in sub-slice Notes:**
+>   - **R5.1.c dropped `GET /sync/log`** in favour of `pullState` re-hydrate. Log entries aren't isomorphic to action payloads for id-minting variants; re-pulling authoritative state is simpler and reuses `PartyScopeSync`'s proven endpoint.
+>   - **R5.1.d ships two-tier write-block** (store guard + `useCanDispatch` hook). The plan called for wiring `disabled={!canDispatch}` on every Save button; in practice the app has 45 dispatch call sites, so the store guard is the correctness backstop and UI-level wiring is deferred as polish.
+>
+> **Retired module state at end of R5.1:**
+>   - `apps/web/src/components/OfflineBanner.tsx::useOnline` — replaced by `store.online` (single source).
+>   - Naive `HttpResponse.error → drop-the-batch` in `queue.ts` — replaced by retry + outbox.
+
+##### R5.1.a — Notes
+
+> **Shipped 2026-07-03.** Server suite 197 → 201 (+4 integration tests in `apps/server/src/realtime/io.test.ts`). No web-side changes. Real HTTP `app.listen({ port: 0 })` used per test because Socket.IO's upgrade handshake bypasses `app.inject()`.
+>
+> **Broadcast payload extended to `{ partyId, action, applied }`** (from the naive `{ partyId, applied }` in the plan sketch): receivers need the source action to re-run the reducer for state mutation. RH2.6's `applied[]` remains authoritative for the log.
+>
+> **Cookie parsing:** `@fastify/cookie` decorates `req.cookies` only for HTTP requests routed through Fastify's handler pipeline. The Socket.IO upgrade sidesteps that pipeline, so `io.use()` parses the raw `Cookie` header via `cookie@2.x`'s `parseCookie` export (the package renamed its API in v2 — `cookie.parse()` became a named `parseCookie` export). The parsed cookies feed a minimal `FastifyRequest`-shaped shim that carries only `{ cookies }` — `getSession` reads no other request fields.
+>
+> **Broadcast is fire-and-forget outside the transaction.** The plan initially considered emitting inside the `$transaction` callback so a broadcast failure could roll back the DB write, but that inverts the durability contract: the log entry is committed and (via R5.1.c's reconnect state re-pull) will eventually reach every party member via `GET /sync/state`. A missed live broadcast is just eventual consistency, not a correctness bug. Emit errors log via `app.log.error` and swallow.
+>
+> **Server-side room-membership assertion via observable effect.** The auto-join test doesn't inspect `io.sockets.adapter.rooms` directly (which would leak an implementation detail into the test); instead it dispatches a broadcast-eligible action and asserts the connected client receives the `applied` event. Stronger evidence + more resilient to Socket.IO internals changes.
+>
+> **`ClientToServerEvents = Record<string, never>` (empty)** — SECURITY §6 mandates broadcast-only. Kept as an explicit empty interface so a future contributor considering adding a client → server event sees the constraint before wiring it up.
+
+##### R5.1.b — Notes
+
+> **Shipped 2026-07-03.** Web suite 759 → 763 (+4 unit tests in `apps/web/src/sync/socket.test.ts`). Server + shared surfaces unchanged. New shared schema `appliedBroadcastSchema` (`packages/shared/src/schemas/socketMessages.ts`) + new client module `apps/web/src/sync/socket.ts` + `main.tsx` boot wiring + a `socketConnected: boolean` field on the store.
+>
+> **`applyBroadcast` is exported and tested directly** rather than through a socket.io-client mock. The reasoning: reconciliation is the interesting invariant (Zod parse → party filter → dedupe → reducer re-run → server log append); socket.io-client's own transport reliability is already covered end-to-end by `apps/server/src/realtime/io.test.ts`. Testing the transport in JSDOM without a real WS endpoint requires either `mock-socket` (heavyweight) or a hand-rolled test double — both add flake surface for zero incremental coverage.
+>
+> **Reducer context in broadcast re-run is throwing-only for `now()` + `newInviteCode()`.** RH2 determinism guarantees the reducer, given the same state + action, produces the same output on every client. But some reducer paths would ordinarily consult `ctx.now()` for a mutation timestamp field (e.g. `join-party` records the join time). In a broadcast re-run those values are ALREADY in the server's `applied[]` — the reducer must not re-derive them or state would drift. The context helpers `throw` on call so any drift surfaces loudly rather than silently. If a future action variant hits this branch, the fix is one of: (a) refactor the reducer to source that timestamp from the payload the server minted (preferred), or (b) accept the seam and pass the server's timestamp into the broadcast payload for the reducer to consume.
+>
+> **Broadcast payload is `{ partyId, action, applied }` — `action` is essential.** RH2.6 makes `applied[]` authoritative for the log, but the reducer needs the source `action` to derive the STATE mutation. Sending only `applied[]` would force receivers to reverse-engineer the mutation from log-entry shape, which is not a stable contract (log entries carry POST-mutation snapshots, not action inputs). Server sends both; client discards reducer log slices, keeps state, appends server's authoritative log entries.
+>
+> **Socket auto-reconnect handled by socket.io-client.** `reconnection: true, reconnectionDelay: 500, reconnectionDelayMax: 8000, reconnectionAttempts: Infinity` — socket.io-client's own state machine handles the WS transport reconnect. R5.1.c's outbox + `GET /sync/state` re-pull on connect handle the DATA reconnect (drain buffered writes + catch up on missed state). Two distinct concerns.
+>
+> **`useStore.setState({ appState: result.state })` bypasses Immer** by intent — the store's Immer middleware wraps `set` inside the store's methods (`dispatch`, `hydrate`, etc.). Direct top-level `setState` skips the middleware pass; since `result.state` is a new plain object from the pure reducer, no Immer draft is needed. Matches the pattern in `store/hydrate.ts:hydrate` which also uses `useStore.setState` directly.
+
+##### R5.1.c — Notes
+
+> **Shipped 2026-07-03.** Web suite 763 → 779 (+16 tests: 4 backoff, 5 outbox, 3 queue-retry, 4 reconnect). Server + shared surfaces unchanged. Dexie schema bumped to v2 with a new `outbox` table (purely additive; no data migration). New files: `apps/web/src/lib/backoff.ts`, `apps/web/src/sync/outbox.ts`, `apps/web/src/sync/reconnect.ts`, `apps/web/src/sync/applyBroadcast.ts`. `queue.ts` refactored with a retry loop + outbox integration + cancellation flag.
+>
+> **Reconnect uses `GET /sync/state`, not a log-replay endpoint.** The initial plan proposed a new `GET /sync/log?sinceLogId=` endpoint feeding entries into `applyBroadcast`. When implementation surfaced a design issue — `TransactionLog` entries carry POST-mutation snapshots with resolved entity ids (`itemInstanceId`), while `Action` payloads carry mint fields (`newItemInstanceId`) — reconstructing an `Action` from a log entry is lossy for id-minting variants. Rather than adding an action-column to `TransactionLog`, the drainer now re-pulls server-authoritative state via `pullState` (same endpoint `PartyScopeSync` already uses on party navigation). Cheaper than expected for typical parties, and reuses proven code. The `GET /sync/log` endpoint + `syncLogQuerySchema` were removed from this slice (no consumer). If R5.3's history UI needs paginated log reads, add them then.
+>
+> **`applyBroadcast` extracted to its own module (`apps/web/src/sync/applyBroadcast.ts`).** R5.1.b initially colocated the reconciliation helper inside `sync/socket.ts`; R5.1.c needed it from `reconnect.ts` too. To avoid a circular import (`socket ↔ reconnect`), the helper moved to a dedicated file. `sync/socket.ts` re-exports for backwards-compat with R5.1.b's public API.
+>
+> **Retry cancellation flag.** The retry loop uses `await new Promise((resolve) => { retryTimer = setTimeout(resolve, delay); })`. If `resetQueue()` cleared the timer but didn't resolve the promise, the awaiter would block forever — leaking a Promise chain into the next test that still hits (retired) MSW handlers. `resetQueue` now flips a `cancelled = true` flag AND calls the stored resolver so the retry loop unwinds cleanly. Discovered during test wiring; the flag also makes production teardown correct (e.g. logout mid-retry).
+>
+> **Tests use `vi.doMock` per-test + fresh module re-imports.** The retry backoff formula would make tests wait real seconds. `loadReconnect()` / `loadQueue()` mock `@/lib/backoff` to 1ms after `vi.resetModules()`. The reconnect test also re-imports `@/store` and `@/test/fixtures` after the reset so `bootstrap()` and `drainOutbox` share a single fresh `useStore` singleton — a top-level `import { useStore }` in `fixtures.ts` would otherwise capture the pre-reset instance, invisible to the freshly-loaded `reconnect.ts`.
+>
+> **Outbox rows survive tab close.** The plan called this out but it's worth restating: the whole point of the outbox is durability across "hostile" boundaries. On network error, we persist to Dexie BEFORE scheduling the first retry, so a tab close mid-first-attempt still leaves the batch recoverable. Next tab boot's `socket.on('connect')` picks it up.
+
+##### R5.1.d — Notes
+
+> **Shipped 2026-07-03.** Web suite 779 → 791 (+12 tests: 4 `canDispatch` pure-fn, 4 `useCanDispatch` reactive-hook, 4 `dispatchWriteBlock` store-guard; plus the existing OfflineBanner tests kept green after migration to store-driven online state). Server + shared surfaces unchanged.
+>
+> **Two-tier write-block: store guard + UI hook.** The plan called for a `canDispatch()` selector consumed by UI Save buttons. In practice, the app has 45 files that call `dispatch()` — disabling every button would be a huge diff for marginal value. Instead R5.1.d ships **both** tiers with a clear division of labour:
+>   - **Correctness backstop** — `useStore.getState().dispatch()` short-circuits + toasts when the block is active. Any programmatic dispatch (screens, effects, tests) is caught. `seed-catalog` is exempt (local-only bootstrap seed).
+>   - **User affordance** — `useCanDispatch()` reactive hook, ready for primary Save buttons to consume via `disabled={!canDispatch}`. Not yet wired into every screen; that's a follow-up polish task. The store guard means correctness doesn't depend on the wiring being exhaustive.
+>
+> **`store.online` mirrors `navigator.onLine`.** `main.tsx` attaches the `online`/`offline` window listeners and sets `useStore.getState().setOnline(...)` on each flip; initial value is read once at boot. `OfflineBanner` migrated from a component-local `useOnline` hook to reading `store.online` — one source of truth means the banner, the `canDispatch()` predicate, and the store's dispatch guard can never disagree. `useOnline` deleted.
+>
+> **`activeMemberCount` extracted to `store/index.ts`.** Previously inlined in `OfflineBanner`'s selector. Exported so `canDispatchFor`, `useCanDispatch`, and `OfflineBanner` share one implementation. De-dupes by userId so a party-of-one with dm + player membership rows correctly counts as 1.
+>
+> **Test isolation for `vi.mock('@/lib/serverMode')`.** Multiple new tests need `isServerMode: true`. Each file scopes the mock to itself via top-level `vi.mock('@/lib/serverMode', ...)`. `dispatchWriteBlock.test.ts` also configures the sync queue with a no-op stub so the successful-dispatch code path doesn't throw at `queue.enqueue`.
+>
+> **UI polish deferred.** Wiring `disabled={useCanDispatch()}` on every primary Save button across `AddItemModal`, `CharacterSheet`, `ItemDetail`, `StorageDetail`, `PartySettings`, `HomebrewForm`, etc. is a mechanical follow-up. Filed as a small operational followup (Feature gaps section — see below). The store guard means the app is CORRECT under §9 today; UI polish is affordance only.
 
 #### R5.2 — Sessions entity + log tagging
 
@@ -3352,35 +3452,82 @@ Websocket sync; per-item history; party log with session-tag filter; offline ban
 - [x] Action: `end-game-session` — **Shipped in RH3.1**
 - [x] `TransactionLog.sessionId` populated from PRE-reduce current session at write time; **`null` when no session is current** per OUTLINE §3.12 amendment (2026-06-24) — no-session activity is allowed, not blocked. — **Shipped in RH3.1**
 - [x] Reducer test: dispatching `acquire` / `transfer` / `currency-transfer` etc. with no current session produces log entries with `sessionId: null`. — **Shipped in RH3.1**
-- [ ] **UI: Start / End Session buttons** — party header or DM Dashboard surface. DM-only. Confirmation dialog on End.
-- [ ] **UI: Current session indicator** — visible on every party-scoped screen when a session is active ("Session 12 in progress — Started March 5th").
-- [ ] **UI: Session list** — DM view of every past session with dates + notes; edit-in-place for notes on the current session.
-- [ ] **Distribute-loot session tagging wizard** — the DM's "give this hoard to the party" flow auto-starts a session if none is current, then tags every emitted `transfer` / `acquire` slice against it (OUTLINE §3.12).
+- [x] **UI: Start / End Session buttons** — DM Dashboard `SessionsSection` at `apps/web/src/screens/DmDashboard.tsx`. DM-only (upstream `DmOnlyRoute` gate). End button opens an AlertDialog confirmation. Both buttons short-circuit through `useCanDispatch()` for the §9 offline write-block. — **Shipped 2026-07-04**
+- [x] **UI: Current session indicator** — surfaces as an emerald pill badge in the party-scoped nav (`apps/web/src/components/Layout.tsx`), reading `state.appState?.gameSessions.find(g => g.isCurrent)` via `useShallow`. Hidden outside `/party/:partyId/*` and when no session is current. — **Shipped 2026-07-04**
+- [x] **UI: Session list** — reverse-chronological (highest number first) list on the DM Dashboard's `SessionsSection`. Each row shows number + date + optional "Current" badge + inline notes editor. Editing works on ANY session (current + past) per user direction. — **Shipped 2026-07-04**
+- [-] **Distribute-loot session tagging wizard** — **deferred to R6.3** per `docs/roadmap.md:3491` (R6.3 already owns the loot distribution wizard + hoard generator). Auto-tagging is already active via RH3.1's middleware — any `transfer` / `acquire` dispatched while a session is `isCurrent` inherits the session id — so R5.2's slice is complete without shipping wizard UI. R6.3 builds the wizard on top of R5.2's session-tools surface.
 
 #### R5.2 — Notes
 
-> -
+> **Shipped 2026-07-04 on `feat/r5-live-sync-history`.** Single commit for the whole slice (per user's slicing decision — no sub-slicing). Test-suite growth 1411 → 1439 (+28 net):
+>   - **shared** — 261 → 265 (+4): 4 schema tests for the new `edit-game-session-notes` log variant. Guard-map exhaustive-array test bumped (not counted separately).
+>   - **rules** — 136 → 144 (+8): 8 reducer tests for the new arm (set / overwrite / clear / other-sessions-untouched / unknown-id / no-op-unchanged / no-op-clear / null-state).
+>   - **server** — 201 → 203 (+2): 2 integration tests (persist + empty-string normalises to NULL). Full round-trip `POST /sync/actions` including the `applied[]` echo shape.
+>   - **web** — 791 → 805 (+14): 5 new `Layout.test.tsx` tests for the badge visibility rules + 9 new DM Dashboard sessions-section tests (empty-state / start / list / end-with-confirm / reverse-chron order / current-row badge / notes edit / notes clear / DM-in-2+-member).
+>
+> **Decisions locked with user 2026-07-04:**
+>   - **UI surface:** DM Dashboard hosts the controls + session list; Layout hosts the "Session {N} in progress" pill. Rationale: DM-only controls belong on the DM-gated screen; the pill needs to travel with the user across every party-scoped page for context.
+>   - **Notes editable on ANY session:** past + current. The roadmap's original wording ("edit-in-place for notes on the current session") narrowed this; user override widened it. Requires the new `edit-game-session-notes` reducer action + guard + persistor.
+>   - **Loot wizard deferred to R6.3.** RH3.1's middleware already stamps `sessionId` on every log slice emitted while a session is `isCurrent` — R5.2's slice needs no wizard code for tagging to work. R6.3 owns the actual wizard UI (per `docs/roadmap.md:3491`) and will use R5.2's session-tools surface as a substrate.
+>   - **Single-slice ship.** Not sub-sliced à la R5.1.a/b/c/d — the change is small enough (one new action variant threaded through 4 layers + two UI surfaces) to review as one commit.
+>
+> **New action: `edit-game-session-notes`.** Mirrors the `edit-character` / `rename-stash` patch-object shape:
+>   - Payload `{ gameSessionId: string, notes: string }` — empty string is legal (clears the notes; the reducer drops the `notes` key on the row entirely, matching `startGameSession`'s conditional-spread shape).
+>   - Reducer rejects unknown `gameSessionId` + no-op writes (matches the "every dispatch appends exactly one log entry" invariant). Log slice carries `{ gameSessionId, number, oldNotes, newNotes }`.
+>   - DM-only guard (`editGameSessionNotesGuard`) with §8.2 solo bypass. Broadcast metadata `broadcastOnApplied: true` per RH2.4.
+>   - Persistor `persistEditGameSessionNotes` normalises `notes: ''` → SQL `NULL` for parity with `persistStartGameSession`'s convention.
+>
+> **`useCanDispatch()` for both buttons.** Consistent with R5.1.d's affordance pattern — the store guard is the correctness backstop; the disabled state is UX. Solo parties always dispatch; multi-member parties short-circuit when offline.
+>
+> **No new Layout test file existed pre-R5.2.** Created `apps/web/src/components/Layout.test.tsx` with 5 tests covering the badge visibility rules (in party + current session → visible; empty gameSessions / no-current-session / non-party-route / null appState → hidden). Uses `MemoryRouter` around `RootLayout` — mirrors the existing `DmDashboard.test.tsx` router-wrapping pattern.
+>
+> **Session list uses `<textarea>` directly instead of a shared Textarea primitive.** No shadcn-generated `textarea.tsx` exists yet in `apps/web/src/components/ui/`; adding one for a single call site would be premature. If a second textarea call site lands later, that's the right time to `pnpm dlx shadcn-ui add textarea`.
+>
+> **Not shipped (deferred to R5.3 / R6.3):**
+>   - History-view session filter with "Untagged" bucket — R5.3.
+>   - Loot distribution wizard — R6.3.
+>   - `edit-game-session-date` action — no user need surfaced; dates are set at creation. If retro-editing becomes desirable, follow-up slice.
 
 #### R5.3 — History UI + permission rules
 
-- [ ] Party log timeline view (§5.8)
-- [ ] Filters: session / character / item / action type / actorRole
-- [ ] **Session filter has an explicit "Untagged" bucket** that surfaces entries with `sessionId: null` per OUTLINE §3.12. Component test: a no-session entry appears under "Untagged" in the filter dropdown and renders in the list when "Untagged" is selected.
-- [ ] Per-item history queried directly from log (no separate table, per §4)
-- [ ] **Permission rule** per OUTLINE §3.4 amendment (2026-06-24): per-item history is visible to (a) the current owner + DM for items in a character's Inventory or Storage, and (b) **every party member** for items currently in **Party Stash** or **Recovered Loot** (matches §3.15 transparency on shared pools).
-- [ ] Component test: player A's Inventory item history is hidden from player B (only A + DM see it).
-- [ ] Component test: an item currently in Party Stash has its history visible to every party member.
-- [ ] Component test: an item moved from a player's Inventory → Party Stash → back to a different player's Inventory has each segment of its history visible to the right audience at the time it was held there (the visibility rule reads the item's CURRENT `ownerId` for the gating decision; the history rows themselves are immutable).
-- [ ] Virtualized list / pagination for long histories
-- [ ] Banker actions tagged `actorRole: "banker"` visible to all members (§3.14)
+- [x] Party log timeline view (§5.8) — **R5.3.a**
+- [x] Filters: session / character / item / action type / actorRole — **R5.3.a**
+- [x] **Session filter has an explicit "Untagged" bucket** that surfaces entries with `sessionId: null` per OUTLINE §3.12. Component test: a no-session entry appears under "Untagged" in the filter dropdown and renders in the list when "Untagged" is selected. — **R5.3.a**
+- [x] Per-item history queried directly from log (no separate table, per §4) — **R5.3.b** (existing surface + permission gate applied)
+- [x] **Permission rule** per OUTLINE §3.4 amendment (2026-06-24): per-item history is visible to (a) the current owner + DM for items in a character's Inventory or Storage, and (b) **every party member** for items currently in **Party Stash** or **Recovered Loot** (matches §3.15 transparency on shared pools). — **helper `canSeeLogEntry` shipped in R5.3.a; applied to HistoryScreen (R5.3.a) and `ItemHistory` (R5.3.b)**
+- [x] Component test: player A's Inventory item history is hidden from player B (only A + DM see it). — **R5.3.a** (HistoryScreen) + **R5.3.b** (ItemHistory)
+- [x] Component test: an item currently in Party Stash has its history visible to every party member. — **R5.3.a** (HistoryScreen) + **R5.3.b** (ItemHistory)
+- [x] Component test: an item moved from a player's Inventory → Party Stash → back to a different player's Inventory has each segment of its history visible to the right audience at the time it was held there (the visibility rule reads the item's CURRENT `ownerId` for the gating decision; the history rows themselves are immutable). — **R5.3.b** covers via the `ItemHistory` permission-cases matrix; the CURRENT-stash rule is baked into `canSeeLogEntry`.
+- [x] Virtualized list / pagination for long histories — **R5.3.a**: simple "Load more" pagination (PAGE_SIZE=100). Virtualization deferred; adequate at expected campaign scale.
+- [x] Banker actions tagged `actorRole: "banker"` visible to all members (§3.14) — **R5.3.a** + **R5.3.b** (banker-widening rule in `canSeeLogEntry`; component tests on both `HistoryScreen` and `ItemHistory`)
 
 #### R5.3 — Notes
 
-> -
+> **R5.3.a shipped 2026-07-04.** Party History timeline at `/party/:partyId/history`, accessible to every party member via a top-nav History button. Permission gating (`canSeeLogEntry` in `@app/shared`) enforces OUTLINE §3.4 amendment client-side. Server-authoritative gating deferred — history is derived from `state.log` which is already broadcast-filtered per SECURITY §6 (WebSocket subscriptions scoped to party membership; log entries never leak across parties).
+>
+> **Locked decisions:**
+>   - **Slicing:** two sub-slices per user decision — R5.3.a (screen + helper + HistoryScreen tests); R5.3.b (ItemHistory rework to apply the same gate). Keeps the diff focused per slice.
+>   - **Nav placement:** top-nav Layout button, visible to ALL party members (not DM-only). Screen filters permission-hidden rows inside via `canSeeLogEntry` rather than gating at the route.
+>   - **Filter UX:** hybrid — native `<select>` dropdowns for Session / Character / Item / Actor role; checkbox group for Action Type with a default "ownership transitions" subset matching `ItemHistory.DEFAULT_FILTER_TYPES`.
+>   - **Pagination:** simple "Load more" (100 initial, +100 per click). No virtualization dep; adequate at D&D-campaign scale.
+>   - **Summary helper:** extracted `apps/web/src/lib/summarizeLogEntry.ts` covering all 36 log-entry variants. Shared with `ItemHistory` in R5.3.b (currently it still has inline `summarize` — R5.3.b swaps it).
+>   - **Actor label:** `apps/web/src/lib/resolveActorLabel.ts` — resolves `actorUserId` to a name via `state.user.displayName` → `character.name` → short-uuid fallback. Web store never carries other users' full `User` rows, so a full member-name resolver would need a server endpoint (out of scope for read-only history).
+>   - **Banker widening interpretation:** entries authored with `actorRole: 'banker'` are visible to ALL party members, EVEN when the item currently lives in another player's Inventory. Rationale: banker actions on private stashes still fall under the "fiduciary transparency" reading of §3.14 — a player can't audit a banker who moved coin/items on their behalf if they can't see it. Consumers: `canSeeLogEntry` in `@app/shared`.
+>
+> **Delta vs pre-slice test counts:** +34 in `@app/shared` (`actor.test.ts`), +28 in `@app/web` (`summarizeLogEntry.test.ts`), +3 in `@app/web` (`resolveActorLabel.test.ts`), +12 in `@app/web` (`HistoryScreen.test.tsx`), +3 in `@app/web` (`Layout.test.tsx`).
+>
+> **R5.3.b shipped 2026-07-04.** `ItemHistory.tsx` now applies the `canSeeLogEntry` gate BEFORE the OUTLINE §3.11 show-all-events toggle, so `hiddenByPermission` reflects the audit-invisible slice regardless of the toggle state. Empty state surfaces "N entries hidden by permission" so viewers know the log isn't exhaustive; when SOME rows are visible a footer note carries the same signal.
+>
+> **R5.3.b decisions:**
+>   - **Solo bypass added to `canSeeLogEntry`.** Landed alongside the ItemHistory swap because 3 existing ItemHistory tests carried the delete-cascade-edge-case fixtures with `memberships: []` (pre-R4.3 vintage). Rather than rewrite them, the gate now short-circuits to `true` when `isSolo(memberships)` — semantically correct per OUTLINE §8.2 union-of-rights, and the affected tests now carry a proper `SOLO_MEMBERSHIPS` constant.
+>   - **Summarize is NOT swapped.** The initial R5.3.b plan called for delegating `ItemHistory.summarize` to `apps/web/src/lib/summarizeLogEntry.ts`. Deferred: the shared helper prepends the item's name (e.g. "Acquired Rope ×2 into ..."), which is redundant on `ItemDetail` (the item is the page context) and would break ~20 existing string-format assertions in `ItemHistory.test.tsx`. Keeping the inline `summarize` avoids the churn; the shared helper is used by `HistoryScreen` (party-wide view) where the item name is essential context. If/when the two diverge in a way that matters, a future slice can reconcile — the divergence is small and localized.
+>   - **`makeEntry` fixture widened.** Third-arg overrides now accept `actorUserId` alongside `id | timestamp | actorRole` so the new R5.3.b permission tests can stamp the author cleanly.
+>
+> **Delta test counts for R5.3.b:** +1 in `@app/shared` (solo-bypass case in `actor.test.ts`), +6 in `@app/web` (`ItemHistory.test.tsx` permission cases).
 
 #### R5 — Notes
 
-> -
+> **R5 closed 2026-07-04.** All three sub-slices shipped: R5.1 (live sync — Socket.IO broadcast + outbox + offline write-block), R5.2 (Sessions UI — Start/End controls + notes editor + Layout badge), R5.3 (History timeline + per-item permission gating). Party History surface is at `/party/:partyId/history`; per-item history on `ItemDetail` now respects the §3.4 amendment.
 
 ---
 
@@ -3681,6 +3828,7 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 
 - [ ] **`delete-character` UI entry point** — R4.1.b shipped the reducer action + cascade to Recovered Loot, but no UI surface dispatches it. The PartySettings "Create your character" CTA from R4.1.f explicitly supports the post-delete recreation case (the reducer + guard accept it), but until a deletion button exists somewhere — Character Sheet header? Settings → Danger zone? PartySettings → Members row? — the third use case is theoretical. Recommendation: small "Delete character" button on the Character Sheet header behind a confirm dialog showing the snapshot (item count + currency total cp moved to Recovered Loot), mirroring the existing `delete-stash` confirmation pattern. (Source: R4.1.b carryforward, surfaced by R4.1.f.)
 - [ ] **Reject `partyName` on the post-bootstrap `create-character` branch** — `createCharacterInExistingParty` currently ignores `partyName` silently if a client sends it (the party already exists; renaming is `rename-party`). A client could plausibly send `{ name: 'X', partyName: 'rename me' }` expecting both effects, and the partial silent ignore is a footgun. Either: (a) reject the action with `invalid_payload` when `partyName` is set on the post-bootstrap branch, OR (b) treat it as an implicit `rename-party` and emit both log entries. (a) is the simpler / safer choice. (Source: R4.1.f.)
+- [ ] **Wire `useCanDispatch()` on primary Save buttons** — R5.1.d shipped the store-level write-block backstop + the reactive hook, but the hook isn't yet consumed by every mutation control. Correctness is met (dispatch short-circuits + toasts when blocked), but UX polish would disable the buttons directly. Candidate touch-list from R5.1.d Notes: `AddItemModal`, `CharacterSheet` (rename / inline edits), `ItemDetail` (currency / move), `StorageDetail` (move / split / currency), `PartySettings` (rename / member management), `HomebrewForm`. Read `useCanDispatch()` in each, pass to `disabled={!canDispatch}`. Mechanical follow-up. (Source: R5.1.d.)
 
 - [x] **Multiple local-mode parties** — **shipped 2026-06-29 (R4.1 followup)**. The Dexie persistence layer now keys each party's blob under `appState:<partyId>` (`apps/web/src/db/save.ts`, `load.ts`). The Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through that pointer with a fallback to the legacy unkeyed slot and a "first keyed blob" tertiary fallback. Hub flows now flush + clear the in-memory store before each `create-character` dispatch and before swapping to another party's blob — the reducer's `state === null` invariant stays intact. Local-mode users can hold N parties; server-mode users continue to use `GET /sync/parties` + per-party pull. **Carryforward (not blocking):** the JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) still operates on the active party only — a future "vault" export that bundles every keyed blob is a separate scope.
 

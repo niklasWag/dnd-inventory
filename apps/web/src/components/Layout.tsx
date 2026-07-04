@@ -1,6 +1,14 @@
 import { Outlet, useNavigate } from 'react-router-dom';
 import type { ReactElement } from 'react';
-import { BookOpen, LayoutDashboard, LogOut, Settings as SettingsIcon, Users } from 'lucide-react';
+import {
+  BookOpen,
+  History,
+  LayoutDashboard,
+  LogOut,
+  Play,
+  Settings as SettingsIcon,
+  Users,
+} from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
@@ -35,6 +43,18 @@ export function RootLayout(): ReactElement {
   // reducer mutation.
   const hasParty = useStore(useShallow((s) => s.appState !== null));
   const canSeeDmDashboard = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
+  // R5.2 — surface the current GameSession as a badge whenever we're
+  // inside a party AND a session is `isCurrent`. Reads via `useShallow`
+  // on `(number, date)` to avoid re-rendering on unrelated GameSession
+  // mutations (notes edits, etc. — for the CURRENT session, notes
+  // changes DON'T need to re-render the badge because the badge doesn't
+  // display notes).
+  const currentSession = useStore(
+    useShallow((s) => {
+      const current = s.appState?.gameSessions.find((gs) => gs.isCurrent);
+      return current === undefined ? null : { number: current.number, date: current.date };
+    }),
+  );
 
   async function handleLogout(): Promise<void> {
     await session.signOut();
@@ -81,6 +101,19 @@ export function RootLayout(): ReactElement {
                 <span className="sr-only sm:not-sr-only">Party</span>
               </Button>
             ) : null}
+            {hasParty && partyId !== null ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void navigate(`/party/${partyId}/history`);
+                }}
+                aria-label="History"
+              >
+                <History className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only">History</span>
+              </Button>
+            ) : null}
             {canSeeDmDashboard && partyId !== null ? (
               <Button
                 variant="ghost"
@@ -93,6 +126,16 @@ export function RootLayout(): ReactElement {
                 <LayoutDashboard className="h-4 w-4" />
                 <span className="sr-only sm:not-sr-only">DM</span>
               </Button>
+            ) : null}
+            {partyId !== null && currentSession !== null ? (
+              <span
+                className="ml-1 inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+                aria-label={`Session ${currentSession.number} in progress, started ${currentSession.date}`}
+                title={`Started ${currentSession.date}`}
+              >
+                <Play className="h-3 w-3" aria-hidden="true" />
+                Session {currentSession.number}
+              </span>
             ) : null}
             <Button
               variant="ghost"

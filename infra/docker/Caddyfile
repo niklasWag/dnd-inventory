@@ -34,8 +34,17 @@
 	# previously absent from the matcher, so requests fell through
 	# to the SPA handler and returned `index.html` (which the
 	# client then failed to JSON-parse as a `malformed_response`).
+	#
+	# R5.1.a — added `/socket.io/*` for the Socket.IO transport.
+	# Without this, the Engine.IO polling handshake fell through to
+	# the SPA and returned `index.html`; the client parsed it as a
+	# malformed Engine.IO packet and surfaced the generic
+	# `connect_error: server error` every reconnect tick. Caddy's
+	# `reverse_proxy` upgrades WebSockets automatically, so the
+	# eventual `transport=websocket` upgrade works via the same
+	# route.
 	@server {
-		path /auth/* /sync/* /parties /parties/* /healthz /healthz/*
+		path /auth/* /sync/* /parties /parties/* /healthz /healthz/* /socket.io /socket.io/*
 	}
 	handle @server {
 		reverse_proxy server:3000
