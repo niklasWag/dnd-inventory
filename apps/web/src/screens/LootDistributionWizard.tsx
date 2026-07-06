@@ -7,6 +7,7 @@ import { Trash2, Plus, Coins, Package } from 'lucide-react';
 import { newUuidV7 } from '@app/shared';
 import type { ItemDefinition, Rarity as ItemRarity } from '@app/shared';
 import type { hoard } from '@app/rules';
+import { searchCatalog } from '@app/rules';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -499,10 +500,15 @@ interface ItemPickerProps {
 function ItemPicker({ catalog, rarityFilter, onCancel, onPick }: ItemPickerProps): ReactElement {
   const [query, setQuery] = useState('');
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return catalog
-      .filter((d) => rarityFilter === undefined || (d.rarity as ItemRarity) === rarityFilter)
-      .filter((d) => q === '' || d.name.toLowerCase().includes(q))
+    const filtered = catalog.filter(
+      (d) => rarityFilter === undefined || (d.rarity as ItemRarity) === rarityFilter,
+    );
+    const q = query.trim();
+    if (q === '') {
+      return [...filtered].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 30);
+    }
+    return searchCatalog(q, filtered)
+      .map((r) => r.item)
       .slice(0, 30);
   }, [catalog, query, rarityFilter]);
 

@@ -17,7 +17,13 @@ export * as weight from './weight';
 export * as hoard from './hoard';
 export * as validation from './validation';
 export * as pricing from './pricing';
-export * as search from './search';
+// R6.5 — the search module exports its ranker at the top level as
+// `searchCatalog` (not as a `search.*` namespace). Namespace-only
+// re-exports of a generic function widen `T` to the constraint at the
+// call site, erasing the caller's item type. The direct export keeps
+// generic inference intact for `ItemDefinition` and future callers.
+export { search as searchCatalog } from './search';
+export type { Searchable, SearchResult } from './search';
 export * as currency from './currency';
 export * as inventory from './inventory';
 

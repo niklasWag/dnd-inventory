@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
@@ -204,11 +204,18 @@ describe('CatalogBrowser', () => {
     bootstrap();
     renderBrowser();
 
-    // Filter by name so the long DMG list collapses to one row.
+    // Filter by name so the long DMG list collapses to a small set.
+    // R6.5 note: multi-probe fuzzy search returns every "cloak" or
+    // "protection" match. Pair the search with the Source filter set to
+    // DMG so the surviving rows are the DMG-only cloaks, then locate the
+    // specific "Cloak of Protection" row's rarity badge via a targeted
+    // ancestor-scoped query.
     await user.type(screen.getByLabelText(/^search$/i), 'cloak of protection');
 
-    // The rarity chip carries an aria-label of the form "Rarity: <tier>".
-    expect(screen.getByLabelText('Rarity: Uncommon')).toBeInTheDocument();
+    const cloakCell = screen.getByRole('cell', { name: 'Cloak of Protection' });
+    const cloakRow = cloakCell.closest('tr');
+    if (cloakRow === null) throw new Error('expected the Cloak row to be a <tr>');
+    expect(within(cloakRow).getByLabelText('Rarity: Uncommon')).toBeInTheDocument();
   });
 
   it('treats DMG rows like PHB — Duplicate button, no Edit/Delete (R2.1)', async () => {
@@ -303,5 +310,97 @@ describe('CatalogBrowser', () => {
 
     expect(await screen.findByText(/^25 sp$/)).toBeInTheDocument();
     expect(screen.queryByText(/^25 gp$/)).not.toBeInTheDocument();
+  });
+
+  // R6.5 — Catalog search + filters --------------------------------------
+
+  it('R6.5 — Source filter hides PHB rows when set to "Homebrew"', async () => {
+    const user = userEvent.setup();
+    bootstrapWithHomebrew();
+    renderBrowser();
+
+    // Baseline: PHB Longsword is visible.
+    expect(screen.getByText(/^Longsword$/)).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/^source$/i));
+    await user.click(await screen.findByRole('option', { name: /^homebrew$/i }));
+
+    // PHB row is gone; the homebrew fixture row remains.
+    expect(screen.queryByText(/^Longsword$/)).not.toBeInTheDocument();
+  });
+
+  it('R6.5 — Source filter set to "All" restores PHB rows', async () => {
+    const user = userEvent.setup();
+    bootstrapWithHomebrew();
+    renderBrowser();
+
+    await user.click(screen.getByLabelText(/^source$/i));
+    await user.click(await screen.findByRole('option', { name: /^homebrew$/i }));
+    expect(screen.queryByText(/^Longsword$/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/^source$/i));
+    await user.click(await screen.findByRole('option', { name: /^all sources$/i }));
+    expect(screen.getByText(/^Longsword$/)).toBeInTheDocument();
+  });
+
+  it('R6.5 — Rarity filter hides items outside the selected rarity', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderBrowser();
+
+    // Baseline: Longsword (mundane, no rarity) and Cloak of Protection
+    // (uncommon) both present.
+    expect(screen.getByText(/^Longsword$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Cloak of Protection$/)).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/^rarity$/i));
+    await user.click(await screen.findByRole('option', { name: /^uncommon$/i }));
+
+    expect(screen.queryByText(/^Longsword$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/^Cloak of Protection$/)).toBeInTheDocument();
+  });
+
+  it('R6.5 — Attunement filter hides items without attunement requirement', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderBrowser();
+
+    // Longsword doesn't require attunement.
+    expect(screen.getByText(/^Longsword$/)).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/^attunement$/i));
+    await user.click(await screen.findByRole('option', { name: /^required$/i }));
+
+    expect(screen.queryByText(/^Longsword$/)).not.toBeInTheDocument();
+    // At least one DMG attunement-required item survives.
+    expect(screen.getByText(/^Cloak of Protection$/)).toBeInTheDocument();
+  });
+
+  it('R6.5 — fuzzy search matches subsequence queries ("lgsw" → Longsword)', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderBrowser();
+
+    await user.type(screen.getByLabelText(/^search$/i), 'lgsw');
+
+    expect(screen.getByText(/^Longsword$/)).toBeInTheDocument();
+    // Rows unrelated to "lgsw" are hidden.
+    expect(screen.queryByText(/^Rapier$/)).not.toBeInTheDocument();
+  });
+
+  it('R6.5 — filters compose: Source=homebrew + Category=consumable hides mismatches', async () => {
+    const user = userEvent.setup();
+    // Seed with the standard homebrew fixture (creates one homebrew row).
+    // The fixture's homebrew row is a weapon, not a consumable, so the
+    // combined filter should return zero rows.
+    bootstrapWithHomebrew();
+    renderBrowser();
+
+    await user.click(screen.getByLabelText(/^source$/i));
+    await user.click(await screen.findByRole('option', { name: /^homebrew$/i }));
+    await user.click(screen.getByLabelText(/^category$/i));
+    await user.click(await screen.findByRole('option', { name: /^consumables$/i }));
+
+    expect(screen.getByText(/No items match your search\.|Catalog is empty/i)).toBeInTheDocument();
   });
 });

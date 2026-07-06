@@ -3760,22 +3760,43 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 #### R6.5 — Catalog search
 
 **Rules — activate stub (§6)**
-- [ ] `packages/rules/search.ts` implemented (fuzzy across name + description + tags)
-- [ ] `search.ts` tests cover ranking + filter combinations
+- [x] `packages/rules/search.ts` implemented (fuzzy across name + description + tags) — **subsequence + word-boundary ranker with per-field weights (name > description > tags); tuned span-cap on subsequence to suppress noise from long descriptions.**
+- [x] `search.ts` tests cover ranking + filter combinations — **18 tests: empty query, name / description / tag tier ranking, subsequence, tie-break by name length, multi-word AND semantics, short-probe subseq guard, robustness on empty catalog + punctuation.**
 
 **Catalog search**
-- [ ] Catalog search wired to `search.ts` (replaces M2's simple search)
-- [ ] Filters by category, rarity, attunement-required, cost, source (§3.7)
-- [ ] Catalog source filter (PHB / DMG / homebrew / all) surfaced in `CatalogBrowser` alongside the category filter
-- [ ] Catalog source-filter test: with PHB + ≥1 homebrew loaded, selecting "homebrew" hides PHB rows; "all" restores them; combines with category filter (e.g. "homebrew" + "consumable" only).
+- [x] Catalog search wired to `search.ts` (replaces M2's simple search) — **`CatalogBrowser` + `CatalogPicker` (stash Add) + LootDistributionWizard's inline item picker all swapped from `.includes` to the fuzzy ranker via the new `searchCatalog` top-level export.**
+- [x] Filters by category, rarity, attunement-required, cost, source (§3.7) — **Category (existing) + Rarity + Attunement + Source shipped. Cost filter skipped — see R6.5 Notes.**
+- [x] Catalog source filter (PHB / DMG / homebrew / all) surfaced in `CatalogBrowser` alongside the category filter — **Source dropdown shipped alongside three other filters in a 5-column grid.**
+- [x] Catalog source-filter test: with PHB + ≥1 homebrew loaded, selecting "homebrew" hides PHB rows; "all" restores them; combines with category filter (e.g. "homebrew" + "consumable" only) — **covered in `CatalogBrowser.test.tsx` R6.5 tests: source hides / restores, and source + category compose to zero rows for the "consumable homebrew" case.**
 
 #### R6.5 — Notes
 
-> -
+> - **One-slice shape (matches R6.1–R6.4 rhythm).** Pure rules module + UI wiring in `CatalogBrowser` / `CatalogPicker` / `LootDistributionWizard`. No new schemas, no reducer arms, no Prisma migration, no `actionMetadata` entries.
+> - **Test count deltas.**
+>   - **rules** — 215 → 235 (+20): `search.test.ts` covering empty query, name > description > tag tier ranking, exact-substring vs. word-boundary vs. subsequence ordering, tie-break by name length, multi-word AND semantics, short-probe subseq guard, subsequence span-cap (rejecting scattered matches, admitting close-together ones), robustness on empty catalog + punctuation.
+>   - **web** — 951 → 957 (+6): 6 R6.5 tests in `CatalogBrowser.test.tsx` — source hides / restores, rarity filter, attunement filter, fuzzy subsequence hit ("lgsw" → Longsword), source + category compose to empty state. Existing R2.1 rarity-badge test tightened to scope the badge query to the specific Cloak-of-Protection row via `within(tr)`.
+> - **`search.ts` scoring model.**
+>   - **Tiers** (per field, strongest wins):
+>     - Exact-substring hit → base score.
+>     - Word-boundary hit (match at position 0 OR preceded by a non-alphanumeric char) → bonus over exact.
+>     - Subsequence match (chars in order, not necessarily adjacent) → weakest tier.
+>   - **Field weights**: name (100 / 80 / 40) > description (20 / 15 / 10) > tags (8 / 5 / 3). Tags contribute only their best-matching tag's score, so a tag-heavy row isn't overweighted.
+>   - **Multi-word AND**: `'long sword'` splits into probes `['long', 'sword']`; every probe must hit some field on an item for that item to be included.
+>   - **Tie-break**: shorter `name.length` wins ties (assumes stronger relative match on a shorter string).
+> - **Short-probe subsequence guard.** Probes of length < 3 do NOT subsequence-match (`'of'`, `'in'`, `'to'` would otherwise trivially subseq-hit any word containing those two letters in order). Substring matches still apply for short probes so `'of'` still hits `'Cloak of Protection'` correctly.
+> - **Subsequence span cap.** Subsequence matches are additionally bounded by span: the matched characters must fit within `max(needle.length + 2, needle.length × 3)` haystack positions. Without this cap, long descriptions ("A martial melee weapon…") were subseq-matching short probes (`'rapier'`: r-a-p-i-e-r scattered across 40+ chars). The cap tuned so 'lgsw' → 'longsword' (span 8, probe 4 → 2×) still matches while 'rapier' → 'a martial weapon' does not.
+> - **Result ordering.** Empty query → alphabetical by name (existing UX preserved). Non-empty query → descending score with the length tie-break.
+> - **`searchCatalog` top-level export (namespace removed).** `packages/rules/src/index.ts` exposes the ranker as a top-level `searchCatalog` function plus the `Searchable` / `SearchResult` types — NO `search.*` namespace. Reason: `export * as search from './search'` widens the generic `T` to its constraint at every call site (TS namespace-import semantics), erasing `ItemDefinition`-specific fields. The direct `export { search as searchCatalog }` keeps callers' generic-inferred `T = ItemDefinition` intact. Single import path across the codebase.
+> - **`Searchable` interface.** Added a named type for the generic constraint (`{ name: string; description?: string | undefined; tags?: ReadonlyArray<string> | undefined }`). The explicit `| undefined` on optional fields + `ReadonlyArray` tolerance sidestep an `exactOptionalPropertyTypes` mismatch where `ItemDefinition`'s `description?: string` wouldn't structurally assign to a `description?: string` constraint TS treated as "not undefined".
+> - **Cost filter skipped.** The roadmap §3.7 checkbox mentioned it; deferred to a future polish PR. Rationale: cost is derived through the pricing pipeline (`partyModifier`, homebrew skip, `formatPrice` denomination cascade) and building a range control that respects `baseCurrency` + `partyModifier` is disproportionate to the DM's need (visually sorting by the rendered cost column is enough for now).
+> - **CatalogPicker kept lean.** The modal picker used by stash Add / loot wizard inline picker only got the search core swap — category filter remained the only filter surface. Adding all four filters to the compact modal would harm the "quick add" UX; the full filter matrix lives in the main CatalogBrowser screen.
+> - **jsdom shim for Radix Select.** `apps/web/src/test/setup.ts` gained a `hasPointerCapture` / `setPointerCapture` / `releasePointerCapture` / `scrollIntoView` shim on `Element.prototype` — jsdom 29.x doesn't ship these and Radix Select's pointer-down handler crashes without them. This unblocks all Select-interactive tests going forward (existing tests avoided the Radix Select entirely).
 
 #### R6 — Notes
 
-> -
+> - **All five slices shipped**: R6.0 Edit-character dialog, R6.1 Pricing + per-party economy, R6.2 Shops + purchase/sale, R6.3 Hoard generator + loot distribution wizard, R6.4 Identification panel + batch-identify, R6.5 Catalog search + filters.
+> - **Per-slice Notes above** carry the design decisions, deviations, and test-count deltas.
+> - **No new open questions surfaced** by R6 — spec sections §3.5, §3.7, §3.8, §3.10, §5.10, §5.11, §5.12, §5.13 fully implemented against OUTLINE.md.
 
 ---
 

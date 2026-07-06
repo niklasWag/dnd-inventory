@@ -1,7 +1,7 @@
 import { type ReactElement, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
-import { pricing, currency } from '@app/rules';
+import { pricing, currency, searchCatalog } from '@app/rules';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -49,22 +49,45 @@ export function CatalogBrowser(): ReactElement {
   );
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<'all' | ItemCategory>('all');
+  // R6.5 — new filter surfaces per OUTLINE §3.7.
+  //   rarity: 'all' | 'none' (mundane, no rarity set) | any raritySchema value
+  //   attunement: 'any' | 'required' | 'not-required'
+  //   source: 'all' | 'PHB' | 'DMG' | 'homebrew'
+  const [rarity, setRarity] = useState<
+    'all' | 'none' | 'common' | 'uncommon' | 'rare' | 'very-rare' | 'legendary' | 'artifact'
+  >('all');
+  const [attunement, setAttunement] = useState<'any' | 'required' | 'not-required'>('any');
+  const [source, setSource] = useState<'all' | 'PHB' | 'DMG' | 'homebrew'>('all');
   const [activeDef, setActiveDef] = useState<ItemDefinition | null>(null);
   const [formMode, setFormMode] = useState<'create' | 'edit' | 'duplicate' | null>(null);
   const [deleteDef, setDeleteDef] = useState<ItemDefinition | null>(null);
 
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return catalog
-      .filter((d) => category === 'all' || d.category === category)
-      .filter((d) => {
-        if (q === '') return true;
-        if (d.name.toLowerCase().includes(q)) return true;
-        if ((d.description ?? '').toLowerCase().includes(q)) return true;
-        if ((d.tags ?? []).some((t) => t.toLowerCase().includes(q))) return true;
-        return false;
-      });
-  }, [catalog, query, category]);
+    // Filters are AND-composed. Applied BEFORE search so scoring only
+    // considers surviving items.
+    const filtered = catalog.filter((d) => {
+      if (category !== 'all' && d.category !== category) return false;
+      if (source !== 'all' && d.source !== source) return false;
+      if (rarity !== 'all') {
+        if (rarity === 'none') {
+          if (d.rarity !== undefined && d.rarity !== null) return false;
+        } else {
+          if (d.rarity !== rarity) return false;
+        }
+      }
+      if (attunement === 'required' && d.requiresAttunement !== true) return false;
+      if (attunement === 'not-required' && d.requiresAttunement === true) return false;
+      return true;
+    });
+
+    const q = query.trim();
+    if (q === '') {
+      // No search query → alphabetical by name.
+      return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    // R6.5 — fuzzy multi-field score. Non-matching items excluded.
+    return searchCatalog(q, filtered).map((r) => r.item);
+  }, [catalog, query, category, rarity, attunement, source]);
 
   // Reference count per definition: number of DISTINCT stashes holding
   // any instance. Used to gate the Delete dialog (rejected when > 0).
@@ -94,12 +117,12 @@ export function CatalogBrowser(): ReactElement {
         </Button>
       </header>
 
-      <div className="grid grid-cols-[2fr_1fr] gap-3">
-        <div className="space-y-1.5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="space-y-1.5 lg:col-span-2">
           <Label htmlFor="catalog-browser-search">Search</Label>
           <Input
             id="catalog-browser-search"
-            placeholder="rope, longsword, torch…"
+            placeholder="rope, longsword, torch, lgsw…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -122,6 +145,51 @@ export function CatalogBrowser(): ReactElement {
               <SelectItem value="currency">Currency &amp; gems</SelectItem>
               <SelectItem value="container">Containers</SelectItem>
               <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="catalog-browser-rarity">Rarity</Label>
+          <Select value={rarity} onValueChange={(v) => setRarity(v as typeof rarity)}>
+            <SelectTrigger id="catalog-browser-rarity">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All rarities</SelectItem>
+              <SelectItem value="none">Mundane (no rarity)</SelectItem>
+              <SelectItem value="common">Common</SelectItem>
+              <SelectItem value="uncommon">Uncommon</SelectItem>
+              <SelectItem value="rare">Rare</SelectItem>
+              <SelectItem value="very-rare">Very rare</SelectItem>
+              <SelectItem value="legendary">Legendary</SelectItem>
+              <SelectItem value="artifact">Artifact</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="catalog-browser-source">Source</Label>
+          <Select value={source} onValueChange={(v) => setSource(v as typeof source)}>
+            <SelectTrigger id="catalog-browser-source">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              <SelectItem value="PHB">PHB</SelectItem>
+              <SelectItem value="DMG">DMG</SelectItem>
+              <SelectItem value="homebrew">Homebrew</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="catalog-browser-attunement">Attunement</Label>
+          <Select value={attunement} onValueChange={(v) => setAttunement(v as typeof attunement)}>
+            <SelectTrigger id="catalog-browser-attunement">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Any</SelectItem>
+              <SelectItem value="required">Required</SelectItem>
+              <SelectItem value="not-required">Not required</SelectItem>
             </SelectContent>
           </Select>
         </div>
