@@ -79,6 +79,7 @@ function makeAppState(memberCount: number): AppState {
     characters: [],
     gameSessions: [],
     stashes: [],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [],

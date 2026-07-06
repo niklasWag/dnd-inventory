@@ -28,6 +28,7 @@ import type {
   Party,
   PartyMembership,
   Rarity,
+  Shop,
   Stash,
   TransactionLogEntry,
   User,
@@ -40,6 +41,7 @@ import {
   itemInstanceSchema,
   partyMembershipSchema,
   partySchema,
+  shopSchema,
   stashSchema,
   transactionLogEntrySchema,
   userSchema,
@@ -561,6 +563,48 @@ export function fromPrismaGameSession(row: GameSessionRow): GameSession {
     date: row.date.toISOString().slice(0, 10),
     ...(row.notes !== null ? { notes: row.notes } : {}),
     isCurrent: row.isCurrent,
+    createdAt: row.createdAt.toISOString(),
+  });
+}
+
+/**
+ * R6.2 — Shop row mapper. Includes an eagerly-loaded `stock` array
+ * (Prisma `include: { stock: true }`); the state loader queries with
+ * the include so consumers get a fully-populated Shop tree.
+ */
+export interface ShopStockEntryRow {
+  id: string;
+  shopId: string;
+  itemDefinitionId: string;
+  priceOverride: number | null;
+  quantity: number;
+}
+
+export interface ShopRow {
+  id: string;
+  partyId: string;
+  name: string;
+  priceModifier: number;
+  sellToMerchantRate: number;
+  isOpen: boolean;
+  stock: ShopStockEntryRow[];
+  createdAt: Date;
+}
+
+export function fromPrismaShop(row: ShopRow): Shop {
+  return shopSchema.parse({
+    id: row.id,
+    partyId: row.partyId,
+    name: row.name,
+    priceModifier: row.priceModifier,
+    sellToMerchantRate: row.sellToMerchantRate,
+    isOpen: row.isOpen,
+    stock: row.stock.map((e) => ({
+      id: e.id,
+      itemDefinitionId: e.itemDefinitionId,
+      ...(e.priceOverride !== null ? { priceOverride: e.priceOverride } : {}),
+      quantity: e.quantity,
+    })),
     createdAt: row.createdAt.toISOString(),
   });
 }

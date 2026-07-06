@@ -60,6 +60,7 @@ function makeAppState(opts: {
     })),
     gameSessions: [],
     stashes: [],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [],

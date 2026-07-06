@@ -53,6 +53,7 @@ function makeState(opts: {
     characters: opts.characters ?? [],
     gameSessions: opts.gameSessions ?? [],
     stashes: opts.stashes ?? [],
+    shops: [],
     catalog: [],
     items: opts.items ?? [],
     currencies: opts.currencies ?? [],

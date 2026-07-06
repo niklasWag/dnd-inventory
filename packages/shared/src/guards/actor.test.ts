@@ -225,6 +225,7 @@ function makeState(): AppState {
         createdAt: BASE_TS,
       },
     ],
+    shops: [],
     catalog: [],
     items: [
       // item in player-A's Inventory

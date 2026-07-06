@@ -330,6 +330,81 @@ export type Action =
         baseCurrency: CurrencyDenomination;
       };
     }
+  // R6.2 — Shop CRUD + purchase / sale (OUTLINE §3.9, §5.12).
+  | {
+      type: 'create-shop';
+      payload: {
+        newShopId: string;
+        name: string;
+      };
+    }
+  | {
+      type: 'edit-shop';
+      payload: {
+        shopId: string;
+        patch: {
+          name?: string;
+          priceModifier?: number;
+          sellToMerchantRate?: number;
+        };
+      };
+    }
+  | {
+      type: 'delete-shop';
+      payload: { shopId: string };
+    }
+  | {
+      type: 'set-shop-open';
+      payload: { shopId: string; isOpen: boolean };
+    }
+  | {
+      type: 'edit-shop-stock';
+      payload: {
+        shopId: string;
+        operation:
+          | {
+              kind: 'add';
+              newStockEntryId: string;
+              itemDefinitionId: string;
+              priceOverride?: number;
+              quantity: number;
+            }
+          | {
+              kind: 'update';
+              stockEntryId: string;
+              priceOverride?: number | null;
+              quantity?: number;
+            }
+          | {
+              kind: 'remove';
+              stockEntryId: string;
+            };
+      };
+    }
+  | {
+      // R6.2 `purchase` — any active party member (DM anytime; players
+      // when `shop.isOpen`). Debits buyer, mints ItemInstance (auto-
+      // stacks per §4), decrements finite stock.
+      type: 'purchase';
+      payload: {
+        shopId: string;
+        stockEntryId: string;
+        targetStashId: string;
+        quantity: number;
+        newItemInstanceId: string;
+      };
+    }
+  | {
+      // R6.2 `sale` — inverse of purchase. Consumes item, credits
+      // seller, increments (or inserts new) shop stock row.
+      type: 'sale';
+      payload: {
+        shopId: string;
+        itemInstanceId: string;
+        quantity: number;
+        newStockEntryId: string;
+      };
+    }
   | {
       // R1.2: equip an item that lives in a character's Inventory stash.
       // Reducer rejects when the row is not in a `scope=character,

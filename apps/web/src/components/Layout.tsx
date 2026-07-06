@@ -7,6 +7,7 @@ import {
   LogOut,
   Play,
   Settings as SettingsIcon,
+  Store,
   Users,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
@@ -125,6 +126,19 @@ export function RootLayout(): ReactElement {
               >
                 <LayoutDashboard className="h-4 w-4" />
                 <span className="sr-only sm:not-sr-only">DM</span>
+              </Button>
+            ) : null}
+            {canSeeDmDashboard && partyId !== null ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void navigate(`/party/${partyId}/shops`);
+                }}
+                aria-label="Shops"
+              >
+                <Store className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only">Shops</span>
               </Button>
             ) : null}
             {partyId !== null && currentSession !== null ? (

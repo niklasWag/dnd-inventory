@@ -350,6 +350,127 @@ const updatePartyEconomyAction = z.object({
   }),
 });
 
+// -----------------------------------------------------------------------------
+// R6.2 — Shop CRUD + purchase / sale (OUTLINE §3.9, §5.12).
+// -----------------------------------------------------------------------------
+
+/**
+ * `create-shop` — DM-only mint of a new shop with default modifiers
+ * (`priceModifier: 1.0`, `sellToMerchantRate: 0.5`, `isOpen: false`,
+ * empty stock). Solo bypass via `checkGuard`.
+ */
+const createShopAction = z.object({
+  type: z.literal('create-shop'),
+  payload: z.object({
+    newShopId: z.string().min(1),
+    name: z.string().min(1).max(60),
+  }),
+});
+
+/**
+ * `edit-shop` — DM-only patch of scalar shop fields. `isOpen` has its
+ * own action (`set-shop-open`) so a visibility flip broadcasts as a
+ * distinct event. Rejects no-op writes.
+ */
+const editShopAction = z.object({
+  type: z.literal('edit-shop'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    patch: z
+      .object({
+        name: z.string().min(1).max(60).optional(),
+        priceModifier: z.number().positive().optional(),
+        sellToMerchantRate: z.number().positive().optional(),
+      })
+      .strict(),
+  }),
+});
+
+/** `delete-shop` — DM-only. Removes the shop + cascade its stock rows. */
+const deleteShopAction = z.object({
+  type: z.literal('delete-shop'),
+  payload: z.object({
+    shopId: z.string().min(1),
+  }),
+});
+
+/**
+ * `set-shop-open` — DM-only toggle. Separate action so the broadcast
+ * carries the visibility change explicitly (players' UI reacts).
+ * Rejects no-op writes.
+ */
+const setShopOpenAction = z.object({
+  type: z.literal('set-shop-open'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    isOpen: z.boolean(),
+  }),
+});
+
+/**
+ * `edit-shop-stock` — DM-only mutation of the stock array. One
+ * dispatch = one stock operation (add / update / remove). The
+ * discriminated `operation` keeps the reducer + persistor tiny.
+ */
+const editShopStockAction = z.object({
+  type: z.literal('edit-shop-stock'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    operation: z.discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('add'),
+        newStockEntryId: z.string().min(1),
+        itemDefinitionId: z.string().min(1),
+        priceOverride: z.number().int().nonnegative().optional(),
+        quantity: z.number().int(),
+      }),
+      z.object({
+        kind: z.literal('update'),
+        stockEntryId: z.string().min(1),
+        priceOverride: z.number().int().nonnegative().nullable().optional(),
+        quantity: z.number().int().optional(),
+      }),
+      z.object({
+        kind: z.literal('remove'),
+        stockEntryId: z.string().min(1),
+      }),
+    ]),
+  }),
+});
+
+/**
+ * `purchase` — any active party member. Debits buyer's currency,
+ * creates an ItemInstance in `targetStashId` (auto-stacks per §4),
+ * decrements finite shop stock. Guard: shop must be open for players
+ * (DM anytime).
+ */
+const purchaseAction = z.object({
+  type: z.literal('purchase'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    stockEntryId: z.string().min(1),
+    targetStashId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    newItemInstanceId: z.string().min(1),
+  }),
+});
+
+/**
+ * `sale` — any active party member. Consumes an item from
+ * `itemInstanceId`, credits the source stash's currency, increments
+ * (or inserts) the shop's stock row for the item's definition. Guard:
+ * shop must be open for players (DM anytime).
+ */
+const saleAction = z.object({
+  type: z.literal('sale'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    itemInstanceId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    newStockEntryId: z.string().min(1),
+  }),
+});
+
 const equipAction = z.object({
   type: z.literal('equip'),
   payload: z.object({
@@ -684,6 +805,13 @@ export const actionSchema = z.discriminatedUnion('type', [
   renamePartyAction,
   setEncumbranceAction,
   updatePartyEconomyAction,
+  createShopAction,
+  editShopAction,
+  deleteShopAction,
+  setShopOpenAction,
+  editShopStockAction,
+  purchaseAction,
+  saleAction,
   equipAction,
   unequipAction,
   attuneAction,

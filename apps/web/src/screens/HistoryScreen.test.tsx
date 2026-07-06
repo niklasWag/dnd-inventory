@@ -190,6 +190,7 @@ function makeState(opts: {
     characters: CHARACTERS,
     gameSessions: GAME_SESSIONS,
     stashes: STASHES,
+    shops: [],
     catalog: [],
     items: ITEMS,
     currencies: [],

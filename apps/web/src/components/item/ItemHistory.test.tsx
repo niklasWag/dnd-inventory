@@ -255,6 +255,7 @@ describe('ItemHistory', () => {
             createdAt: new Date().toISOString(),
           },
         ],
+        shops: [],
         catalog: [],
         items: [],
         currencies: [],
@@ -359,6 +360,7 @@ describe('ItemHistory', () => {
             createdAt: new Date().toISOString(),
           },
         ],
+        shops: [],
         catalog: [],
         items: [],
         currencies: [],
@@ -431,6 +433,7 @@ describe('ItemHistory', () => {
             createdAt: new Date().toISOString(),
           },
         ],
+        shops: [],
         catalog: [],
         items: [],
         currencies: [],
@@ -852,6 +855,7 @@ describe('ItemHistory', () => {
           createdAt: nowIso,
         },
       ],
+      shops: [],
       catalog: [],
       items: [
         {

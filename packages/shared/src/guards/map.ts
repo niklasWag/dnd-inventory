@@ -550,6 +550,139 @@ const updatePartyEconomyGuard: Guard<Extract<Action, { type: 'update-party-econo
   return { ok: true };
 };
 
+/**
+ * R6.2 — Shop CRUD guards (OUTLINE §3.9; user directive 2026-07-06:
+ * "Players only buy/sell, DM creates/updates/deletes a shop").
+ *
+ * All shop WRITES on the entity itself + stock array + open-toggle are
+ * DM-only when memberCount ≥ 2 (§8.2 solo bypass via `checkGuard`).
+ */
+const createShopGuard: Guard<Extract<Action, { type: 'create-shop' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'create-shop: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'create-shop is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const editShopGuard: Guard<Extract<Action, { type: 'edit-shop' }>> = (state, _payload, actor) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'edit-shop: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'edit-shop is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const deleteShopGuard: Guard<Extract<Action, { type: 'delete-shop' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'delete-shop: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'delete-shop is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const setShopOpenGuard: Guard<Extract<Action, { type: 'set-shop-open' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'set-shop-open: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'set-shop-open is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const editShopStockGuard: Guard<Extract<Action, { type: 'edit-shop-stock' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return {
+      ok: false,
+      code: 'state_not_initialized',
+      message: 'edit-shop-stock: no state.',
+    };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'edit-shop-stock is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * R6.2 — `purchase` / `sale` guards. Any active party member may
+ * transact IF the shop is open; when closed, DM-only. Solo party
+ * (memberCount === 1) always allowed via §8.2 union-of-rights
+ * (handled by `checkGuard`'s solo bypass; these guards run only in
+ * multi-member parties).
+ */
+const purchaseGuard: Guard<Extract<Action, { type: 'purchase' }>> = (state, payload, actor) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'purchase: no state.' };
+  const shop = state.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    return { ok: false, code: 'shop_not_found', message: `Shop ${payload.shopId} not found.` };
+  }
+  if (!shop.isOpen && actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'shop_closed',
+      message: 'This shop is closed. Only the DM can transact.',
+    };
+  }
+  return { ok: true };
+};
+
+const saleGuard: Guard<Extract<Action, { type: 'sale' }>> = (state, payload, actor) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'sale: no state.' };
+  const shop = state.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    return { ok: false, code: 'shop_not_found', message: `Shop ${payload.shopId} not found.` };
+  }
+  if (!shop.isOpen && actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'shop_closed',
+      message: 'This shop is closed. Only the DM can transact.',
+    };
+  }
+  return { ok: true };
+};
+
 const equipGuard: Guard<Extract<Action, { type: 'equip' }>> = (state, payload, actor) => {
   if (state === null)
     return { ok: false, code: 'state_not_initialized', message: 'equip: no state.' };
@@ -1167,6 +1300,13 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'rename-party': renamePartyGuard,
   'set-encumbrance': setEncumbranceGuard,
   'update-party-economy': updatePartyEconomyGuard,
+  'create-shop': createShopGuard,
+  'edit-shop': editShopGuard,
+  'delete-shop': deleteShopGuard,
+  'set-shop-open': setShopOpenGuard,
+  'edit-shop-stock': editShopStockGuard,
+  purchase: purchaseGuard,
+  sale: saleGuard,
   equip: equipGuard,
   unequip: unequipGuard,
   attune: attuneGuard,

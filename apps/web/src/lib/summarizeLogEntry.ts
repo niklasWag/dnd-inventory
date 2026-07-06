@@ -194,5 +194,39 @@ export function summarizeLogEntry(
       const label = sessionNumber(entry.payload.gameSessionId) ?? String(entry.payload.number);
       return `Updated Session ${label} notes`;
     }
+    // R6.2 — Shop CRUD + purchase / sale.
+    case 'create-shop':
+      return `Created shop "${entry.payload.name}"`;
+    case 'edit-shop':
+      return `Edited shop \u2014 ${entry.payload.changedFields.join(' + ')}`;
+    case 'delete-shop':
+      return `Deleted shop "${entry.payload.name}"`;
+    case 'set-shop-open':
+      return `Shop is now ${entry.payload.isOpen ? 'open' : 'closed'}`;
+    case 'edit-shop-stock': {
+      const op = entry.payload.operation;
+      const defName =
+        state.catalog.find((d) => d.id === op.itemDefinitionId)?.name ??
+        op.itemDefinitionId.slice(0, 8);
+      if (op.kind === 'add') {
+        return `Added ${defName} to shop stock (qty ${op.quantity === -1 ? 'unlimited' : String(op.quantity)})`;
+      }
+      if (op.kind === 'remove') {
+        return `Removed ${defName} from shop stock`;
+      }
+      return `Updated ${defName} stock (qty ${op.oldQuantity === -1 ? 'unlimited' : String(op.oldQuantity)}\u2192${op.newQuantity === -1 ? 'unlimited' : String(op.newQuantity)})`;
+    }
+    case 'purchase': {
+      const defName =
+        state.catalog.find((d) => d.id === entry.payload.itemDefinitionId)?.name ??
+        entry.payload.itemDefinitionId.slice(0, 8);
+      return `Purchased ${String(entry.payload.quantity)}\u00d7 ${defName} (${String(entry.payload.totalCostCp)} cp)`;
+    }
+    case 'sale': {
+      const defName =
+        state.catalog.find((d) => d.id === entry.payload.itemDefinitionId)?.name ??
+        entry.payload.itemDefinitionId.slice(0, 8);
+      return `Sold ${String(entry.payload.quantity)}\u00d7 ${defName} (${String(entry.payload.totalCreditCp)} cp)`;
+    }
   }
 }

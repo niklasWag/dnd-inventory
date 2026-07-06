@@ -101,6 +101,7 @@ describe('appStateSchema round-trip', () => {
         createdAt: '2026-06-23T10:00:00.000Z',
       },
     ],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [

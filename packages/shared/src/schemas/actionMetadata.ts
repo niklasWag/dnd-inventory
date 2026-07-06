@@ -83,6 +83,13 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   'rename-party': { broadcastOnApplied: true },
   'set-encumbrance': { broadcastOnApplied: true },
   'update-party-economy': { broadcastOnApplied: true },
+  'create-shop': { broadcastOnApplied: true },
+  'edit-shop': { broadcastOnApplied: true },
+  'delete-shop': { broadcastOnApplied: true },
+  'set-shop-open': { broadcastOnApplied: true },
+  'edit-shop-stock': { broadcastOnApplied: true },
+  purchase: { broadcastOnApplied: true },
+  sale: { broadcastOnApplied: true },
   'appoint-banker': { broadcastOnApplied: true },
   'revoke-banker': { broadcastOnApplied: true },
 

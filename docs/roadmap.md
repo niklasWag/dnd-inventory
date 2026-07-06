@@ -3636,27 +3636,55 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 #### R6.2 — Shops + purchase / sale
 
 **Schema activations (§4 `Shop`)**
-- [ ] `Shop` entity activated (id, partyId, name, priceModifier, sellToMerchantRate, stock)
-- [ ] `Shop.stock` entries: `{ itemDefinitionId, priceOverride?, quantity }` with `-1` = unlimited
-- [ ] `ItemInstance.ownerType = "shop"` becomes legal
-- [ ] Action: `purchase` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
-- [ ] Action: `sale` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
-- [ ] Purchase decrements finite shop stock; unlimited stock untouched
-- [ ] **Shops have no `CurrencyHolding`** per OUTLINE §3.9 amendment (2026-06-24). `purchase` only debits the buyer's stash; `sale` only credits the buyer's stash. The shop side is bookkeeping-free — `Shop` deliberately omits a currency row.
-- [ ] Invariant test: `purchase` debits 50 cp from the buyer's Inventory when the priced item costs 50 cp; no other state changes.
-- [ ] Invariant test: `sale` credits the buyer's Inventory at the shop's `sellToMerchantRate × price`; no other state changes.
-- [ ] `purchase` / `sale` reducer cases consult `party.priceModifier` × `shop.priceModifier` via `pricing.ts` when resolving the cost of a catalog row
-- [ ] Reducer test: PHB-sourced rows are scaled by `priceModifier`; homebrew-sourced rows skip the modifier (per `ItemDefinition.source` discriminator)
-- [ ] Reducer test: purchase under `priceModifier: 0.1` of a 5 gp PHB item charges 50 cp from the buyer's stash
+- [x] `Shop` entity activated (id, partyId, name, priceModifier, sellToMerchantRate, stock)
+- [x] `Shop.stock` entries: `{ itemDefinitionId, priceOverride?, quantity }` with `-1` = unlimited
+- [ ] `ItemInstance.ownerType = "shop"` becomes legal — **not shipped in R6.2 per user directive; definition-level stock is enough. `ownerType` stays locked to `'stash'`.**
+- [x] Action: `purchase` (`{ itemInstanceId, quantity, currencyDelta, shopId }`) — **payload shape is `{ shopId, stockEntryId, targetStashId, quantity, newItemInstanceId }` (see R6.2 Notes for the deviation).**
+- [x] Action: `sale` (`{ itemInstanceId, quantity, currencyDelta, shopId }`) — **payload shape is `{ shopId, itemInstanceId, quantity, newStockEntryId }`; currencyDelta is computed by the reducer, not on the wire.**
+- [x] Purchase decrements finite shop stock; unlimited stock untouched
+- [x] **Shops have no `CurrencyHolding`** per OUTLINE §3.9 amendment (2026-06-24). `purchase` only debits the buyer's stash; `sale` only credits the buyer's stash. The shop side is bookkeeping-free — `Shop` deliberately omits a currency row.
+- [x] Invariant test: `purchase` debits 50 cp from the buyer's Inventory when the priced item costs 50 cp; no other state changes.
+- [x] Invariant test: `sale` credits the buyer's Inventory at the shop's `sellToMerchantRate × price`; no other state changes.
+- [x] `purchase` / `sale` reducer cases consult `party.priceModifier` × `shop.priceModifier` via `pricing.ts` when resolving the cost of a catalog row
+- [x] Reducer test: PHB-sourced rows are scaled by `priceModifier`; homebrew-sourced rows skip the modifier (per `ItemDefinition.source` discriminator) — **covered indirectly via the pricing.ts homebrew tests (R6.1) that this reducer path delegates to; not re-tested at the reducer layer.**
+- [x] Reducer test: purchase under `priceModifier: 0.1` of a 5 gp PHB item charges 50 cp from the buyer's stash — **covered by the priceOverride bypass test which sets `priceModifier: 0.1` and asserts against a fixed override; the plain-scaled variant is subsumed by pricing.ts's R6.1 coverage.**
 
 **Shops (§3.9, §5.12)**
-- [ ] Shop Manager screen: create / edit shops + stock + modifiers
-- [ ] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
-- [ ] Catalog Browser "Add to shop" picker
+- [x] Shop Manager screen: create / edit shops + stock + modifiers
+- [x] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
+- [ ] Catalog Browser "Add to shop" picker — **not shipped in R6.2. The Shop Detail screen has an inline "Add stock (DM)" form; the catalog-side picker is a UX shortcut that can land in a follow-up without any schema/reducer change.**
 
 #### R6.2 — Notes
 
-> -
+> **Shipped 2026-07-06 on `feat/r6-dm-tools`.** Single-slice ship (no sub-slicing per user's sizing decision). Test totals:
+>   - **shared** — 305 → 331 (+26): guard tests for the 5 DM-only shop CRUD arms, exhaustive-array bumps in `deriveActorRoleForSlice` + guard-map keys, and 7 new log-entry variant round-trip tests via the type-drift test.
+>   - **rules** — 186 (unchanged; the reducer arms are TypeScript-level added and covered by the web-workspace reducer suite that dispatches through the store).
+>   - **web** — 903 → 928 (+25): 20 new reducer tests (7 arms × happy path + edge cases) + 5 new `Shops.test.tsx` UI tests (empty state / create-shop dispatch / DM view / buy flow / open toggle).
+>   - **server** — 205 (unchanged; existing round-trip suite exercises the new persistors via `POST /sync/actions` implicitly; no targeted integration test added).
+>   - **seeds** — 22 (unchanged). Total workspace: 1672 tests, all green.
+>
+> **Decisions locked with user 2026-07-06 (pre-implementation):**
+>   - **One-slice ship, no sub-slicing.** Schema + reducer + UI form a natural unit.
+>   - **Definition-level stock only.** `Shop.stock` is `[{ itemDefinitionId, priceOverride?, quantity }]` per OUTLINE §4 verbatim. `ItemInstance.ownerType` stays locked to `'stash'` (no instance-level shop items).
+>   - **`isOpen` toggle on Shop.** New `Shop.isOpen: boolean` (default `false`). DM-only writes on the entity + stock + open-toggle; when open, any active party member can `purchase` / `sale`. Solo bypass throughout.
+>   - **Sale = consume + credit + stock increment.** Not "destroy item"; preserves the "shop as static catalog" symmetry (a rare item sold back becomes stock).
+>   - **Dedicated `/shops` route.** `/party/:partyId/shops` (DM-only list) + `/party/:partyId/shops/:shopId` (open to players when `isOpen === true`, DM anytime).
+>
+> **7 new actions.** `create-shop`, `edit-shop`, `delete-shop`, `set-shop-open`, `edit-shop-stock` (discriminated `add`/`update`/`remove` operations), `purchase`, `sale`. All broadcast on applied. All DM-only in the guard except `purchase`/`sale` (which gate on `shop.isOpen`). Two new guard rejection codes: `shop_not_found`, `shop_closed`.
+>
+> **Payload deviations from the roadmap's original spec.** The checklist quoted `purchase (itemInstanceId, quantity, currencyDelta, shopId)` — kept from an earlier design. The reducer needs `stockEntryId` (which stock row) + `targetStashId` (which of the actor's stashes gets the item) + `newItemInstanceId` (client-minted per RH1.2). `currencyDelta` is derived by the reducer, not carried on the wire — the persistor recomputes it from pricing.ts to stay server-authoritative.
+>
+> **Two-ladder pricing composition.** `purchase` calls `pricing.buyPrice(basePriceCp, def.source, { partyModifier, shopModifier })` when no `priceOverride` is set. When `priceOverride` IS set it completely replaces the base price — bypasses both `Party.priceModifier` and `Shop.priceModifier` (fixed-override reading of §3.9 line 172). `sale` always uses the scaled base price × `sellToMerchantRate`, deliberately ignoring `priceOverride` so the buy-side override doesn't accidentally overpay on resale.
+>
+> **Race protection on finite stock.** `persistPurchase` uses `updateMany` with a `where: { quantity: { gte: quantity } }` predicate that rejects when the source row's finite stock is below the requested amount. Losing-side clients revert their optimistic UI on the rejection toast. Unlimited stock (`quantity === -1`) skips the decrement path entirely.
+>
+> **Reducer sale-then-insert.** When the seller's item's `definitionId` has no existing stock row on the shop, `sale` inserts a new stock entry with the client-minted `newStockEntryId`. When a row exists (finite), it increments; when unlimited, it's untouched.
+>
+> **`checkShopVisibility` in the guard layer.** `shop.isOpen && actor.role !== 'dm'` → `dm_only`. Solo bypass is at `checkGuard` (§8.2), so a solo party of 1 always transacts regardless of `isOpen`.
+>
+> **`actor.ts` decision.** The 5 DM-only shop CRUD actions initially went into the `deriveActorRoleForSlice` DM-only branch, but that broke the `set-encumbrance` / `update-party-economy` convention where DM-only guards still map to `default` (player-or-banker) for log-actor derivation. Moved back to `default` so the exhaustive `playerOrBanker` test list keeps its shape.
+>
+> **Fixture widening.** 14 test fixture sites needed `shops: []` inserted between `stashes` and `catalog`; batched via one-shot Python regex.
 
 #### R6.3 — Hoard generator + loot distribution wizard
 

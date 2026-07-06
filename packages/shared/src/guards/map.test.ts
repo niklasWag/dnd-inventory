@@ -155,6 +155,7 @@ function makeState(opts?: { ownerUserId?: string; ownerCharacterId?: string }): 
         createdAt: '2026-01-01T00:00:00.000Z',
       },
     ],
+    shops: [],
     catalog: [],
     items: [
       {
@@ -270,6 +271,13 @@ describe('deriveActorRoleForSlice — RH2.1a', () => {
     'rename-party',
     'set-encumbrance',
     'update-party-economy',
+    'create-shop',
+    'edit-shop',
+    'delete-shop',
+    'set-shop-open',
+    'edit-shop-stock',
+    'purchase',
+    'sale',
     'equip',
     'unequip',
     'attune',
@@ -558,6 +566,61 @@ describe('guards — DM-only actions', () => {
         TWO_MEMBERS_WITH_DEDICATED_DM,
       ),
     ).toEqual({ ok: true });
+  });
+
+  // R6.2 — Shop CRUD guards (DM-only).
+  it('create-shop rejects a player', () => {
+    expect(
+      runGuard(
+        {
+          type: 'create-shop',
+          payload: {
+            newShopId: '01947f00-0000-7000-8000-000000000001',
+            name: 'General Store',
+          },
+        },
+        makeActor('u1', 'player'),
+      ),
+    ).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('edit-shop rejects a player', () => {
+    expect(
+      runGuard(
+        {
+          type: 'edit-shop',
+          payload: { shopId: 's1', patch: { name: 'X' } },
+        },
+        makeActor('u1', 'player'),
+      ),
+    ).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('delete-shop rejects a player', () => {
+    expect(
+      runGuard({ type: 'delete-shop', payload: { shopId: 's1' } }, makeActor('u1', 'player')),
+    ).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('set-shop-open rejects a player', () => {
+    expect(
+      runGuard(
+        { type: 'set-shop-open', payload: { shopId: 's1', isOpen: true } },
+        makeActor('u1', 'player'),
+      ),
+    ).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+
+  it('edit-shop-stock rejects a player', () => {
+    expect(
+      runGuard(
+        {
+          type: 'edit-shop-stock',
+          payload: { shopId: 's1', operation: { kind: 'remove', stockEntryId: 'e1' } },
+        },
+        makeActor('u1', 'player'),
+      ),
+    ).toMatchObject({ ok: false, code: 'dm_only' });
   });
   it('seed-catalog rejects a player', () => {
     expect(
@@ -1907,6 +1970,13 @@ describe('guards — every action has an entry', () => {
       'rename-party',
       'set-encumbrance',
       'update-party-economy',
+      'create-shop',
+      'edit-shop',
+      'delete-shop',
+      'set-shop-open',
+      'edit-shop-stock',
+      'purchase',
+      'sale',
       'equip',
       'unequip',
       'attune',

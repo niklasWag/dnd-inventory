@@ -16,6 +16,8 @@ import { LoginEmail } from '@/screens/LoginEmail';
 import { LoginEmailVerify } from '@/screens/LoginEmailVerify';
 import { PartySettings } from '@/screens/PartySettings';
 import { Settings } from '@/screens/Settings';
+import { ShopDetail } from '@/screens/ShopDetail';
+import { ShopsList } from '@/screens/ShopsList';
 import { StorageDetail } from '@/screens/StorageDetail';
 
 /**
@@ -106,9 +108,17 @@ export const router = createBrowserRouter([
                   { path: 'history', Component: HistoryScreen },
                   { path: 'item/:itemInstanceId', Component: ItemDetail },
                   { path: 'stash/:stashId', Component: StorageDetail },
+                  // R6.2 — Shop routes. Detail is open to players when
+                  // `shop.isOpen === true` (component-level redirect
+                  // handles closed shops for non-DM viewers). List is
+                  // DM-only (nested under DmOnlyRoute below).
+                  { path: 'shops/:shopId', Component: ShopDetail },
                   {
                     Component: DmOnlyRoute,
-                    children: [{ path: 'dm', Component: DmDashboard }],
+                    children: [
+                      { path: 'dm', Component: DmDashboard },
+                      { path: 'shops', Component: ShopsList },
+                    ],
                   },
                 ],
               },

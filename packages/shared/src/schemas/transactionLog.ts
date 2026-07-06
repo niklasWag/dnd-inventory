@@ -516,6 +516,114 @@ const updatePartyEconomyEntry = z.object({
   }),
 });
 
+// -----------------------------------------------------------------------------
+// R6.2 — Shop CRUD + purchase / sale (OUTLINE §3.9).
+// -----------------------------------------------------------------------------
+
+const createShopEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('create-shop'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    name: z.string().min(1),
+  }),
+});
+
+const editShopFieldSchema = z.enum(['name', 'priceModifier', 'sellToMerchantRate']);
+
+const editShopEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('edit-shop'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    changedFields: z.array(editShopFieldSchema).min(1),
+  }),
+});
+
+const deleteShopEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('delete-shop'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    name: z.string().min(1),
+  }),
+});
+
+const setShopOpenEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('set-shop-open'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    isOpen: z.boolean(),
+  }),
+});
+
+/**
+ * `edit-shop-stock` log entry mirrors the action's operation shape so
+ * the history view can render "added / updated / removed" with the
+ * specific values.
+ */
+const editShopStockEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('edit-shop-stock'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    operation: z.discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('add'),
+        stockEntryId: z.string().min(1),
+        itemDefinitionId: z.string().min(1),
+        priceOverride: z.number().int().nonnegative().optional(),
+        quantity: z.number().int(),
+      }),
+      z.object({
+        kind: z.literal('update'),
+        stockEntryId: z.string().min(1),
+        itemDefinitionId: z.string().min(1),
+        oldPriceOverride: z.number().int().nonnegative().nullable(),
+        newPriceOverride: z.number().int().nonnegative().nullable(),
+        oldQuantity: z.number().int(),
+        newQuantity: z.number().int(),
+      }),
+      z.object({
+        kind: z.literal('remove'),
+        stockEntryId: z.string().min(1),
+        itemDefinitionId: z.string().min(1),
+      }),
+    ]),
+  }),
+});
+
+const purchaseEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('purchase'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    stockEntryId: z.string().min(1),
+    itemDefinitionId: z.string().min(1),
+    itemInstanceId: z.string().min(1),
+    targetStashId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    unitCostCp: z.number().int().nonnegative(),
+    totalCostCp: z.number().int().nonnegative(),
+  }),
+});
+
+const saleEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('sale'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    stockEntryId: z.string().min(1),
+    itemDefinitionId: z.string().min(1),
+    itemInstanceId: z.string().min(1),
+    sellerStashId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    unitCreditCp: z.number().int().nonnegative(),
+    totalCreditCp: z.number().int().nonnegative(),
+  }),
+});
+
 /**
  * `equip` / `unequip` — set / clear the `equipped` flag on an item that
  * lives in a character's Inventory stash (OUTLINE §3.4 + §4 line 304).
@@ -1026,6 +1134,13 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   renamePartyEntry,
   setEncumbranceEntry,
   updatePartyEconomyEntry,
+  createShopEntry,
+  editShopEntry,
+  deleteShopEntry,
+  setShopOpenEntry,
+  editShopStockEntry,
+  purchaseEntry,
+  saleEntry,
   equipEntry,
   unequipEntry,
   attuneEntry,

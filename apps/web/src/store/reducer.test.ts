@@ -388,6 +388,7 @@ describe('reducer: seed-catalog (M2)', () => {
         ...s,
         appState: {
           ...s.appState,
+          shops: [],
           catalog: [
             ...s.appState.catalog,
             {
@@ -3749,7 +3750,7 @@ describe('reducer: update-party-economy (R6.1)', () => {
     }
   });
 
-  it('log entry parses against transactionLogEntrySchema', () => {
+  it('log entry parses against transactionLogEntrySchema (update-party-economy)', () => {
     const { partyId } = localBootstrap();
     useStore.getState().dispatch({
       type: 'update-party-economy',
@@ -3757,6 +3758,497 @@ describe('reducer: update-party-economy (R6.1)', () => {
     });
     const entry = useStore.getState().log.at(-1)!;
     expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R6.2 — Shop CRUD + purchase / sale
+// -------------------------------------------------------------------- //
+
+describe('reducer: create-shop (R6.2)', () => {
+  it('bootstrap party defaults shops to empty array', () => {
+    localBootstrap();
+    expect(useStore.getState().appState!.shops).toEqual([]);
+  });
+
+  it('adds a shop with default modifiers + empty stock + closed', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId, name: 'General Store' } });
+    const shops = useStore.getState().appState!.shops;
+    expect(shops).toHaveLength(1);
+    expect(shops[0]).toMatchObject({
+      id: newShopId,
+      name: 'General Store',
+      priceModifier: 1.0,
+      sellToMerchantRate: 0.5,
+      isOpen: false,
+      stock: [],
+    });
+  });
+
+  it('rejects duplicate shopId', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    expect(() =>
+      useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'B' } }),
+    ).toThrow(/already exists/);
+  });
+});
+
+describe('reducer: edit-shop (R6.2)', () => {
+  it('updates name + priceModifier atomically', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop',
+      payload: { shopId: newShopId, patch: { name: 'B', priceModifier: 1.2 } },
+    });
+    const shop = useStore.getState().appState!.shops[0]!;
+    expect(shop.name).toBe('B');
+    expect(shop.priceModifier).toBe(1.2);
+  });
+
+  it('rejects a no-op edit', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-shop',
+        payload: { shopId: newShopId, patch: { name: 'A' } },
+      }),
+    ).toThrow(/no fields changed/);
+  });
+});
+
+describe('reducer: delete-shop (R6.2)', () => {
+  it('removes the shop and logs its name', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    useStore.getState().dispatch({ type: 'delete-shop', payload: { shopId: newShopId } });
+    expect(useStore.getState().appState!.shops).toEqual([]);
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('delete-shop');
+  });
+});
+
+describe('reducer: set-shop-open (R6.2)', () => {
+  it('flips isOpen', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    useStore
+      .getState()
+      .dispatch({ type: 'set-shop-open', payload: { shopId: newShopId, isOpen: true } });
+    expect(useStore.getState().appState!.shops[0]!.isOpen).toBe(true);
+  });
+
+  it('rejects a no-op flip (same value)', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    expect(() =>
+      useStore
+        .getState()
+        .dispatch({ type: 'set-shop-open', payload: { shopId: newShopId, isOpen: false } }),
+    ).toThrow(/nothing changed/);
+  });
+});
+
+describe('reducer: edit-shop-stock (R6.2)', () => {
+  it('adds a stock entry', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    const newStockEntryId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId: newShopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId,
+          itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+          quantity: 5,
+        },
+      },
+    });
+    const stock = useStore.getState().appState!.shops[0]!.stock;
+    expect(stock).toHaveLength(1);
+    expect(stock[0]).toMatchObject({
+      id: newStockEntryId,
+      itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+      quantity: 5,
+    });
+  });
+
+  it('updates a stock entry quantity', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    const stockId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId: newShopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: stockId,
+          itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+          quantity: 5,
+        },
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId: newShopId,
+        operation: { kind: 'update', stockEntryId: stockId, quantity: 3 },
+      },
+    });
+    expect(useStore.getState().appState!.shops[0]!.stock[0]!.quantity).toBe(3);
+  });
+
+  it('removes a stock entry', () => {
+    localBootstrap();
+    const newShopId = newUuidV7();
+    const stockId = newUuidV7();
+    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId: newShopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: stockId,
+          itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+          quantity: 5,
+        },
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId: newShopId,
+        operation: { kind: 'remove', stockEntryId: stockId },
+      },
+    });
+    expect(useStore.getState().appState!.shops[0]!.stock).toEqual([]);
+  });
+});
+
+describe('reducer: purchase (R6.2)', () => {
+  function bootstrapShopWithRope(quantity: number): {
+    shopId: string;
+    stockEntryId: string;
+    inventoryStashId: string;
+    partyId: string;
+  } {
+    const b = localBootstrap();
+    const shopId = newUuidV7();
+    const stockEntryId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: stockEntryId,
+          itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+          quantity,
+        },
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: b.inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 100, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    return {
+      shopId,
+      stockEntryId,
+      inventoryStashId: b.inventoryStashId,
+      partyId: b.partyId,
+    };
+  }
+
+  it('debits buyer + creates ItemInstance + decrements stock', () => {
+    const { shopId, stockEntryId, inventoryStashId } = bootstrapShopWithRope(5);
+    useStore.getState().dispatch({
+      type: 'purchase',
+      payload: {
+        shopId,
+        stockEntryId,
+        targetStashId: inventoryStashId,
+        quantity: 2,
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const s = useStore.getState().appState!;
+    const inv = s.items.filter((it) => it.ownerId === inventoryStashId);
+    expect(inv).toHaveLength(1);
+    expect(inv[0]!.quantity).toBe(2);
+    expect(s.shops[0]!.stock[0]!.quantity).toBe(3);
+  });
+
+  it('unlimited stock is not decremented', () => {
+    const { shopId, stockEntryId, inventoryStashId } = bootstrapShopWithRope(-1);
+    useStore.getState().dispatch({
+      type: 'purchase',
+      payload: {
+        shopId,
+        stockEntryId,
+        targetStashId: inventoryStashId,
+        quantity: 3,
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    expect(useStore.getState().appState!.shops[0]!.stock[0]!.quantity).toBe(-1);
+  });
+
+  it('rejects insufficient stock', () => {
+    const { shopId, stockEntryId, inventoryStashId } = bootstrapShopWithRope(2);
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'purchase',
+        payload: {
+          shopId,
+          stockEntryId,
+          targetStashId: inventoryStashId,
+          quantity: 5,
+          newItemInstanceId: newUuidV7(),
+        },
+      }),
+    ).toThrow(/insufficient stock/);
+  });
+
+  it('rejects insufficient funds', () => {
+    const b = localBootstrap();
+    const shopId = newUuidV7();
+    const stockEntryId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: stockEntryId,
+          itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+          quantity: 5,
+        },
+      },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'purchase',
+        payload: {
+          shopId,
+          stockEntryId,
+          targetStashId: b.inventoryStashId,
+          quantity: 1,
+          newItemInstanceId: newUuidV7(),
+        },
+      }),
+    ).toThrow(/insufficient funds/);
+  });
+
+  it('priceOverride bypasses partyModifier', () => {
+    const b = localBootstrap();
+    const shopId = newUuidV7();
+    const stockEntryId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: stockEntryId,
+          itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+          priceOverride: 500,
+          quantity: 5,
+        },
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: b.inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 10, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    // Even under silver-standard the override should NOT scale.
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId: b.partyId, priceModifier: 0.1, baseCurrency: 'sp' },
+    });
+    useStore.getState().dispatch({
+      type: 'purchase',
+      payload: {
+        shopId,
+        stockEntryId,
+        targetStashId: b.inventoryStashId,
+        quantity: 1,
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const bal = useStore
+      .getState()
+      .appState!.currencies.find((c) => c.stashId === b.inventoryStashId)!;
+    // Started with 10 gp = 1000 cp; charged 500 cp → 500 cp = 5 gp.
+    expect(bal.gp).toBe(5);
+  });
+
+  it('auto-stacks into existing inventory row', () => {
+    const { shopId, stockEntryId, inventoryStashId } = bootstrapShopWithRope(10);
+    useStore.getState().dispatch({
+      type: 'purchase',
+      payload: {
+        shopId,
+        stockEntryId,
+        targetStashId: inventoryStashId,
+        quantity: 2,
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'purchase',
+      payload: {
+        shopId,
+        stockEntryId,
+        targetStashId: inventoryStashId,
+        quantity: 3,
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const inv = useStore.getState().appState!.items.filter((it) => it.ownerId === inventoryStashId);
+    expect(inv).toHaveLength(1);
+    expect(inv[0]!.quantity).toBe(5);
+  });
+});
+
+describe('reducer: sale (R6.2)', () => {
+  it('consumes item + credits seller + inserts new stock row', () => {
+    const b = localBootstrap();
+    const shopId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: b.inventoryStashId,
+        definitionId: 'phb-2024:rope-hempen-50ft',
+        quantity: 3,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const itemId = useStore.getState().appState!.items[0]!.id;
+    const newStockEntryId = newUuidV7();
+    useStore.getState().dispatch({
+      type: 'sale',
+      payload: { shopId, itemInstanceId: itemId, quantity: 2, newStockEntryId },
+    });
+    const s = useStore.getState().appState!;
+    expect(s.items.find((it) => it.id === itemId)!.quantity).toBe(1);
+    expect(s.shops[0]!.stock).toHaveLength(1);
+    expect(s.shops[0]!.stock[0]).toMatchObject({
+      id: newStockEntryId,
+      itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+      quantity: 2,
+    });
+  });
+
+  it('increments existing stock row when definition matches', () => {
+    const b = localBootstrap();
+    const shopId = newUuidV7();
+    const existingStockId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: existingStockId,
+          itemDefinitionId: 'phb-2024:rope-hempen-50ft',
+          quantity: 5,
+        },
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: b.inventoryStashId,
+        definitionId: 'phb-2024:rope-hempen-50ft',
+        quantity: 3,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const itemId = useStore.getState().appState!.items[0]!.id;
+    useStore.getState().dispatch({
+      type: 'sale',
+      payload: {
+        shopId,
+        itemInstanceId: itemId,
+        quantity: 2,
+        newStockEntryId: newUuidV7(),
+      },
+    });
+    const stock = useStore.getState().appState!.shops[0]!.stock;
+    expect(stock).toHaveLength(1);
+    expect(stock[0]).toMatchObject({ id: existingStockId, quantity: 7 });
+  });
+
+  it('drops the item row when quantity reaches zero', () => {
+    const b = localBootstrap();
+    const shopId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: b.inventoryStashId,
+        definitionId: 'phb-2024:rope-hempen-50ft',
+        quantity: 1,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const itemId = useStore.getState().appState!.items[0]!.id;
+    useStore.getState().dispatch({
+      type: 'sale',
+      payload: {
+        shopId,
+        itemInstanceId: itemId,
+        quantity: 1,
+        newStockEntryId: newUuidV7(),
+      },
+    });
+    expect(useStore.getState().appState!.items.find((it) => it.id === itemId)).toBeUndefined();
   });
 });
 

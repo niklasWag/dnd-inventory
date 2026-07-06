@@ -44,6 +44,7 @@ function makeAppStateFixture(memberCount: number): AppState {
     characters: [],
     gameSessions: [],
     stashes: [],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [],

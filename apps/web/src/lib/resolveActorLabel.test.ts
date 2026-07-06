@@ -42,6 +42,7 @@ function makeState(): AppState {
     ],
     gameSessions: [],
     stashes: [],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [],

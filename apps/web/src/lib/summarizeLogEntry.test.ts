@@ -129,6 +129,7 @@ function makeState(): AppState {
         createdAt: BASE_TS,
       },
     ],
+    shops: [],
     catalog: [rope],
     items: [
       {

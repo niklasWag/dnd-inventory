@@ -65,6 +65,7 @@ function makeState(gameSessions: GameSession[]): AppState {
     characters: [],
     gameSessions,
     stashes: [],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [],
