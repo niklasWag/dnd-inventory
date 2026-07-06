@@ -566,6 +566,28 @@ const identifyAction = z.object({
   }),
 });
 
+/**
+ * R6.4 — Batch-identify (OUTLINE §3.8 amendment 2026-06-24).
+ *
+ * Flips `identified` on every `ItemInstance` in the current party whose
+ * `definitionId` matches, in a single reducer slice. Optional shared
+ * `hint` overrides per-instance hints when present; when absent, each
+ * affected instance keeps its existing hint.
+ *
+ * The reducer emits one `identify` log entry per affected instance
+ * (mirrors the single-`identify` log shape) so per-item history
+ * filters keep working. There is no dedicated `identify-batch`
+ * TransactionLog type.
+ */
+const identifyBatchAction = z.object({
+  type: z.literal('identify-batch'),
+  payload: z.object({
+    definitionId: z.string().min(1),
+    identified: z.boolean(),
+    hint: z.string().optional(),
+  }),
+});
+
 const editCharacterAction = z.object({
   type: z.literal('edit-character'),
   payload: z.object({
@@ -819,6 +841,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   useChargeAction,
   rechargeAction,
   identifyAction,
+  identifyBatchAction,
   editCharacterAction,
   deleteCharacterAction,
   leavePartyAction,

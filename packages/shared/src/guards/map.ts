@@ -848,6 +848,28 @@ const identifyGuard: Guard<Extract<Action, { type: 'identify' }>> = (state, _pay
   return { ok: true };
 };
 
+/**
+ * R6.4 — batch-identify guard. Same DM-only rule as single `identify`.
+ * The reducer verifies definitionId exists and that ≥1 matching
+ * instance would actually flip; the guard here only judges authority.
+ */
+const identifyBatchGuard: Guard<Extract<Action, { type: 'identify-batch' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'identify-batch: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'identify-batch is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
 const editCharacterGuard: Guard<Extract<Action, { type: 'edit-character' }>> = (
   state,
   payload,
@@ -1314,6 +1336,7 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'use-charge': useChargeGuard,
   recharge: rechargeGuard,
   identify: identifyGuard,
+  'identify-batch': identifyBatchGuard,
   'edit-character': editCharacterGuard,
   'delete-character': deleteCharacterGuard,
   'leave-party': leavePartyGuard,

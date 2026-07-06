@@ -3727,16 +3727,35 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 #### R6.4 — Identification panel + batch-identify
 
 **Identification (§3.8, §5.13)**
-- [ ] Identification Panel UI: list of unidentified instances in the party
-- [ ] DM toggles `identified`; players see real name update via sync
-- [ ] DM-set hint editable
-- [ ] **Bidirectional toggle** per OUTLINE §3.8 amendment (2026-06-24): the DM can flip an item BACK to `identified: false` (e.g., "actually that was cursed all along"). Component test: identified → unidentified flip produces an `identify` log entry; the item reverts to "Unknown Magic Item" + hint display per the §8 display invariant.
-- [ ] **DM batch-identify action** per OUTLINE §3.8 amendment (2026-06-24): a dedicated DM toolkit affordance that toggles `identified` and optionally sets a shared hint across ALL instances of a given `definitionId` in the party (Inventory + Storage + Party Stash + Recovered Loot). Emits one `identify` log entry per affected instance (or a single batch entry — pick one and document). Useful because hints are per-instance (§3.8), so bulk-revealing several copies of "Sword of X" otherwise takes one-by-one clicks.
-- [ ] Batch-identify component test: 3 unidentified copies of the same definition → one batch click → all 3 reveal; 3 `identify` log entries (or one batch entry) recorded.
+- [x] Identification Panel UI: list of unidentified instances in the party — **shipped as `/party/:partyId/identify`, DM-only, grouped by definitionId with per-instance expandable subrows.**
+- [x] DM toggles `identified`; players see real name update via sync — **`identify` action already broadcasts via R5.1 (broadcastOnApplied: true, unchanged from R2.3). Panel dispatches the existing action.**
+- [x] DM-set hint editable — **inline `HintEditor` per instance; blur-to-save via single `identify` dispatch that preserves `identified` and updates `hint`.**
+- [x] **Bidirectional toggle** per OUTLINE §3.8 amendment (2026-06-24): the DM can flip an item BACK to `identified: false` — **surfaced as a "Show identified items" toggle in the panel; expanded rows have a "Revoke" button that dispatches `identify { identified: false }`.**
+- [x] **DM batch-identify action** per OUTLINE §3.8 amendment (2026-06-24) — **new `identify-batch` action variant. Reducer emits one `identify` log entry per affected instance (not a new log type). Optional shared `hint` in payload; when absent, per-instance hints are preserved.**
+- [x] Batch-identify component test: 3 unidentified copies of the same definition → one batch click → all 3 reveal; 3 `identify` log entries recorded — **covered in `IdentificationPanel.test.tsx` "batch dialog confirm dispatches identify-batch for all copies" and the reducer test "flips every matching instance and emits one identify log entry per flip".**
 
 #### R6.4 — Notes
 
-> -
+> - **One-slice shape (matches R6.1/R6.2/R6.3 rhythm).** New action variant + reducer arm + guard + server persistor + UI + tests ship together.
+> - **Test count deltas.**
+>   - **web** — 939 → 951 (+12): 6 new reducer tests in `reducer.test.ts` (batch happy path, shared hint, per-instance hint preservation, no-op rejection, unknown definitionId, actorRole=dm) + 6 new UI tests in `IdentificationPanel.test.tsx` (empty state, group rendering, single-identify from expanded row, batch dialog dispatch, batch shared hint, "Show identified" reveal + revoke).
+>   - **shared** — 331 tests unchanged (map.test.ts drift-catcher list updated in-place to include `identify-batch`).
+>   - **rules / seeds / server** — no per-suite additions; new action flows through the existing hand-rolled Action mirror + typechecks.
+> - **`identify-batch` action shape.** Payload is `{ definitionId, identified, hint? }`. Reducer walks every `ItemInstance` in the current party with matching `definitionId` and `identified !== payload.identified`; instances already in the target state are skipped (no spurious no-op log entries). If NO instance would flip, the reducer throws with a clear message so the UI can toast.
+> - **Batch emits N `identify` log entries, not a new log type.** Rationale: OUTLINE §3.11 per-item history filter keys on `itemInstanceId`; a batch entry with a list of ids would break that filter. Every affected copy keeps its own history entry. The "batch-ness" is discoverable in the party log as N `identify` entries sharing a timestamp / reducer slice.
+> - **Guard: DM-only, mirrors single `identify`.** No new rejection codes; the guard's error path matches `dm_only` semantics from R2.3.
+> - **actionMetadata: broadcastOnApplied=true.** Multi-user parties see batch-identify land on other clients via R5.1's `applied[]` echo; the reducer runs deterministically on the receiver.
+> - **Hint semantics on batch.**
+>   - Payload without `hint`: every affected instance keeps its existing per-instance hint.
+>   - Payload with `hint: 'some string'`: every affected instance gets the same shared hint.
+>   - Payload with `hint: undefined` (explicit undefined): every affected instance's hint is CLEARED. (Not exposed in the UI today — the wizard input converts empty string to "no hint field" rather than to `hint: undefined`.)
+> - **Reverse batch not surfaced.** `identify-batch { identified: false }` is a valid schema shape and the reducer supports it, but the UI only exposes forward-batch. Reverse flips happen one-at-a-time from the "Show identified" section. Rationale: mass-unidentify is a niche affordance; the schema is ready if a DM tool needs it later.
+> - **Panel scope: whole-party.** Reads `s.appState.items` (already party-scoped in AppState). Groups by `definitionId`. Sorted alphabetically by definition name. The "identified magic items" section filters `def.rarity !== undefined && def.rarity !== null` to hide mundane items (torch, rope) that default to `identified: true` and have no meaningful "revoke" affordance.
+> - **Location column.** Per-instance subrow shows the containing stash's name (`stashNameOf`) — Inventory / Storage / Party Stash / Recovered Loot. Helpful when the DM has 3 unidentified copies scattered across different characters and wants to know where each is.
+> - **Server persistor: `updateMany` predicate-filtered.** `persistIdentifyBatch` filters by `definitionId + identified: {not: payload.identified} + ownerId: {in: [party stash ids]}`. Predicate is idempotent — running the same batch twice is a no-op on the DB (the second call updates 0 rows, matching the reducer's throw semantics). `partyId` is derived from `actor.partyId` per SECURITY §2.1; the request body never supplies it.
+> - **No Prisma migration.** `ItemInstance.identified` and `ItemInstance.hint` shipped in R2.3.
+> - **No summarizeLogEntry change.** Batch emits `identify` entries so the existing `identify` summarizer branch renders them unchanged.
+> - **Nav link.** New "Identify" nav item (Eye icon) visible to DM/solo users, positioned between Loot and the session badge.
 
 #### R6.5 — Catalog search
 
@@ -3814,6 +3833,7 @@ Light/dark theme, responsive player views (mobile), fuzzy multi-field search, ac
 - [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
 - [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
 - [ ] Variant-rules toggle exposed in Settings (§5.17)
+- [ ] **UI-component consistency audit.** Walk every screen + form + dialog + row-action surface and check: (a) are we using the shadcn/ui primitives from `src/components/ui/` where one exists, or did we hand-roll a native element that has a shadcn equivalent (e.g. native `<select>` where the shadcn `Select` is available, native `<input type="checkbox">` where a `Checkbox` primitive should be added, hand-rolled overlay divs where `Dialog` fits)? (b) are the shadcn primitives being used *consistently* — same size prop, same variant vocabulary, same spacing scale across dialogs / cards / tables / empty-states? (c) do we have any pieces of UI that grew organically outside the shadcn palette and should either be lifted into `src/components/ui/` or replaced. Deliverable: a spreadsheet/table of every screen + component + inconsistency, then a set of small refactor PRs. Scope guard: no visual redesign — this is a *consistency* pass, not a facelift.
 
 #### R7.5 — Notes
 

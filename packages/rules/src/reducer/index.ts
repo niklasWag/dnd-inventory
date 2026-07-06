@@ -164,6 +164,8 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return rechargeAction(state, action.payload);
     case 'identify':
       return identifyAction(state, action.payload);
+    case 'identify-batch':
+      return identifyBatchAction(state, action.payload);
     case 'edit-character':
       return editCharacter(state, action.payload);
     case 'delete-character':
@@ -3580,6 +3582,93 @@ function identifyAction(
         payload: logPayload,
       },
     ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// identify-batch (R6.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * OUTLINE §3.8 amendment (2026-06-24): a DM-toolkit affordance that
+ * flips `identified` across every `ItemInstance` in the party matching
+ * `definitionId` in one reducer slice. Optional shared `hint` in the
+ * payload overrides per-instance hints when present; when absent,
+ * every affected row keeps its existing hint.
+ *
+ * The reducer emits one `identify` log entry per affected instance
+ * (matches the single-`identify` shape) so the OUTLINE §3.11 per-item
+ * history filter continues to work. There is no dedicated
+ * `identify-batch` TransactionLog type.
+ *
+ * "Matching instance" means `it.definitionId === payload.definitionId
+ * AND it.identified !== payload.identified` — instances already in the
+ * target state are skipped (they'd log a spurious no-op otherwise). If
+ * NO instance would flip, the reducer throws so the UI can surface it
+ * as an error toast.
+ */
+function identifyBatchAction(
+  state: AppState,
+  payload: Extract<Action, { type: 'identify-batch' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'identify-batch');
+
+  const affected = s.items.filter(
+    (it) => it.definitionId === payload.definitionId && it.identified !== payload.identified,
+  );
+  if (affected.length === 0) {
+    throw new Error(
+      `identify-batch: no matching instances to change for definitionId ${payload.definitionId}`,
+    );
+  }
+
+  // `hint` field semantics on payload:
+  //   - absent (`'hint' in payload === false`): preserve each row's
+  //     existing hint.
+  //   - explicit `undefined`: clear every affected row's hint.
+  //   - explicit string: write that shared hint on every affected row.
+  const hintInPayload = 'hint' in payload;
+  const sharedHint = hintInPayload ? payload.hint : undefined;
+
+  const affectedIds = new Set(affected.map((it) => it.id));
+  const nextItems: ItemInstance[] = s.items.map((it) => {
+    if (!affectedIds.has(it.id)) return it;
+    const nextRow: ItemInstance = { ...it, identified: payload.identified };
+    if (hintInPayload) {
+      if (sharedHint === undefined) {
+        delete nextRow.hint;
+      } else {
+        nextRow.hint = sharedHint;
+      }
+    }
+    return nextRow;
+  });
+
+  const logEntries: LogEntrySlice[] = affected.map((row) => {
+    const previousHint = row.hint;
+    const newHint = hintInPayload ? sharedHint : previousHint;
+    const logPayload: {
+      itemInstanceId: string;
+      previousIdentified: boolean;
+      newIdentified: boolean;
+      previousHint?: string;
+      newHint?: string;
+    } = {
+      itemInstanceId: row.id,
+      previousIdentified: row.identified,
+      newIdentified: payload.identified,
+    };
+    if (previousHint !== undefined) logPayload.previousHint = previousHint;
+    if (newHint !== undefined) logPayload.newHint = newHint;
+    return {
+      type: 'identify',
+      payload: logPayload,
+    };
+  });
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntries,
   };
 }
 

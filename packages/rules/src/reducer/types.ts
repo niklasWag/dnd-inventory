@@ -572,6 +572,21 @@ export type Action =
       };
     }
   | {
+      // R6.4 — batch-identify (OUTLINE §3.8 amendment 2026-06-24). Flips
+      // `identified` on every ItemInstance in the current party whose
+      // `definitionId` matches. Optional shared `hint` overrides per-
+      // instance hints when present; when absent, each affected instance
+      // keeps its existing hint. Reducer emits one `identify` log entry
+      // per affected instance (no new TransactionLog type) so per-item
+      // history filters continue to work.
+      type: 'identify-batch';
+      payload: {
+        definitionId: string;
+        identified: boolean;
+        hint?: string | undefined;
+      };
+    }
+  | {
       // R1.2: catch-all Character editor for fields that compose
       // naturally per OUTLINE §4 line 320. `encumbranceRule` and
       // `enforceEncumbrance` have their own `set-encumbrance` action;

@@ -1984,6 +1984,7 @@ describe('guards — every action has an entry', () => {
       'use-charge',
       'recharge',
       'identify',
+      'identify-batch',
       'edit-character',
       'delete-character',
       'leave-party',

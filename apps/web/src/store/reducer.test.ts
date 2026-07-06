@@ -7202,6 +7202,156 @@ describe('reducer: identify (R2.3)', () => {
 });
 
 // -------------------------------------------------------------------- //
+// R6.4: identify-batch                                                 //
+// -------------------------------------------------------------------- //
+
+describe('reducer: identify-batch (R6.4)', () => {
+  /** Seed 3 unidentified copies of the Cloak of Protection in inventory. */
+  function seedThreeUnidentifiedCloaks(): {
+    inventoryStashId: string;
+    definitionId: string;
+    instanceIds: string[];
+  } {
+    const base = bootstrap();
+    const cloak = base.catalog.find((d) => /cloak of protection/i.test(d.name));
+    if (cloak === undefined) throw new Error('Cloak of Protection not in DMG seed');
+    const created: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      useStore.getState().dispatch({
+        type: 'acquire',
+        payload: {
+          stashId: base.inventoryStashId,
+          definitionId: cloak.id,
+          quantity: 1,
+          source: 'catalog-add',
+          // Distinct notes prevent auto-stack; each acquire → its own row.
+          notes: `copy-${String(i)}`,
+          ...acquireIds(),
+        },
+      });
+      const rows = useStore
+        .getState()
+        .appState!.items.filter(
+          (it) => it.definitionId === cloak.id && it.notes === `copy-${String(i)}`,
+        );
+      if (rows.length !== 1)
+        throw new Error(`expected 1 row for copy-${String(i)}, got ${String(rows.length)}`);
+      created.push(rows[0]!.id);
+    }
+    // Flip all three to unidentified.
+    for (const id of created) {
+      useStore.getState().dispatch({
+        type: 'identify',
+        payload: { itemInstanceId: id, identified: false },
+      });
+    }
+    return {
+      inventoryStashId: base.inventoryStashId,
+      definitionId: cloak.id,
+      instanceIds: created,
+    };
+  }
+
+  it('flips every matching instance and emits one identify log entry per flip', () => {
+    const { definitionId, instanceIds } = seedThreeUnidentifiedCloaks();
+    const logLenBefore = useStore.getState().log.length;
+
+    useStore.getState().dispatch({
+      type: 'identify-batch',
+      payload: { definitionId, identified: true },
+    });
+
+    const items = useStore.getState().appState!.items;
+    for (const id of instanceIds) {
+      const row = items.find((it) => it.id === id)!;
+      expect(row.identified).toBe(true);
+    }
+    const added = useStore.getState().log.slice(logLenBefore);
+    expect(added).toHaveLength(3);
+    for (const entry of added) {
+      expect(entry.type).toBe('identify');
+    }
+  });
+
+  it('applies a shared hint to every affected instance when hint is present', () => {
+    const { definitionId, instanceIds } = seedThreeUnidentifiedCloaks();
+
+    useStore.getState().dispatch({
+      type: 'identify-batch',
+      payload: { definitionId, identified: true, hint: 'radiates protection' },
+    });
+
+    const items = useStore.getState().appState!.items;
+    for (const id of instanceIds) {
+      const row = items.find((it) => it.id === id)!;
+      expect(row.hint).toBe('radiates protection');
+    }
+  });
+
+  it('preserves per-instance hints when payload has no hint field', () => {
+    const { definitionId, instanceIds } = seedThreeUnidentifiedCloaks();
+    // Set distinct per-instance hints before batch-identify.
+    const hints = ['a', 'b', 'c'];
+    instanceIds.forEach((id, i) => {
+      useStore.getState().dispatch({
+        type: 'identify',
+        payload: { itemInstanceId: id, identified: false, hint: hints[i]! },
+      });
+    });
+
+    useStore.getState().dispatch({
+      type: 'identify-batch',
+      payload: { definitionId, identified: true },
+    });
+
+    const items = useStore.getState().appState!.items;
+    instanceIds.forEach((id, i) => {
+      const row = items.find((it) => it.id === id)!;
+      expect(row.hint).toBe(hints[i]);
+    });
+  });
+
+  it('rejects when no instances match the target identified state (no-op)', () => {
+    const { definitionId } = seedThreeUnidentifiedCloaks();
+    // First batch flips all to identified.
+    useStore.getState().dispatch({
+      type: 'identify-batch',
+      payload: { definitionId, identified: true },
+    });
+    // Second batch is a no-op — everything is already identified.
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'identify-batch',
+        payload: { definitionId, identified: true },
+      }),
+    ).toThrow(/no matching instances/i);
+  });
+
+  it('rejects an unknown definitionId', () => {
+    seedThreeUnidentifiedCloaks();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'identify-batch',
+        payload: { definitionId: 'not-in-catalog', identified: true },
+      }),
+    ).toThrow(/no matching instances|unknown/i);
+  });
+
+  it('routes every batch log entry through actorRole=dm', () => {
+    const { definitionId } = seedThreeUnidentifiedCloaks();
+    const logLenBefore = useStore.getState().log.length;
+    useStore.getState().dispatch({
+      type: 'identify-batch',
+      payload: { definitionId, identified: true },
+    });
+    const added = useStore.getState().log.slice(logLenBefore);
+    for (const entry of added) {
+      expect(entry.actorRole).toBe('dm');
+    }
+  });
+});
+
+// -------------------------------------------------------------------- //
 // R4.1.b: delete-character
 // -------------------------------------------------------------------- //
 

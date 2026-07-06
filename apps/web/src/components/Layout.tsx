@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import {
   BookOpen,
   Dices,
+  Eye,
   History,
   LayoutDashboard,
   LogOut,
@@ -153,6 +154,19 @@ export function RootLayout(): ReactElement {
               >
                 <Dices className="h-4 w-4" />
                 <span className="sr-only sm:not-sr-only">Loot</span>
+              </Button>
+            ) : null}
+            {canSeeDmDashboard && partyId !== null ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void navigate(`/party/${partyId}/identify`);
+                }}
+                aria-label="Identification panel"
+              >
+                <Eye className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only">Identify</span>
               </Button>
             ) : null}
             {partyId !== null && currentSession !== null ? (

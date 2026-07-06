@@ -122,6 +122,7 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   'use-charge': { broadcastOnApplied: true },
   recharge: { broadcastOnApplied: true },
   identify: { broadcastOnApplied: true },
+  'identify-batch': { broadcastOnApplied: true },
 
   // Homebrew
   'create-homebrew': { broadcastOnApplied: true },

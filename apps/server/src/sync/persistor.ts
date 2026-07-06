@@ -130,6 +130,8 @@ export async function applyDelta(
       return persistRecharge(tx, action.payload);
     case 'identify':
       return persistIdentify(tx, action.payload);
+    case 'identify-batch':
+      return persistIdentifyBatch(tx, action.payload, actor);
     case 'edit-character':
       return persistEditCharacter(tx, action.payload);
     case 'delete-character':
@@ -1367,6 +1369,46 @@ async function persistIdentify(
     data.hint = payload.hint ?? null;
   }
   await tx.itemInstance.update({ where: { id: payload.itemInstanceId }, data });
+}
+
+/**
+ * R6.4 — batch-identify. Flips `identified` on every party ItemInstance
+ * with matching `definitionId` whose current value differs from the
+ * payload target. Uses `updateMany` predicate-filtered so concurrent
+ * dispatches can't double-flip: rows already in the target state are
+ * silently skipped by the predicate. `partyId` is derived from
+ * `actor.partyId` (SECURITY §2.1) so the update is party-scoped via the
+ * stash → party join.
+ */
+async function persistIdentifyBatch(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'identify-batch' }>['payload'],
+  actor: Actor,
+): Promise<void> {
+  // Fetch every stash id in the actor's party so the ItemInstance
+  // filter is party-scoped. This mirrors the reducer's iteration over
+  // `state.items` (which is already party-scoped in AppState).
+  const stashRows = await tx.stash.findMany({
+    where: { partyId: actor.partyId },
+    select: { id: true },
+  });
+  const stashIds = stashRows.map((s) => s.id);
+  if (stashIds.length === 0) return;
+
+  const data: Prisma.ItemInstanceUpdateManyMutationInput = {
+    identified: payload.identified,
+  };
+  if (Object.prototype.hasOwnProperty.call(payload, 'hint')) {
+    data.hint = payload.hint ?? null;
+  }
+  await tx.itemInstance.updateMany({
+    where: {
+      definitionId: payload.definitionId,
+      identified: { not: payload.identified },
+      ownerId: { in: stashIds },
+    },
+    data,
+  });
 }
 
 async function persistEditCharacter(

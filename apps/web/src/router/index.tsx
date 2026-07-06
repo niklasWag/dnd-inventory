@@ -10,6 +10,7 @@ import { DmDashboard, DmOnlyRoute } from '@/screens/DmDashboard';
 import { HistoryScreen } from '@/screens/HistoryScreen';
 import { HoardGenerator } from '@/screens/HoardGenerator';
 import { Hub } from '@/screens/Hub';
+import { IdentificationPanel } from '@/screens/IdentificationPanel';
 import { ItemDetail } from '@/screens/ItemDetail';
 import { LootDistributionWizard } from '@/screens/LootDistributionWizard';
 import { Login } from '@/screens/Login';
@@ -126,6 +127,8 @@ export const router = createBrowserRouter([
                       // state) and directly (empty wizard).
                       { path: 'loot/generate', Component: HoardGenerator },
                       { path: 'loot/distribute', Component: LootDistributionWizard },
+                      // R6.4 — Identification panel. DM-only.
+                      { path: 'identify', Component: IdentificationPanel },
                     ],
                   },
                 ],
