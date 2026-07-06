@@ -2,6 +2,7 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import type { ReactElement } from 'react';
 import {
   BookOpen,
+  Dices,
   History,
   LayoutDashboard,
   LogOut,
@@ -139,6 +140,19 @@ export function RootLayout(): ReactElement {
               >
                 <Store className="h-4 w-4" />
                 <span className="sr-only sm:not-sr-only">Shops</span>
+              </Button>
+            ) : null}
+            {canSeeDmDashboard && partyId !== null ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void navigate(`/party/${partyId}/loot/generate`);
+                }}
+                aria-label="Loot generator"
+              >
+                <Dices className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only">Loot</span>
               </Button>
             ) : null}
             {partyId !== null && currentSession !== null ? (

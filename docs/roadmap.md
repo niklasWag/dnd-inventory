@@ -3689,22 +3689,40 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 #### R6.3 — Hoard generator + loot distribution wizard
 
 **Rules — activate stub (§6)**
-- [ ] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band)
-- [ ] `hoard.ts` tests cover representative CR bands
+- [x] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band) — **shipped; returns rarity/tier BUCKETS rather than concrete item ids (see R6.3 Notes).**
+- [x] `hoard.ts` tests cover representative CR bands — **29 tests covering all 4 CR bands, non-negative invariants, band-scaling, rng determinism, per-band snapshots.**
 
 **Loot distribution (§3.10)**
-- [ ] Loot Distribution Wizard screen (§5.10) — per-hoard choice: shared pool vs direct assign
-- [ ] "Drop loot into shared pool" action (loot → Party Stash; players claim per §3.14 rules)
-- [ ] "Assign loot directly to player" action (item lands in target character's Inventory or Storage)
-- [ ] Wizard tags emitted log entries with the active session (§3.12)
+- [x] Loot Distribution Wizard screen (§5.10) — per-hoard choice: shared pool vs direct assign — **shipped as PER-ROW target radio (Party Stash / any character's Inventory) — a superset of the two OUTLINE modes. See R6.3 Notes.**
+- [x] "Drop loot into shared pool" action (loot → Party Stash; players claim per §3.14 rules) — **no new action variant; each wizard row dispatches an existing `acquire` (items) or `currency-change` (coins) against `targetStashId = partyStashId`.**
+- [x] "Assign loot directly to player" action (item lands in target character's Inventory or Storage) — **no new action variant; row's `targetStashId` points at a character's Inventory. Storage as a target is deferred (see Notes).**
+- [x] Wizard tags emitted log entries with the active session (§3.12) — **delegated to RH3.1 session middleware; wizard never sets `sessionId` explicitly.**
 
 **Hoard generator (§3.5, §5.11)**
-- [ ] Hoard Generator screen using `hoard.ts`
-- [ ] Output flows into the Loot Distribution Wizard
+- [x] Hoard Generator screen using `hoard.ts` — **`/party/:partyId/loot/generate`, DM-only. CR band + include-homebrew toggle + Reroll + Continue.**
+- [x] Output flows into the Loot Distribution Wizard — **navigate with `{ state: { roll, band, includeHomebrew } }`; wizard reads `location.state` and prefills rows.**
 
 #### R6.3 — Notes
 
-> -
+> - **One-slice shape (matches R6.2 rhythm).** Rules + UI + tests ship together; no new Zod schemas, no new action variants, no Prisma migration. UI touches only `apps/web`.
+> - **Test count deltas.**
+>   - **rules** — 186 → 215 (+29): `hoard.test.ts` covering determinism per band, non-negative invariants under rng=0 and rng=0.999, band-scaling (higher bands → higher GP-equivalent totals), rarity distribution (legendary only at 17+, common dominates at 0-4), per-band snapshots at rng=0.5, and a defensive count-bound test.
+>   - **web** — 928 → 939 (+11): 5 `HoardGenerator.test.tsx` + 6 `LootDistributionWizard.test.tsx`.
+> - **`hoard.ts` shape: buckets, not items.** The stub declared a return type of `{ coins, items: string[] }`. The shipped API returns `{ coins, magicItemsByRarity, gemsByTier }` — rarity/tier counts, not concrete item ids. Rationale: the DM should curate specific items in the wizard (context matters — "another Bag of Holding when they already have three" is a UX antifeature). The wizard's picker pre-filters the catalog by the row's rarity/tier hint.
+> - **`rollIndividual` stays stubbed.** Per-monster individual-treasure roll declared in the M0 stub is not implemented and continues to throw. Not on the R6 checklist and rarely used in practice compared to hoards.
+> - **Wizard target selection: per-row radio, superset of §3.10 modes.** OUTLINE §3.10 describes "shared pool vs direct assign" as a per-hoard toggle. The wizard implements this as a per-row target radio (Party Stash or any character's Inventory), which:
+>   - reproduces "shared pool" when every row → Party Stash
+>   - reproduces "direct assign" when each row → a different character's Inventory
+>   - additionally supports mixed hoards (some coins to the pool, some items to a specific player) which the two-mode phrasing forbids.
+> - **No new action variants.** The wizard fans out to existing `acquire` + `currency-change` dispatches. Every row emits its own log entry. Trade-off: audit trail is one-entry-per-thing (verbose) rather than one-entry-per-loot-drop. Acceptable since the log view already groups by session (RH3.1) — the whole hoard is visible under the current session's bucket.
+> - **Storage as target: deferred.** Wizard's target picker offers Party Stash and each character's Inventory. Direct-assign to a character's Storage stash isn't in the picker; a DM who wants that today can distribute to the character's Inventory and the player transfers to Storage. Adding Storage options is a one-selector change if requested.
+> - **Session tagging: middleware-only.** Wizard's `acquire` + `currency-change` dispatches flow through the store's `dispatch` middleware; the RH3.1 session-tagging middleware stamps `sessionId` on every observed log slice. If no session is `isCurrent`, entries carry `sessionId: null` per §3.12 (Untagged bucket). No wizard-side session code.
+> - **Continue-on-failure batch semantics.** If a single row dispatch throws (e.g. a guard rejection), the wizard toasts that error but continues distributing the remaining rows. Partial distribution is fine — the audit trail explains what did and didn't land. Alternative "abort on first error" was rejected because the DM would then have to manually re-do everything that already worked.
+> - **Include-homebrew toggle.** UI-only filter that will be threaded into the wizard's picker component. Default: ON. Passed through route state; wizard uses it as a picker filter, not as a `hoard.ts` input (bucket counts don't care about source — the DM picks the specific catalog entry).
+> - **Pricing composition subtlety.** `hoard.ts` returns coin totals directly (no `pricing` composition). Rationale: hoards ARE the source of coin — no shop or party economy modifier applies to found treasure. `pricing.formatPrice` doesn't even see these numbers; they land as raw denominated integers via `currency-change`.
+> - **RH2 broadcast: R5.1 auto-covers.** The wizard's dispatches route through the same store path as any other action; `getActionMetadata('acquire' | 'currency-change').broadcastOnApplied === true` is already in the registry from prior slices, so multi-user parties will see loot land on other clients without any R6.3-specific socket work.
+> - **No new schemas or migrations.** No Zod additions, no `actionMetadata` entries, no Prisma migration. Route additions are UI-only.
+> - **Nav link.** New "Loot" nav item (Dice icon) visible to DM/solo users, positioned between Shops and the session badge. Routes to `/party/:partyId/loot/generate`.
 
 #### R6.4 — Identification panel + batch-identify
 

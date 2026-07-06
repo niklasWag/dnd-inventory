@@ -8,8 +8,10 @@ import { CharacterSheet } from '@/screens/CharacterSheet';
 import { CatalogBrowser } from '@/screens/CatalogBrowser';
 import { DmDashboard, DmOnlyRoute } from '@/screens/DmDashboard';
 import { HistoryScreen } from '@/screens/HistoryScreen';
+import { HoardGenerator } from '@/screens/HoardGenerator';
 import { Hub } from '@/screens/Hub';
 import { ItemDetail } from '@/screens/ItemDetail';
+import { LootDistributionWizard } from '@/screens/LootDistributionWizard';
 import { Login } from '@/screens/Login';
 import { LoginDisplayName } from '@/screens/LoginDisplayName';
 import { LoginEmail } from '@/screens/LoginEmail';
@@ -118,6 +120,12 @@ export const router = createBrowserRouter([
                     children: [
                       { path: 'dm', Component: DmDashboard },
                       { path: 'shops', Component: ShopsList },
+                      // R6.3 — Hoard generator + Loot distribution wizard.
+                      // Both DM-only; wizard is reachable both via the
+                      // generator's Continue button (with roll in route
+                      // state) and directly (empty wizard).
+                      { path: 'loot/generate', Component: HoardGenerator },
+                      { path: 'loot/distribute', Component: LootDistributionWizard },
                     ],
                   },
                 ],
