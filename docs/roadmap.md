@@ -3577,12 +3577,6 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 >
 > **Zero-schema-diff slice.** No new action variant, no schema change, no guard change, no persistor change, no `EquippedSlotsPanel` change. The reducer (R1.2), guard (`editCharacterGuard` at `packages/shared/src/guards/map.ts:692`), broadcast metadata, and log-summary formatter all shipped since R1.2 — this slice is pure UI wiring.
 >
-> **Files touched:**
->   - `apps/web/src/components/character/EditCharacterDialog.tsx` (new)
->   - `apps/web/src/components/character/EditCharacterDialog.test.tsx` (new)
->   - `apps/web/src/screens/CharacterSheet.tsx` — header button + dialog mount + `canEditCharacter` gate
->   - `apps/web/src/screens/CharacterSheet.test.tsx` — R6.0 button-visibility tests
->
 > **Not shipped in R6.0:**
 >   - Inline `maxAttunement` editor on `EquippedSlotsPanel` — dropped per scope amendment. Panel remains a pure read-only counter. If a future slice wants an inline control it can add one alongside the dialog without conflict.
 
@@ -3636,38 +3630,8 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 >
 > **Fixture widening.** 16 Party test fixtures across 12 files needed the two new fields; batched via a one-shot Python regex. All existing tests parse the widened shape without semantic change.
 >
-> **Files touched:**
->   - `packages/rules/src/pricing.ts` (stub → full impl)
->   - `packages/rules/src/pricing.test.ts` (new)
->   - `packages/shared/src/schemas/party.ts` (+ 2 fields)
->   - `packages/shared/src/schemas/appState.test.ts` (fixture widening)
->   - `packages/shared/src/schemas/action.ts` (+ `update-party-economy` variant)
->   - `packages/shared/src/schemas/transactionLog.ts` (+ log variant)
->   - `packages/shared/src/schemas/actionMetadata.ts` (+ broadcast registration)
->   - `packages/shared/src/guards/map.ts` (+ `updatePartyEconomyGuard`)
->   - `packages/shared/src/guards/map.test.ts` (+ guard tests + exhaustive-array bump + fixture widening)
->   - `packages/shared/src/guards/actor.test.ts` (fixture widening)
->   - `packages/rules/src/reducer/index.ts` (+ `updatePartyEconomy` reducer arm + bootstrap defaults)
->   - `packages/rules/src/reducer/types.ts` (+ Action variant)
->   - `apps/web/src/store/reducer.test.ts` (+ 6 reducer tests)
->   - `apps/server/prisma/schema.prisma` (+ 2 columns + `CurrencyDenom` enum)
->   - `apps/server/prisma/migrations/20260706130000_r61_party_economy/migration.sql` (new)
->   - `apps/server/src/db/mappers.ts` (Party mapper widens)
->   - `apps/server/src/sync/persistor.ts` (+ `persistUpdatePartyEconomy` + dispatch arm)
->   - `apps/server/src/sync/routes.test.ts` (fixture widening)
->   - `apps/web/src/screens/CatalogBrowser.tsx` (route price through `formatPrice(buyPrice(...))`)
->   - `apps/web/src/screens/CatalogBrowser.test.tsx` (+ 4 R6.1 tests)
->   - `apps/web/src/screens/PartySettings.tsx` (mount `EconomyPresetField`)
->   - `apps/web/src/components/settings/EconomyPresetField.tsx` (new)
->   - `apps/web/src/components/settings/EconomyPresetField.test.tsx` (new)
->   - `apps/web/src/lib/summarizeLogEntry.ts` (+ log summary)
->   - 10 other web test files (fixture widening)
->
 > **Not shipped in R6.1:**
 >   - `pricing.sellPrice` — throw-stub for R6.2's purchase/sale.
->   - Shop entity + `Shop.priceModifier` — R6.2 owns the Shop activation. `buyPrice` accepts an optional `shopModifier` so R6.2 can compose without a signature change.
->   - Catalog Browser source filter (PHB / DMG / homebrew) — R6.5 scope.
->   - Server-integration test for `POST /sync/actions { update-party-economy }` — no new coverage written; the existing "any action round-trips through /sync/actions" invariant test covers the endpoint path, and the persistor is a plain `tx.party.update`. Add a targeted server test in R6.2 alongside `purchase` / `sale` if warranted.
 
 #### R6.2 — Shops + purchase / sale
 
