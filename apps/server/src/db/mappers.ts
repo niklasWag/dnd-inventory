@@ -435,6 +435,8 @@ export interface PartyRow {
   bankerUserId: string | null;
   encumbranceRule: $Enums.EncumbranceRule;
   enforceEncumbrance: boolean;
+  priceModifier: number;
+  baseCurrency: $Enums.CurrencyDenom;
   createdAt: Date;
 }
 
@@ -451,6 +453,8 @@ export function fromPrismaParty(row: PartyRow): Party {
     bankerUserId: row.bankerUserId,
     encumbranceRule: row.encumbranceRule,
     enforceEncumbrance: row.enforceEncumbrance,
+    priceModifier: row.priceModifier,
+    baseCurrency: row.baseCurrency,
     createdAt: row.createdAt.toISOString(),
   });
 }

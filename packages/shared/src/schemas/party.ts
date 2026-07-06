@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { encumbranceRuleSchema } from './character';
+import { currencyDenominationSchema } from './itemDefinition';
 
 /**
  * Party — every party-of-one is the same shape as a 2+-member party.
@@ -19,6 +20,13 @@ import { encumbranceRuleSchema } from './character';
  * `setEncumbranceGuard`); flipped via the party-scoped `set-encumbrance`
  * action. STR + creature-size stay on `Character` — those are the
  * per-character body inputs the rule reads from.
+ *
+ * R6.1 (2026-07-06) — per-party economy controls per OUTLINE §3.5.
+ * `priceModifier` multiplies every PHB/DMG seed price (homebrew is
+ * skipped per §3.5 line 133); `baseCurrency` is the display ceiling
+ * for `formatPrice` canonicalization. DM-only edit permission when
+ * memberCount ≥ 2 (§8.1); flipped via the party-scoped
+ * `update-party-economy` action.
  */
 export const partySchema = z
   .object({
@@ -30,6 +38,8 @@ export const partySchema = z
     bankerUserId: z.string().min(1).nullable(),
     encumbranceRule: encumbranceRuleSchema,
     enforceEncumbrance: z.boolean(),
+    priceModifier: z.number().positive(),
+    baseCurrency: currencyDenominationSchema,
     createdAt: z.string().datetime(),
   })
   .strict();

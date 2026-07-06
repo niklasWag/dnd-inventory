@@ -1,6 +1,7 @@
 import { type ReactElement, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { pricing, currency } from '@app/rules';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,10 +36,15 @@ const EMPTY_ITEMS: readonly ItemInstance[] = [];
  * delete policy: reject when items still reference the definition).
  */
 export function CatalogBrowser(): ReactElement {
-  const { catalog, items } = useStore(
+  const { catalog, items, priceModifier, baseCurrency } = useStore(
     useShallow((s) => ({
       catalog: s.appState?.catalog ?? EMPTY_CATALOG,
       items: s.appState?.items ?? EMPTY_ITEMS,
+      // R6.1 — party-scoped economy fed into `pricing.buyPrice` +
+      // `pricing.formatPrice`. Fallbacks match the schema defaults so
+      // a null-state render (pre-first-party) still shows sane prices.
+      priceModifier: s.appState?.party.priceModifier ?? 1.0,
+      baseCurrency: s.appState?.party.baseCurrency ?? ('gp' as const),
     })),
   );
   const [query, setQuery] = useState('');
@@ -167,7 +173,16 @@ export function CatalogBrowser(): ReactElement {
                     {d.weight !== undefined ? `${String(d.weight)} lb` : '—'}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {d.cost !== undefined ? `${String(d.cost.amount)} ${d.cost.currency}` : '—'}
+                    {d.cost !== undefined
+                      ? pricing.formatPrice(
+                          pricing.buyPrice(
+                            currency.toCopper({ [d.cost.currency]: d.cost.amount }),
+                            d.source,
+                            { partyModifier: priceModifier },
+                          ),
+                          baseCurrency,
+                        )
+                      : '—'}
                   </td>
                   <td className="px-3 py-2 text-right">
                     {d.source === 'PHB' || d.source === 'DMG' ? (

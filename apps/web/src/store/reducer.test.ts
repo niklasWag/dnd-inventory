@@ -3688,6 +3688,78 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
   });
 });
 
+// -------------------------------------------------------------------- //
+// R6.1 — update-party-economy
+// -------------------------------------------------------------------- //
+
+describe('reducer: update-party-economy (R6.1)', () => {
+  it('bootstrap party defaults priceModifier=1.0 and baseCurrency=gp', () => {
+    localBootstrap();
+    const s = useStore.getState().appState!;
+    expect(s.party.priceModifier).toBe(1.0);
+    expect(s.party.baseCurrency).toBe('gp');
+  });
+
+  it('updates both fields atomically', () => {
+    const { partyId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
+    });
+    const s = useStore.getState().appState!;
+    expect(s.party.priceModifier).toBe(0.1);
+    expect(s.party.baseCurrency).toBe('sp');
+  });
+
+  it('rejects a no-op write (both fields unchanged)', () => {
+    const { partyId } = localBootstrap();
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'update-party-economy',
+        payload: { partyId, priceModifier: 1.0, baseCurrency: 'gp' },
+      }),
+    ).toThrow(/nothing changed/);
+  });
+
+  it('accepts a one-field-changed write (priceModifier only)', () => {
+    const { partyId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId, priceModifier: 2.0, baseCurrency: 'gp' },
+    });
+    expect(useStore.getState().appState!.party.priceModifier).toBe(2.0);
+  });
+
+  it('logs an update-party-economy entry with old/new for both fields', () => {
+    const { partyId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId, priceModifier: 0.5, baseCurrency: 'ep' },
+    });
+    const last = useStore.getState().log.at(-1);
+    expect(last?.type).toBe('update-party-economy');
+    if (last?.type === 'update-party-economy') {
+      expect(last.payload).toMatchObject({
+        partyId,
+        oldPriceModifier: 1.0,
+        newPriceModifier: 0.5,
+        oldBaseCurrency: 'gp',
+        newBaseCurrency: 'ep',
+      });
+    }
+  });
+
+  it('log entry parses against transactionLogEntrySchema', () => {
+    const { partyId } = localBootstrap();
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
+    });
+    const entry = useStore.getState().log.at(-1)!;
+    expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
+  });
+});
+
 describe('reducer: equip / unequip (R1.2)', () => {
   /**
    * R1.2 flips `ItemInstance.equipped` on Inventory rows. Invariants:

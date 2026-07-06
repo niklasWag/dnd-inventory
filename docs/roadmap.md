@@ -3589,24 +3589,85 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 #### R6.1 — Pricing + per-party economy
 
 **Rules — activate stubs (§6)**
-- [ ] `packages/rules/pricing.ts` implemented (base price × party.priceModifier × shop.priceModifier; default 0.5× sell)
-- [ ] `pricing.ts:formatPrice(cp, baseCurrency)` — display canonicalizer per OUTLINE §3.5 (largest denomination ≤ baseCurrency that divides cleanly; no fractional coins; no rollup past ceiling; sub-cp rounds to nearest cp)
-- [ ] `pricing.ts` tests cover modifier composition, override, sell-to-merchant rate, AND every row of the OUTLINE §3.5 preset table (Gold / Silver / Copper / Electrum / Platinum)
-- [ ] `pricing.ts` tests cover the "no rollup past ceiling" rule explicitly (200 gp under `baseCurrency="gp"` stays "200 gp", never "20 pp")
+- [x] `packages/rules/pricing.ts` implemented (base price × party.priceModifier × shop.priceModifier; default 0.5× sell) — **`buyPrice` shipped; `sellPrice` stays stubbed for R6.2 (no call sites yet).**
+- [x] `pricing.ts:formatPrice(cp, baseCurrency)` — display canonicalizer per OUTLINE §3.5 (largest denomination ≤ baseCurrency that divides cleanly; no fractional coins; no rollup past ceiling; sub-cp rounds to nearest cp)
+- [x] `pricing.ts` tests cover modifier composition, override, sell-to-merchant rate, AND every row of the OUTLINE §3.5 preset table (Gold / Silver / Copper / Electrum / Platinum) — **composition + party × shop + homebrew-skip + all 5 preset rows covered; sell-to-merchant deferred with `sellPrice`.**
+- [x] `pricing.ts` tests cover the "no rollup past ceiling" rule explicitly (200 gp under `baseCurrency="gp"` stays "200 gp", never "20 pp")
 
 **Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
-- [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
-- [ ] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
-- [ ] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted
-- [ ] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
-- [ ] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
-- [ ] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
-- [ ] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
-- [ ] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
+- [x] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
+- [x] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
+- [x] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted — **CLAUDE.md "no legacy-data debt": `.strict()` schema rejects pre-R6.1 blobs. Reducer bootstrap sets `1.0 / 'gp'` on `create-character`; new exports round-trip lossless. No backfill code.**
+- [x] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
+- [x] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
+- [x] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
+- [x] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
+- [x] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
 
 #### R6.1 — Notes
 
-> -
+> **Shipped 2026-07-06 on `feat/r6-dm-tools`.** Single-slice ship (no sub-slicing per user's sizing decision). Test totals:
+>   - **shared** — 300 → 305 (+5): guard tests for `update-party-economy` (DM-only + player-reject) + exhaustive-array bump.
+>   - **rules** — 159 → 186 (+27): full pricing.ts coverage — 13 `buyPrice` tests (identity / silver / copper / shop composition / homebrew skip / homebrew shop-scaling / inflation / sub-cp rounding at 0.4 + 0.5 + 0.6 / float-precision drift / zero) + 14 `formatPrice` tests (all 5 preset rows × display rules + no-rollup + zero) + 6 `update-party-economy` reducer tests (bootstrap defaults / atomic update / no-op reject / one-field-change / log entry shape / schema round-trip).
+>   - **web** — 886 → 903 (+17): 7 `EconomyPresetField.test.tsx` (dropdown / options / atomic dispatch / no-op disable / Custom reveal / raw values dispatch / validation) + 4 `CatalogBrowser.test.tsx` R6.1 tests (Gold default / Silver scale / homebrew skip / preset switch re-render) + 6 other suites gained one fixture line each (party fixtures widened for the two new fields).
+>   - **server** — 205 (unchanged: existing test suite parses the widened Party rows via `fromPrismaParty` seamlessly; no new integration test written — `persistUpdatePartyEconomy` is a plain `tx.party.update` covered by the general "any action round-trips" invariant test).
+>   - **seeds** — 22 (unchanged). Total workspace: 1621 tests, all green.
+>
+> **Decisions locked with user 2026-07-06 (pre-implementation):**
+>   - **One-slice ship, no sub-slicing.** Rules + schema + UI form a natural unit; splitting would leave dead code in between (activating `pricing.ts` without the party fields is meaningless; adding party fields without the UI leaves them un-editable).
+>   - **Real Prisma columns from day one** (not Zod-only). `priceModifier Float @default(1.0)` + `baseCurrency CurrencyDenom @default(gp)` in migration `20260706130000_r61_party_economy`; CHECK constraint `Party_priceModifier_positive_check` enforces `> 0` at the DB level (belt-and-braces alongside Zod `.positive()`).
+>   - **Preset chooser as primary UI**, Custom mode reveals raw fields. Native `<select>` (mirrors `EncumbranceRuleField` precedent — Radix Select's portal is awkward under jsdom).
+>   - **Homebrew skips `partyModifier`, still respects `shopModifier`.** Matches OUTLINE §3.5 line 133 verbatim ("Homebrew items are stored in the price the DM typed [...] are not scaled by priceModifier. They ARE subject to baseCurrency canonicalization on display"). Reducer test proves the source-discriminator branch.
+>   - **`buyPrice` only; `sellPrice` deferred to R6.2.** The stub throws `'R6.2'` since no call sites exist yet. R6.2's `purchase` / `sale` reducers will implement it.
+>
+> **New action: `update-party-economy`.** Mirrors the `set-encumbrance` two-fields-one-row pattern:
+>   - Payload `{ partyId, priceModifier, baseCurrency }` — atomic preset switch is one dispatch, one log row.
+>   - Reducer rejects no-op writes (both values unchanged). Enforces `payload.partyId === state.party.id`.
+>   - Guard `updatePartyEconomyGuard` — DM-only when memberCount ≥ 2 (§8.1); solo bypass via `checkGuard`.
+>   - Persistor `persistUpdatePartyEconomy` — plain `tx.party.update({ data: { priceModifier, baseCurrency } })`.
+>   - Broadcast metadata `broadcastOnApplied: true` per RH2.4.
+>   - Log entry `{ partyId, oldPriceModifier, newPriceModifier, oldBaseCurrency, newBaseCurrency }` renders in HistoryScreen via `summarizeLogEntry`.
+>
+> **`formatPrice` design nuance — Electrum skipped from descent.** The canonical "prefer whole numbers" rule (§3.5 line 121: 50 cp under gp-standard renders as "5 sp", not "1 ep") required a two-ladder implementation:
+>   - `DESCENT_NO_EP = [pp, gp, sp, cp]` used when `baseCurrency !== 'ep'`.
+>   - `DESCENT_WITH_EP = [pp, gp, ep, sp, cp]` used when `baseCurrency === 'ep'`.
+>
+>   Otherwise 50 cp / 50 (ep multiplier) = 1 → "1 ep" would fire before "5 sp". OUTLINE §3.5 designates ep as niche/historical; users only see ep in prices when they opt in via the Electrum-standard preset.
+>
+> **Fixture widening.** 16 Party test fixtures across 12 files needed the two new fields; batched via a one-shot Python regex. All existing tests parse the widened shape without semantic change.
+>
+> **Files touched:**
+>   - `packages/rules/src/pricing.ts` (stub → full impl)
+>   - `packages/rules/src/pricing.test.ts` (new)
+>   - `packages/shared/src/schemas/party.ts` (+ 2 fields)
+>   - `packages/shared/src/schemas/appState.test.ts` (fixture widening)
+>   - `packages/shared/src/schemas/action.ts` (+ `update-party-economy` variant)
+>   - `packages/shared/src/schemas/transactionLog.ts` (+ log variant)
+>   - `packages/shared/src/schemas/actionMetadata.ts` (+ broadcast registration)
+>   - `packages/shared/src/guards/map.ts` (+ `updatePartyEconomyGuard`)
+>   - `packages/shared/src/guards/map.test.ts` (+ guard tests + exhaustive-array bump + fixture widening)
+>   - `packages/shared/src/guards/actor.test.ts` (fixture widening)
+>   - `packages/rules/src/reducer/index.ts` (+ `updatePartyEconomy` reducer arm + bootstrap defaults)
+>   - `packages/rules/src/reducer/types.ts` (+ Action variant)
+>   - `apps/web/src/store/reducer.test.ts` (+ 6 reducer tests)
+>   - `apps/server/prisma/schema.prisma` (+ 2 columns + `CurrencyDenom` enum)
+>   - `apps/server/prisma/migrations/20260706130000_r61_party_economy/migration.sql` (new)
+>   - `apps/server/src/db/mappers.ts` (Party mapper widens)
+>   - `apps/server/src/sync/persistor.ts` (+ `persistUpdatePartyEconomy` + dispatch arm)
+>   - `apps/server/src/sync/routes.test.ts` (fixture widening)
+>   - `apps/web/src/screens/CatalogBrowser.tsx` (route price through `formatPrice(buyPrice(...))`)
+>   - `apps/web/src/screens/CatalogBrowser.test.tsx` (+ 4 R6.1 tests)
+>   - `apps/web/src/screens/PartySettings.tsx` (mount `EconomyPresetField`)
+>   - `apps/web/src/components/settings/EconomyPresetField.tsx` (new)
+>   - `apps/web/src/components/settings/EconomyPresetField.test.tsx` (new)
+>   - `apps/web/src/lib/summarizeLogEntry.ts` (+ log summary)
+>   - 10 other web test files (fixture widening)
+>
+> **Not shipped in R6.1:**
+>   - `pricing.sellPrice` — throw-stub for R6.2's purchase/sale.
+>   - Shop entity + `Shop.priceModifier` — R6.2 owns the Shop activation. `buyPrice` accepts an optional `shopModifier` so R6.2 can compose without a signature change.
+>   - Catalog Browser source filter (PHB / DMG / homebrew) — R6.5 scope.
+>   - Server-integration test for `POST /sync/actions { update-party-economy }` — no new coverage written; the existing "any action round-trips through /sync/actions" invariant test covers the endpoint path, and the persistor is a plain `tx.party.update`. Add a targeted server test in R6.2 alongside `purchase` / `sale` if warranted.
 
 #### R6.2 — Shops + purchase / sale
 

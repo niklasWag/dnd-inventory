@@ -524,6 +524,32 @@ const setEncumbranceGuard: Guard<Extract<Action, { type: 'set-encumbrance' }>> =
   return { ok: true };
 };
 
+/**
+ * R6.1 — `update-party-economy` (OUTLINE §3.5). DM-only when the party
+ * has 2+ members (§8.1). Solo bypass via `checkGuard` — the sole
+ * member wears both hats and always reaches the reducer.
+ */
+const updatePartyEconomyGuard: Guard<Extract<Action, { type: 'update-party-economy' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return {
+      ok: false,
+      code: 'state_not_initialized',
+      message: 'update-party-economy: no state.',
+    };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'update-party-economy is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
 const equipGuard: Guard<Extract<Action, { type: 'equip' }>> = (state, payload, actor) => {
   if (state === null)
     return { ok: false, code: 'state_not_initialized', message: 'equip: no state.' };
@@ -1140,6 +1166,7 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'rename-character': renameCharacterGuard,
   'rename-party': renamePartyGuard,
   'set-encumbrance': setEncumbranceGuard,
+  'update-party-economy': updatePartyEconomyGuard,
   equip: equipGuard,
   unequip: unequipGuard,
   attune: attuneGuard,

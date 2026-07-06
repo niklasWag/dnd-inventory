@@ -68,6 +68,8 @@ function makeParty(id = 'p1', bankerUserId: string | null = null): Party {
     bankerUserId,
     encumbranceRule: 'off',
     enforceEncumbrance: false,
+    priceModifier: 1.0,
+    baseCurrency: 'gp',
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
@@ -267,6 +269,7 @@ describe('deriveActorRoleForSlice — RH2.1a', () => {
     'rename-character',
     'rename-party',
     'set-encumbrance',
+    'update-party-economy',
     'equip',
     'unequip',
     'attune',
@@ -531,6 +534,30 @@ describe('guards — DM-only actions', () => {
         makeActor('u1', 'player'),
       ),
     ).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+  it('update-party-economy rejects a player', () => {
+    expect(
+      runGuard(
+        {
+          type: 'update-party-economy',
+          payload: { partyId: 'p1', priceModifier: 0.1, baseCurrency: 'sp' },
+        },
+        makeActor('u1', 'player'),
+      ),
+    ).toMatchObject({ ok: false, code: 'dm_only' });
+  });
+  it('update-party-economy accepts a DM', () => {
+    expect(
+      runGuard(
+        {
+          type: 'update-party-economy',
+          payload: { partyId: 'p1', priceModifier: 0.1, baseCurrency: 'sp' },
+        },
+        makeActor('dm-user', 'dm'),
+        makeState(),
+        TWO_MEMBERS_WITH_DEDICATED_DM,
+      ),
+    ).toEqual({ ok: true });
   });
   it('seed-catalog rejects a player', () => {
     expect(
@@ -1879,6 +1906,7 @@ describe('guards — every action has an entry', () => {
       'rename-character',
       'rename-party',
       'set-encumbrance',
+      'update-party-economy',
       'equip',
       'unequip',
       'attune',

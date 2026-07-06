@@ -228,4 +228,80 @@ describe('CatalogBrowser', () => {
       screen.queryByRole('button', { name: /delete cloak of protection/i }),
     ).not.toBeInTheDocument();
   });
+
+  // ---------- R6.1 — per-party economy display ----------
+
+  it('R6.1 — Gold standard default: 5 gp PHB row displays as "5 gp"', async () => {
+    // Bootstrap = 1.0× / gp. A PHB Rope (2 sp) should render "2 sp".
+    // A PHB item priced at 5 gp = 500 cp under gp-standard = "5 gp".
+    // Use Rapier (25 gp = 2500 cp under gp-standard) since Torch is
+    // 1 cp (edge case).
+    const user = userEvent.setup();
+    bootstrap();
+    renderBrowser();
+
+    await user.type(screen.getByLabelText(/^search$/i), 'rapier');
+    // Look for the "25 gp" text (Rapier is 25 gp in the PHB seed).
+    expect(screen.getByText(/^25 gp$/)).toBeInTheDocument();
+  });
+
+  it('R6.1 — Silver standard: PHB prices scale by 0.1 and canonicalize to sp', async () => {
+    // 1 sp Torch, 25 gp Rapier: under silver-standard (0.1× / sp) the
+    // Rapier becomes 25 gp * 0.1 = 2.5 gp = 250 cp → "25 sp".
+    const user = userEvent.setup();
+    const { partyId } = bootstrap();
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
+    });
+    renderBrowser();
+
+    await user.type(screen.getByLabelText(/^search$/i), 'rapier');
+    expect(screen.getByText(/^25 sp$/)).toBeInTheDocument();
+  });
+
+  it('R6.1 — homebrew rows keep their typed price (partyModifier does not apply)', async () => {
+    // Homebrew "Torc of Whimsy" priced 10 gp. Under silver-standard
+    // (0.1× / sp) a PHB 10 gp item would become 10 sp. Homebrew skips
+    // the modifier → still 10 gp = 1000 cp under baseCurrency='sp' →
+    // canonicalization descends from sp: 1000/10 = 100 → "100 sp"
+    // (§3.5 baseCurrency=sp caps the ceiling; no rollup to gp).
+    const user = userEvent.setup();
+    const { partyId } = bootstrapWithHomebrew({
+      name: 'Torc of Whimsy',
+      category: 'gear',
+      cost: { amount: 10, currency: 'gp' },
+    });
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
+    });
+    renderBrowser();
+
+    await user.type(screen.getByLabelText(/^search$/i), 'torc');
+    // 10 gp = 1000 cp; homebrew skips the modifier; sp-standard
+    // ceiling → 1000 / 10 = 100 → "100 sp".
+    expect(screen.getByText(/^100 sp$/)).toBeInTheDocument();
+  });
+
+  it('R6.1 — preset switch re-renders visible catalog prices without re-seeding', async () => {
+    // Bootstrap defaults to Gold-standard: Rapier reads "25 gp". Flip
+    // the economy to Silver via `update-party-economy` and confirm
+    // the same row re-renders as "25 sp" (Rapier 25 gp * 0.1 → 250 cp
+    // → "25 sp") without touching the catalog seed itself.
+    const user = userEvent.setup();
+    const { partyId } = bootstrap();
+    renderBrowser();
+
+    await user.type(screen.getByLabelText(/^search$/i), 'rapier');
+    expect(screen.getByText(/^25 gp$/)).toBeInTheDocument();
+
+    useStore.getState().dispatch({
+      type: 'update-party-economy',
+      payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
+    });
+
+    expect(await screen.findByText(/^25 sp$/)).toBeInTheDocument();
+    expect(screen.queryByText(/^25 gp$/)).not.toBeInTheDocument();
+  });
 });

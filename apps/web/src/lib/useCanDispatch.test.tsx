@@ -36,6 +36,8 @@ function makeAppStateFixture(memberCount: number): AppState {
       bankerUserId: null,
       encumbranceRule: 'off',
       enforceEncumbrance: false,
+      priceModifier: 1.0,
+      baseCurrency: 'gp',
       createdAt: '2026-01-01T00:00:00.000Z',
     },
     memberships,

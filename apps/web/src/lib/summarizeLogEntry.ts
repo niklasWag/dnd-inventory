@@ -127,6 +127,8 @@ export function summarizeLogEntry(
       return `Edited ${characterName(entry.payload.characterId)} \u2014 ${entry.payload.changedFields.join(' + ')}`;
     case 'set-encumbrance':
       return `Party encumbrance: ${entry.payload.oldRule}\u2192${entry.payload.newRule}${entry.payload.oldEnforce !== entry.payload.newEnforce ? `, enforce=${String(entry.payload.newEnforce)}` : ''}`;
+    case 'update-party-economy':
+      return `Party economy: ${String(entry.payload.oldPriceModifier)}\u00d7/${entry.payload.oldBaseCurrency}\u2192${String(entry.payload.newPriceModifier)}\u00d7/${entry.payload.newBaseCurrency}`;
     case 'create-stash':
       return `Created stash "${entry.payload.name}" (${entry.payload.scope})`;
     case 'rename-stash':

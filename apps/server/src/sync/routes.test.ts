@@ -633,6 +633,8 @@ describe('R4.4.b — homebrew party-scope filter', () => {
           recoveredLootStashId: recoveredStashId,
           encumbranceRule: 'off',
           enforceEncumbrance: false,
+          priceModifier: 1.0,
+          baseCurrency: 'gp',
         },
       });
       // Character references the Inventory stash; Stash references the

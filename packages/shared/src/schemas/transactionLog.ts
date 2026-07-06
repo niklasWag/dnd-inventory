@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { encumbranceRuleSchema } from './character';
+import { currencyDenominationSchema } from './itemDefinition';
 
 /**
  * TransactionLog — MVP captures a strict SUBSET of the OUTLINE §4 full
@@ -493,6 +494,25 @@ const setEncumbranceEntry = z.object({
     newRule: encumbranceRuleSchema,
     oldEnforce: z.boolean(),
     newEnforce: z.boolean(),
+  }),
+});
+
+/**
+ * R6.1 — `update-party-economy` (OUTLINE §3.5). Records a change to
+ * `Party.priceModifier` and/or `Party.baseCurrency`. Both old + new
+ * are captured on a single row for the same reason `set-encumbrance`
+ * captures both fields together — a preset switch is one dispatch, one
+ * log row.
+ */
+const updatePartyEconomyEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('update-party-economy'),
+  payload: z.object({
+    partyId: z.string().min(1),
+    oldPriceModifier: z.number().positive(),
+    newPriceModifier: z.number().positive(),
+    oldBaseCurrency: currencyDenominationSchema,
+    newBaseCurrency: currencyDenominationSchema,
   }),
 });
 
@@ -1005,6 +1025,7 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   renameCharacterEntry,
   renamePartyEntry,
   setEncumbranceEntry,
+  updatePartyEconomyEntry,
   equipEntry,
   unequipEntry,
   attuneEntry,

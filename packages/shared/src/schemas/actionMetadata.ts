@@ -82,6 +82,7 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   // Party-scope actions
   'rename-party': { broadcastOnApplied: true },
   'set-encumbrance': { broadcastOnApplied: true },
+  'update-party-economy': { broadcastOnApplied: true },
   'appoint-banker': { broadcastOnApplied: true },
   'revoke-banker': { broadcastOnApplied: true },
 

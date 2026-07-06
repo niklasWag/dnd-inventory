@@ -319,6 +319,18 @@ export type Action =
       };
     }
   | {
+      // R6.1 — party-wide economy controls (OUTLINE §3.5). Sets both
+      // `priceModifier` and `baseCurrency` in one dispatch (mirrors the
+      // `set-encumbrance` both-fields-one-row pattern so a preset switch
+      // is atomic). Reducer rejects no-op writes; DM-only guard.
+      type: 'update-party-economy';
+      payload: {
+        partyId: string;
+        priceModifier: number;
+        baseCurrency: CurrencyDenomination;
+      };
+    }
+  | {
       // R1.2: equip an item that lives in a character's Inventory stash.
       // Reducer rejects when the row is not in a `scope=character,
       // isCarried=true` stash, or when the stash's `ownerCharacterId`

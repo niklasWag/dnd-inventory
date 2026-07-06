@@ -333,6 +333,23 @@ const setEncumbranceAction = z.object({
   }),
 });
 
+/**
+ * R6.1 — `update-party-economy`. Sets `Party.priceModifier` +
+ * `Party.baseCurrency` in a single dispatch (matches the
+ * `set-encumbrance` "both-fields-in-one-row" pattern so a preset switch
+ * commits atomically). DM-only when memberCount ≥ 2 (§8.1); solo
+ * bypass via `checkGuard`. Reducer rejects no-op writes (both values
+ * unchanged).
+ */
+const updatePartyEconomyAction = z.object({
+  type: z.literal('update-party-economy'),
+  payload: z.object({
+    partyId: z.string().min(1),
+    priceModifier: z.number().positive(),
+    baseCurrency: currencyDenominationSchema,
+  }),
+});
+
 const equipAction = z.object({
   type: z.literal('equip'),
   payload: z.object({
@@ -666,6 +683,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   renameCharacterAction,
   renamePartyAction,
   setEncumbranceAction,
+  updatePartyEconomyAction,
   equipAction,
   unequipAction,
   attuneAction,

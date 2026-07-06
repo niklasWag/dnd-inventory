@@ -31,6 +31,16 @@ enum EncumbranceRule {
   variant
 }
 
+// R6.1 — party-wide currency-display ceiling (OUTLINE §3.5 baseCurrency).
+// Matches the Zod `currencyDenominationSchema` values 1:1.
+enum CurrencyDenom {
+  cp
+  sp
+  ep
+  gp
+  pp
+}
+
 enum ItemCategory {
   weapon
   armor
@@ -157,6 +167,13 @@ model Party {
   // whether the reducer rejects over-capacity acquires/transfers.
   encumbranceRule      EncumbranceRule
   enforceEncumbrance   Boolean
+  // R6.1 (2026-07-06) — per-party economy controls per OUTLINE §3.5.
+  // `priceModifier` scales PHB/DMG seed prices (homebrew skips per
+  // §3.5); `baseCurrency` is the display ceiling for `formatPrice`.
+  // Migration `20260706130000_r61_party_economy` adds columns with
+  // defaults (1.0 / gp) and a `priceModifier > 0` CHECK constraint.
+  priceModifier        Float           @default(1.0)
+  baseCurrency         CurrencyDenom   @default(gp)
   // R4.1 — `isSoloShortcut` column dropped (migration `r41_drop_party_isSoloShortcut`).
   // Hub UI derives the "solo" badge from `memberCount === 1` per OUTLINE §4 amendment 2026-06-24.
   createdAt            DateTime @default(now())

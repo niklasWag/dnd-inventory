@@ -135,6 +135,8 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return renameParty(state, action.payload);
     case 'set-encumbrance':
       return setEncumbrance(state, action.payload);
+    case 'update-party-economy':
+      return updatePartyEconomy(state, action.payload);
     case 'equip':
     case 'unequip':
       return equipOrUnequip(state, action.type, action.payload);
@@ -496,6 +498,8 @@ function createCharacter(
     bankerUserId: null,
     encumbranceRule: 'off',
     enforceEncumbrance: false,
+    priceModifier: 1.0,
+    baseCurrency: 'gp',
     createdAt: now,
   } as const;
   const dmMembership = {
@@ -2271,6 +2275,58 @@ function setEncumbrance(
           newRule: payload.rule,
           oldEnforce,
           newEnforce: payload.enforce,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * R6.1 — `update-party-economy` (OUTLINE §3.5). Sets
+ * `Party.priceModifier` and `Party.baseCurrency` in one dispatch (both
+ * are pieces of the same "campaign economy" decision — a preset switch
+ * atomically flips both, so recording them together mirrors the
+ * `set-encumbrance` "both-fields-one-row" precedent). Rejects a no-op
+ * write per the "every dispatch appends exactly one log entry"
+ * invariant.
+ */
+function updatePartyEconomy(
+  state: AppState,
+  payload: Extract<Action, { type: 'update-party-economy' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'update-party-economy');
+
+  if (payload.partyId !== s.party.id) {
+    throw new Error(
+      `update-party-economy: partyId ${payload.partyId} does not match state.party.id ${s.party.id}`,
+    );
+  }
+  const priceUnchanged = payload.priceModifier === s.party.priceModifier;
+  const currencyUnchanged = payload.baseCurrency === s.party.baseCurrency;
+  if (priceUnchanged && currencyUnchanged) {
+    throw new Error('update-party-economy: nothing changed');
+  }
+
+  const oldPriceModifier = s.party.priceModifier;
+  const oldBaseCurrency = s.party.baseCurrency;
+  return {
+    state: {
+      ...s,
+      party: {
+        ...s.party,
+        priceModifier: payload.priceModifier,
+        baseCurrency: payload.baseCurrency,
+      },
+    },
+    logEntries: [
+      {
+        type: 'update-party-economy',
+        payload: {
+          partyId: s.party.id,
+          oldPriceModifier,
+          newPriceModifier: payload.priceModifier,
+          oldBaseCurrency,
+          newBaseCurrency: payload.baseCurrency,
         },
       },
     ],

@@ -100,6 +100,8 @@ export async function applyDelta(
       return persistRenameParty(tx, action.payload);
     case 'set-encumbrance':
       return persistSetEncumbrance(tx, action.payload);
+    case 'update-party-economy':
+      return persistUpdatePartyEconomy(tx, action.payload);
     case 'equip':
       return persistEquip(tx, action.payload);
     case 'unequip':
@@ -781,6 +783,21 @@ async function persistSetEncumbrance(
   await tx.party.update({
     where: { id: payload.partyId },
     data: { encumbranceRule: payload.rule, enforceEncumbrance: payload.enforce },
+  });
+}
+
+/**
+ * R6.1 — `update-party-economy` persistor (OUTLINE §3.5). Writes both
+ * `priceModifier` and `baseCurrency` in one UPDATE — matches the
+ * atomic-preset-switch semantics of the reducer + guard.
+ */
+async function persistUpdatePartyEconomy(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'update-party-economy' }>['payload'],
+): Promise<void> {
+  await tx.party.update({
+    where: { id: payload.partyId },
+    data: { priceModifier: payload.priceModifier, baseCurrency: payload.baseCurrency },
   });
 }
 
