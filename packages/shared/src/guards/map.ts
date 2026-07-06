@@ -512,6 +512,8 @@ const setEncumbranceGuard: Guard<Extract<Action, { type: 'set-encumbrance' }>> =
   if (state === null)
     return { ok: false, code: 'state_not_initialized', message: 'set-encumbrance: no state.' };
   // OUTLINE §8.1 "Edit any character encumbrance rule + enforce flag" → DM-only.
+  // BUG-011 — encumbrance is party-wide since 2026-07-06; the payload is
+  // party-scoped, but the DM-only permission carries over unchanged.
   if (actor.role !== 'dm') {
     return {
       ok: false,

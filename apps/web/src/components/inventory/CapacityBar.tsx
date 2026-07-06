@@ -12,10 +12,14 @@ interface CapacityBarProps {
 /**
  * R1.1 — Encumbrance display for the Inventory tab (OUTLINE §3.3 + §3.6).
  *
- * Reads the character's `encumbranceRule` (`off | phb | variant`),
- * `enforceEncumbrance`, and STR, plus the `weight × quantity` sum across
- * rows in their Inventory stash. Returns `null` when `rule === 'off'`
- * (bar hidden entirely; matches the "off = no display" decision).
+ * Reads the party-wide `encumbranceRule` (`off | phb | variant`) and
+ * `enforceEncumbrance` from `AppState.party`, plus the character's STR
+ * and the `weight × quantity` sum across rows in their Inventory stash.
+ * Returns `null` when `rule === 'off'` (bar hidden entirely; matches
+ * the "off = no display" decision).
+ *
+ * BUG-011 (2026-07-06) — rule + enforce flag are party-wide (moved
+ * from Character to Party); STR + size stay per-character.
  *
  * The selector aggregates `currentWeight` to a primitive number so the
  * returned shape is all primitives — returning a fresh `rows: T[]`
@@ -65,8 +69,8 @@ export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | n
       return {
         str: character.abilityScores.STR,
         size: character.size,
-        rule: character.encumbranceRule,
-        enforce: character.enforceEncumbrance,
+        rule: s.appState.party.encumbranceRule,
+        enforce: s.appState.party.enforceEncumbrance,
         currentWeight,
       };
     }),

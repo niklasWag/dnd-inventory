@@ -21,6 +21,41 @@ Open + recently-closed bugs in the project. Each entry has a stable id (`BUG-<n>
 
 ## Open
 
+### BUG-011 — Encumbrance is per-character but is a party-wide house rule; DM's setting doesn't propagate
+
+- **Filed:** 2026-07-06
+- **Severity:** high (broken UX in multi-member parties — the DM cannot enforce a party-wide encumbrance rule; each player sees their own default)
+- **Status:** fix-pending
+- **Affected slice:** R1.1 amendment — inverts the "per-character encumbrance rule" design decision documented in `docs/OUTLINE.md §3.3` and `docs/roadmap.md` R1.1 Notes.
+
+**Symptom.** In a 2+-member party the DM opens the global `/settings` screen and flips Encumbrance from "off" to "PHB" (+ enforce). Only the DM's own CapacityBar reflects the change; every other player's CapacityBar keeps their own (default `off`) rule and their acquires/transfers are never rejected.
+
+**Reproduction.**
+1. Server mode, 2+-member party with a dedicated DM and at least one non-DM player.
+2. Sign in as DM. Open `/settings`. Flip Encumbrance to "PHB" + Enforce.
+3. Sign in as a non-DM player (or observe via a second browser). Go to their Inventory tab.
+4. Observe: their CapacityBar still shows "off" (bar hidden) and they can still acquire items past `STR × 15 lb` without rejection.
+
+**Root cause.** `encumbranceRule` and `enforceEncumbrance` live on `Character` in the Zod schema, Prisma schema, and reducer. `apps/web/src/screens/Settings.tsx:296-310` picks `getOwnCharacter(appState)` and edits ONLY that character's row. The `set-encumbrance` action is per-character (`payload.characterId`); dispatching it once flips exactly one character. The CapacityBar reads `character.encumbranceRule` per-character.
+
+Two problems compound:
+1. Wrong UI scope — the field renders on the global (account-scoped) `/settings` screen, but the underlying data is per-character-in-a-party.
+2. Wrong data scope — a party-wide house rule ("in this campaign we enforce carrying capacity") has no natural home; forcing it to per-character means each player's rule can drift.
+
+**Fix (user-approved 2026-07-06).** Move both fields from `Character` onto `Party`. Rework `set-encumbrance` to be party-scoped (`payload.partyId`). DM-only edit permission (already the case in `packages/shared/src/guards/map.ts:setEncumbranceGuard`). Move the UI from `/settings` into `/party/settings`; non-DMs see a read-only summary. Update `CapacityBar` to read the rule + enforce flag from `s.appState.party` while continuing to read STR + size from the per-character row.
+
+**Docs (source of truth) updated in the same slice.** `docs/OUTLINE.md §3.3, §3.6, §4`, `docs/MVP.md`, `docs/USER_FLOWS.md`, `docs/roadmap.md` R1.1 Notes, `CLAUDE.md` "Data model rules".
+
+**No legacy-data debt.** Old Dexie blobs + old Postgres rows fail the new Zod parse — RH5.2 corruption-recovery handles the local case; a fresh migration handles the server. Consistent with CLAUDE.md.
+
+**Related.**
+- `docs/OUTLINE.md §3.3 + §3.6` — encumbrance display + enforcement invariants (updated).
+- `docs/roadmap.md` R1.1 lines 760, 799, 802, 868, 1055 — Notes block updated with amendment.
+- `packages/shared/src/schemas/party.ts` — new fields.
+- `packages/rules/src/reducer/index.ts:setEncumbrance` + `checkHardMode` — re-pointed at `s.party`.
+
+---
+
 ### BUG-005 — Optimistic success toast flashes before the server rejection toast on guarded actions
 
 - **Filed:** 2026-07-01

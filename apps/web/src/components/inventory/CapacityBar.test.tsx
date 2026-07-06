@@ -93,10 +93,10 @@ describe('CapacityBar (R1.1)', () => {
 
   describe('phb rule', () => {
     it('renders "0 / 150 lb" for an empty inventory under STR 10', () => {
-      const { characterId } = bootstrapStr10();
+      const { characterId, partyId } = bootstrapStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'phb', enforce: false },
+        payload: { partyId, rule: 'phb', enforce: false },
       });
 
       renderBar(characterId);
@@ -108,10 +108,11 @@ describe('CapacityBar (R1.1)', () => {
     it('stays unencumbered at exactly STR × 15 = 150 lb (strict > boundary)', () => {
       loadInventoryWith(150, 1);
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       setStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'phb', enforce: false },
+        payload: { partyId, rule: 'phb', enforce: false },
       });
 
       renderBar(characterId);
@@ -123,10 +124,11 @@ describe('CapacityBar (R1.1)', () => {
     it('flips to over-capacity (heavily-encumbered) at 151 lb', () => {
       loadInventoryWith(151, 1);
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       setStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'phb', enforce: false },
+        payload: { partyId, rule: 'phb', enforce: false },
       });
 
       renderBar(characterId);
@@ -137,10 +139,11 @@ describe('CapacityBar (R1.1)', () => {
     it('never shows the intermediate "(encumbered)" label under phb', () => {
       loadInventoryWith(75, 1); // well within cap (75 ≤ 150)
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       setStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'phb', enforce: false },
+        payload: { partyId, rule: 'phb', enforce: false },
       });
 
       renderBar(characterId);
@@ -153,10 +156,11 @@ describe('CapacityBar (R1.1)', () => {
     it('stays unencumbered at exactly 5×STR (boundary; strict >)', () => {
       loadInventoryWith(50, 1);
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       setStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'variant', enforce: false },
+        payload: { partyId, rule: 'variant', enforce: false },
       });
 
       renderBar(characterId);
@@ -169,10 +173,11 @@ describe('CapacityBar (R1.1)', () => {
     it('flips to encumbered at 5×STR + 1', () => {
       loadInventoryWith(51, 1);
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       setStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'variant', enforce: false },
+        payload: { partyId, rule: 'variant', enforce: false },
       });
 
       renderBar(characterId);
@@ -183,10 +188,11 @@ describe('CapacityBar (R1.1)', () => {
     it('flips to heavily-encumbered at 10×STR + 1', () => {
       loadInventoryWith(101, 1);
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       setStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'variant', enforce: false },
+        payload: { partyId, rule: 'variant', enforce: false },
       });
 
       renderBar(characterId);
@@ -197,10 +203,10 @@ describe('CapacityBar (R1.1)', () => {
 
   describe('enforce flag', () => {
     it('shows " · enforced" badge when enforceEncumbrance is true', () => {
-      const { characterId } = bootstrapStr10();
+      const { characterId, partyId } = bootstrapStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'variant', enforce: true },
+        payload: { partyId, rule: 'variant', enforce: true },
       });
 
       renderBar(characterId);
@@ -209,10 +215,10 @@ describe('CapacityBar (R1.1)', () => {
     });
 
     it('omits the badge when enforce is false', () => {
-      const { characterId } = bootstrapStr10();
+      const { characterId, partyId } = bootstrapStr10();
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'variant', enforce: false },
+        payload: { partyId, rule: 'variant', enforce: false },
       });
 
       renderBar(characterId);
@@ -233,9 +239,10 @@ describe('CapacityBar (R1.1)', () => {
         str: 10,
       });
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'phb', enforce: false },
+        payload: { partyId, rule: 'phb', enforce: false },
       });
 
       renderBar(characterId);
@@ -254,9 +261,10 @@ describe('CapacityBar (R1.1)', () => {
         str: 10,
       });
       const characterId = useStore.getState().appState!.characters[0]!.id;
+      const partyId = useStore.getState().appState!.party.id;
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'variant', enforce: false },
+        payload: { partyId, rule: 'variant', enforce: false },
       });
 
       // Cap = STR×15×2 = 300; encumbered > 100; heavily > 200.

@@ -312,7 +312,7 @@ const renamePartyAction = z.object({
 const setEncumbranceAction = z.object({
   type: z.literal('set-encumbrance'),
   payload: z.object({
-    characterId: z.string().min(1),
+    partyId: z.string().min(1),
     rule: encumbranceRuleSchema,
     enforce: z.boolean(),
   }),

@@ -191,9 +191,13 @@ function requireState(state: AppState, action: string): NonNullable<AppState> {
  * BEFORE committing `nextItems`. Speculative: `nextItems` already reflects
  * the proposed mutation (so the §3.4 cascade has already cleared flags on
  * cross-stash moves). Reads the destination stash; if it's a character's
- * Inventory AND the character has `enforceEncumbrance: true` AND
+ * Inventory AND the party has `enforceEncumbrance: true` AND
  * `encumbranceRule !== 'off'`, computes the container-aware weight of the
  * post-write Inventory rows and rejects when over `heavyThreshold`.
+ *
+ * BUG-011 (2026-07-06) — the rule + enforce flag are party-wide now
+ * (`Party.encumbranceRule` / `Party.enforceEncumbrance`); the STR + size
+ * inputs still come from the destination Inventory's owning character.
  *
  * Composition with R1.3: passing `nextItems` (post-cascade) means a
  * leave-Inventory transfer ALWAYS lowers the source's weight (the row
@@ -213,14 +217,15 @@ function checkHardMode(
   nextItems: ReadonlyArray<ItemInstance>,
   destinationStashId: string,
 ): void {
+  if (!s.party.enforceEncumbrance) return;
+  if (s.party.encumbranceRule === 'off') return;
+
   const stash = s.stashes.find((st) => st.id === destinationStashId);
   if (stash === undefined) return;
   if (stash.scope !== 'character' || !stash.isCarried) return;
   if (stash.ownerCharacterId === null) return;
   const character = s.characters.find((c) => c.id === stash.ownerCharacterId);
   if (character === undefined) return;
-  if (!character.enforceEncumbrance) return;
-  if (character.encumbranceRule === 'off') return;
 
   const defsById = new Map(
     s.catalog.map(
@@ -238,7 +243,7 @@ function checkHardMode(
   const threshold = capacity.heavyThreshold(
     character.abilityScores.STR,
     character.size,
-    character.encumbranceRule,
+    s.party.encumbranceRule,
   );
   if (postWeight > threshold) {
     throw new Error(
@@ -350,8 +355,6 @@ function createCharacterInExistingParty(
     level: payload.level,
     abilityScores: { STR: payload.str },
     maxAttunement: 3,
-    encumbranceRule: 'off' as const,
-    enforceEncumbrance: false,
     inventoryStashId,
   };
 
@@ -491,6 +494,8 @@ function createCharacter(
     inviteCode: ctx.newInviteCode(),
     recoveredLootStashId,
     bankerUserId: null,
+    encumbranceRule: 'off',
+    enforceEncumbrance: false,
     createdAt: now,
   } as const;
   const dmMembership = {
@@ -607,8 +612,6 @@ function createCharacter(
         level: payload.level,
         abilityScores: { STR: payload.str },
         maxAttunement: 3,
-        encumbranceRule: 'off',
-        enforceEncumbrance: false,
         inventoryStashId,
       },
     ],
@@ -775,7 +778,8 @@ function acquire(
 
   // R1.4 — hard-mode threshold check on the post-write items. Guard
   // short-circuits when the destination isn't a character's Inventory
-  // OR the character has `enforceEncumbrance: false` / `rule === 'off'`.
+  // OR the party has `enforceEncumbrance: false` / `rule === 'off'`
+  // (party-wide since BUG-011).
   checkHardMode('acquire', s, nextItems, payload.stashId);
 
   return {
@@ -2186,28 +2190,33 @@ function renameParty(
 }
 
 // ---------------------------------------------------------------------------
-// set-encumbrance (R1.1)
+// set-encumbrance (R1.1; party-scoped since BUG-011)
 // ---------------------------------------------------------------------------
 
 /**
- * Flip a Character's encumbrance configuration:
+ * Flip the party-wide encumbrance configuration:
  *   - `rule`    — `off | phb | variant` — which math the CapacityBar
- *                 and (R1.2) the reducer cascade use. `phb` is the
- *                 standard PHB 2024 rule: at-or-under `STR × 15` is
- *                 fine; above is over-capacity. `variant` is the
- *                 sidebar rule on PHB p. 366 with bands at 5×/10×STR.
- *   - `enforce` — orthogonal boolean. R1.2 will reject `acquire` /
- *                 `transfer` that pushes weight over the rule's upper
- *                 band only when this flag is `true`. R1.1 stores the
- *                 flag; behavior is display-only.
+ *                 and the reducer cascade use. `phb` is the standard
+ *                 PHB 2024 rule: at-or-under `STR × 15` is fine; above
+ *                 is over-capacity. `variant` is the sidebar rule on
+ *                 PHB p. 366 with bands at 5×/10×STR.
+ *   - `enforce` — orthogonal boolean. When `true`, the reducer rejects
+ *                 `acquire` / `transfer` that pushes any character's
+ *                 Inventory weight over the rule's upper band.
  *
- * Guards: unknown characterId rejects; no-op rejects only when BOTH
- * fields match the current row (a caller dispatching the current rule
- * with a new enforce value is a real change).
+ * BUG-011 (2026-07-06) — party-scoped since encumbrance is a party-wide
+ * house rule, not per-character. Payload carries `partyId` for symmetry
+ * with `rename-party`. The reducer verifies the payload's `partyId`
+ * matches `state.party.id`; the no-op check compares against
+ * `state.party.encumbranceRule` / `state.party.enforceEncumbrance`.
+ *
+ * DM-only when the party has 2+ members (see
+ * `packages/shared/src/guards/map.ts` `setEncumbranceGuard`).
  *
  * Per the CLAUDE.md "every mutation logs once" invariant, the single
- * log entry captures `{ oldRule, newRule, oldEnforce, newEnforce }`
- * so the history view can render either / both transitions.
+ * log entry captures `{ partyId, oldRule, newRule, oldEnforce,
+ * newEnforce }` so the history view can render either / both
+ * transitions.
  */
 function setEncumbrance(
   state: AppState,
@@ -2215,32 +2224,33 @@ function setEncumbrance(
 ): ReducerResult {
   const s = requireState(state, 'set-encumbrance');
 
-  const character = s.characters.find((c) => c.id === payload.characterId);
-  if (character === undefined) {
-    throw new Error(`set-encumbrance: unknown characterId ${payload.characterId}`);
+  if (payload.partyId !== s.party.id) {
+    throw new Error(
+      `set-encumbrance: partyId ${payload.partyId} does not match state.party.id ${s.party.id}`,
+    );
   }
-  const ruleUnchanged = payload.rule === character.encumbranceRule;
-  const enforceUnchanged = payload.enforce === character.enforceEncumbrance;
+  const ruleUnchanged = payload.rule === s.party.encumbranceRule;
+  const enforceUnchanged = payload.enforce === s.party.enforceEncumbrance;
   if (ruleUnchanged && enforceUnchanged) {
     throw new Error('set-encumbrance: nothing changed');
   }
 
-  const oldRule = character.encumbranceRule;
-  const oldEnforce = character.enforceEncumbrance;
+  const oldRule = s.party.encumbranceRule;
+  const oldEnforce = s.party.enforceEncumbrance;
   return {
     state: {
       ...s,
-      characters: s.characters.map((c) =>
-        c.id === character.id
-          ? { ...c, encumbranceRule: payload.rule, enforceEncumbrance: payload.enforce }
-          : c,
-      ),
+      party: {
+        ...s.party,
+        encumbranceRule: payload.rule,
+        enforceEncumbrance: payload.enforce,
+      },
     },
     logEntries: [
       {
         type: 'set-encumbrance',
         payload: {
-          characterId: character.id,
+          partyId: s.party.id,
           oldRule,
           newRule: payload.rule,
           oldEnforce,
@@ -2968,9 +2978,9 @@ function identifyAction(
 
 /**
  * Editable Character-field allowlist per OUTLINE §4 line 320.
- * `encumbranceRule` and `enforceEncumbrance` have their own dedicated
- * `set-encumbrance` TxType (single-field actions stay single-purpose
- * per the R1.1 design note); `size` is creation-only in v1; `name` has
+ * `encumbranceRule` and `enforceEncumbrance` live on `Party` since
+ * BUG-011 (2026-07-06); the party-scoped `set-encumbrance` TxType
+ * handles them. `size` is creation-only in v1; `name` has
  * its own `rename-character` TxType.
  */
 const EDIT_CHARACTER_FIELDS = ['species', 'class', 'level', 'str', 'maxAttunement'] as const;

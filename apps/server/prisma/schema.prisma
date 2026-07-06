@@ -152,6 +152,11 @@ model Party {
   // `bankerUserId != ownerUserId` (DM can't self-appoint). See
   // prisma/migrations/20260703131254_rh25_invariants/migration.sql.
   bankerUserId         String?
+  // BUG-011 (2026-07-06) — party-wide encumbrance house rule. Moved
+  // from Character. `off | phb | variant`; `enforceEncumbrance` toggles
+  // whether the reducer rejects over-capacity acquires/transfers.
+  encumbranceRule      EncumbranceRule
+  enforceEncumbrance   Boolean
   // R4.1 — `isSoloShortcut` column dropped (migration `r41_drop_party_isSoloShortcut`).
   // Hub UI derives the "solo" badge from `memberCount === 1` per OUTLINE §4 amendment 2026-06-24.
   createdAt            DateTime @default(now())
@@ -214,8 +219,9 @@ model Character {
   strScore           Int
   // CHECK: >= 0 in migration tail.
   maxAttunement      Int
-  encumbranceRule    EncumbranceRule
-  enforceEncumbrance Boolean
+  // BUG-011 (2026-07-06) — encumbranceRule + enforceEncumbrance moved
+  // to Party (party-wide house rule). Columns dropped in migration
+  // `20260706000000_bug011_encumbrance_to_party`.
   // FK to Stash; made DEFERRABLE INITIALLY DEFERRED in migration tail to
   // break the Character ↔ Stash cycle inside a single transaction. Also
   // hand-tailed to use the default `NO ACTION` on delete instead of

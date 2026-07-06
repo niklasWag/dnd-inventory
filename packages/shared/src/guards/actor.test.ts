@@ -117,6 +117,8 @@ function makeState(): AppState {
       inviteCode: 'INV-ABCDEF',
       recoveredLootStashId: 'rl',
       bankerUserId: null,
+      encumbranceRule: 'off',
+      enforceEncumbrance: false,
       createdAt: BASE_TS,
     },
     memberships: [
@@ -157,8 +159,6 @@ function makeState(): AppState {
         level: 1,
         abilityScores: { STR: 16 },
         maxAttunement: 3,
-        encumbranceRule: 'off',
-        enforceEncumbrance: false,
         inventoryStashId: 'inv-a',
       },
       {
@@ -172,8 +172,6 @@ function makeState(): AppState {
         level: 1,
         abilityScores: { STR: 10 },
         maxAttunement: 3,
-        encumbranceRule: 'off',
-        enforceEncumbrance: false,
         inventoryStashId: 'inv-b',
       },
     ],

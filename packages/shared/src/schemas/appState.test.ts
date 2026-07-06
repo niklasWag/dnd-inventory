@@ -32,6 +32,8 @@ describe('appStateSchema round-trip', () => {
       inviteCode: 'INV-ABCDEF',
       recoveredLootStashId: 'stash-loot',
       bankerUserId: null,
+      encumbranceRule: 'off',
+      enforceEncumbrance: false,
       createdAt: '2026-06-23T10:00:00.000Z',
     },
     memberships: [
@@ -64,8 +66,6 @@ describe('appStateSchema round-trip', () => {
         level: 1,
         abilityScores: { STR: 16 },
         maxAttunement: 3,
-        encumbranceRule: 'off',
-        enforceEncumbrance: false,
         inventoryStashId: 'stash-inv',
       },
     ],
@@ -236,10 +236,9 @@ describe('appStateSchema round-trip', () => {
         },
       },
       {
-        // R1.1: set-encumbrance round-trip. Per-character flip of the
-        // rule + the orthogonal `enforce` boolean. Mirrors the rename
-        // pair: { characterId, oldRule, newRule, oldEnforce, newEnforce }
-        // recorded.
+        // BUG-011 (2026-07-06): set-encumbrance round-trip. Party-wide
+        // flip of the rule + the orthogonal `enforce` boolean. Payload
+        // is `{ partyId, oldRule, newRule, oldEnforce, newEnforce }`.
         id: 'log-9',
         partyId: 'party-1',
         sessionId: null,
@@ -248,7 +247,7 @@ describe('appStateSchema round-trip', () => {
         actorRole: 'player',
         type: 'set-encumbrance',
         payload: {
-          characterId: 'char-1',
+          partyId: 'party-1',
           oldRule: 'off',
           newRule: 'variant',
           oldEnforce: false,

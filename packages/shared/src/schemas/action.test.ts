@@ -114,7 +114,7 @@ const samples: Action[] = [
   { type: 'delete-homebrew', payload: { definitionId: 'd' } },
   { type: 'rename-character', payload: { characterId: 'c', newName: 'Z' } },
   { type: 'rename-party', payload: { partyId: 'p', newName: 'Z' } },
-  { type: 'set-encumbrance', payload: { characterId: 'c', rule: 'phb', enforce: true } },
+  { type: 'set-encumbrance', payload: { partyId: 'p', rule: 'phb', enforce: true } },
   { type: 'equip', payload: { itemInstanceId: 'i', characterId: 'c' } },
   { type: 'unequip', payload: { itemInstanceId: 'i', characterId: 'c' } },
   { type: 'attune', payload: { itemInstanceId: 'i', characterId: 'c' } },

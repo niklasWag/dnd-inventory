@@ -56,8 +56,6 @@ function makeChar(id: string, name: string): Character {
     level: 1,
     abilityScores: { STR: 10 },
     maxAttunement: 3,
-    encumbranceRule: 'off',
-    enforceEncumbrance: false,
     inventoryStashId: 's',
   };
 }

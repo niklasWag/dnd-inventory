@@ -393,8 +393,9 @@ Manual purchase flow (DM resolves each transaction):
 [DM Dashboard] → (click character name) → [Character Detail — DM view]
   Can edit (via explicit logged actions):
     name, species, class, level, STR → TransactionLog: edit-character
-    encumbrance rule (off/phb/variant) + enforce flag → TransactionLog: set-encumbrance
     max attunement slots → TransactionLog: edit-character
+    (BUG-011 2026-07-06) encumbrance rule + enforce flag moved to Party
+    scope; edit under /party/settings, TransactionLog: set-encumbrance
 
   Can force actions on any item in character's Inventory:
     identify, recharge, force-use-charge (Inventory items only), edit notes

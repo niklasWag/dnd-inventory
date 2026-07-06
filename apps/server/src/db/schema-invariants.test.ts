@@ -288,8 +288,9 @@ describe('schema invariants — RH2.5 constraint promotions', () => {
         userId,
       );
       await tx.$executeRawUnsafe(
-        `INSERT INTO "Party" ("id", "name", "ownerUserId", "inviteCode", "recoveredLootStashId")
-         VALUES ($1, 'Test Party', $2, $3, $4)`,
+        `INSERT INTO "Party" ("id", "name", "ownerUserId", "inviteCode", "recoveredLootStashId",
+           "encumbranceRule", "enforceEncumbrance")
+         VALUES ($1, 'Test Party', $2, $3, $4, 'off'::"EncumbranceRule", false)`,
         partyId,
         userId,
         `INV-${partyId}`,
@@ -319,10 +320,10 @@ describe('schema invariants — RH2.5 constraint promotions', () => {
       // order within the same transaction (see the DEFERRABLE test above).
       await tx.$executeRawUnsafe(
         `INSERT INTO "Character" ("id", "partyId", "ownerUserId", "name", "species", "size",
-           "class", "level", "strScore", "maxAttunement", "encumbranceRule", "enforceEncumbrance",
+           "class", "level", "strScore", "maxAttunement",
            "inventoryStashId")
          VALUES ($1, $2, $3, 'Tester', 'Human', 'medium'::"CreatureSize", 'Fighter', 1, 10, 3,
-                 'off'::"EncumbranceRule", false, $4)`,
+                 $4)`,
         characterId,
         partyId,
         userId,

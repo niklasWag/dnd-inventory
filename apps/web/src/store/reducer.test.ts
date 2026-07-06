@@ -3534,93 +3534,87 @@ describe('reducer: rename-party (M7)', () => {
   });
 });
 
-describe('reducer: set-encumbrance (R1.1)', () => {
+describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
   /**
-   * R1.1 introduces two orthogonal fields:
+   * BUG-011 (2026-07-06) — encumbrance moved from per-character to
+   * party-wide. Two orthogonal fields live on `state.party`:
    *   - `encumbranceRule: 'off' | 'phb' | 'variant'`
    *   - `enforceEncumbrance: boolean`
-   * One reducer action covers both. Guards mirror `rename-character`:
-   * unknown characterId rejects; no-op rejects only when BOTH fields
-   * match the current row.
+   * One reducer action covers both. Guards: no-op rejects only when
+   * BOTH fields match the current `state.party` values; mismatched
+   * `payload.partyId` rejects.
    */
-  it('flips rule from off → variant; STR + level + name stable', () => {
-    const { characterId } = localBootstrap();
-    const before = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+  it('flips rule from off → variant; party name + bankerUserId stable', () => {
+    const { partyId } = localBootstrap();
+    const before = useStore.getState().appState!.party;
     expect(before.encumbranceRule).toBe('off');
     expect(before.enforceEncumbrance).toBe(false);
 
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: false },
+      payload: { partyId, rule: 'variant', enforce: false },
     });
 
-    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    const after = useStore.getState().appState!.party;
     expect(after.encumbranceRule).toBe('variant');
     expect(after.enforceEncumbrance).toBe(false);
     expect(after.id).toBe(before.id);
     expect(after.name).toBe(before.name);
-    expect(after.level).toBe(before.level);
-    expect(after.abilityScores).toEqual(before.abilityScores);
-    expect(after.inventoryStashId).toBe(before.inventoryStashId);
+    expect(after.bankerUserId).toBe(before.bankerUserId);
+    expect(after.inviteCode).toBe(before.inviteCode);
   });
 
   it('flips through off → phb → variant → off', () => {
-    const { characterId } = localBootstrap();
+    const { partyId } = localBootstrap();
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'phb', enforce: false },
+      payload: { partyId, rule: 'phb', enforce: false },
     });
-    expect(
-      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
-    ).toBe('phb');
+    expect(useStore.getState().appState!.party.encumbranceRule).toBe('phb');
 
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: false },
+      payload: { partyId, rule: 'variant', enforce: false },
     });
-    expect(
-      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
-    ).toBe('variant');
+    expect(useStore.getState().appState!.party.encumbranceRule).toBe('variant');
 
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'off', enforce: false },
+      payload: { partyId, rule: 'off', enforce: false },
     });
-    expect(
-      useStore.getState().appState!.characters.find((c) => c.id === characterId)!.encumbranceRule,
-    ).toBe('off');
+    expect(useStore.getState().appState!.party.encumbranceRule).toBe('off');
   });
 
   it('flips enforce independently of rule', () => {
-    const { characterId } = localBootstrap();
+    const { partyId } = localBootstrap();
     // First set the rule so enforce flipping makes sense.
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: false },
+      payload: { partyId, rule: 'variant', enforce: false },
     });
     // Now flip ONLY enforce.
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: true },
+      payload: { partyId, rule: 'variant', enforce: true },
     });
-    const after = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
+    const after = useStore.getState().appState!.party;
     expect(after.encumbranceRule).toBe('variant');
     expect(after.enforceEncumbrance).toBe(true);
   });
 
   it('logs a set-encumbrance entry with old/new for both fields', () => {
-    const { characterId } = localBootstrap();
+    const { partyId } = localBootstrap();
 
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: true },
+      payload: { partyId, rule: 'variant', enforce: true },
     });
 
     const last = useStore.getState().log.at(-1);
     expect(last?.type).toBe('set-encumbrance');
     if (last?.type === 'set-encumbrance') {
       expect(last.payload).toEqual({
-        characterId,
+        partyId,
         oldRule: 'off',
         newRule: 'variant',
         oldEnforce: false,
@@ -3631,63 +3625,63 @@ describe('reducer: set-encumbrance (R1.1)', () => {
   });
 
   it('throws on no-op (rule AND enforce both unchanged)', () => {
-    const { characterId } = localBootstrap();
+    const { partyId } = localBootstrap();
     expect(() =>
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'off', enforce: false },
+        payload: { partyId, rule: 'off', enforce: false },
       }),
     ).toThrow(/nothing changed/);
   });
 
   it('does NOT throw when only enforce changes (rule stays)', () => {
-    const { characterId } = localBootstrap();
+    const { partyId } = localBootstrap();
     // off → variant first (so the no-op flip below isn't bookending an off-with-enforce state which is meaningless).
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: false },
+      payload: { partyId, rule: 'variant', enforce: false },
     });
     expect(() =>
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: 'variant', enforce: true },
+        payload: { partyId, rule: 'variant', enforce: true },
       }),
     ).not.toThrow();
   });
 
-  it('throws on unknown characterId', () => {
+  it('throws on mismatched partyId', () => {
     localBootstrap();
     expect(() =>
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId: 'does-not-exist', rule: 'variant', enforce: false },
+        payload: { partyId: 'does-not-match', rule: 'variant', enforce: false },
       }),
-    ).toThrow(/unknown characterId/);
+    ).toThrow(/does not match state\.party\.id/);
   });
 
   it('throws when state is null', () => {
     expect(() =>
       useStore.getState().dispatch({
         type: 'set-encumbrance',
-        payload: { characterId: 'foo', rule: 'variant', enforce: false },
+        payload: { partyId: 'foo', rule: 'variant', enforce: false },
       }),
     ).toThrow(/no AppState/);
   });
 
   it('produces AppState that still validates against the shared schema', () => {
-    const { characterId } = localBootstrap();
+    const { partyId } = localBootstrap();
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: true },
+      payload: { partyId, rule: 'variant', enforce: true },
     });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
   });
 
   it('log entry parses against transactionLogEntrySchema', () => {
-    const { characterId } = localBootstrap();
+    const { partyId } = localBootstrap();
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'phb', enforce: false },
+      payload: { partyId, rule: 'phb', enforce: false },
     });
     const entry = useStore.getState().log.at(-1)!;
     expect(() => transactionLogEntrySchema.parse(entry)).not.toThrow();
@@ -4763,17 +4757,17 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
    * via `(definitionId, notes ?? "")` per the M2 acquire contract.
    */
 
-  function enableEnforce(characterId: string, rule: 'phb' | 'variant'): void {
+  function enableEnforce(partyId: string, rule: 'phb' | 'variant'): void {
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule, enforce: true },
+      payload: { partyId, rule, enforce: true },
     });
   }
 
   it('rejects acquire when post-write weight exceeds variant 10×STR×size (enforced)', () => {
-    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { inventoryStashId, catalog, partyId } = localBootstrap();
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
-    enableEnforce(characterId, 'variant');
+    enableEnforce(partyId, 'variant');
 
     // Pre-load to 160 lb (16 × 10) — exactly at cap, no reject.
     useStore.getState().dispatch({
@@ -4810,9 +4804,9 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
   });
 
   it('rejects transfer-into-Inventory when post-write weight exceeds phb STR×15×size (enforced)', () => {
-    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const { inventoryStashId, partyStashId, catalog, partyId } = localBootstrap();
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
-    enableEnforce(characterId, 'phb');
+    enableEnforce(partyId, 'phb');
 
     // Stage 240 lb worth (24 × 10) in the Party Stash; Inventory empty.
     useStore.getState().dispatch({
@@ -4866,7 +4860,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
   });
 
   it('allows acquire when rule = off even if enforce flag is true (off short-circuits)', () => {
-    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { inventoryStashId, catalog } = localBootstrap();
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
     // Hand-write the enforce flag while leaving rule = off (the reducer
     // wouldn't accept this via `set-encumbrance` no-op check, but the
@@ -4877,9 +4871,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
         ...s,
         appState: {
           ...s.appState,
-          characters: s.appState.characters.map((c) =>
-            c.id === characterId ? { ...c, enforceEncumbrance: true } : c,
-          ),
+          party: { ...s.appState.party, enforceEncumbrance: true },
         },
       };
     });
@@ -4900,12 +4892,12 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
   });
 
   it('allows acquire over threshold when enforceEncumbrance = false (display-only path)', () => {
-    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { inventoryStashId, catalog, partyId } = localBootstrap();
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
     // Rule on, enforce off — CapacityBar will paint red but reducer allows.
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule: 'variant', enforce: false },
+      payload: { partyId, rule: 'variant', enforce: false },
     });
 
     expect(() => {
@@ -4926,7 +4918,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
 
   it('respects size multiplier (Small character: phb ceiling halves to STR × 15 × 0.5)', () => {
     // Small + STR 10 → phb ceiling = 10 × 15 × 0.5 = 75 lb.
-    const { characterId, inventoryStashId, catalog } = bootstrap({
+    const { inventoryStashId, catalog, partyId } = bootstrap({
       name: 'Pip',
       species: 'Halfling',
       size: 'small',
@@ -4935,7 +4927,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
       str: 10,
     });
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
-    enableEnforce(characterId, 'phb');
+    enableEnforce(partyId, 'phb');
 
     // 7 greatclubs = 70 lb → under, OK.
     useStore.getState().dispatch({
@@ -4967,7 +4959,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     // The §3.4 cascade test composes here: even if the SOURCE inventory
     // is over-cap and enforce is on, moving items OUT can only lower
     // the inventory weight — must succeed.
-    const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
+    const { inventoryStashId, partyStashId, catalog, partyId } = localBootstrap();
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
     // First load Inventory to 230 lb with enforce OFF (so the load itself
     // doesn't trip the guard), then flip enforce on.
@@ -4981,7 +4973,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
         ...acquireIds(),
       },
     });
-    enableEnforce(characterId, 'phb'); // ceiling = 240 — fine, but a future
+    enableEnforce(partyId, 'phb'); // ceiling = 240 — fine, but a future
     // hypothetical "edit-character to lower STR" path could leave the row
     // over-cap; this test pins the leave-Inventory direction as always-safe.
 
@@ -5037,10 +5029,10 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     return fresh!.id;
   }
 
-  function enableEnforce(characterId: string, rule: 'phb' | 'variant'): void {
+  function enableEnforce(partyId: string, rule: 'phb' | 'variant'): void {
     useStore.getState().dispatch({
       type: 'set-encumbrance',
-      payload: { characterId, rule, enforce: true },
+      payload: { partyId, rule, enforce: true },
     });
   }
 
@@ -5192,7 +5184,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
   });
 
   it('hard-mode allows packing into a flatWeight container at-cap (effective weight drops)', () => {
-    const { characterId, inventoryStashId, catalog } = localBootstrap();
+    const { inventoryStashId, catalog, partyId } = localBootstrap();
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
     // Create a homebrew "Big Sack" container, then patch its `flatWeight`
     // via setState (the M6 homebrew payload doesn't expose flatWeight in
@@ -5231,7 +5223,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         ...acquireIds(),
       },
     });
-    enableEnforce(characterId, 'phb'); // ceiling = 240 lb
+    enableEnforce(partyId, 'phb'); // ceiling = 240 lb
     const greatclubRow = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === greatclub.id)!;
@@ -7185,8 +7177,6 @@ describe('reducer: kick-player (R4.1.d)', () => {
               level: 1,
               abilityScores: { STR: 10 },
               maxAttunement: 3,
-              encumbranceRule: 'off',
-              enforceEncumbrance: false,
               inventoryStashId: kickedInventoryStashId,
             },
           ],
@@ -7500,8 +7490,11 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     expect(ch.level).toBe(2);
     expect(ch.abilityScores.STR).toBe(12);
     expect(ch.maxAttunement).toBe(3);
-    expect(ch.encumbranceRule).toBe('off');
-    expect(ch.enforceEncumbrance).toBe(false);
+    // BUG-011 — encumbrance is party-scoped; new characters no longer
+    // carry these fields. Party defaults are asserted on the create-
+    // party path elsewhere.
+    expect(s.party.encumbranceRule).toBe('off');
+    expect(s.party.enforceEncumbrance).toBe(false);
 
     // New Inventory stash carried, owned by new character
     const inv = s.stashes.find((st) => st.id === ch.inventoryStashId)!;
@@ -8023,8 +8016,6 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
               level: 1,
               abilityScores: { STR: 10 },
               maxAttunement: 3,
-              encumbranceRule: 'off',
-              enforceEncumbrance: false,
               inventoryStashId: bankerInvStashId,
             },
           ],
@@ -8518,8 +8509,6 @@ describe('reducer: split-evenly (R4.2.d)', () => {
               level: 1,
               abilityScores: { STR: 10 },
               maxAttunement: 3,
-              encumbranceRule: 'off',
-              enforceEncumbrance: false,
               inventoryStashId: bankerInventoryStashId,
             },
           ],
@@ -8649,8 +8638,6 @@ describe('reducer: split-evenly (R4.2.d)', () => {
               level: 1,
               abilityScores: { STR: 10 },
               maxAttunement: 3,
-              encumbranceRule: 'off',
-              enforceEncumbrance: false,
               inventoryStashId: 'inv-c',
             },
           ],

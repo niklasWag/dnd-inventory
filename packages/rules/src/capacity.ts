@@ -18,8 +18,9 @@
  * rules) but we ship 0.5 for forward-compat with R6 DM-NPC tooling.
  *
  * Enforcement (whether a move OVER the upper band is reducer-rejected)
- * is the orthogonal `enforceEncumbrance` boolean on `Character` — R1.2
- * will wire that. R1.1's `encumbranceState` is pure display.
+ * is the orthogonal `enforceEncumbrance` boolean on `Party` (BUG-011,
+ * 2026-07-06 — was on `Character` in R1.1). R1.4 wires the rejection;
+ * `encumbranceState` remains pure display.
  *
  * The `off` rule short-circuits to `'unencumbered'` so callers don't
  * have to special-case a null return; the `CapacityBar` separately
@@ -86,10 +87,10 @@ export function encumbranceState(
 
 /**
  * The numeric ceiling above which `encumbranceState` returns
- * `heavily-encumbered` for the given rule + size. R1.2 will use this
- * as the reject threshold for `acquire` / `transfer` when
- * `Character.enforceEncumbrance === true`. R1.1's CapacityBar uses it
- * to compute the bar fill percentage.
+ * `heavily-encumbered` for the given rule + size. R1.4 uses this as
+ * the reject threshold for `acquire` / `transfer` when
+ * `Party.enforceEncumbrance === true` (party-wide since BUG-011).
+ * R1.1's CapacityBar uses it to compute the bar fill percentage.
  *
  * - phb     → `STR × 15 × size` (cap)
  * - variant → `STR × 10 × size`

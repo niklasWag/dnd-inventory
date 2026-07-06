@@ -97,6 +97,8 @@ async function applyRestore(prisma: PrismaClient, envelope: ExportEnvelope): Pro
           inviteCode: appState.party.inviteCode,
           recoveredLootStashId: appState.party.recoveredLootStashId,
           bankerUserId: appState.party.bankerUserId,
+          encumbranceRule: appState.party.encumbranceRule,
+          enforceEncumbrance: appState.party.enforceEncumbrance,
           createdAt: new Date(appState.party.createdAt),
         },
       });
@@ -139,8 +141,6 @@ async function applyRestore(prisma: PrismaClient, envelope: ExportEnvelope): Pro
             level: ch.level,
             strScore: ch.abilityScores.STR,
             maxAttunement: ch.maxAttunement,
-            encumbranceRule: ch.encumbranceRule,
-            enforceEncumbrance: ch.enforceEncumbrance,
             inventoryStashId: ch.inventoryStashId,
           },
         });

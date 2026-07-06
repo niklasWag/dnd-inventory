@@ -752,12 +752,16 @@ Character entity (inventory-only data); equip; encumbrance (off/phb/variant + en
 #### R1.1 — Encumbrance display (rule + size + enforce flag)
 
 **Schema activations (§4)**
-- [x] `Character.encumbranceRule` accepts `"phb" | "variant"` (in addition to `"off"`) — **R1.1** (renamed mid-slice from `advisory|hard`; hard rename, no legacy aliases)
-- [x] `Character.enforceEncumbrance: boolean` added as orthogonal flag — **R1.1**
+- [x] `Character.encumbranceRule` accepts `"phb" | "variant"` (in addition to `"off"`) — **R1.1** (renamed mid-slice from `advisory|hard`; hard rename, no legacy aliases). **BUG-011 (2026-07-06):** moved off Character onto Party — see amendment below.
+- [x] `Character.enforceEncumbrance: boolean` added as orthogonal flag — **R1.1**. **BUG-011 (2026-07-06):** moved off Character onto Party.
 - [x] `Character.size: CreatureSize` added (`tiny|small|medium|large|huge|gargantuan`); set at create, not editable post-creation in MVP — **R1.1**
 
 **Reducer actions (§4 TransactionLog union)**
-- [x] `set-encumbrance` action + payload (`{ characterId, oldRule, newRule, oldEnforce, newEnforce }`) — **R1.1** (single entry covers both fields; player-role in MVP, R4 widens to DM-only)
+- [x] `set-encumbrance` action + payload — **R1.1**. **BUG-011 (2026-07-06) amendment:** payload is `{ partyId, oldRule, newRule, oldEnforce, newEnforce }` (party-scoped since the encumbrance rule is a party-wide house rule, not per-character). Still one entry covers both fields; DM-only edit permission when memberCount ≥ 2.
+
+> **Note — BUG-011 (2026-07-06) — encumbrance is party-wide, not per-character.**
+> The original R1.1 design placed `encumbranceRule` + `enforceEncumbrance` on `Character` on the theory that different characters in the same party might want different rules. In practice the setting was surfaced on the global `/settings` screen (edited via `getOwnCharacter`), which meant a DM's flip only ever mutated their own character — no propagation to other players. User confirmed the intent is "on for the whole party or off for the whole party, no individual skipping". Fields moved to `Party`; `set-encumbrance` payload re-scoped to `partyId`; UI moved to `/party/settings` (DM-only editor, read-only summary for other members). No legacy-data debt (WIP project). See `docs/BUGS.md` BUG-011 and the OUTLINE §4 `Party` amendment.
+
 
 **Rules — activate stubs (§6)**
 - [x] `packages/rules/capacity.ts` implemented — **R1.1**: `carryCapacity(str, size) = str × 15 × sizeMultiplier(size)`; `encumbranceState(weight, str, size, rule)` branches on rule (`phb` → unencumbered/heavily only; `variant` → strict `>` thresholds at 5×STR and 10×STR); `heavyThreshold(str, size, rule)` exposes the upper ceiling; `sizeMultiplier(size)` is `0.5 / 0.5 / 1 / 2 / 4 / 8`

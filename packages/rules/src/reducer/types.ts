@@ -305,13 +305,14 @@ export type Action =
       //   - `enforce` — orthogonal boolean — does Hard-mode rejection
       //                 apply? R1.1 stores the flag; R1.2 wires the
       //                 actual `acquire` / `transfer` rejection.
-      // Reducer captures pre-mutation `oldRule` + `oldEnforce` from the
-      // row and rejects no-op (both unchanged) dispatches. UI may set
-      // both fields at once or just one; if a caller only wants to
-      // touch one, they read the current value and resend it.
+      // Reducer captures pre-mutation `oldRule` + `oldEnforce` from
+      // `state.party` and rejects no-op (both unchanged) dispatches.
+      // BUG-011 (2026-07-06) — party-scoped (was per-character). UI
+      // may set both fields at once or just one; if a caller only
+      // wants to touch one, they read the current value and resend it.
       type: 'set-encumbrance';
       payload: {
-        characterId: string;
+        partyId: string;
         rule: EncumbranceRule;
         enforce: boolean;
       };

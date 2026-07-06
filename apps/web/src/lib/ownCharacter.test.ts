@@ -30,6 +30,8 @@ function makeAppState(opts: {
       inviteCode: 'INV-XXXXXX',
       recoveredLootStashId: 'rl',
       bankerUserId: null,
+      encumbranceRule: 'off',
+      enforceEncumbrance: false,
       createdAt: '2026-01-01T00:00:00.000Z',
     },
     memberships: memberships.map((m) => ({
@@ -52,7 +54,6 @@ function makeAppState(opts: {
       abilityScores: { STR: 10 },
       maxAttunement: 3,
       encumbranceRule: 'off' as const,
-      enforceEncumbrance: false,
       inventoryStashId: `inv-${id}`,
     })),
     gameSessions: [],

@@ -388,7 +388,6 @@ export function matchesCharacter(
     case 'use-charge':
     case 'recharge':
     case 'rename-character':
-    case 'set-encumbrance':
     case 'edit-character':
       return entry.payload.characterId === characterId;
     case 'create-character':

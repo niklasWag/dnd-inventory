@@ -7,32 +7,35 @@ import { useStore } from '@/store';
 import type { EncumbranceRule } from '@app/shared';
 
 interface EncumbranceRuleFieldProps {
-  characterId: string;
+  partyId: string;
   currentRule: EncumbranceRule;
   currentEnforce: boolean;
 }
 
 /**
- * R1.1 inline form for a Character's encumbrance configuration
- * (Settings §17 screen). Two orthogonal controls in one form:
+ * R1.1 inline form for the party-wide encumbrance configuration
+ * (§17 Party Settings). Two orthogonal controls in one form:
  *
  *   - `<select>` — the rule (off | phb | variant). Native element rather
  *     than the shadcn Radix Select because three options fit cleanly in
  *     the OS dropdown and Radix Select uses a portal that's awkward to
  *     drive under jsdom.
  *   - `<input type="checkbox">` — `enforceEncumbrance`. Hidden when
- *     `rule === 'off'` (nothing to enforce). R1.1 stores the flag and
- *     surfaces it in the CapacityBar; R1.4 wires the actual reducer
- *     rejection on `acquire` / `transfer`.
+ *     `rule === 'off'` (nothing to enforce). Wired to the reducer
+ *     rejection on `acquire` / `transfer` (R1.4).
  *
  * Save dispatches a single `set-encumbrance` covering both fields. The
  * button is disabled when the draft matches the current row on BOTH
  * fields. `useEffect` re-seeds the draft when either prop changes (e.g.
- * after a successful round-trip back through the store, or after an
- * Import).
+ * after a successful round-trip back through the store, after an
+ * Import, or after a broadcast from another party member).
+ *
+ * BUG-011 (2026-07-06) — party-scoped (was per-character). Payload
+ * carries `partyId` and mutates `state.party.encumbranceRule` /
+ * `state.party.enforceEncumbrance`.
  */
 export function EncumbranceRuleField({
-  characterId,
+  partyId,
   currentRule,
   currentEnforce,
 }: EncumbranceRuleFieldProps): ReactElement {
@@ -62,7 +65,7 @@ export function EncumbranceRuleField({
       setSubmitError(null);
       dispatch({
         type: 'set-encumbrance',
-        payload: { characterId, rule: draftRule, enforce: effectiveEnforce },
+        payload: { partyId, rule: draftRule, enforce: effectiveEnforce },
       });
       toast.success(`Encumbrance: ${draftRule}${effectiveEnforce ? ' (enforced)' : ''}`);
     } catch (err) {
@@ -88,7 +91,7 @@ export function EncumbranceRuleField({
         </select>
         <p className="text-xs text-muted-foreground">
           {draftRule === 'off'
-            ? 'Capacity bar hidden on the Inventory tab.'
+            ? 'Capacity bar hidden on every Inventory tab in this party.'
             : draftRule === 'phb'
               ? 'Standard rule: at-or-under STR × 15 is fine; above is over-capacity.'
               : 'Variant rule (PHB 2024 sidebar): warns at 5×STR and 10×STR.'}
@@ -114,8 +117,8 @@ export function EncumbranceRuleField({
               Enforce encumbrance
             </Label>
             <p className="text-xs text-muted-foreground">
-              When on, the reducer rejects acquires and transfers that would push your Inventory
-              weight over the rule's limit.
+              When on, the reducer rejects acquires and transfers that would push any
+              character&apos;s Inventory weight over the rule&apos;s limit.
             </p>
           </div>
         </div>

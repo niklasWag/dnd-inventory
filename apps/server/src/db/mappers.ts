@@ -433,6 +433,8 @@ export interface PartyRow {
   inviteCode: string;
   recoveredLootStashId: string;
   bankerUserId: string | null;
+  encumbranceRule: $Enums.EncumbranceRule;
+  enforceEncumbrance: boolean;
   createdAt: Date;
 }
 
@@ -447,6 +449,8 @@ export function fromPrismaParty(row: PartyRow): Party {
     // state. Cast handles the schema constraint; if a non-null value sneaks
     // in (R4.2+), the parse below surfaces the schema-drift error.
     bankerUserId: row.bankerUserId,
+    encumbranceRule: row.encumbranceRule,
+    enforceEncumbrance: row.enforceEncumbrance,
     createdAt: row.createdAt.toISOString(),
   });
 }
@@ -486,8 +490,6 @@ export interface CharacterRow {
   level: number;
   strScore: number;
   maxAttunement: number;
-  encumbranceRule: $Enums.EncumbranceRule;
-  enforceEncumbrance: boolean;
   inventoryStashId: string;
 }
 
@@ -504,8 +506,6 @@ export function fromPrismaCharacter(row: CharacterRow): Character {
     // R3.1 schema flattens abilityScores.STR → strScore column.
     abilityScores: { STR: row.strScore },
     maxAttunement: row.maxAttunement,
-    encumbranceRule: row.encumbranceRule,
-    enforceEncumbrance: row.enforceEncumbrance,
     inventoryStashId: row.inventoryStashId,
   });
 }

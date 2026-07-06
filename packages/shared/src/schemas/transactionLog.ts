@@ -472,24 +472,23 @@ const renamePartyEntry = z.object({
 });
 
 /**
- * `set-encumbrance` — per-character encumbrance configuration
- * (OUTLINE §3.3 + §3.6). R1.1 widens `Character.encumbranceRule` from
- * the MVP literal `'off'` to `'off' | 'phb' | 'variant'`, and adds the
- * orthogonal `enforceEncumbrance` boolean. This single entry records
- * any change to EITHER field (or both at once) so a "switch to variant
- * + turn on enforcement" flip stays one dispatch / one log row per the
- * CLAUDE.md "every mutation logs once" invariant.
+ * `set-encumbrance` — party-wide encumbrance configuration
+ * (OUTLINE §3.3 + §3.6). BUG-011 (2026-07-06) moved this from per-
+ * character to per-party: encumbrance is a party-wide house rule. This
+ * single entry records any change to EITHER field (or both at once) so
+ * a "switch to variant + turn on enforcement" flip stays one dispatch /
+ * one log row per the CLAUDE.md "every mutation logs once" invariant.
  *
- * Reducer guards: unknown characterId rejects; no-op rejects when both
- * `newRule === oldRule` AND `newEnforce === oldEnforce`. In MVP
- * party-of-one this is owner-only (player); R4 makes it DM-only in 2+-
- * member parties per OUTLINE §8.1.
+ * Reducer guards: no-op rejects when both `newRule === oldRule` AND
+ * `newEnforce === oldEnforce`. DM-only when the party has 2+ members
+ * (§8.1); enforced by `packages/shared/src/guards/map.ts`
+ * `setEncumbranceGuard`.
  */
 const setEncumbranceEntry = z.object({
   ...baseLogFields,
   type: z.literal('set-encumbrance'),
   payload: z.object({
-    characterId: z.string().min(1),
+    partyId: z.string().min(1),
     oldRule: encumbranceRuleSchema,
     newRule: encumbranceRuleSchema,
     oldEnforce: z.boolean(),

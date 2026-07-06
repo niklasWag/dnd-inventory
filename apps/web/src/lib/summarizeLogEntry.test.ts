@@ -51,6 +51,8 @@ function makeState(): AppState {
       inviteCode: 'INV-ABCDEF',
       recoveredLootStashId: 'rl',
       bankerUserId: null,
+      encumbranceRule: 'off',
+      enforceEncumbrance: false,
       createdAt: BASE_TS,
     },
     memberships: [
@@ -83,8 +85,6 @@ function makeState(): AppState {
         level: 1,
         abilityScores: { STR: 16 },
         maxAttunement: 3,
-        encumbranceRule: 'off',
-        enforceEncumbrance: false,
         inventoryStashId: 'inv-a',
       },
     ],
@@ -404,14 +404,14 @@ describe('summarizeLogEntry — character/party variants', () => {
       ...baseFields(),
       type: 'set-encumbrance',
       payload: {
-        characterId: 'char-a',
+        partyId: 'p1',
         oldRule: 'off',
         newRule: 'phb',
         oldEnforce: false,
         newEnforce: true,
       },
     };
-    expect(summarizeLogEntry(enc, state)).toBe('Encumbrance for Aeryn: off\u2192phb, enforce=true');
+    expect(summarizeLogEntry(enc, state)).toBe('Party encumbrance: off\u2192phb, enforce=true');
   });
 
   it('rename-party', () => {

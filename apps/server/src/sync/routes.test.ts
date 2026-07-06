@@ -631,6 +631,8 @@ describe('R4.4.b — homebrew party-scope filter', () => {
           ownerUserId,
           inviteCode: `inv-${Math.random().toString(36).slice(2, 18)}`,
           recoveredLootStashId: recoveredStashId,
+          encumbranceRule: 'off',
+          enforceEncumbrance: false,
         },
       });
       // Character references the Inventory stash; Stash references the
@@ -648,8 +650,6 @@ describe('R4.4.b — homebrew party-scope filter', () => {
           level: 1,
           strScore: 10,
           maxAttunement: 3,
-          encumbranceRule: 'off',
-          enforceEncumbrance: false,
           inventoryStashId,
         },
       });

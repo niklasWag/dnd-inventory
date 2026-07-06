@@ -509,8 +509,6 @@ describe('CharacterSheet — R4.5 cross-character DM cue', () => {
       level: 3,
       abilityScores: { STR: 8 },
       maxAttunement: 3,
-      encumbranceRule: 'off',
-      enforceEncumbrance: false,
       inventoryStashId: 's-inv-bob',
     };
     const bobStash: Stash = {

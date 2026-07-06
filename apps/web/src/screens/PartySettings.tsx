@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { RenameField } from '@/components/settings/RenameField';
+import { EncumbranceRuleField } from '@/components/settings/EncumbranceRuleField';
 import { CharacterForm, type CharacterFormOutput } from '@/components/CharacterForm';
 import { RoleBadge } from '@/components/RoleBadge';
 import { ApiError, kickPlayerApi, leavePartyApi, listPartyMembers, rotateInvite } from '@/lib/api';
@@ -54,6 +55,26 @@ export function PartySettings(): ReactElement {
   );
   const bankerUserId = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.party.bankerUserId : null)),
+  );
+  const encumbranceRule = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.party.encumbranceRule : null)),
+  );
+  const enforceEncumbrance = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.party.enforceEncumbrance : null)),
+  );
+  // BUG-011 — DM check that works in local mode (before the server-side
+  // `members` list resolves). Reads the actor's active memberships to
+  // decide whether the encumbrance section renders as an editor or a
+  // read-only summary. In server mode this matches the server-authored
+  // members list once it resolves.
+  const iAmDmFromLocalMemberships = useStore(
+    useShallow((s) => {
+      if (s.appState === null) return false;
+      const myId = s.appState.user.id;
+      return s.appState.memberships.some(
+        (m) => m.userId === myId && m.role === 'dm' && m.leftAt === null,
+      );
+    }),
   );
   const character = useStore(useShallow((s) => getOwnCharacter(s.appState)));
   const myUserId = useStore(useShallow((s) => (s.appState !== null ? s.appState.user.id : null)));
@@ -337,6 +358,43 @@ export function PartySettings(): ReactElement {
           />
         ) : null}
       </section>
+
+      {/* BUG-011 (2026-07-06) — Party-wide encumbrance house rule
+          (OUTLINE §3.3 + §3.6). Moved here from global /settings.
+          DM edits; non-DMs see a read-only summary. Applies to every
+          character's CapacityBar in the party. */}
+      {encumbranceRule !== null && enforceEncumbrance !== null ? (
+        <section aria-label="Encumbrance" className="space-y-4 rounded-lg border border-border p-4">
+          <div>
+            <h2 className="font-semibold">Encumbrance</h2>
+            <p className="text-sm text-muted-foreground">
+              Pick how every Inventory tab in this party handles carrying capacity.
+            </p>
+          </div>
+          {iAmDmFromLocalMemberships ? (
+            <EncumbranceRuleField
+              partyId={partyId}
+              currentRule={encumbranceRule}
+              currentEnforce={enforceEncumbrance}
+            />
+          ) : (
+            <p className="text-sm">
+              Current rule:{' '}
+              <span className="font-medium">
+                {encumbranceRule === 'off'
+                  ? 'Off (no capacity limits)'
+                  : encumbranceRule === 'phb'
+                    ? 'PHB default'
+                    : 'Variant'}
+              </span>
+              {encumbranceRule !== 'off' && enforceEncumbrance ? (
+                <span className="text-muted-foreground"> · enforced</span>
+              ) : null}
+              . The DM sets this for the whole party.
+            </p>
+          )}
+        </section>
+      ) : null}
 
       {/* R4.1.f — "Create your character" CTA. Visible whenever the
           actor is in a party but has no character yet. Three use cases

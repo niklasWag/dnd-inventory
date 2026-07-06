@@ -25,9 +25,13 @@ export const creatureSizeSchema = z.enum([
 export type CreatureSize = z.infer<typeof creatureSizeSchema>;
 
 /**
- * Encumbrance rule per character (OUTLINE §3.3 + §3.6).
+ * Encumbrance rule (OUTLINE §3.3 + §3.6). BUG-011 (2026-07-06) moved
+ * this off `Character` and onto `Party` — it's a party-wide house rule,
+ * not a per-character setting. The enum itself stays here for
+ * historical import stability; `Party.encumbranceRule` +
+ * `Party.enforceEncumbrance` are the actual data.
  *
- * R1.1 ships THREE values:
+ * Values:
  * - `off`     — bar hidden, no math.
  * - `phb`     — PHB 2024 default rule: at-or-under `STR × 15 × size` is
  *               fine; above is over-capacity (single band).
@@ -36,22 +40,17 @@ export type CreatureSize = z.infer<typeof creatureSizeSchema>;
  *               (heavily encumbered).
  *
  * Enforcement (whether moves OVER the threshold are rejected) is the
- * orthogonal `enforceEncumbrance` boolean — R1.2 will wire reducer
- * rejection on it. R1.1 stores the flag; behavior is display-only.
- *
- * Hard rename of the M7-/R1.1-mid-slice values (`advisory`/`hard`) —
- * existing in-memory or just-shipped Dexie blobs need a clean re-create.
- * Acceptable because the slice landed today and no persisted user data
- * is in flight beyond the dev session.
+ * orthogonal `enforceEncumbrance` boolean on `Party`. R1.4 wires the
+ * reducer rejection; R1.1 stored the flag display-only.
  */
 export const encumbranceRuleSchema = z.enum(['off', 'phb', 'variant']);
 export type EncumbranceRule = z.infer<typeof encumbranceRuleSchema>;
 
 /**
- * Character — MVP carries STR only (encumbrance enforcement deferred to
- * R1.2). `maxAttunement` is stored but not enforced (MVP §6); R1.2 will
- * make it DM-editable. Schema keeps fields settable so R1 can flip them
- * without a migration.
+ * Character — STR + creature-size drive the carrying-capacity math; the
+ * rule + enforce flag live on `Party` per BUG-011 (party-wide house
+ * rule). `maxAttunement` is stored but not enforced (MVP §6); R1.2 will
+ * make it DM-editable.
  */
 export const characterSchema = z
   .object({
@@ -72,14 +71,6 @@ export const characterSchema = z
       })
       .strict(),
     maxAttunement: z.number().int().min(0),
-    encumbranceRule: encumbranceRuleSchema,
-    // R1.1: orthogonal to `encumbranceRule`. When `true`, R1.2 will reject
-    // `acquire` / `transfer` that pushes Inventory weight over the rule's
-    // upper band (phb: > STR×15×size; variant: > 10×STR×size). In R1.1 the
-    // flag is stored and displayed in Settings but reducer behavior is
-    // identical regardless. The CapacityBar reads it to label hard-mode
-    // visually.
-    enforceEncumbrance: z.boolean(),
     inventoryStashId: z.string().min(1),
   })
   .strict();

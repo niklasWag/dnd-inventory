@@ -14,7 +14,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { LinkedAccounts } from '@/components/auth/LinkedAccounts';
-import { EncumbranceRuleField } from '@/components/settings/EncumbranceRuleField';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
 import { loadAppState } from '@/db/load';
 import { clearCurrentPartyId, getCurrentPartyId } from '@/db/meta';
@@ -23,7 +22,6 @@ import { wipeAll } from '@/db/wipe';
 import { exportToFile, type ExportSnapshot } from '@/io/export';
 import { importFromText, type ImportResult } from '@/io/import';
 import { isServerMode } from '@/lib/serverMode';
-import { getOwnCharacter } from '@/lib/ownCharacter';
 import { APP_VERSION } from '@/lib/version';
 import { useStore } from '@/store';
 import { useSession } from '@/store/session';
@@ -187,7 +185,6 @@ export function Settings(): ReactElement {
     }
   }
 
-  const character = getOwnCharacter(appState);
   const seedVersion = appState?.seedVersion ?? 0;
 
   return (
@@ -290,24 +287,9 @@ export function Settings(): ReactElement {
           R4.1-followup. The screen lives next to members + invite code
           so all per-party settings are co-located. */}
 
-      {/* R1.1: per-character encumbrance rule selector. Same pre-
-          bootstrap gate as the rename section — nothing to configure
-          until a character exists. */}
-      {character !== null ? (
-        <section className="space-y-4 rounded-lg border border-border p-4">
-          <div>
-            <h2 className="font-semibold">Encumbrance</h2>
-            <p className="text-sm text-muted-foreground">
-              Pick how the Inventory tab handles carrying capacity.
-            </p>
-          </div>
-          <EncumbranceRuleField
-            characterId={character.id}
-            currentRule={character.encumbranceRule}
-            currentEnforce={character.enforceEncumbrance}
-          />
-        </section>
-      ) : null}
+      {/* R1.1 encumbrance rule — moved to /party/settings in BUG-011
+          (party-wide house rule, not per-character; DM-edited). This
+          screen is now purely global / account-scoped. */}
 
       {/* RH5.2 — corruption-recovery. Only surfaces when the current-
           party Dexie blob fails Zod parse (boot-time toast points the

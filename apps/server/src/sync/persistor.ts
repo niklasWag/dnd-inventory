@@ -177,6 +177,8 @@ export async function applyBootstrapDelta(
       inviteCode: party.inviteCode,
       recoveredLootStashId: party.recoveredLootStashId,
       bankerUserId: party.bankerUserId,
+      encumbranceRule: party.encumbranceRule,
+      enforceEncumbrance: party.enforceEncumbrance,
       createdAt: new Date(party.createdAt),
     },
   });
@@ -199,8 +201,6 @@ export async function applyBootstrapDelta(
         level: ch.level,
         strScore: ch.abilityScores.STR,
         maxAttunement: ch.maxAttunement,
-        encumbranceRule: ch.encumbranceRule,
-        enforceEncumbrance: ch.enforceEncumbrance,
         inventoryStashId: ch.inventoryStashId,
       },
     });
@@ -401,8 +401,6 @@ async function persistAddCharacterToExistingParty(
       level: payload.level,
       strScore: payload.str,
       maxAttunement: 3,
-      encumbranceRule: 'off',
-      enforceEncumbrance: false,
       inventoryStashId,
     },
   });
@@ -754,8 +752,8 @@ async function persistSetEncumbrance(
   tx: Prisma.TransactionClient,
   payload: Extract<Action, { type: 'set-encumbrance' }>['payload'],
 ): Promise<void> {
-  await tx.character.update({
-    where: { id: payload.characterId },
+  await tx.party.update({
+    where: { id: payload.partyId },
     data: { encumbranceRule: payload.rule, enforceEncumbrance: payload.enforce },
   });
 }

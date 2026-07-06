@@ -66,6 +66,8 @@ function makeParty(id = 'p1', bankerUserId: string | null = null): Party {
     inviteCode: 'INV-XXXXXX',
     recoveredLootStashId: 'rl',
     bankerUserId,
+    encumbranceRule: 'off',
+    enforceEncumbrance: false,
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
@@ -118,8 +120,6 @@ function makeState(opts?: { ownerUserId?: string; ownerCharacterId?: string }): 
         level: 1,
         abilityScores: { STR: 16 },
         maxAttunement: 3,
-        encumbranceRule: 'off',
-        enforceEncumbrance: false,
         inventoryStashId: 'inv',
       },
     ],
@@ -526,7 +526,7 @@ describe('guards — DM-only actions', () => {
       runGuard(
         {
           type: 'set-encumbrance',
-          payload: { characterId: 'char-u1', rule: 'phb', enforce: true },
+          payload: { partyId: 'p1', rule: 'phb', enforce: true },
         },
         makeActor('u1', 'player'),
       ),
