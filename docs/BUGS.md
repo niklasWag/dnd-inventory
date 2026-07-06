@@ -115,6 +115,53 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-012 — Homebrew form has no rarity select; homebrew magic items can't be attuned
+
+- **Filed:** 2026-07-06
+- **Fixed:** 2026-07-06
+- **Severity:** high (multi-user product gap — DMs can't create attunable magic items via the UI at all).
+- **Status:** fixed
+- **Affected slice:** R2.1 amendment — the magic-item metadata fields (`rarity`, `requiresAttunement`, `attunementPrereq`) shipped on `itemDefinitionSchema` but the homebrew form was never widened to collect them.
+
+**Symptom.** In `/catalog` → New homebrew:
+
+1. There is no rarity select in the form (no way to mark a homebrew as `common | uncommon | rare | very-rare | legendary | artifact`).
+2. Attempting to attune a homebrew magic item (Acquire → Inventory → Attune) fails with `attune: item "…" is not a magic item (requiresAttunement !== true)`.
+
+**Reproduction.**
+
+1. Open `/catalog` → click New homebrew.
+2. Set category = Magic item. Observe: no rarity, no attunement toggle.
+3. Save → row lands with `rarity: undefined`, `requiresAttunement: undefined`.
+4. Acquire the row into Inventory → click Attune → reducer throws "not a magic item".
+
+**Root cause (single defect, two symptoms).** `apps/web/src/components/catalog/HomebrewForm.tsx` never surfaces the three magic-item fields. All three exist on `itemDefinitionSchema` since R2.1, but every layer of the homebrew create/edit path was written before the magic-item slice added them:
+
+- `homebrewDefinitionInputSchema` / `homebrewDefinitionPatchSchema` — omit the fields.
+- `HomebrewDefinitionInput` / `HomebrewDefinitionPatch` — omit the fields.
+- `HOMEBREW_EDITABLE_FIELDS` — omits the fields, so the edit diff loop wouldn't propagate them even if the input did.
+- `createHomebrew` spread — omits the fields.
+- `persistCreateHomebrew` / `persistEditHomebrew` — omit the fields.
+
+The reducer's `attune` action is correct: it rejects rows whose `def.requiresAttunement !== true`. Since homebrew rows land with `undefined`, they can't be attuned. Fixing the form alone would fix nothing; the payload contract has to widen end-to-end.
+
+**Fix.** Widen the payload contract end-to-end, gate the new form fields behind `category === 'magic'`, require rarity when the gate is open (user-approved 2026-07-06):
+
+- Rarity + requiresAttunement + attunementPrereq surface only when `category === 'magic'` in the form (gated via `useWatch` on `category`); rarity is REQUIRED for magic items via cross-field `.superRefine` on the form schema; nested prereq input surfaces only when `requiresAttunement === true`.
+- Wire the three fields through Zod (`packages/shared/src/schemas/action.ts`) → reducer types (`packages/rules/src/reducer/types.ts`) → reducer body (`packages/rules/src/reducer/index.ts`: `HOMEBREW_EDITABLE_FIELDS` + `createHomebrew` spread) → server persistor (`apps/server/src/sync/persistor.ts`). The existing generic `editHomebrew` diff loop picks up the new fields for free once the constant widens.
+- Persistor uses the existing `toDbRarity` helper for the hyphen↔underscore Prisma enum swap (`apps/server/src/db/mappers.ts:78`).
+- **No Prisma migration** — the DB columns landed with R2.1 (`apps/server/prisma/schema.prisma:300-302`).
+
+7 new tests in `HomebrewForm.test.tsx` cover: fields hidden by default, magic reveals them, prereq nested behind checkbox, magic-without-rarity rejected, full-payload round-trip, requiresAttunement-off omits prereq, non-magic omits all three, edit-mode uncheck clears the flag. `action.test.ts` fixture extended.
+
+**Related.**
+
+- OUTLINE §3.8 (magic items) + §4 line 289-291 (rarity + attunement fields).
+- `apps/web/src/components/settings/EncumbranceRuleField.tsx` — the checkbox + label pattern reused for the `requiresAttunement` control.
+- `packages/rules/src/reducer/index.ts` `attuneOrUnattune` — the reducer arm that rejects `def.requiresAttunement !== true`.
+
+---
+
 ### BUG-010 — History screen shows the current user's `displayName` but other players' `character.name`
 
 - **Filed:** 2026-07-04

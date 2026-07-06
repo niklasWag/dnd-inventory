@@ -108,9 +108,26 @@ const samples: Action[] = [
   },
   {
     type: 'create-homebrew',
-    payload: { name: 'Magic Sword', category: 'magic', newDefinitionId: id.homebrewDef },
+    payload: {
+      name: 'Wand of Bugs',
+      category: 'magic',
+      newDefinitionId: id.homebrewDef,
+      // BUG-012 (2026-07-06) — magic-item metadata surfaced by the
+      // homebrew form. Optional at the wire layer; the form enforces
+      // rarity-required for magic items via cross-field refinement.
+      rarity: 'uncommon',
+      requiresAttunement: true,
+      attunementPrereq: 'by a wizard',
+    },
   },
-  { type: 'edit-homebrew', payload: { definitionId: 'd', patch: { name: 'X' } } },
+  {
+    type: 'edit-homebrew',
+    payload: {
+      definitionId: 'd',
+      // BUG-012 — patch shape accepts the same three fields.
+      patch: { name: 'X', rarity: 'rare', requiresAttunement: false },
+    },
+  },
   { type: 'delete-homebrew', payload: { definitionId: 'd' } },
   { type: 'rename-character', payload: { characterId: 'c', newName: 'Z' } },
   { type: 'rename-party', payload: { partyId: 'p', newName: 'Z' } },

@@ -1920,6 +1920,12 @@ const HOMEBREW_EDITABLE_FIELDS = [
   'cost',
   'description',
   'tags',
+  // BUG-012 (2026-07-06) — magic-item metadata surfaced by the
+  // homebrew form. The diff loop below is generic over this constant
+  // so no other body change is needed for edits.
+  'rarity',
+  'requiresAttunement',
+  'attunementPrereq',
 ] as const;
 type HomebrewEditableField = (typeof HOMEBREW_EDITABLE_FIELDS)[number];
 
@@ -1964,6 +1970,16 @@ function createHomebrew(
     ...(payload.cost !== undefined ? { cost: payload.cost } : {}),
     ...(payload.description !== undefined ? { description: payload.description } : {}),
     ...(payload.tags !== undefined ? { tags: payload.tags } : {}),
+    // BUG-012 (2026-07-06) — magic-item metadata forwarded from the
+    // homebrew form when `category === 'magic'`. Non-magic categories
+    // omit all three (the form gates them client-side).
+    ...(payload.rarity !== undefined ? { rarity: payload.rarity } : {}),
+    ...(payload.requiresAttunement !== undefined
+      ? { requiresAttunement: payload.requiresAttunement }
+      : {}),
+    ...(payload.attunementPrereq !== undefined
+      ? { attunementPrereq: payload.attunementPrereq }
+      : {}),
     ...(payload.duplicatedFromId !== undefined
       ? { duplicatedFromId: payload.duplicatedFromId }
       : {}),

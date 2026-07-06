@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 
 import { HomebrewForm } from './HomebrewForm';
 import { Toaster } from '@/components/ui/sonner';
-import { useStore } from '@/store';
+import { useStore, dispatchMintingAction } from '@/store';
 import { wipeAll } from '@/db/wipe';
 import type { ItemDefinition } from '@app/shared';
 
@@ -43,6 +43,11 @@ describe('HomebrewForm — create mode (M6)', () => {
     expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/tags/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^create$/i })).toBeInTheDocument();
+    // BUG-012 — magic-item fields are hidden by default (category
+    // defaults to 'gear'). They only appear when the user picks
+    // Magic item.
+    expect(screen.queryByLabelText(/^rarity$/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/requires attunement/i)).not.toBeInTheDocument();
   });
 
   it('shows validation error and does NOT dispatch when name is empty', async () => {
@@ -220,5 +225,157 @@ describe('HomebrewForm — edit mode (M6)', () => {
 
     await user.click(screen.getByRole('button', { name: /^save$/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/no fields changed/i);
+  });
+});
+
+describe('HomebrewForm — magic-item fields (BUG-012)', () => {
+  function renderCreate(): void {
+    render(
+      <>
+        <HomebrewForm open={true} onOpenChange={() => {}} mode="create" />
+        <Toaster />
+      </>,
+    );
+  }
+
+  it('reveals rarity + requiresAttunement inputs when category switches to Magic', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderCreate();
+
+    // Hidden by default (category=gear).
+    expect(screen.queryByLabelText(/^rarity$/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/requires attunement/i)).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText(/category/i), 'magic');
+
+    expect(screen.getByLabelText(/^rarity$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/requires attunement/i)).toBeInTheDocument();
+    // Prereq input is nested behind the checkbox — hidden until the
+    // user checks Requires attunement.
+    expect(screen.queryByLabelText(/attunement prerequisite/i)).not.toBeInTheDocument();
+  });
+
+  it('reveals the prereq input only after Requires attunement is checked', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderCreate();
+
+    await user.selectOptions(screen.getByLabelText(/category/i), 'magic');
+    expect(screen.queryByLabelText(/attunement prerequisite/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/requires attunement/i));
+    expect(screen.getByLabelText(/attunement prerequisite/i)).toBeInTheDocument();
+  });
+
+  it('rejects submit for magic-category items when rarity is unpicked', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const before = useStore.getState().appState!.catalog.length;
+    renderCreate();
+
+    await user.type(screen.getByLabelText(/^name$/i), 'Wand of Bugs');
+    await user.selectOptions(screen.getByLabelText(/category/i), 'magic');
+    // Leave rarity at the '' sentinel.
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+
+    expect(await screen.findByText(/rarity is required for magic items/i)).toBeInTheDocument();
+    expect(useStore.getState().appState!.catalog).toHaveLength(before);
+  });
+
+  it('dispatches create-homebrew with rarity + attunement metadata', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderCreate();
+
+    await user.type(screen.getByLabelText(/^name$/i), 'Wand of Bugs');
+    await user.selectOptions(screen.getByLabelText(/category/i), 'magic');
+    await user.selectOptions(screen.getByLabelText(/^rarity$/i), 'uncommon');
+    await user.click(screen.getByLabelText(/requires attunement/i));
+    await user.type(screen.getByLabelText(/attunement prerequisite/i), 'by a wizard');
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+
+    const created = getHomebrewRow('Wand of Bugs');
+    expect(created).toBeDefined();
+    expect(created?.category).toBe('magic');
+    expect(created?.rarity).toBe('uncommon');
+    expect(created?.requiresAttunement).toBe(true);
+    expect(created?.attunementPrereq).toBe('by a wizard');
+  });
+
+  it('omits attunementPrereq when Requires attunement is off', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderCreate();
+
+    await user.type(screen.getByLabelText(/^name$/i), 'Weightless Trinket');
+    await user.selectOptions(screen.getByLabelText(/category/i), 'magic');
+    await user.selectOptions(screen.getByLabelText(/^rarity$/i), 'common');
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+
+    const created = getHomebrewRow('Weightless Trinket');
+    expect(created).toBeDefined();
+    expect(created?.rarity).toBe('common');
+    expect(created?.requiresAttunement).toBeUndefined();
+    expect(created?.attunementPrereq).toBeUndefined();
+  });
+
+  it('leaves rarity/attunement fields absent for non-magic homebrew items', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    renderCreate();
+
+    await user.type(screen.getByLabelText(/^name$/i), 'Fancy Rope');
+    // category stays 'gear' by default.
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+
+    const created = getHomebrewRow('Fancy Rope');
+    expect(created).toBeDefined();
+    expect(created?.category).toBe('gear');
+    expect(created?.rarity).toBeUndefined();
+    expect(created?.requiresAttunement).toBeUndefined();
+    expect(created?.attunementPrereq).toBeUndefined();
+  });
+
+  it('edit mode: unchecking Requires attunement clears the flag via the edit-homebrew patch', async () => {
+    const user = userEvent.setup();
+
+    // Bootstrap and create a magic-attunement homebrew directly via
+    // the reducer so the test focuses on the edit path (avoids
+    // stacking two modals in the DOM, which trips
+    // testing-library pointer-events checks).
+    const { partyId } = bootstrap();
+    dispatchMintingAction({
+      type: 'create-homebrew',
+      payload: {
+        name: 'Cursed Blade',
+        category: 'magic',
+        rarity: 'rare',
+        requiresAttunement: true,
+      },
+    });
+    void partyId;
+    const created = getHomebrewRow('Cursed Blade')!;
+    expect(created.requiresAttunement).toBe(true);
+
+    // Open edit mode on that row and uncheck the flag.
+    render(
+      <>
+        <HomebrewForm open={true} onOpenChange={() => {}} mode="edit" definition={created} />
+        <Toaster />
+      </>,
+    );
+    const checkbox = screen.getByLabelText(/requires attunement/i);
+    await user.click(checkbox);
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    const updated = useStore.getState().appState!.catalog.find((d) => d.id === created.id)!;
+    expect(updated.requiresAttunement).toBeUndefined();
+
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('edit-homebrew');
+    if (last.type === 'edit-homebrew') {
+      expect(last.payload.changedFields).toContain('requiresAttunement');
+    }
   });
 });

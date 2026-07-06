@@ -5,6 +5,7 @@ import type {
   EncumbranceRule,
   ItemCategory,
   ItemDefinition,
+  Rarity,
   TransactionLogEntry as LogEntry,
   TxType,
 } from '@app/shared';
@@ -733,6 +734,14 @@ export interface HomebrewDefinitionInput {
   };
   description?: string;
   tags?: string[];
+  // BUG-012 (2026-07-06) — magic-item metadata surfaced by the
+  // homebrew form when `category === 'magic'`. Optional at the
+  // reducer/wire layer; the form enforces "rarity required for magic
+  // items" via cross-field refinement and omits all three for
+  // non-magic categories.
+  rarity?: Rarity;
+  requiresAttunement?: boolean;
+  attunementPrereq?: string;
 }
 
 /**
@@ -755,6 +764,13 @@ export interface HomebrewDefinitionPatch {
     | undefined;
   description?: string | undefined;
   tags?: string[] | undefined;
+  // BUG-012 — same three fields the input carries. `undefined` here
+  // means "clear this optional field" per the reducer's diff loop
+  // (the form emits this when the user unchecks `requiresAttunement`
+  // or switches `category` away from `magic`).
+  rarity?: Rarity | undefined;
+  requiresAttunement?: boolean | undefined;
+  attunementPrereq?: string | undefined;
 }
 
 export type TransactionLogEntry = LogEntry;

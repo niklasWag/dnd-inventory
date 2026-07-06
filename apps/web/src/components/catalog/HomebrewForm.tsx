@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
 import type { HomebrewDefinitionInput, HomebrewDefinitionPatch } from '@/store/types';
-import type { ItemCategory, ItemDefinition } from '@app/shared';
+import type { ItemCategory, ItemDefinition, Rarity } from '@app/shared';
 
 /**
  * HomebrewForm (M6) — RHF + Zod form for create / edit / duplicate of
@@ -69,41 +69,81 @@ const CATEGORY_OPTIONS: { value: ItemCategory; label: string }[] = [
 ];
 
 /**
+ * BUG-012 (2026-07-06) — rarity options offered when `category === 'magic'`.
+ * Kebab-case values match the shared `raritySchema` and the reducer's
+ * `Rarity` type. The empty-string sentinel represents "no rarity picked
+ * yet"; the cross-field refinement below rejects that combination when
+ * category is magic.
+ */
+const RARITY_OPTIONS: { value: '' | Rarity; label: string }[] = [
+  { value: '', label: '— pick a rarity —' },
+  { value: 'common', label: 'Common' },
+  { value: 'uncommon', label: 'Uncommon' },
+  { value: 'rare', label: 'Rare' },
+  { value: 'very-rare', label: 'Very rare' },
+  { value: 'legendary', label: 'Legendary' },
+  { value: 'artifact', label: 'Artifact' },
+];
+
+/**
  * Form schema. All fields are user-facing strings (RHF integrates with
  * `<input>` natively); coercion to the typed payload shape happens in
  * `formOutputToCreateInput` / `formOutputToEditPatch`. Optional fields
  * use empty-string sentinels rather than `undefined` because RHF's
  * `defaultValues` works most naturally with stable string types.
  */
-const formSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required').max(120, 'Name is too long (max 120 chars)'),
-  category: z.enum([
-    'weapon',
-    'armor',
-    'gear',
-    'tool',
-    'ammunition',
-    'consumable',
-    'magic',
-    'currency',
-    'container',
-    'other',
-  ]),
-  weight: z
-    .string()
-    .trim()
-    .refine((v) => v === '' || (!isNaN(Number(v)) && Number(v) >= 0), 'Weight must be 0 or higher'),
-  costAmount: z
-    .string()
-    .trim()
-    .refine(
-      (v) => v === '' || (!isNaN(Number(v)) && Number(v) >= 0 && Number.isInteger(Number(v))),
-      'Cost must be a non-negative whole number',
-    ),
-  costCurrency: z.enum(['cp', 'sp', 'ep', 'gp', 'pp']),
-  description: z.string().trim().max(2000, 'Description is too long (max 2000 chars)'),
-  tags: z.string().trim().max(200, 'Tags string is too long (max 200 chars)'),
-});
+const formSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Name is required').max(120, 'Name is too long (max 120 chars)'),
+    category: z.enum([
+      'weapon',
+      'armor',
+      'gear',
+      'tool',
+      'ammunition',
+      'consumable',
+      'magic',
+      'currency',
+      'container',
+      'other',
+    ]),
+    weight: z
+      .string()
+      .trim()
+      .refine(
+        (v) => v === '' || (!isNaN(Number(v)) && Number(v) >= 0),
+        'Weight must be 0 or higher',
+      ),
+    costAmount: z
+      .string()
+      .trim()
+      .refine(
+        (v) => v === '' || (!isNaN(Number(v)) && Number(v) >= 0 && Number.isInteger(Number(v))),
+        'Cost must be a non-negative whole number',
+      ),
+    costCurrency: z.enum(['cp', 'sp', 'ep', 'gp', 'pp']),
+    description: z.string().trim().max(2000, 'Description is too long (max 2000 chars)'),
+    tags: z.string().trim().max(200, 'Tags string is too long (max 200 chars)'),
+    // BUG-012 — magic-item metadata. Kebab-case values match the shared
+    // `raritySchema`. Empty string = "not picked"; enforced via the
+    // cross-field `.superRefine` below when `category === 'magic'`.
+    rarity: z.enum(['', 'common', 'uncommon', 'rare', 'very-rare', 'legendary', 'artifact']),
+    requiresAttunement: z.boolean(),
+    attunementPrereq: z.string().trim().max(200, 'Prereq is too long (max 200 chars)'),
+  })
+  .superRefine((values, ctx) => {
+    // BUG-012 — rarity is required for magic items. Non-magic categories
+    // accept `rarity: ''` (the reducer/wire layer will simply omit the
+    // field). The refinement targets the `rarity` path so RHF surfaces
+    // the message inline with the select.
+    if (values.category === 'magic' && values.rarity === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rarity'],
+        message: 'Rarity is required for magic items',
+      });
+    }
+  });
 
 type FormValues = z.input<typeof formSchema>;
 type FormOutput = z.output<typeof formSchema>;
@@ -141,6 +181,12 @@ function definitionToFormValues(def: ItemDefinition | undefined): FormValues {
     costCurrency: def?.cost?.currency ?? 'gp',
     description: def?.description ?? '',
     tags: def?.tags !== undefined ? def.tags.join(', ') : '',
+    // BUG-012 — magic-item metadata. `rarity: null` collapses to `''`
+    // (schema allows null; the form treats null / undefined / absent
+    // identically as "not picked").
+    rarity: def?.rarity ?? '',
+    requiresAttunement: def?.requiresAttunement === true,
+    attunementPrereq: def?.attunementPrereq ?? '',
   };
 }
 
@@ -173,6 +219,19 @@ function formOutputToCreateInput(values: FormOutput): HomebrewDefinitionInput {
       .filter((t) => t.length > 0);
     if (tags.length > 0) result.tags = tags;
   }
+  // BUG-012 — surface magic-item metadata only when category=magic
+  // (the form gates the inputs; non-magic categories don't collect
+  // them). Rarity is required by the schema refinement above, so an
+  // empty value here would only appear if magic is picked but the
+  // refinement was bypassed — defensive branch keeps the payload
+  // schema-clean.
+  if (values.category === 'magic') {
+    if (values.rarity !== '') result.rarity = values.rarity;
+    if (values.requiresAttunement) result.requiresAttunement = true;
+    if (values.requiresAttunement && values.attunementPrereq !== '') {
+      result.attunementPrereq = values.attunementPrereq;
+    }
+  }
   return result;
 }
 
@@ -195,6 +254,23 @@ function formOutputToEditPatch(values: FormOutput): HomebrewDefinitionPatch {
           .map((t) => t.trim())
           .filter((t) => t.length > 0);
   result.tags = tagsList !== undefined && tagsList.length > 0 ? tagsList : undefined;
+  // BUG-012 — magic-item metadata in patch context. `undefined` here
+  // means "clear this optional field" per the reducer's diff loop.
+  // When category flips AWAY from magic in edit mode, we EXPLICITLY
+  // clear all three so the row stops advertising itself as a magic
+  // item.
+  if (values.category === 'magic') {
+    result.rarity = values.rarity === '' ? undefined : values.rarity;
+    result.requiresAttunement = values.requiresAttunement ? true : undefined;
+    result.attunementPrereq =
+      values.requiresAttunement && values.attunementPrereq !== ''
+        ? values.attunementPrereq
+        : undefined;
+  } else {
+    result.rarity = undefined;
+    result.requiresAttunement = undefined;
+    result.attunementPrereq = undefined;
+  }
   return result;
 }
 
@@ -213,11 +289,18 @@ export function HomebrewForm({
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<FormValues, unknown, FormOutput>({
     resolver: zodResolver(formSchema),
     defaultValues: definitionToFormValues(definition),
   });
+
+  // BUG-012 — reactive gates on `category` (reveal magic-item fields)
+  // and `requiresAttunement` (reveal the nested prereq input).
+  const watchedCategory = useWatch({ control, name: 'category' });
+  const watchedRequiresAttunement = useWatch({ control, name: 'requiresAttunement' });
+  const isMagicCategory = watchedCategory === 'magic';
 
   // In modal variant: reset on open or when the definition reference
   // changes (e.g. CatalogBrowser opens edit on a different row).
@@ -396,6 +479,73 @@ export function HomebrewForm({
           </p>
         ) : null}
       </div>
+
+      {/* BUG-012 (2026-07-06) — magic-item metadata. Gated by
+          `category === 'magic'`: non-magic homebrew items don't need
+          rarity or attunement info. Rarity is required when this
+          section is visible (enforced by the schema refinement).
+          The nested prereq input surfaces only when the user checks
+          `Requires attunement`. */}
+      {isMagicCategory ? (
+        <div className="space-y-4 rounded-md border border-border p-3">
+          <div className="grid grid-cols-[1fr_1fr] gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="homebrew-rarity">Rarity</Label>
+              <select
+                id="homebrew-rarity"
+                {...register('rarity')}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {RARITY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              {errors.rarity?.message !== undefined ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {errors.rarity.message}
+                </p>
+              ) : null}
+            </div>
+            <div />
+          </div>
+
+          <div className="flex items-start gap-2">
+            <input
+              id="homebrew-requires-attunement"
+              type="checkbox"
+              {...register('requiresAttunement')}
+              className="mt-1 h-4 w-4 rounded border-input"
+            />
+            <div className="space-y-1">
+              <Label htmlFor="homebrew-requires-attunement" className="cursor-pointer">
+                Requires attunement
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                When on, players must Attune the item in Inventory before its magical effects apply
+                (subject to the character&apos;s attunement slot cap).
+              </p>
+            </div>
+          </div>
+
+          {watchedRequiresAttunement ? (
+            <div className="space-y-1.5 pl-6">
+              <Label htmlFor="homebrew-attunement-prereq">Attunement prerequisite (optional)</Label>
+              <Input
+                id="homebrew-attunement-prereq"
+                placeholder="e.g. by a wizard, by a creature of good alignment"
+                {...register('attunementPrereq')}
+              />
+              {errors.attunementPrereq?.message !== undefined ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {errors.attunementPrereq.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {submitError !== null ? (
         <p className="text-sm text-destructive" role="alert">

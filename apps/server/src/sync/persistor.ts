@@ -700,6 +700,17 @@ async function persistCreateHomebrew(
     data.costCurrency = payload.cost.currency;
   }
   if (payload.description !== undefined) data.description = payload.description;
+  // BUG-012 (2026-07-06) — magic-item metadata. `rarity` uses the
+  // shared kebab-case enum on the wire (`very-rare`); the Prisma
+  // column stores the underscore form (`very_rare`), so route through
+  // `toDbRarity` for the enum swap.
+  if (payload.rarity !== undefined) data.rarity = toDbRarity(payload.rarity);
+  if (payload.requiresAttunement !== undefined) {
+    data.requiresAttunement = payload.requiresAttunement;
+  }
+  if (payload.attunementPrereq !== undefined) {
+    data.attunementPrereq = payload.attunementPrereq;
+  }
   if (payload.duplicatedFromId !== undefined) data.duplicatedFromId = payload.duplicatedFromId;
   await tx.itemDefinition.create({ data });
 }
@@ -718,6 +729,21 @@ async function persistEditHomebrew(
   }
   if (payload.patch.description !== undefined) data.description = payload.patch.description;
   if (payload.patch.tags !== undefined) data.tags = payload.patch.tags;
+  // BUG-012 — magic-item metadata. Patch semantics: "key present" =
+  // apply (including explicit `undefined` to clear). The reducer's
+  // diff loop only sends keys that changed, so the presence check
+  // via `in` distinguishes "clear" from "no touch".
+  if ('rarity' in payload.patch) {
+    data.rarity = payload.patch.rarity === undefined ? null : toDbRarity(payload.patch.rarity);
+  }
+  if ('requiresAttunement' in payload.patch) {
+    data.requiresAttunement =
+      payload.patch.requiresAttunement === undefined ? null : payload.patch.requiresAttunement;
+  }
+  if ('attunementPrereq' in payload.patch) {
+    data.attunementPrereq =
+      payload.patch.attunementPrereq === undefined ? null : payload.patch.attunementPrereq;
+  }
   await tx.itemDefinition.update({ where: { id: payload.definitionId }, data });
 }
 
@@ -1556,7 +1582,6 @@ async function persistSplitEvenly(
 }
 
 // Silence unused-import lint for translators that future actions will use.
-void toDbRarity;
 void toDbRechargeRule;
 
 // -------------------- RH3.1 GameSession persistors --------------------

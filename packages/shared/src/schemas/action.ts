@@ -5,6 +5,7 @@ import {
   currencyDenominationSchema,
   itemCategorySchema,
   itemDefinitionSchema,
+  raritySchema,
 } from './itemDefinition';
 
 /**
@@ -45,6 +46,13 @@ const homebrewDefinitionInputSchema = z.object({
     .optional(),
   description: z.string().optional(),
   tags: z.array(z.string().min(1)).optional(),
+  // BUG-012 (2026-07-06) — magic-item metadata surfaced by the homebrew
+  // form when `category === 'magic'`. Optional at the wire level; the
+  // form enforces "rarity required for magic items" via cross-field
+  // refinement, while non-magic categories omit all three.
+  rarity: raritySchema.optional(),
+  requiresAttunement: z.boolean().optional(),
+  attunementPrereq: z.string().optional(),
 });
 
 export type HomebrewDefinitionInput = z.infer<typeof homebrewDefinitionInputSchema>;
@@ -69,6 +77,13 @@ const homebrewDefinitionPatchSchema = z.object({
     .optional(),
   description: z.string().optional(),
   tags: z.array(z.string().min(1)).optional(),
+  // BUG-012 — same three fields the input schema carries. In patch
+  // context, `undefined` = "clear this optional field" per the reducer's
+  // diff loop. Emitted by the form when the user unchecks
+  // `requiresAttunement` or switches `category` away from `magic`.
+  rarity: raritySchema.optional(),
+  requiresAttunement: z.boolean().optional(),
+  attunementPrereq: z.string().optional(),
 });
 
 export type HomebrewDefinitionPatch = z.infer<typeof homebrewDefinitionPatchSchema>;
