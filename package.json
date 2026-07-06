@@ -14,7 +14,8 @@
     "test": "pnpm -r --parallel test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "docker:dev": "cd infra/docker && docker compose --profile proxy --profile mail up -d --build"
+    "docker:dev": "cd infra/docker && docker compose --profile proxy --profile mail up -d --build",
+    "fullcheck": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

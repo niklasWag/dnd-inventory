@@ -3548,21 +3548,43 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 **Rationale.** The `edit-character` catch-all reducer + guard have shipped since R1.2 (schema + reducer + DM-only guard + audit-log entry), and R4.3.d widened the guard so DMs can dispatch against ANY character in their party. What's missing across the R1.2 → R4.5 arc is the UI affordance: no screen today dispatches `edit-character` with `{ patch: { maxAttunement: N } }` (or any of the other DM-editable fields). R6.0 lights up that surface as a stand-alone slice so subsequent R6 work can lean on it (e.g. R6.3's loot wizard may want to bump a character's `maxAttunement` when handing out a legendary; R6.4 identification runs alongside).
 
 **UI**
-- [ ] DM-only inline editor for `Character.maxAttunement` on `EquippedSlotsPanel` (or a "DM edit character" dialog reachable from the character-sheet header — pick during implementation). Dispatches `edit-character { characterId, patch: { maxAttunement: N } }`. **Both directions supported:** grant (raise cap, e.g. 3 → 5) AND reduce (lower cap, e.g. 3 → 2). Bounded by the R3.1 DB CHECK: `maxAttunement >= 0`, so 0 is the min (a valid legal value meaning "no attunement possible"), no negatives.
-- [ ] Over-cap-reduce confirm dialog. When the DM lowers `maxAttunement` BELOW the character's current attuned count (e.g. character has 3 attuned, DM sets max to 2), show an AlertDialog: "{Character} has {N} attuned items; reducing max to {M} will leave them over-cap. Continue?" Per R1.2 Notes line 865 this is legal (existing attunements NOT auto-revoked; over-cap state is a display flag, not an invariant violation) — but confirmation is warranted so the DM doesn't strand players over cap accidentally. Reuse the R4.3.d cap-override AlertDialog primitive pattern.
-- [ ] Suppressed / hidden for non-DM players in 2+-member parties. Solo bypass (§8.2) allows the sole member to edit their own `maxAttunement`. Reuse the `isCurrentUserDmOrSolo` helper from R4.5.
-- [ ] Optional stretch: an inline "DM edit character" dialog covering `species` / `class` / `level` / `str` / `maxAttunement` in one form (matches OUTLINE §5.15's Party Settings §5.15 amend flow). Skip if per-field inline editors are sufficient.
+- [x] DM-only inline editor for `Character.maxAttunement` on `EquippedSlotsPanel` (or a "DM edit character" dialog reachable from the character-sheet header — pick during implementation). Dispatches `edit-character { characterId, patch: { maxAttunement: N } }`. **Both directions supported:** grant (raise cap, e.g. 3 → 5) AND reduce (lower cap, e.g. 3 → 2). Bounded by the R3.1 DB CHECK: `maxAttunement >= 0`, so 0 is the min (a valid legal value meaning "no attunement possible"), no negatives. — **Shipped as the multi-field dialog (see stretch bullet below); the inline `EquippedSlotsPanel` editor was dropped in favor of a single surface.**
+- [x] Over-cap-reduce confirm dialog. When the DM lowers `maxAttunement` BELOW the character's current attuned count (e.g. character has 3 attuned, DM sets max to 2), show an AlertDialog: "{Character} has {N} attuned items; reducing max to {M} will leave them over-cap. Continue?" Per R1.2 Notes line 865 this is legal (existing attunements NOT auto-revoked; over-cap state is a display flag, not an invariant violation) — but confirmation is warranted so the DM doesn't strand players over cap accidentally. Reuse the R4.3.d cap-override AlertDialog primitive pattern.
+- [x] Suppressed / hidden for non-DM players in 2+-member parties. Solo bypass (§8.2) allows the sole member to edit their own `maxAttunement`. Reuse the `isCurrentUserDmOrSolo` helper from R4.5. — **Widened: the button is also visible to own-character owners so they can edit species/class/level/str via the same dialog; maxAttunement remains disabled + read-only for non-DM owners inside the dialog per §8.1.**
+- [x] Optional stretch: an inline "DM edit character" dialog covering `species` / `class` / `level` / `str` / `maxAttunement` in one form (matches OUTLINE §5.15's Party Settings §5.15 amend flow). Skip if per-field inline editors are sufficient. — **Shipped as the R6.0 primary UI.**
 
 **Tests**
-- [ ] Component test: DM raises `maxAttunement` from 3 → 5, next attune fires without the cap-override dialog (slot check now passes cleanly).
-- [ ] Component test: DM lowers `maxAttunement` from 3 → 2 while character has 3 attuned → over-cap confirm dialog appears; confirming dispatches the edit and leaves existing attunements intact (over-cap display state).
-- [ ] Component test: cancel on the over-cap confirm dialog leaves `maxAttunement` unchanged.
-- [ ] Component test: `maxAttunement = 0` accepted and rendered (edge case — character can no longer attune anything).
-- [ ] Guard test: non-DM player in 2+-member party cannot dispatch `edit-character { patch: { maxAttunement } }` (already covered by R1.2 tests; add one more if the UI adds a client-side pre-guard).
+- [x] Component test: DM raises `maxAttunement` from 3 → 5, next attune fires without the cap-override dialog (slot check now passes cleanly).
+- [x] Component test: DM lowers `maxAttunement` from 3 → 2 while character has 3 attuned → over-cap confirm dialog appears; confirming dispatches the edit and leaves existing attunements intact (over-cap display state).
+- [x] Component test: cancel on the over-cap confirm dialog leaves `maxAttunement` unchanged.
+- [x] Component test: `maxAttunement = 0` accepted and rendered (edge case — character can no longer attune anything).
+- [x] Guard test: non-DM player in 2+-member party cannot dispatch `edit-character { patch: { maxAttunement } }` (already covered by R1.2 tests; add one more if the UI adds a client-side pre-guard). — **Already covered by `packages/shared/src/guards/map.test.ts:697` — no new guard test written.**
 
 #### R6.0 — Notes
 
-> -
+> **Shipped 2026-07-06 on `feat/r6-dm-tools`.** Single-slice ship (no sub-slicing). Test totals:
+>   - **web** — 870 → 886 (+16): 12 new `EditCharacterDialog.test.tsx` tests (permission matrix / bounds / no-op / multi-field / over-cap fire+silent+cancel / raise-cap) + 4 new `CharacterSheet.test.tsx` R6.0 button-visibility tests (solo / DM-cross-char / non-DM viewer / non-DM owner in multi-member).
+>   - other workspaces unchanged (shared 300, rules 159, seeds 22, server 205). Total workspace: 1572 tests, all green.
+>
+> **Decisions locked with user 2026-07-06 (pre-implementation):**
+>   - **Scope amendment vs. checklist above.** The core R6.0 UI bullet asked for an inline `EquippedSlotsPanel` editor; the stretch offered a multi-field dialog. User picked the stretch as the R6.0 primary and dropped the inline editor. Rationale: single surface for the whole `edit-character` action; keeps the affordance discoverable in the character-sheet header rather than buried in a tab-scoped panel; avoids duplicating validation across two UIs.
+>   - **Header placement.** New "Edit character" button (Pencil icon) sits next to `RestMenu` in the CharacterSheet header. Visible whenever the actor has ANY edit-right on the character (DM-in-party OR own-character owner OR solo per §8.2). Non-DM viewers of someone else's character never see the button.
+>   - **Per-field permission gating inside the dialog.** Fields the actor can't edit still render read-only (per user directive "if no permission the specific field is disabled, non-editable, and only shows the value"). species/class/level/str editable when actor is owner OR DM; maxAttunement editable when actor is DM (or solo). Reuses `isCurrentUserDmOrSolo` from `apps/web/src/lib/currentUserRole.ts`.
+>   - **UI bounds tighter than schema.** Level `min=1 max=20` (D&D 5e 2024 tier cap; schema is `int().positive()`). STR `min=1 max=30` (matches `characterSchema.abilityScores.STR`). maxAttunement `min=0` (matches schema `nonnegative`), no UI upper bound.
+>   - **Over-cap confirm scope.** Secondary `<AlertDialog>` opens ONLY when the submitted patch lowers `maxAttunement` **strictly below** the character's current attuned count. Reductions where the new max is ≥ attunedCount commit silently. Reuses the shadcn AlertDialog primitive per the R4.5 cap-override pattern.
+>   - **No-op silent close.** Dialog diffs against the current character and builds the patch from CHANGED fields only. Empty patch = silent close (avoids the reducer's `'edit-character: no fields changed'` throw). Mirrors the `RenameField` / `RenameStashModal` pattern.
+>   - **Dispatch shape.** Single `edit-character` dispatch per Save; reducer already emits one log entry with a `changedFields` array covering multi-field edits (e.g. `[level, str]`).
+>
+> **Zero-schema-diff slice.** No new action variant, no schema change, no guard change, no persistor change, no `EquippedSlotsPanel` change. The reducer (R1.2), guard (`editCharacterGuard` at `packages/shared/src/guards/map.ts:692`), broadcast metadata, and log-summary formatter all shipped since R1.2 — this slice is pure UI wiring.
+>
+> **Files touched:**
+>   - `apps/web/src/components/character/EditCharacterDialog.tsx` (new)
+>   - `apps/web/src/components/character/EditCharacterDialog.test.tsx` (new)
+>   - `apps/web/src/screens/CharacterSheet.tsx` — header button + dialog mount + `canEditCharacter` gate
+>   - `apps/web/src/screens/CharacterSheet.test.tsx` — R6.0 button-visibility tests
+>
+> **Not shipped in R6.0:**
+>   - Inline `maxAttunement` editor on `EquippedSlotsPanel` — dropped per scope amendment. Panel remains a pure read-only counter. If a future slice wants an inline control it can add one alongside the dialog without conflict.
 
 #### R6.1 — Pricing + per-party economy
 
