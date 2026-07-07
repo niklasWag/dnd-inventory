@@ -63,6 +63,30 @@ updates:
           - '@types/*'
         exclude-patterns:
           - '@types/react*'
+    # Block noisy major bumps until we opt into them as their own slice.
+    #   - tailwindcss 3→4 is a rewrite (new engine, CSS-based config, browser drops).
+    #   - tailwind-merge v3 exists to match Tailwind 4's utility set — bump together.
+    #   - eslint 9→10 changes rule surface + Node engines; needs a config review.
+    #   - @types/node must match the Node runtime major (currently 22 in Dockerfile).
+    #   - react-router-dom majors have caused breaking API changes historically.
+    #   - prisma majors touch DB engine + generated client shape.
+    ignore:
+      - dependency-name: 'tailwindcss'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'tailwind-merge'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'eslint'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-router-dom'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-router'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'prisma'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@prisma/*'
+        update-types: ['version-update:semver-major']
 
   # GitHub Actions — none in the repo yet, but pre-configuring so any future
   # workflow is auto-tracked without a config edit.
@@ -94,3 +118,9 @@ updates:
       - deps:docker
     commit-message:
       prefix: '⬆️ docker'
+    # Pin the Node major to the current LTS. Bumping the Docker base
+    # image major means also bumping engines + @types/node — do it as
+    # a deliberate slice, not a Dependabot Monday.
+    ignore:
+      - dependency-name: 'node'
+        update-types: ['version-update:semver-major']
