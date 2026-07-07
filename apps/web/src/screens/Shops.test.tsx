@@ -187,6 +187,121 @@ describe('ShopDetail (R6.2)', () => {
     const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
     expect(shop.stock).toHaveLength(0);
   });
+
+  // BUG-013 — DMG magic items (and every other DMG entry with no
+  // catalog cost) can't be added to a shop without an explicit price
+  // override. The reducer rejects the dispatch; the UI shows a hint
+  // under the price field; the Buy button is disabled for legacy rows
+  // that still lack a price.
+  it('shows a "no default price" hint when picking a no-cost item', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: false });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    await user.click(screen.getByRole('button', { name: /^pick item$/i }));
+    const search = await screen.findByLabelText(/^search$/i);
+    await user.type(search, 'cloak of the bat');
+    const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
+    await user.click(pickBtns[0]!);
+
+    expect(
+      screen.getByText(/no default price\. set an override to sell this item/i),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the default price hint when picking an item with cost', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: false });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    await user.click(screen.getByRole('button', { name: /^pick item$/i }));
+    const search = await screen.findByLabelText(/^search$/i);
+    await user.type(search, 'rope, hempen');
+    const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
+    await user.click(pickBtns[0]!);
+
+    expect(screen.getByText(/default: .+ — leave blank to use\./i)).toBeInTheDocument();
+  });
+
+  it('blocks Add for a no-cost item when the price override is blank', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: false });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    await user.click(screen.getByRole('button', { name: /^pick item$/i }));
+    const search = await screen.findByLabelText(/^search$/i);
+    await user.type(search, 'cloak of the bat');
+    const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
+    await user.click(pickBtns[0]!);
+
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    expect(await screen.findByText(/no catalog price/i)).toBeInTheDocument();
+    const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
+    expect(shop.stock).toHaveLength(0);
+  });
+
+  it('accepts Add for a no-cost item when a price override is set', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: false });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    await user.click(screen.getByRole('button', { name: /^pick item$/i }));
+    const search = await screen.findByLabelText(/^search$/i);
+    await user.type(search, 'cloak of the bat');
+    const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
+    await user.click(pickBtns[0]!);
+
+    const overrideInput = screen.getByLabelText(/price override/i);
+    await user.type(overrideInput, '50000');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
+    expect(shop.stock).toHaveLength(1);
+    expect(shop.stock[0]!.itemDefinitionId).toBe('dmg-2024:cloak-of-the-bat');
+    expect(shop.stock[0]!.priceOverride).toBe(50000);
+  });
+
+  it('disables the Buy button for a stock row that has no price', () => {
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: true });
+    // Bypass the reducer guard (which we just added) to seed a pre-fix
+    // broken row: no-cost def, no priceOverride. Mirrors the on-disk
+    // state a user might still have from before the fix landed.
+    const brokenEntryId = newUuidV7();
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          shops: s.appState.shops.map((sh) =>
+            sh.id === shopId
+              ? {
+                  ...sh,
+                  stock: [
+                    {
+                      id: brokenEntryId,
+                      itemDefinitionId: 'dmg-2024:cloak-of-the-bat',
+                      quantity: 1,
+                    },
+                  ],
+                }
+              : sh,
+          ),
+        },
+      };
+    });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    const buyBtn = screen.getByRole('button', { name: /^buy cloak of the bat$/i });
+    expect(buyBtn).toBeDisabled();
+    expect(buyBtn).toHaveAttribute('title', 'No price set for this item');
+  });
 });
 
 describe('ShopsList — player view (R6.2 follow-up)', () => {

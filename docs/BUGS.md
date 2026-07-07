@@ -80,6 +80,48 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-013 — Adding a no-cost catalog row to a shop with no price override silently succeeds, then throws at buy time
+
+- **Filed:** 2026-07-07
+- **Fixed:** 2026-07-07
+- **Severity:** high (broken buy flow with no workaround for players — the mutation throws in the reducer with a technical error message; also affects nearly every DMG magic item, which is exactly what a DM most often wants to sell).
+- **Status:** fixed
+- **Affected slice:** R6.2 amendment — the R6.2 shop/pricing surface accepted stock rows whose catalog def has no `cost`, deferring the failure to `purchase`.
+
+**Symptom.** DM adds "Cloak of the Bat" (or any other DMG magic item) to a shop's stock with the "Price override (cp)" field left blank. The Add succeeds silently and the row appears in the stock table with price shown as `—`. Later, when a player clicks Buy on that row, the reducer throws `"purchase: catalog row dmg-2024:cloak-of-the-bat has no cost"` and surfaces it via the standard error toast. Player has no way to complete the buy.
+
+**Reproduction.**
+
+1. Solo party or DM in a multi-member party.
+2. Open shop → Add stock → Pick item → search "cloak of the bat" → Pick → leave "Price override (cp)" blank → Add.
+3. Observe the row lands with `—` for price.
+4. Player (or the DM in solo) clicks Buy 1.
+5. Toast: `purchase: catalog row dmg-2024:cloak-of-the-bat has no cost`.
+
+**Root cause.** Two-layer gap:
+
+- `ItemDefinition.cost` is optional in the seed schema (`packages/shared/src/schemas/itemDefinition.ts`). The DMG 2024 seed omits `cost` on 272/305 rows: all 202 magic items, all 19 armor, all 21 weapons, 5 ammunition, 4 containers, 2 gear, and 19/41 consumables. This is canonical — the 2024 DMG doesn't publish market prices for magic items; pricing is DM discretion. PHB mundane items (181/181) all have cost.
+- `edit-shop-stock/add` in `packages/rules/src/reducer/index.ts` didn't validate that either `def.cost` exists or a `priceOverride` is provided. The row was accepted, and `resolvePurchaseUnitCostCp` (`reducer/index.ts:2617-2640`) — the buy-time price resolver — threw on the null intersection.
+- `ShopDetail.tsx` compounded the problem: the price cell rendered `—` for no-cost rows but the Buy button stayed enabled, so the player saw a clickable Buy that always failed.
+
+**Fix.** Defense in depth across three layers:
+
+1. **Reducer guard** (`packages/rules/src/reducer/index.ts`): `edit-shop-stock/add` rejects when the catalog def has no `cost` and no `priceOverride` is provided. Also adds the previously-missing "unknown itemDefinitionId" guard. `edit-shop-stock/update` rejects an explicit `priceOverride: null` on a no-cost def (qty-only updates on pre-existing broken rows are still allowed as a DM escape hatch).
+2. **UI hint** (`apps/web/src/screens/ShopDetail.tsx`): new `defaultCostCp(def)` helper mirrors `unitCostCp` for a picked def with no stock entry. Below the "Price override (cp)" input the form now shows either `Default: <price> — leave blank to use.` (item with cost) or a red `No default price. Set an override to sell this item.` (no cost). The Add handler short-circuits with the same reducer message before dispatching to save the round-trip.
+3. **Buy disable** (`apps/web/src/screens/ShopDetail.tsx`): Buy button is `disabled` when `unitCostCp(entry) === null` and carries `title="No price set for this item"`. Covers pre-fix rows still in the shop from before the guard shipped — the DM's escape hatch is to edit those rows to set a `priceOverride`.
+
+3 new reducer tests cover: add rejection, add with override succeeds, update rejection on null override. 4 new ShopDetail tests cover: default-price hint, no-default hint, blocked Add, allowed Add with override, disabled Buy.
+
+**Related.**
+
+- Original R6.2 slice — commits `6144b8f` (shops + purchase/sale), `d92ff59` (add-stock picker).
+- `pricing.buyPrice` + `currency.toCopper` composition — the same code path is used to compute the displayed default and to compute the actual purchase price at dispatch.
+- The `sale` action already correctly throws on missing cost (`packages/rules/src/reducer/index.ts:2767-2875`), but the player-side Sell UI gates on `sellableItems` having a cost (`ShopDetail.tsx:77-98`), so no equivalent bug exists on the sell side.
+
+**Not fixed / intentional.** Existing shop rows created before this fix that have no cost and no override are left as-is on disk. They render `—` with a disabled Buy; the DM can edit them to add an override. No migration or auto-cleanup runs (per user decision — risks losing intentional half-configured setups).
+
+---
+
 ### BUG-012 — Homebrew form has no rarity select; homebrew magic items can't be attuned
 
 - **Filed:** 2026-07-06

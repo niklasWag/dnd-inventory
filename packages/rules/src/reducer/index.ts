@@ -2501,6 +2501,16 @@ function editShopStock(
     if (op.quantity !== -1 && op.quantity < 0) {
       throw new Error('edit-shop-stock/add: quantity must be -1 (unlimited) or >= 0');
     }
+    // BUG-013 — a no-cost catalog row (e.g. DMG magic items, which don't
+    // publish market prices) is unsellable without an explicit override.
+    // Reject at add time so the trap doesn't fire at buy time.
+    const def = s.catalog.find((d) => d.id === op.itemDefinitionId);
+    if (def === undefined) {
+      throw new Error(`edit-shop-stock/add: unknown itemDefinitionId ${op.itemDefinitionId}`);
+    }
+    if (def.cost === undefined && op.priceOverride === undefined) {
+      throw new Error('edit-shop-stock/add: item has no catalog cost — set a price override');
+    }
     const newEntry = {
       id: op.newStockEntryId,
       itemDefinitionId: op.itemDefinitionId,
@@ -2550,6 +2560,17 @@ function editShopStock(
     const oldQuantity = entry.quantity;
     const newPriceOverride = op.priceOverride === undefined ? oldPriceOverride : op.priceOverride;
     const newQuantity = op.quantity ?? oldQuantity;
+    // BUG-013 — same guard as `add`: reject an update that would leave
+    // the row with no override on a no-cost catalog def. Only fires when
+    // the update EXPLICITLY sets priceOverride to null; qty-only updates
+    // on pre-existing broken rows still go through (DM's escape hatch —
+    // they can adjust stock while they sort out pricing).
+    if (op.priceOverride === null) {
+      const def = s.catalog.find((d) => d.id === entry.itemDefinitionId);
+      if (def !== undefined && def.cost === undefined) {
+        throw new Error('edit-shop-stock/update: item has no catalog cost — set a price override');
+      }
+    }
     const nextEntry = {
       id: entry.id,
       itemDefinitionId: entry.itemDefinitionId,

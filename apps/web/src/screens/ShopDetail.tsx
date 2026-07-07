@@ -119,6 +119,21 @@ export function ShopDetail(): ReactElement {
     });
   }
 
+  /**
+   * Compute the effective default buy price for a picked `ItemDefinition`
+   * — same math as `unitCostCp` but without a stock entry (so no
+   * `priceOverride` short-circuit). Returns null when the def has no
+   * `cost` (canonical for DMG magic rows). BUG-013.
+   */
+  function defaultCostCp(def: ItemDefinition | null): number | null {
+    if (def === null || def.cost === undefined) return null;
+    const baseCp = currency.toCopper({ [def.cost.currency]: def.cost.amount });
+    return pricing.buyPrice(baseCp, def.source, {
+      partyModifier,
+      shopModifier: shop.priceModifier,
+    });
+  }
+
   function defNameOf(id: string): string {
     return catalog.find((d) => d.id === id)?.name ?? id.slice(0, 12);
   }
@@ -159,6 +174,13 @@ export function ShopDetail(): ReactElement {
       addStockOverride.trim() === '' ? undefined : Number.parseInt(addStockOverride, 10);
     if (override !== undefined && (!Number.isFinite(override) || override < 0)) {
       toast.error('Price override must be non-negative integer CP');
+      return;
+    }
+    // BUG-013 — mirror the reducer guard: no-cost catalog rows need an
+    // explicit override. Short-circuit here so the DM sees a friendly
+    // message before the round-trip.
+    if (override === undefined && defaultCostCp(pickedDef) === null) {
+      toast.error('This item has no catalog price — set a price override');
       return;
     }
     try {
@@ -326,7 +348,9 @@ export function ShopDetail(): ReactElement {
                 {shop.stock.map((entry) => {
                   const priceCp = unitCostCp(entry);
                   const canBuyForSelf =
-                    myInventoryStashId !== null && (entry.quantity === -1 || entry.quantity >= 1);
+                    myInventoryStashId !== null &&
+                    priceCp !== null &&
+                    (entry.quantity === -1 || entry.quantity >= 1);
                   return (
                     <tr key={entry.id} className="border-t border-border">
                       <td className="px-3 py-2">{defNameOf(entry.itemDefinitionId)}</td>
@@ -348,6 +372,7 @@ export function ShopDetail(): ReactElement {
                             disabled={!canBuyForSelf}
                             onClick={() => onBuy(entry.id)}
                             aria-label={`Buy ${defNameOf(entry.itemDefinitionId)}`}
+                            title={priceCp === null ? 'No price set for this item' : undefined}
                           >
                             Buy 1
                           </Button>
@@ -415,6 +440,18 @@ export function ShopDetail(): ReactElement {
                 onChange={(e) => setAddStockOverride(e.target.value)}
                 placeholder="leave blank"
               />
+              {pickedDef !== null ? (
+                defaultCostCp(pickedDef) !== null ? (
+                  <p className="text-xs text-muted-foreground">
+                    Default: {pricing.formatPrice(defaultCostCp(pickedDef)!, baseCurrency)} — leave
+                    blank to use.
+                  </p>
+                ) : (
+                  <p className="text-xs text-destructive">
+                    No default price. Set an override to sell this item.
+                  </p>
+                )
+              ) : null}
             </div>
           </div>
           <div>

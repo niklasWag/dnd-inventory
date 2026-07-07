@@ -3941,6 +3941,94 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
     });
     expect(useStore.getState().appState!.shops[0]!.stock).toEqual([]);
   });
+
+  // BUG-013 — DMG magic items (and every other DMG entry with no `cost`)
+  // must not enter shop stock without an explicit `priceOverride`, or
+  // `purchase` traps at buy time with `catalog row X has no cost`.
+  it('rejects add when the def has no catalog cost and no priceOverride', () => {
+    localBootstrap();
+    const shopId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-shop-stock',
+        payload: {
+          shopId,
+          operation: {
+            kind: 'add',
+            newStockEntryId: newUuidV7(),
+            itemDefinitionId: 'dmg-2024:cloak-of-the-bat',
+            quantity: 1,
+          },
+        },
+      }),
+    ).toThrow(/no catalog cost/i);
+  });
+
+  it('accepts add when the def has no catalog cost but a priceOverride is set', () => {
+    localBootstrap();
+    const shopId = newUuidV7();
+    const stockEntryId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: stockEntryId,
+          itemDefinitionId: 'dmg-2024:cloak-of-the-bat',
+          quantity: 1,
+          priceOverride: 50000,
+        },
+      },
+    });
+    const stock = useStore.getState().appState!.shops[0]!.stock;
+    expect(stock).toHaveLength(1);
+    expect(stock[0]).toMatchObject({
+      itemDefinitionId: 'dmg-2024:cloak-of-the-bat',
+      priceOverride: 50000,
+    });
+  });
+
+  it('rejects update that clears the priceOverride on a no-cost item', () => {
+    localBootstrap();
+    const shopId = newUuidV7();
+    const stockEntryId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
+    useStore.getState().dispatch({
+      type: 'edit-shop-stock',
+      payload: {
+        shopId,
+        operation: {
+          kind: 'add',
+          newStockEntryId: stockEntryId,
+          itemDefinitionId: 'dmg-2024:cloak-of-the-bat',
+          quantity: 1,
+          priceOverride: 50000,
+        },
+      },
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'edit-shop-stock',
+        payload: {
+          shopId,
+          operation: {
+            kind: 'update',
+            stockEntryId,
+            priceOverride: null,
+          },
+        },
+      }),
+    ).toThrow(/no catalog cost/i);
+  });
 });
 
 describe('reducer: purchase (R6.2)', () => {
