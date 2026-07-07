@@ -188,3 +188,75 @@ describe('ShopDetail (R6.2)', () => {
     expect(shop.stock).toHaveLength(0);
   });
 });
+
+describe('ShopsList — player view (R6.2 follow-up)', () => {
+  /**
+   * Turn the fresh bootstrap solo party into a 2-member party where the
+   * current user (`u0`) reads as a plain player, not solo-bypass DM.
+   * Bootstrap seeds BOTH a `dm` and a `player` row for the creator per the
+   * outline's composite-key invariant — we strip the DM row and graft a
+   * second user as the DM.
+   */
+  function makeCurrentUserPlayer(): void {
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      const myId = s.appState.user.id;
+      const partyId = s.appState.party.id;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          memberships: [
+            // Keep u0's player row only — drop the bootstrap DM row.
+            ...s.appState.memberships.filter((m) => !(m.userId === myId && m.role === 'dm')),
+            {
+              userId: 'u-other-dm',
+              partyId,
+              role: 'dm',
+              characterId: null,
+              joinedAt: '2026-01-01T00:00:00.000Z',
+              leftAt: null,
+            },
+          ],
+        },
+      };
+    });
+  }
+
+  it('lists only open shops and hides the New shop button', () => {
+    bootstrap();
+    // Seed one open and one closed shop while the user is still solo-DM,
+    // then flip membership so the user reads as a player.
+    const openId = newUuidV7();
+    const closedId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: openId, name: 'Open Shop' } });
+    useStore
+      .getState()
+      .dispatch({ type: 'set-shop-open', payload: { shopId: openId, isOpen: true } });
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: closedId, name: 'Closed Shop' } });
+    makeCurrentUserPlayer();
+
+    renderAt('/party/:partyId/shops');
+
+    expect(screen.getByText(/^Open Shop$/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Closed Shop$/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^new shop$/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the player empty-state when no shops are open', () => {
+    bootstrap();
+    const closedId = newUuidV7();
+    useStore
+      .getState()
+      .dispatch({ type: 'create-shop', payload: { newShopId: closedId, name: 'Closed Shop' } });
+    makeCurrentUserPlayer();
+
+    renderAt('/party/:partyId/shops');
+
+    expect(screen.getByText(/no shops are open right now/i)).toBeInTheDocument();
+  });
+});

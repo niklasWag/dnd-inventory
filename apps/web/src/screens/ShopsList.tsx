@@ -16,29 +16,33 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
+import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { newUuidV7 } from '@app/shared';
 
 /**
- * R6.2 — Shops list screen (`/party/:partyId/shops`). DM-only route
- * (guarded by `DmOnlyRoute` in the router table).
+ * R6.2 — Shops list screen (`/party/:partyId/shops`).
  *
- * Header + "New shop" button. Table lists every shop in the party with
- * open/closed indicator, item count, and click-through to the detail
- * route. New-shop dispatches `create-shop` with a client-minted
- * `newShopId` per RH1.2.
+ * DM/solo view: full list of every shop in the party with open/closed
+ * indicator, item count, and a "New shop" affordance. Click-through
+ * navigates to the individual shop detail.
  *
- * Non-DM players never reach this route (route guard redirects); they
- * navigate to individual open shops via a party-visible directory
- * shipped in R6.3+ (for now, discoverable by URL).
+ * Player view: read-only list of currently-open shops only. Players get
+ * here from the header Shops button, which itself only appears when at
+ * least one shop is open (see `Layout.tsx`). Clicking a row lands on
+ * `ShopDetail`, which already handles the player-can-see-open-shops
+ * rule via its own route guard.
  */
 export function ShopsList(): ReactElement {
   const navigate = useNavigate();
   const partyId = useCurrentPartyId();
   const shops = useStore(useShallow((s) => s.appState?.shops ?? []));
+  const isDmOrSolo = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
   const dispatch = useStore((s) => s.dispatch);
   const [creatingOpen, setCreatingOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const visibleShops = isDmOrSolo ? shops : shops.filter((sh) => sh.isOpen);
 
   function onCreate(): void {
     if (newName.trim().length === 0) {
@@ -67,18 +71,27 @@ export function ShopsList(): ReactElement {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Shops</h1>
           <p className="text-sm text-muted-foreground">
-            Manage per-party shops. Only DMs see this list; players see individual open shops by
-            their share link.
+            {isDmOrSolo
+              ? 'Manage per-party shops. Only DMs see the full list; players see open shops.'
+              : 'Shops currently open in this party.'}
           </p>
         </div>
-        <Button type="button" onClick={() => setCreatingOpen(true)}>
-          New shop
-        </Button>
+        {isDmOrSolo ? (
+          <Button type="button" onClick={() => setCreatingOpen(true)}>
+            New shop
+          </Button>
+        ) : null}
       </header>
 
-      {shops.length === 0 ? (
+      {visibleShops.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No shops yet. Click <span className="font-semibold">New shop</span> to create one.
+          {isDmOrSolo ? (
+            <>
+              No shops yet. Click <span className="font-semibold">New shop</span> to create one.
+            </>
+          ) : (
+            'No shops are open right now.'
+          )}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
@@ -93,7 +106,7 @@ export function ShopsList(): ReactElement {
               </tr>
             </thead>
             <tbody>
-              {shops.map((shop) => (
+              {visibleShops.map((shop) => (
                 <tr
                   key={shop.id}
                   className="cursor-pointer border-t border-border hover:bg-muted/20"
@@ -129,7 +142,7 @@ export function ShopsList(): ReactElement {
       )}
 
       <Dialog
-        open={creatingOpen}
+        open={isDmOrSolo && creatingOpen}
         onOpenChange={(next) => {
           setCreatingOpen(next);
           if (!next) {

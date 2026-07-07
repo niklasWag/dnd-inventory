@@ -114,13 +114,14 @@ export const router = createBrowserRouter([
                   // R6.2 — Shop routes. Detail is open to players when
                   // `shop.isOpen === true` (component-level redirect
                   // handles closed shops for non-DM viewers). List is
-                  // DM-only (nested under DmOnlyRoute below).
+                  // visible to every party member; `ShopsList` filters
+                  // to open shops and hides DM affordances for players.
                   { path: 'shops/:shopId', Component: ShopDetail },
+                  { path: 'shops', Component: ShopsList },
                   {
                     Component: DmOnlyRoute,
                     children: [
                       { path: 'dm', Component: DmDashboard },
-                      { path: 'shops', Component: ShopsList },
                       // R6.3 — Hoard generator + Loot distribution wizard.
                       // Both DM-only; wizard is reachable both via the
                       // generator's Continue button (with roll in route

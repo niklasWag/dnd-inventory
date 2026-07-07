@@ -58,6 +58,12 @@ export function RootLayout(): ReactElement {
       return current === undefined ? null : { number: current.number, date: current.date };
     }),
   );
+  // R6.2 follow-up — count of shops currently open, used to gate the
+  // player-visible Shops button and render the badge. Shallow-selected
+  // scalar so the header doesn't re-render on unrelated shop mutations.
+  const openShopCount = useStore(
+    useShallow((s) => s.appState?.shops.filter((sh) => sh.isOpen).length ?? 0),
+  );
 
   async function handleLogout(): Promise<void> {
     await session.signOut();
@@ -130,16 +136,26 @@ export function RootLayout(): ReactElement {
                 <span className="sr-only sm:not-sr-only">DM</span>
               </Button>
             ) : null}
-            {canSeeDmDashboard && partyId !== null ? (
+            {partyId !== null && (canSeeDmDashboard || openShopCount > 0) ? (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
                   void navigate(`/party/${partyId}/shops`);
                 }}
-                aria-label="Shops"
+                aria-label={openShopCount > 0 ? `Shops (${String(openShopCount)} open)` : 'Shops'}
               >
-                <Store className="h-4 w-4" />
+                <span className="relative inline-flex">
+                  <Store className="h-4 w-4" />
+                  {openShopCount > 0 ? (
+                    <span
+                      className="absolute -right-2 -top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/15 px-1 text-[10px] font-medium leading-none text-emerald-700 dark:text-emerald-300"
+                      aria-hidden="true"
+                    >
+                      {openShopCount}
+                    </span>
+                  ) : null}
+                </span>
                 <span className="sr-only sm:not-sr-only">Shops</span>
               </Button>
             ) : null}
