@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { LinkedAccounts } from '@/components/auth/LinkedAccounts';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
+import { ThemeField } from '@/components/settings/ThemeField';
 import { loadAppState } from '@/db/load';
 import { clearCurrentPartyId, getCurrentPartyId } from '@/db/meta';
 import { deleteAppStateForParty } from '@/db/save';
@@ -251,6 +252,15 @@ export function Settings(): ReactElement {
           </section>
         </>
       ) : null}
+
+      {/* R7.1.a — Appearance (theme preference). Global / account-scoped. */}
+      <section className="space-y-3 rounded-lg border border-border p-4">
+        <div>
+          <h2 className="font-semibold">Appearance</h2>
+          <p className="text-sm text-muted-foreground">Choose how the app looks on this device.</p>
+        </div>
+        <ThemeField />
+      </section>
 
       {/* M7: Backup section */}
       <section className="space-y-3 rounded-lg border border-border p-4">

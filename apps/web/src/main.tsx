@@ -7,6 +7,7 @@ import { useStore } from '@/store';
 import { useSession } from '@/store/session';
 import { hydrateFromDexie } from '@/store/hydrate';
 import { seedCatalogIfNeeded } from '@/store/seed';
+import { attachThemeSideEffects, useThemeStore } from '@/store/theme';
 import { attachUnloadFlush, configureQueue } from '@/sync/queue';
 import { syncSocketWithSession } from '@/sync/socket';
 import '@/index.css';
@@ -30,6 +31,13 @@ if (!rootEl) {
  *   4. Wire the queue's deps + the `beforeunload` flush, then mount.
  */
 async function boot(): Promise<void> {
+  // R7.1.a — resolve the theme preference before the first render so
+  // there's no light-mode flash on cold boot. Attach the side-effect
+  // subscription immediately after, so subsequent preference changes
+  // and matchMedia flips update the `<html>` class in real time.
+  await useThemeStore.getState().hydrate();
+  attachThemeSideEffects();
+
   await useSession.getState().hydrate();
 
   if (!isServerMode) {

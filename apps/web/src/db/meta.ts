@@ -8,6 +8,10 @@ import { db } from '@/db/schema';
  * shrank in RH4.2 to a boot-landing hint: which party should the
  * pre-URL landing show first on cold start?
  *
+ * **Other keys owned by other modules:**
+ *   - `theme` — Light / Dark / System preference; owned by
+ *     `apps/web/src/store/theme.ts` (R7.1.a).
+ *
  * **Where it's used**:
  *   - `apps/web/src/store/hydrate.ts` (local-mode boot) — reads the
  *     pointer to decide which Dexie blob to hydrate from. Server-mode
