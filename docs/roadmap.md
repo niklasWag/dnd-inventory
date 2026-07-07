@@ -3802,38 +3802,15 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 
 ### R7 — Polish (outline §10 M7)
 
-Light/dark theme, responsive player views (mobile), fuzzy multi-field search, accessibility pass. Covers OUTLINE §5 form factor, §5.17 Settings.
+Behavior-focused polish: theme system (shipped), bulk currency edit, fuzzy multi-field search, log-size performance pass, re-seed conflict hints, variant-rules Settings toggle, multi-party vault export. UI-only work lives in R9.
 
-**Slicing.** R7 is the smallest post-R1 milestone (~16 checkboxes) but the topics are independent enough that they're worth shipping as separate slices: each can land without blocking the others, and the a11y pass benefits from its own focused session.
+**Slicing.** Sub-slices are independent and can land in any order.
 
-#### R7.1 — Theme + responsive layout
+#### R7.1 — Theme (light / dark / system)
 
-- [ ] Theme system with light / dark / system-default toggle (§5.17)
-- [ ] Player views mobile-responsive: Character Sheet, Party Stash, Recovered Loot, Transfer Modal, Item Detail (§5)
-- [ ] DM tools remain desktop-only by design (§5) — verify layout doesn't claim otherwise
+- [x] **Theme system with light / dark / system-default toggle** — shipped 2026-07-07 as R7.1.a (commit `f14531c`). New `apps/web/src/store/theme.ts` (Zustand slice + `attachThemeSideEffects` + `resolveTheme`), `apps/web/src/components/settings/ThemeField.tsx`, `apps/web/src/lib/` matchMedia shim. Preference persisted to Dexie `meta.theme`; `system` mode follows `prefers-color-scheme` in real time. Sonner + `<html>` class subscribe to the resolved value. Default is `system`. (§5.17)
 
 #### R7.1 — Notes
-
-> -
-
-#### R7.2 — Accessibility pass
-
-- [ ] Accessibility: keyboard navigation across all interactive elements
-- [ ] Accessibility: ARIA labels on all icon-only buttons
-- [ ] Accessibility: color-contrast pass against WCAG AA
-- [ ] Accessibility: screen-reader audit on Character Sheet + Party Stash flows
-
-#### R7.2 — Notes
-
-> -
-
-#### R7.3 — Bulk multi-select on stash tables
-
-- [ ] **Bulk multi-select for move / delete** on stash tables (§3.4) — checkbox column, bulk action bar
-- [ ] Bulk-move test: select N items, pick target stash, all transfer with one log entry each (or a single grouped entry — decide and document)
-- [ ] Bulk-delete test: select N items, confirm once, all removed
-
-#### R7.3 — Notes
 
 > -
 
@@ -3848,16 +3825,13 @@ Light/dark theme, responsive player views (mobile), fuzzy multi-field search, ac
 
 > -
 
-#### R7.5 — Misc polish
+#### R7.5 — Behavior polish
 
 - [ ] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6)
 - [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
 - [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
 - [ ] Variant-rules toggle exposed in Settings (§5.17)
-- [ ] **UI-component consistency audit.** Walk every screen + form + dialog + row-action surface and check: (a) are we using the shadcn/ui primitives from `src/components/ui/` where one exists, or did we hand-roll a native element that has a shadcn equivalent (e.g. native `<select>` where the shadcn `Select` is available, native `<input type="checkbox">` where a `Checkbox` primitive should be added, hand-rolled overlay divs where `Dialog` fits)? (b) are the shadcn primitives being used *consistently* — same size prop, same variant vocabulary, same spacing scale across dialogs / cards / tables / empty-states? (c) do we have any pieces of UI that grew organically outside the shadcn palette and should either be lifted into `src/components/ui/` or replaced. Deliverable: a spreadsheet/table of every screen + component + inconsistency, then a set of small refactor PRs. Scope guard: no visual redesign — this is a *consistency* pass, not a facelift.
-- [ ] **`delete-character` UI entry point** — *promoted from Operational followups (2026-07-07).* R4.1.b shipped the reducer action + cascade to Recovered Loot, but no UI surface dispatches it. Recommendation: small "Delete character" button on the Character Sheet header behind a confirm dialog showing the snapshot (item count + currency total cp moved to Recovered Loot), mirroring the existing `delete-stash` confirmation pattern. (Source: R4.1.b carryforward, surfaced by R4.1.f.)
-- [ ] **Wire `useCanDispatch()` on primary Save buttons** — *promoted from Operational followups (2026-07-07).* R5.1.d shipped the store-level write-block backstop + reactive hook. Consume it on every mutation control so buttons visibly disable (correctness already met; this is UX polish). Touch-list: `AddItemModal`, `CharacterSheet` (rename / inline edits), `ItemDetail` (currency / move), `StorageDetail` (move / split / currency), `PartySettings` (rename / member management), `HomebrewForm`. Read `useCanDispatch()` in each, pass to `disabled={!canDispatch}`. Mechanical follow-up. (Source: R5.1.d.)
-- [ ] **Multi-party "vault" export** — *promoted from Operational followups (2026-07-07).* The current §3.13 JSON export envelope (`apps/web/src/io/export.ts`, `import.ts`) handles ONE party at a time (the active party in memory). With local mode now supporting N parties, a user wanting to back up their full local-mode footprint has to export each party individually. **Recommended shape:** per-party-iteration — a Hub-level "Export all parties" button that iterates `listKnownPartyIds()` and produces a ZIP / JSON-array of envelopes. Preserves the existing per-party import path; no new Zod schema needed. Promote to a "vault" envelope shape only if users actually ask for it. Server-mode already covers this via `GET /sync/export?partyId=...` (R3.4.b), so the concern is purely local-mode. Inline pointer: `apps/web/src/io/export.ts`, `apps/web/src/io/import.ts`, `packages/shared/src/schemas/exportEnvelope.ts`. (Source: R4.1 followup 2026-06-29.)
+- [ ] **Multi-party "vault" export** —The current §3.13 JSON export envelope (`apps/web/src/io/export.ts`, `import.ts`) handles ONE party at a time (the active party in memory). With local mode now supporting N parties, a user wanting to back up their full local-mode footprint has to export each party individually. **Recommended shape:** per-party-iteration — a Hub-level "Export all parties" button that iterates `listKnownPartyIds()` and produces a ZIP / JSON-array of envelopes. Preserves the existing per-party import path; no new Zod schema needed. Promote to a "vault" envelope shape only if users actually ask for it. Server-mode already covers this via `GET /sync/export?partyId=...` (R3.4.b), so the concern is purely local-mode. Inline pointer: `apps/web/src/io/export.ts`, `apps/web/src/io/import.ts`, `packages/shared/src/schemas/exportEnvelope.ts`. (Source: R4.1 followup 2026-06-29.)
 
 #### R7.5 — Notes
 
@@ -3869,18 +3843,86 @@ Light/dark theme, responsive player views (mobile), fuzzy multi-field search, ac
 
 ---
 
-### R8 — Auth + operator hardening
+### R8 — Server infrastructure hardening
 
-Server-side hardening across the auth surface, operator observability, small server-hygiene items surfaced by prior slices, and test-infrastructure debt. Not user-visible polish (that's R7). No new gameplay features.
+Server-side hardening: auth-flow sweeps, rate limits, operator observability, small server-hygiene items surfaced by prior slices, and test-infrastructure debt. **No user-facing UI** — user-facing account management lives in R10.
 
-**Slicing.** R8 groups five independent sub-slices. Each can land on its own; R8.1 (email change) is the largest and most user-visible; the other four are mechanical / infra.
+**Slicing.** Four independent sub-slices; each ships on its own.
 
-> **Note (2026-07-07):** `docs/OUTLINE.md` §10 currently ends at M7. R8 is tracked here only until OUTLINE §10 gains an M8 row; per CLAUDE.md, OUTLINE is the source of truth and this roadmap is a tracker. Amend OUTLINE §10 first when R8.1 kicks off.
+> **Kickoff prereq:** `docs/OUTLINE.md` §10 currently ends at M7. Amend §10 with M8/M9/M10 rows before R8, R9, or R10 ships (OUTLINE is the source of truth per CLAUDE.md; this roadmap is a tracker).
 
-#### R8.1 — Email change with dual-OTP confirmation
+#### R8.1 — Auth hardening
 
-- [ ] **User-initiated email change with dual-OTP confirmation** — *promoted from Operational followups (2026-07-07).* Today `User.email` (OUTLINE §4 line 245) is set at signup time (or when a Discord user adds a backup login) and there is no user-facing surface to change it afterwards. Add a "Change email" flow in Settings that verifies both the **current** email and the **new** email via the existing 8-digit OTP infrastructure before committing the swap.
-  - **User journey.** Settings → "Change email" → dedicated modal / route (e.g. `/settings/email/change`) that becomes the only interactive surface until the flow finishes or the user explicitly aborts. Steps: (1) enter new email; (2) enter the 8-digit code sent to the CURRENT email (proves possession of the account); (3) enter the 8-digit code sent to the NEW email (proves possession of the new address). On success, `User.email` swaps and `emailVerified` re-stamps to the new confirmation. On abort, no mutation runs. Explicit user-approved 2026-07-07: **the app is blocked (modal / full-screen route) during the flow** — the user can either complete the swap or abort, no other in-app navigation possible.
+- [ ] **`EmailAuthAttempt` cron sweep** —Periodically delete rows with `lockedUntil < now() - 24h`. The `@@index([lockedUntil])` makes this cheap. Not blocking — the table is bounded by the `(email, ip)` UNIQUE and rows hold no PII beyond email + IP. Inline pointer: `apps/server/src/auth/email/rate-limit.ts:18`. (Source: R3.3 Notes.)
+- [ ] **`PendingDiscordLink` cron sweep** —R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
+- [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** —Verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
+
+#### R8.1 — Notes
+
+> -
+
+#### R8.2 — Operator surface
+
+- [ ] **Snapshot-age operator metric** —"Snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). R8.2 kick-off decides the shape (drop-in `/admin/health` JSON vs. OTel exporter). (Source: R3.4.b Notes.)
+- [ ] **Explicit `archivedAt` check in `POST /sync/actions`** —R4.1.e ships the `Party.archivedAt` column + filters it out of `GET /sync/parties`, but the `/sync/actions` route relies on the existing `not_a_member` guard (every member's row is `leftAt: NOT null` after archive, so guards reject). Adding an upfront `archivedAt IS NOT NULL` check would surface a cleaner `party_archived` error code. Inline pointer: `apps/server/src/sync/routes.ts:226`. (Source: R4.1.e Notes.)
+
+#### R8.2 — Notes
+
+> -
+
+#### R8.3 — Server-surface polish
+
+- [ ] **Reject `partyName` on the post-bootstrap `create-character` branch** —`createCharacterInExistingParty` currently ignores `partyName` silently if a client sends it (the party already exists; renaming is `rename-party`). A client could plausibly send `{ name: 'X', partyName: 'rename me' }` expecting both effects, and the partial silent ignore is a footgun. Preferred: (a) reject the action with `invalid_payload` when `partyName` is set on the post-bootstrap branch. Alternative: (b) treat it as an implicit `rename-party` and emit both log entries. (a) is the simpler / safer choice. (Source: R4.1.f.)
+
+#### R8.3 — Notes
+
+> -
+
+#### R8.4 — Test infrastructure
+
+- [ ] **Sync-queue bootstrap pull-after-push test** —R3.5 dropped the bootstrap integration test from `apps/web/src/sync/queue.test.ts` because `instanceof BatchRejectedError` checks across `vi.resetModules()` boundaries proved flaky in the existing test rig. Fix: wire module-singleton caching (or replace `instanceof` with structural checks) so the bootstrap pull-after-push + 422 rollback paths get explicit coverage. The happy path + 401 path are tested; the rollback + bootstrap paths are exercised only through the type-checker today. (Source: R3.5 Notes.)
+- [ ] **Sync-queue unit test for the R4.1.f `isBootstrap` discrimination** —`queue.ts:142` now gates `isBootstrap` on `snapshot?.appState == null` in addition to the action type, but the existing 2 queue.test.ts tests don't isolate this branch. The integration test in `apps/server/src/parties/routes.test.ts` exercises the full path end-to-end; a focused unit test asserting `getActivePartyId()` is called (not `'will-be-minted'`) when `appState !== null` would catch a regression at the layer where it would surface. Same flaky-`instanceof` rig as the bootstrap pull-after-push followup above — likely lands together. (Source: R4.1.f.)
+- [ ] **`GET /sync/state` assertion in the R4.1.f integration test** —The current full-flow test in `apps/server/src/parties/routes.test.ts` asserts the DB rows after user B dispatches `create-character`, but doesn't round-trip through `GET /sync/state?partyId=...` for user B. The mapper layer is well-tested elsewhere, but a focused assertion here would close the seam between the persistor's write side and the state-loader's read side specifically for the post-bootstrap-created character. (Source: R4.1.f.)
+- [ ] **End-to-end browser tests (Playwright)** —Deferred at M5 per `docs/TECH_STACK.md` §3.3; we're past M5 now. R4.x accumulated two motivating cases — BUG-001 and BUG-002 — where every unit + Vitest server-integration test passed but the real HTTP + real Postgres path failed. Both share a profile: defects that only manifest in the full server-DB-client stack under specific state shapes. R8.4 deliverable: either ship a Playwright rig for that defect profile OR document a further deferral with new criteria. Follow `docs/TECH_STACK.md` §3.5 (climb layers only when a lower-cost layer can't catch the defect). (Source: BUG-001 + BUG-002 postmortems; TECH_STACK §3.3.)
+
+#### R8.4 — Notes
+
+> -
+
+#### R8 — Notes
+
+> -
+
+---
+
+### R9 — UI redesign (stub — charter deferred)
+
+Full app UI overhaul per the 2026-07-07 design audit. Charter, sub-slices, and design system are deferred until R9 is picked up for planning; the whole slice should be planned + designed before code, not shipped as a series of small commits. Bullets below are inputs for that chartering pass.
+
+- [ ] **Full UI audit follow-through** — modernize visual hierarchy, spacing rhythm, typography scale, component consistency. Baseline the design language (tokens, spacing scale, elevation, iconography) before touching screens. Source: 2026-07-07 design audit (preserve as `docs/UI_AUDIT_2026-07-07.md` at R9 kickoff).
+- [ ] **Player views mobile-responsive** — Character Sheet, Party Stash, Recovered Loot, Transfer Modal, Item Detail.
+- [ ] **DM tools mobile behavior** — OUTLINE §5 currently says desktop-only for DM tools; revisit that clause and either keep the stance (add "min-width" warning banner) or reflow via a shared card/table primitive.
+- [ ] **Accessibility pass** — keyboard navigation across all interactive elements; ARIA labels on all icon-only buttons; color-contrast pass against WCAG AA; screen-reader audit on Character Sheet + Party Stash flows.
+- [ ] **Bulk multi-select on stash tables** — checkbox column, bulk action bar for move / delete on stash tables (§3.4). Bulk-move test: select N items, pick target stash, all transfer with one log entry each (or a single grouped entry — decide and document). Bulk-delete test: select N items, confirm once, all removed.
+- [ ] **UI-component consistency audit** — walk every screen + form + dialog + row-action surface. (a) Are we using the shadcn/ui primitives from `src/components/ui/` where one exists, or did we hand-roll a native element? (b) Are the shadcn primitives being used *consistently* — same size prop, same variant vocabulary, same spacing scale across dialogs / cards / tables / empty-states? (c) Are there pieces of UI that grew organically outside the shadcn palette and should either be lifted into `src/components/ui/` or replaced? Deliverable: a spreadsheet/table of every screen + component + inconsistency, then a set of small refactor PRs. Scope guard: no visual redesign — this is a *consistency* pass.
+- [ ] **`delete-character` UI entry point** — R4.1.b shipped the reducer action + cascade to Recovered Loot, but no UI surface dispatches it. Recommendation: small "Delete character" button on the Character Sheet header behind a confirm dialog showing the snapshot (item count + currency total cp moved to Recovered Loot), mirroring the existing `delete-stash` confirmation pattern. (Source: R4.1.b carryforward, surfaced by R4.1.f.)
+- [ ] **Wire `useCanDispatch()` on primary Save buttons** — R5.1.d shipped the store-level write-block backstop + reactive hook. Consume it on every mutation control so buttons visibly disable (correctness already met; this is UX polish). Touch-list: `AddItemModal`, `CharacterSheet` (rename / inline edits), `ItemDetail` (currency / move), `StorageDetail` (move / split / currency), `PartySettings` (rename / member management), `HomebrewForm`. (Source: R5.1.d.)
+
+#### R9 — Notes
+
+> - **Kickoff prereq:** preserve the 2026-07-07 design audit as `docs/UI_AUDIT_2026-07-07.md` — it currently exists only in the session that produced it.
+> - **Kickoff prereq:** amend `docs/OUTLINE.md` §5 form factor to reflect whatever mobile posture R9 decides.
+
+---
+
+### R10 — User account management (stub — depends on R9)
+
+Self-service user account CRUD. **Depends on R9's redesigned UI language — do not ship before R9.** R10.1 (email change with dual-OTP confirmation) is the main deliverable; other candidate siblings are listed in R10 Notes.
+
+#### R10.1 — Email change with dual-OTP confirmation
+
+- [ ] **User-initiated email change with dual-OTP confirmation.** Today `User.email` (OUTLINE §4 line 245) is set at signup time (or when a Discord user adds a backup login) and there is no user-facing surface to change it afterwards. Add a "Change email" flow in Settings that verifies both the **current** email and the **new** email via the existing 8-digit OTP infrastructure before committing the swap.
+  - **User journey.** Settings → "Change email" → dedicated modal / route (e.g. `/settings/email/change`) that becomes the only interactive surface until the flow finishes or the user explicitly aborts. Steps: (1) enter new email; (2) enter the 8-digit code sent to the CURRENT email (proves possession of the account); (3) enter the 8-digit code sent to the NEW email (proves possession of the new address). On success, `User.email` swaps and `emailVerified` re-stamps to the new confirmation. On abort, no mutation runs. **The app is blocked** (modal / full-screen route) during the flow — the user can either complete the swap or abort, no other in-app navigation possible.
   - **Security shape.** Both codes must be redeemed within a short window (proposal: 10 min per code, same as the login OTP TTL — verify against `apps/server/src/auth/email/` for the current constants). Reuse the `EmailAuthAttempt` two-axis (email, ip) lockout so a stuck-in-the-flow user isn't a bypass vector (`apps/server/src/auth/email/rate-limit.ts`). Per SECURITY §6: identity must come from the session cookie server-side — the "current email" code proves the caller controls the CURRENTLY-stored email address for that userId, not that they typed it correctly. Rate-limit `POST /auth/email/change/request-current-otp` and `.../request-new-otp` per-IP + per-userId. Server-side pending-change row (mirror `PendingDiscordLink` in shape) holds `{ userId, newEmail, currentOtpConsumedAt, newOtpConsumedAt, expiresAt }`; only when BOTH `consumedAt` timestamps are set does the actual `User.email` swap fire in a single transaction. Reject if `newEmail` collides with another `User.email` (existing UNIQUE constraint).
   - **Edge cases to design through.**
     - User has no current email (Discord-only account, no backup login yet) — this flow is not applicable; that path is the existing "add backup email" flow already noted in OUTLINE §3.1. Only surface "Change email" when `User.email !== null`.
@@ -3889,58 +3931,25 @@ Server-side hardening across the auth surface, operator observability, small ser
     - Session expires mid-flow — pending-change row still holds until `expiresAt`; user must re-authenticate and restart. No stale state leaks.
     - Multi-tab: only one pending-change per userId at a time (upsert on start; a second tab starting a new flow invalidates the first).
   - **Blast radius.** Server: new routes `POST /auth/email/change/{start,request-current-otp,verify-current-otp,request-new-otp,verify-new-otp,commit,abort}` (bikeshed; some can collapse — verify + request can share endpoints if the shape allows). New Prisma model `PendingEmailChange`. New reducer log entry `user-email-changed` (`{oldEmail, newEmail}`) — actor is the user themselves; visible in the History screen but redacted for non-self viewers per SECURITY §4. Client: new `EmailChange.tsx` screen + route, reusing the shadcn `input-otp` primitive and the two-step layout from `LoginEmailVerify.tsx`. UX-blocking wrapper: since the app is blocked during the flow, the route sits OUTSIDE `PartyScopeGuard` and can render its own layout (no top nav). A `beforeunload` handler asks "You have an email change in progress — are you sure?" for tab-close attempts.
-  - **Freeing the old email address.** *User-approved 2026-07-07:* after a successful swap, the old email string becomes available for a new account signup. Since `User.email` is UNIQUE at the DB level and the commit is a single-row `UPDATE` (not a delete-and-re-insert), the UNIQUE index naturally releases the old value as soon as the transaction commits — no cascade or cleanup is required for the email string itself. What DOES need attention:
-    - `EmailAuthAttempt` rows keyed on the OLD email are stale after the swap. They don't block signup (the two-axis lockout keys on `(email, ip)` and only affects login attempts against that address); they just carry noise. Simplest: leave them; R8.2's `EmailAuthAttempt` cron sweep eventually reaps them. Alternative: piggyback on commit to `DELETE FROM EmailAuthAttempt WHERE email = <oldEmail>` — cheap and self-contained. Recommend the delete for cleanliness.
+  - **Freeing the old email address.** After a successful swap, the old email string becomes available for a new account signup. Since `User.email` is UNIQUE at the DB level and the commit is a single-row `UPDATE` (not a delete-and-re-insert), the UNIQUE index naturally releases the old value as soon as the transaction commits — no cascade or cleanup is required for the email string itself. What DOES need attention:
+    - `EmailAuthAttempt` rows keyed on the OLD email are stale after the swap. They don't block signup (the two-axis lockout keys on `(email, ip)` and only affects login attempts against that address); they just carry noise. Simplest: leave them; R8.1's `EmailAuthAttempt` cron sweep eventually reaps them. Alternative: piggyback on commit to `DELETE FROM EmailAuthAttempt WHERE email = <oldEmail>` — cheap and self-contained. Recommend the delete for cleanliness.
     - A dormant `PendingEmailChange` row for the same user must be reaped on commit (already covered by the `expiresAt` + upsert-on-start rule above, but explicit `DELETE WHERE userId = ...` in the commit txn is defensive).
     - The old email is not "reserved for the original owner" post-swap — anyone (including a fresh signup or another existing user trying to add a backup email) can claim it once the swap commits. This matches the "your address is yours only while your account holds it" model users expect from most providers; call it out in the confirm-swap dialog so the user isn't surprised ("After confirming, your old address will be released and could be used by someone else.").
     - **No audit-log leak.** The `user-email-changed` log entry stores the old email in `TransactionLog.payload` (per SECURITY §4 "no silent mutations"). That's fine — the log is a private audit trail per party membership and is redacted for non-self viewers. The row does NOT belong to another user's account.
-  - **Non-goals.** Not changing Discord identity linking (that's a separate flow — see OUTLINE §3.1 "Discord user linking an email"). Not offering SMS or 2FA as alternative confirmation channels. Not allowing an admin/DM to change another user's email — self-service only. Not reserving the old email for the original owner (see "Freeing the old email address" above — it's released outright on commit). (Source: user request 2026-07-07.)
+  - **Non-goals.** Not changing Discord identity linking (that's a separate flow — see OUTLINE §3.1 "Discord user linking an email"). Not offering SMS or 2FA as alternative confirmation channels. Not allowing an admin/DM to change another user's email — self-service only. Not reserving the old email for the original owner (see "Freeing the old email address" above — it's released outright on commit).
 
-#### R8.1 — Notes
+#### R10.1 — Notes
 
 > - **OUTLINE §3.1 amendment needed at kickoff.** The "backup login" language in §3.1 covers ADDING an email to a Discord account; it does not describe changing an already-set email. Draft an amendment before writing code.
 
-#### R8.2 — Auth hardening
+#### R10 — Notes
 
-- [ ] **`EmailAuthAttempt` cron sweep** — *promoted from Operational followups (2026-07-07).* Periodically delete rows with `lockedUntil < now() - 24h`. The `@@index([lockedUntil])` makes this cheap. Not blocking — the table is bounded by the `(email, ip)` UNIQUE and rows hold no PII beyond email + IP. Inline pointer: `apps/server/src/auth/email/rate-limit.ts:18`. (Source: R3.3 Notes.)
-- [ ] **`PendingDiscordLink` cron sweep** — *promoted from Operational followups (2026-07-07).* R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
-- [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** — *promoted from Operational followups (2026-07-07).* Verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
-
-#### R8.2 — Notes
-
-> -
-
-#### R8.3 — Operator surface
-
-- [ ] **Snapshot-age operator metric** — *promoted from Operational followups (2026-07-07).* "Snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). R8.3 kick-off decides the shape (drop-in `/admin/health` JSON vs. OTel exporter). (Source: R3.4.b Notes.)
-- [ ] **Explicit `archivedAt` check in `POST /sync/actions`** — *promoted from Operational followups (2026-07-07).* R4.1.e ships the `Party.archivedAt` column + filters it out of `GET /sync/parties`, but the `/sync/actions` route relies on the existing `not_a_member` guard (every member's row is `leftAt: NOT null` after archive, so guards reject). Adding an upfront `archivedAt IS NOT NULL` check would surface a cleaner `party_archived` error code. Inline pointer: `apps/server/src/sync/routes.ts:226`. (Source: R4.1.e Notes.)
-
-#### R8.3 — Notes
-
-> -
-
-#### R8.4 — Server-surface polish
-
-- [ ] **Reject `partyName` on the post-bootstrap `create-character` branch** — *promoted from Operational followups (2026-07-07).* `createCharacterInExistingParty` currently ignores `partyName` silently if a client sends it (the party already exists; renaming is `rename-party`). A client could plausibly send `{ name: 'X', partyName: 'rename me' }` expecting both effects, and the partial silent ignore is a footgun. Preferred: (a) reject the action with `invalid_payload` when `partyName` is set on the post-bootstrap branch. Alternative: (b) treat it as an implicit `rename-party` and emit both log entries. (a) is the simpler / safer choice. (Source: R4.1.f.)
-
-#### R8.4 — Notes
-
-> -
-
-#### R8.5 — Test infrastructure
-
-- [ ] **Sync-queue bootstrap pull-after-push test** — *promoted from Operational followups (2026-07-07).* R3.5 dropped the bootstrap integration test from `apps/web/src/sync/queue.test.ts` because `instanceof BatchRejectedError` checks across `vi.resetModules()` boundaries proved flaky in the existing test rig. Fix: wire module-singleton caching (or replace `instanceof` with structural checks) so the bootstrap pull-after-push + 422 rollback paths get explicit coverage. The happy path + 401 path are tested; the rollback + bootstrap paths are exercised only through the type-checker today. (Source: R3.5 Notes.)
-- [ ] **Sync-queue unit test for the R4.1.f `isBootstrap` discrimination** — *promoted from Operational followups (2026-07-07).* `queue.ts:142` now gates `isBootstrap` on `snapshot?.appState == null` in addition to the action type, but the existing 2 queue.test.ts tests don't isolate this branch. The integration test in `apps/server/src/parties/routes.test.ts` exercises the full path end-to-end; a focused unit test asserting `getActivePartyId()` is called (not `'will-be-minted'`) when `appState !== null` would catch a regression at the layer where it would surface. Same flaky-`instanceof` rig as the bootstrap pull-after-push followup above — likely lands together. (Source: R4.1.f.)
-- [ ] **`GET /sync/state` assertion in the R4.1.f integration test** — *promoted from Operational followups (2026-07-07).* The current full-flow test in `apps/server/src/parties/routes.test.ts` asserts the DB rows after user B dispatches `create-character`, but doesn't round-trip through `GET /sync/state?partyId=...` for user B. The mapper layer is well-tested elsewhere, but a focused assertion here would close the seam between the persistor's write side and the state-loader's read side specifically for the post-bootstrap-created character. (Source: R4.1.f.)
-- [ ] **End-to-end browser tests (Playwright)** — *promoted from Operational followups (2026-07-07).* Deferred at M5 per `docs/TECH_STACK.md` §3.3; we're past M5 now. R4.x accumulated two motivating cases — BUG-001 and BUG-002 — where every unit + Vitest server-integration test passed but the real HTTP + real Postgres path failed. Both share a profile: defects that only manifest in the full server-DB-client stack under specific state shapes. R8.5 deliverable: either ship a Playwright rig for that defect profile OR document a further deferral with new criteria. Follow `docs/TECH_STACK.md` §3.5 (climb layers only when a lower-cost layer can't catch the defect). (Source: BUG-001 + BUG-002 postmortems; TECH_STACK §3.3.)
-
-#### R8.5 — Notes
-
-> -
-
-#### R8 — Notes
-
-> -
+> - **Candidate siblings for R10** (evaluate at charter time; none committed):
+>   - **Change display name** — Discord + email users currently can't self-rename post-signup. `User.displayName` is app-owned even for Discord accounts (Discord provides the initial value but we don't overwrite on subsequent logins per OUTLINE §3.1). A small `POST /users/me/display-name` route with a reducer `user-display-name-changed` log entry.
+>   - **Manage linked accounts** — Settings → Linked accounts already lets a user add Discord OR email as a login method (`apps/web/src/components/auth/LinkedAccounts.tsx`). UX consolidation opportunity: unify with the new Account section, add unlinking with the "must have at least one login method" invariant enforced.
+>   - **Session management** — "Sign out of other devices." Today the session cookie is single-device implicit (Auth.js `Session` model at `apps/server/prisma/schema.prisma:417`). Add a session-listing UI that surfaces `Session` rows for the current user with per-row revoke buttons.
+>   - **Self-service data export + delete account** — a GDPR-adjacent "Download all my data as JSON" button (distinct from per-party JSON export in §3.13), followed by a "Delete my account" flow that cascades to `PartyMembership` (marks leftAt), `Character` (delete-character cascade), user-owned homebrew (surface a "reassign to party" or "delete" prompt per row), and finally the `User` row. Discord token is already not persisted per SECURITY §1.1. SECURITY §7 backup discussion is the natural place to draft the spec.
+>   - **Notification preferences** — only makes sense if a notification surface is ever added (e.g. "email me when I'm invited to a party", "email me on party archive"). No notification infra exists today; probably a later slice than R10.
 
 ---
 
@@ -4028,31 +4037,31 @@ Followups that don't belong to any single feature slice. Listed here so they're 
 
 ### Hardening / observability
 
-- **NOTE:** `EmailAuthAttempt` cron sweep was previously listed here. **Promoted to R8.2 on 2026-07-07.** See R8.2 above.
-- **NOTE:** Per-IP rate limit on `POST /auth/email/request-otp` was previously listed here. **Promoted to R8.2 on 2026-07-07.** See R8.2 above.
-- **NOTE:** `PendingDiscordLink` cron sweep was previously listed here. **Promoted to R8.2 on 2026-07-07.** See R8.2 above.
-- **NOTE:** Snapshot-age operator metric was previously listed here. **Promoted to R8.3 on 2026-07-07.** See R8.3 above.
-- **NOTE:** Explicit `archivedAt` check in `POST /sync/actions` was previously listed here. **Promoted to R8.3 on 2026-07-07.** See R8.3 above.
+- **NOTE:** `EmailAuthAttempt` cron sweep was previously listed here. **See R8.1.**
+- **NOTE:** Per-IP rate limit on `POST /auth/email/request-otp` was previously listed here. **See R8.1.**
+- **NOTE:** `PendingDiscordLink` cron sweep was previously listed here. **See R8.1.**
+- **NOTE:** Snapshot-age operator metric was previously listed here. **See R8.2.**
+- **NOTE:** Explicit `archivedAt` check in `POST /sync/actions` was previously listed here. **See R8.2.**
 
 ### Test infrastructure
 
-- **NOTE:** Sync-queue bootstrap pull-after-push test was previously listed here. **Promoted to R8.5 on 2026-07-07.** See R8.5 above.
+- **NOTE:** Sync-queue bootstrap pull-after-push test was previously listed here. **See R8.4.**
 - [x] **Delete `apps/web/src/screens/Welcome.tsx` + `CreateCharacter.tsx`** — **Resolved 2026-06-30 (RH0.4).** R3.5 kept them as legacy fixtures so the existing screen tests (`Settings.test.tsx`, `CharacterSheet.test.tsx`, `ItemDetail.test.tsx`, `StorageDetail.test.tsx`) keep working without churn. RH0.4 deleted both files and migrated the dependent tests: three use `{ path: '/', element: null }` as a no-op fallback, and `StorageDetail.test.tsx` got a local `RedirectToCharacter` helper to preserve the "unknown stashId → / → CharacterSheet" auto-redirect test path. Two tests that asserted the literal Welcome heading were rewritten to assert the negative (CharacterSheet's tab list NOT present / ItemDetail's history heading NOT present) — same intent, no dependency on the legacy screen. (Source: R3.5 Notes, R4.1.f post-ship sweep, RH0.4.)
-- **NOTE:** Sync-queue unit test for the R4.1.f `isBootstrap` discrimination was previously listed here. **Promoted to R8.5 on 2026-07-07.** See R8.5 above.
-- **NOTE:** `GET /sync/state` assertion in the R4.1.f integration test was previously listed here. **Promoted to R8.5 on 2026-07-07.** See R8.5 above.
-- **NOTE:** End-to-end browser tests (Playwright) were previously listed here. **Promoted to R8.5 on 2026-07-07.** See R8.5 above.
+- **NOTE:** Sync-queue unit test for the R4.1.f `isBootstrap` discrimination was previously listed here. **See R8.4.**
+- **NOTE:** `GET /sync/state` assertion in the R4.1.f integration test was previously listed here. **See R8.4.**
+- **NOTE:** End-to-end browser tests (Playwright) were previously listed here. **See R8.4.**
 
 ### Feature gaps (small, web-only)
 
-- **NOTE:** `delete-character` UI entry point was previously listed here. **Promoted to R7.5 on 2026-07-07.** See R7.5 above.
-- **NOTE:** Reject `partyName` on the post-bootstrap `create-character` branch was previously listed here. **Promoted to R8.4 on 2026-07-07.** See R8.4 above.
-- **NOTE:** Wire `useCanDispatch()` on primary Save buttons was previously listed here. **Promoted to R7.5 on 2026-07-07.** See R7.5 above.
+- **NOTE:** `delete-character` UI entry point was previously listed here. **See R9.**
+- **NOTE:** Reject `partyName` on the post-bootstrap `create-character` branch was previously listed here. **See R8.3.**
+- **NOTE:** Wire `useCanDispatch()` on primary Save buttons was previously listed here. **See R9.**
 
-- **NOTE:** User-initiated email change with dual-OTP confirmation was previously listed here. **Promoted to R8.1 on 2026-07-07.** See R8.1 above.
+- **NOTE:** User-initiated email change with dual-OTP confirmation was previously listed here. **See R10.1.**
 
 - [x] **Multiple local-mode parties** — **shipped 2026-06-29 (R4.1 followup)**. The Dexie persistence layer now keys each party's blob under `appState:<partyId>` (`apps/web/src/db/save.ts`, `load.ts`). The Hub enumerates every keyed blob in local mode via the new `listKnownPartyIds()` helper; `currentPartyId` (already in `apps/web/src/db/meta.ts`) tracks the active pointer; `hydrate.ts` boots through that pointer with a fallback to the legacy unkeyed slot and a "first keyed blob" tertiary fallback. Hub flows now flush + clear the in-memory store before each `create-character` dispatch and before swapping to another party's blob — the reducer's `state === null` invariant stays intact. Local-mode users can hold N parties; server-mode users continue to use `GET /sync/parties` + per-party pull. **Carryforward (not blocking):** the JSON export envelope (§3.13 / `apps/web/src/io/export.ts`) still operates on the active party only — a future "vault" export that bundles every keyed blob is a separate scope.
 
-- **NOTE:** Multi-party "vault" export / import was previously listed here. **Promoted to R7.5 on 2026-07-07.** See R7.5 above.
+- **NOTE:** Multi-party "vault" export / import was previously listed here. **See R7.5.**
 
 - [x] **"Do you also play a character?" toggle on Create-party** — **shipped 2026-06-29 (R4.1 followup)**. The `create-character` reducer + action payload now accepts a `dmOnly: boolean` flag and an optional `partyName` override. When `dmOnly: true`, the reducer mints `User` + `Party` + ONE `role='dm'` `PartyMembership` + party-scope stashes (Party Stash + Recovered Loot) + their currency holdings, skipping the Character + Inventory stash + player membership. The log entry's `characterId`/`name`/`inventoryStashId` fields are now optional + a `dmOnly?: boolean` flag carries the intent for log readers. The Hub Create-party dialog became a three-step wizard: (1) party name input, (2) "Will you also play a character?" Yes / No, (3a) character form if Yes / dispatch dmOnly directly if No. Create-solo stays a single-step flow (party name auto-derived to "My Campaign"). DM-only bootstrap routes the user to `/party/settings` since they have no character sheet. Server-side `applyBootstrapDelta` is shape-agnostic — it iterates the reducer's `characters` / `stashes` / `memberships` arrays, so the empty-character branch just writes fewer rows.
 
