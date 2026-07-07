@@ -19,6 +19,14 @@ updates:
     commit-message:
       prefix: '⬆️'
       include: scope
+    # Match the `min-release-age=7` policy in .npmrc — Dependabot must not
+    # propose bumps to versions younger than 7 days, otherwise the supply-chain
+    # check in `pnpm install` rejects the resulting lockfile.
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
     groups:
       react:
         patterns:
