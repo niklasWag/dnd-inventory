@@ -1,0 +1,109 @@
+name: 🐛 Bug report
+description: Something is broken or doesn't behave per the docs.
+title: '🐛 <short summary>'
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing! Before you continue, please skim [`docs/BUGS.md`](../blob/main/docs/BUGS.md) — the bug may already be tracked or recently fixed.
+
+        Fixed bugs live under the "Recently fixed" section for a release cycle before being pruned.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug — actual behavior only.
+      placeholder: 'Opening an R5-era party threw 500 with a ZodError on payload.partyId.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: What should have happened per the docs / current schema?
+      placeholder: 'The party should load and the History screen should render its log.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that reliably trigger the bug. Include the exact user role (DM / player / solo).
+      placeholder: |
+        1. Create a party as DM on version R5.
+        2. Change encumbrance rule to variant via Character sheet.
+        3. Upgrade to R7.
+        4. Open the party from the Hub.
+        5. Observe 500 error in Network tab.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Deployment mode
+      description: Where are you running the app?
+      options:
+        - Local-only (browser + IndexedDB)
+        - Self-hosted (Docker Compose + Postgres)
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How bad is it? See BUGS.md severity conventions.
+      options:
+        - S0 — data loss / corruption / party unopenable
+        - S1 — major flow broken, no workaround
+        - S2 — flow broken but workaround exists
+        - S3 — cosmetic / minor
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App version / commit
+      description: Roadmap slice (e.g. R7.2) or git SHA. Check the About screen or `git rev-parse HEAD`.
+      placeholder: 'R7.2 / 72eac2a'
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser + OS. For self-hosted, add server host OS + Postgres version.
+      placeholder: |
+        - Browser: Firefox 142 on macOS 15
+        - Server (if self-hosted): Debian 12 on Proxmox LXC, Postgres 18-alpine
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: Server logs (pino JSON) or browser console. Redact PII first.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I checked `docs/BUGS.md` and this isn't already tracked.
+          required: true
+        - label: I've read the relevant sections of `docs/OUTLINE.md` / `docs/SECURITY.md` for the affected area.
+          required: false

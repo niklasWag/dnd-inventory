@@ -1,0 +1,80 @@
+name: ✨ Feature request
+description: Propose new functionality or an enhancement.
+title: '✨ <short summary>'
+labels: ['enhancement', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! Before continuing, please check:
+
+        - [`docs/OUTLINE.md`](../blob/main/docs/OUTLINE.md) — the request may already be in scope for a later milestone.
+        - [`docs/roadmap.md`](../blob/main/docs/roadmap.md) — check if a matching slice is already planned.
+
+        If the request contradicts the outline, surface the conflict below rather than assuming the docs should change.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What real usage pain does this solve? Concrete scenario > abstract "would be nice".
+      placeholder: 'When my party splits currency evenly, I have to manually compute each share — error-prone with 4+ players.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should the app do? Include UX sketch, action name, and any new AppState fields if you know them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What did you try or think about first? Why isn't that enough?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope-fit
+    attributes:
+      label: Scope fit
+      description: Does this fit the documented product scope?
+      options:
+        - Already in `docs/OUTLINE.md` — this issue tracks implementation
+        - Extends the outline — proposes a docs change
+        - Outside current scope — for consideration
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Where would the change live?
+      multiple: true
+      options:
+        - apps/web (UI / Zustand store)
+        - apps/server (Fastify routes, Prisma)
+        - packages/rules (pure rules engine)
+        - packages/shared (Zod schemas)
+        - packages/seeds (PHB/DMG content)
+        - infra/docker
+        - docs
+    validations:
+      required: false
+
+  - type: textarea
+    id: security-notes
+    attributes:
+      label: Security / permissions considerations
+      description: |
+        Does the change touch auth, permissions, currency, user-controlled input, WebSocket, or JSON import?
+        If yes, sketch how it maps to `docs/SECURITY.md`.
+      placeholder: 'New action must be DM-only per §8.1; server derives role from PartyMembership.'
+    validations:
+      required: false

@@ -1,0 +1,71 @@
+name: 🗺️ Roadmap slice
+description: Track a planned roadmap slice (R7.x / R8.x / …).
+title: '🗺️ R<slice> — <short title>'
+labels: ['roadmap', 'slice']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for slices that already live in [`docs/roadmap.md`](../blob/main/docs/roadmap.md) and need a public issue for tracking.
+
+        Reminder: `docs/roadmap.md` is not the source of truth — link to the authoritative doc (`OUTLINE.md` / `MVP.md` / `TECH_STACK.md` / `SECURITY.md`) that specifies the behaviour.
+
+  - type: input
+    id: slice-id
+    attributes:
+      label: Slice ID
+      description: Matches the roadmap.md heading.
+      placeholder: 'R7.3'
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One-paragraph description of what the slice ships.
+    validations:
+      required: true
+
+  - type: textarea
+    id: authoritative-docs
+    attributes:
+      label: Authoritative doc references
+      description: Which OUTLINE / MVP / TECH_STACK / SECURITY sections drive this slice?
+      placeholder: |
+        - `docs/OUTLINE.md` §3.9 (shops)
+        - `docs/SECURITY.md` §3.5 (pricing invariants)
+    validations:
+      required: true
+
+  - type: textarea
+    id: subtasks
+    attributes:
+      label: Sub-tasks
+      description: Checklist of the concrete work. Add more as scope becomes clear.
+      value: |
+        - [ ] Reducer / rules changes
+        - [ ] Zod schema additions (`packages/shared/schemas/`)
+        - [ ] Server persistor + route
+        - [ ] Prisma migration (if applicable)
+        - [ ] Web UI
+        - [ ] Tests (unit / component / server-integration as appropriate)
+        - [ ] Docs updated (OUTLINE / SECURITY / roadmap Notes)
+    validations:
+      required: false
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Explicitly out of scope
+      description: What deliberately does NOT ship in this slice? Keeps future-slice discussions off the PR.
+    validations:
+      required: false
+
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      description: Anything unresolved that would block implementation.
+    validations:
+      required: false

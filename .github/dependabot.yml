@@ -1,0 +1,96 @@
+# Dependabot config — weekly pnpm + Actions updates.
+# Grouping keeps the PR count manageable for a small repo.
+version: 2
+
+updates:
+  # pnpm monorepo — a single manifest scan at the root picks up all workspaces
+  # via the `packages/*` + `apps/*` glob in pnpm-workspace.yaml.
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: 'Europe/Berlin'
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - deps:npm
+    commit-message:
+      prefix: '⬆️'
+      include: scope
+    groups:
+      react:
+        patterns:
+          - 'react'
+          - 'react-*'
+          - '@types/react*'
+      radix-shadcn:
+        patterns:
+          - '@radix-ui/*'
+          - 'shadcn-ui'
+          - 'class-variance-authority'
+          - 'clsx'
+          - 'tailwind*'
+          - '@tailwindcss/*'
+      prisma:
+        patterns:
+          - 'prisma'
+          - '@prisma/*'
+      fastify:
+        patterns:
+          - 'fastify'
+          - '@fastify/*'
+      auth:
+        patterns:
+          - '@auth/*'
+          - 'next-auth'
+      testing:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
+          - '@testing-library/*'
+          - 'jsdom'
+      lint-format:
+        patterns:
+          - 'eslint'
+          - 'eslint-*'
+          - '@typescript-eslint/*'
+          - 'prettier'
+          - 'prettier-*'
+      types:
+        patterns:
+          - '@types/*'
+        exclude-patterns:
+          - '@types/react*'
+
+  # GitHub Actions — none in the repo yet, but pre-configuring so any future
+  # workflow is auto-tracked without a config edit.
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: 'Europe/Berlin'
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - deps:actions
+    commit-message:
+      prefix: '⬆️ ci'
+
+  # Docker base images.
+  - package-ecosystem: docker
+    directory: '/infra/docker'
+    schedule:
+      interval: monthly
+      day: monday
+      time: '06:00'
+      timezone: 'Europe/Berlin'
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - deps:docker
+    commit-message:
+      prefix: '⬆️ docker'

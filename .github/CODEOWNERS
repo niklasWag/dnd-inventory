@@ -1,0 +1,26 @@
+# CODEOWNERS
+#
+# GitHub uses the LAST matching pattern that matches a file. Keep the
+# catch-all first, then override for special paths.
+#
+# Adjust the owner handle(s) to match your GitHub account / team.
+
+# Default owner — everything requires review from the repo maintainer.
+*                                       @niklasWag
+
+# Docs are the source of truth per CLAUDE.md — extra care.
+/docs/                                  @niklasWag
+/CLAUDE.md                              @niklasWag
+
+# Schema + rules — a change here ripples through every consumer.
+/packages/shared/                       @niklasWag
+/packages/rules/                        @niklasWag
+
+# Server persistence + auth boundary — security-sensitive.
+/apps/server/prisma/                    @niklasWag
+/apps/server/src/auth/                  @niklasWag
+/apps/server/src/sync/                  @niklasWag
+
+# Infra / deploy.
+/infra/                                 @niklasWag
+/.github/                               @niklasWag

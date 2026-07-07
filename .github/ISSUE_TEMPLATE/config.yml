@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Product scope & data model (OUTLINE.md)
+    url: https://github.com/niklasWag/invManagement/blob/main/docs/OUTLINE.md
+    about: Full product scope, permissions model, and AppState schema. Read before proposing changes.
+  - name: MVP scope (MVP.md)
+    url: https://github.com/niklasWag/invManagement/blob/main/docs/MVP.md
+    about: What ships in the local-first MVP vs. the self-hosted milestones.
+  - name: Roadmap (roadmap.md)
+    url: https://github.com/niklasWag/invManagement/blob/main/docs/roadmap.md
+    about: Current slice status and shipped Notes.
+  - name: Known bugs (BUGS.md)
+    url: https://github.com/niklasWag/invManagement/blob/main/docs/BUGS.md
+    about: Check here before filing — your issue may already be tracked or recently fixed.
