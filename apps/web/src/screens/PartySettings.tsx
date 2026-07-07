@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { RenameField } from '@/components/settings/RenameField';
 import { EncumbranceRuleField } from '@/components/settings/EncumbranceRuleField';
+import { EconomyPresetField } from '@/components/settings/EconomyPresetField';
 import { CharacterForm, type CharacterFormOutput } from '@/components/CharacterForm';
 import { RoleBadge } from '@/components/RoleBadge';
 import { ApiError, kickPlayerApi, leavePartyApi, listPartyMembers, rotateInvite } from '@/lib/api';
@@ -61,6 +62,12 @@ export function PartySettings(): ReactElement {
   );
   const enforceEncumbrance = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.party.enforceEncumbrance : null)),
+  );
+  const priceModifier = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.party.priceModifier : null)),
+  );
+  const baseCurrency = useStore(
+    useShallow((s) => (s.appState !== null ? s.appState.party.baseCurrency : null)),
   );
   // BUG-011 — DM check that works in local mode (before the server-side
   // `members` list resolves). Reads the actor's active memberships to
@@ -390,6 +397,36 @@ export function PartySettings(): ReactElement {
               {encumbranceRule !== 'off' && enforceEncumbrance ? (
                 <span className="text-muted-foreground"> · enforced</span>
               ) : null}
+              . The DM sets this for the whole party.
+            </p>
+          )}
+        </section>
+      ) : null}
+
+      {/* R6.1 — Per-party economy controls (OUTLINE §3.5). DM edits;
+          non-DMs see a read-only summary. Applies to Catalog Browser
+          prices (via `pricing.ts`) and — post R6.2 — purchase/sale. */}
+      {priceModifier !== null && baseCurrency !== null ? (
+        <section aria-label="Economy" className="space-y-4 rounded-lg border border-border p-4">
+          <div>
+            <h2 className="font-semibold">Economy</h2>
+            <p className="text-sm text-muted-foreground">
+              Set the campaign's currency standard. Scales PHB / DMG prices; homebrew items keep
+              their typed cost.
+            </p>
+          </div>
+          {iAmDmFromLocalMemberships ? (
+            <EconomyPresetField
+              partyId={partyId}
+              currentPriceModifier={priceModifier}
+              currentBaseCurrency={baseCurrency}
+            />
+          ) : (
+            <p className="text-sm">
+              Current economy:{' '}
+              <span className="font-medium">
+                {String(priceModifier)}× / {baseCurrency}
+              </span>
               . The DM sets this for the whole party.
             </p>
           )}

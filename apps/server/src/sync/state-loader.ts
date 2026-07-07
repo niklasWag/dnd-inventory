@@ -35,6 +35,7 @@ import {
   fromPrismaCharacter,
   fromPrismaCurrencyHolding,
   fromPrismaGameSession,
+  fromPrismaShop,
   fromPrismaItemDefinition,
   fromPrismaItemInstance,
   fromPrismaParty,
@@ -147,7 +148,7 @@ async function assembleAppState(
   const stashIds = stashRows.map((s) => s.id);
 
   // The remaining four reads can fan out in parallel.
-  const [itemDefRows, itemInstanceRows, currencyRows, txLogRows, gameSessionRows] =
+  const [itemDefRows, itemInstanceRows, currencyRows, txLogRows, gameSessionRows, shopRows] =
     await Promise.all([
       // Catalog: PHB + DMG (system rows) + homebrew scoped to this party.
       tx.itemDefinition.findMany({
@@ -167,6 +168,12 @@ async function assembleAppState(
       tx.gameSession.findMany({
         where: { partyId },
         orderBy: { number: 'asc' },
+      }),
+      // R6.2 — Shop rows scoped to this party, with stock eagerly loaded.
+      tx.shop.findMany({
+        where: { partyId },
+        include: { stock: true },
+        orderBy: { createdAt: 'asc' },
       }),
     ]);
 
@@ -206,6 +213,7 @@ async function assembleAppState(
     characters: characterRows.map(fromPrismaCharacter),
     gameSessions: gameSessionRows.map(fromPrismaGameSession),
     stashes: stashRows.map(fromPrismaStash),
+    shops: shopRows.map(fromPrismaShop),
     catalog: itemDefRows.map(fromPrismaItemDefinition),
     items: itemInstanceRows.map(fromPrismaItemInstance),
     currencies: currencyRows.map(fromPrismaCurrencyHolding),

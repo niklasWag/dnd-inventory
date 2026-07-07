@@ -70,6 +70,9 @@ export type GuardRejectionCode =
   | 'equip_only_in_inventory'
   | 'attune_only_in_inventory'
   | 'use_charge_only_in_inventory'
+  // R6.2 — shop actions
+  | 'shop_not_found'
+  | 'shop_closed'
   // RH1 — client-authoritative UUID v7 ids (§4 "Entity IDs")
   /** Client-supplied id is not a valid UUID v7 (wrong shape, wrong
    * version nibble, wrong variant). Structural validation via

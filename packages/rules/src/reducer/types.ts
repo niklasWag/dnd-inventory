@@ -319,6 +319,93 @@ export type Action =
       };
     }
   | {
+      // R6.1 — party-wide economy controls (OUTLINE §3.5). Sets both
+      // `priceModifier` and `baseCurrency` in one dispatch (mirrors the
+      // `set-encumbrance` both-fields-one-row pattern so a preset switch
+      // is atomic). Reducer rejects no-op writes; DM-only guard.
+      type: 'update-party-economy';
+      payload: {
+        partyId: string;
+        priceModifier: number;
+        baseCurrency: CurrencyDenomination;
+      };
+    }
+  // R6.2 — Shop CRUD + purchase / sale (OUTLINE §3.9, §5.12).
+  | {
+      type: 'create-shop';
+      payload: {
+        newShopId: string;
+        name: string;
+      };
+    }
+  | {
+      type: 'edit-shop';
+      payload: {
+        shopId: string;
+        patch: {
+          name?: string;
+          priceModifier?: number;
+          sellToMerchantRate?: number;
+        };
+      };
+    }
+  | {
+      type: 'delete-shop';
+      payload: { shopId: string };
+    }
+  | {
+      type: 'set-shop-open';
+      payload: { shopId: string; isOpen: boolean };
+    }
+  | {
+      type: 'edit-shop-stock';
+      payload: {
+        shopId: string;
+        operation:
+          | {
+              kind: 'add';
+              newStockEntryId: string;
+              itemDefinitionId: string;
+              priceOverride?: number;
+              quantity: number;
+            }
+          | {
+              kind: 'update';
+              stockEntryId: string;
+              priceOverride?: number | null;
+              quantity?: number;
+            }
+          | {
+              kind: 'remove';
+              stockEntryId: string;
+            };
+      };
+    }
+  | {
+      // R6.2 `purchase` — any active party member (DM anytime; players
+      // when `shop.isOpen`). Debits buyer, mints ItemInstance (auto-
+      // stacks per §4), decrements finite stock.
+      type: 'purchase';
+      payload: {
+        shopId: string;
+        stockEntryId: string;
+        targetStashId: string;
+        quantity: number;
+        newItemInstanceId: string;
+      };
+    }
+  | {
+      // R6.2 `sale` — inverse of purchase. Consumes item, credits
+      // seller, increments (or inserts new) shop stock row.
+      type: 'sale';
+      payload: {
+        shopId: string;
+        itemInstanceId: string;
+        quantity: number;
+        newStockEntryId: string;
+      };
+    }
+  | {
       // R1.2: equip an item that lives in a character's Inventory stash.
       // Reducer rejects when the row is not in a `scope=character,
       // isCarried=true` stash, or when the stash's `ownerCharacterId`
@@ -480,6 +567,21 @@ export type Action =
       type: 'identify';
       payload: {
         itemInstanceId: string;
+        identified: boolean;
+        hint?: string | undefined;
+      };
+    }
+  | {
+      // R6.4 — batch-identify (OUTLINE §3.8 amendment 2026-06-24). Flips
+      // `identified` on every ItemInstance in the current party whose
+      // `definitionId` matches. Optional shared `hint` overrides per-
+      // instance hints when present; when absent, each affected instance
+      // keeps its existing hint. Reducer emits one `identify` log entry
+      // per affected instance (no new TransactionLog type) so per-item
+      // history filters continue to work.
+      type: 'identify-batch';
+      payload: {
+        definitionId: string;
         identified: boolean;
         hint?: string | undefined;
       };

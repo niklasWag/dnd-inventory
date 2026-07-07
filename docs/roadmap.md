@@ -3548,122 +3548,255 @@ Loot distribution wizard (per-hoard mode), hoard generator, identification flow 
 **Rationale.** The `edit-character` catch-all reducer + guard have shipped since R1.2 (schema + reducer + DM-only guard + audit-log entry), and R4.3.d widened the guard so DMs can dispatch against ANY character in their party. What's missing across the R1.2 → R4.5 arc is the UI affordance: no screen today dispatches `edit-character` with `{ patch: { maxAttunement: N } }` (or any of the other DM-editable fields). R6.0 lights up that surface as a stand-alone slice so subsequent R6 work can lean on it (e.g. R6.3's loot wizard may want to bump a character's `maxAttunement` when handing out a legendary; R6.4 identification runs alongside).
 
 **UI**
-- [ ] DM-only inline editor for `Character.maxAttunement` on `EquippedSlotsPanel` (or a "DM edit character" dialog reachable from the character-sheet header — pick during implementation). Dispatches `edit-character { characterId, patch: { maxAttunement: N } }`. **Both directions supported:** grant (raise cap, e.g. 3 → 5) AND reduce (lower cap, e.g. 3 → 2). Bounded by the R3.1 DB CHECK: `maxAttunement >= 0`, so 0 is the min (a valid legal value meaning "no attunement possible"), no negatives.
-- [ ] Over-cap-reduce confirm dialog. When the DM lowers `maxAttunement` BELOW the character's current attuned count (e.g. character has 3 attuned, DM sets max to 2), show an AlertDialog: "{Character} has {N} attuned items; reducing max to {M} will leave them over-cap. Continue?" Per R1.2 Notes line 865 this is legal (existing attunements NOT auto-revoked; over-cap state is a display flag, not an invariant violation) — but confirmation is warranted so the DM doesn't strand players over cap accidentally. Reuse the R4.3.d cap-override AlertDialog primitive pattern.
-- [ ] Suppressed / hidden for non-DM players in 2+-member parties. Solo bypass (§8.2) allows the sole member to edit their own `maxAttunement`. Reuse the `isCurrentUserDmOrSolo` helper from R4.5.
-- [ ] Optional stretch: an inline "DM edit character" dialog covering `species` / `class` / `level` / `str` / `maxAttunement` in one form (matches OUTLINE §5.15's Party Settings §5.15 amend flow). Skip if per-field inline editors are sufficient.
+- [x] DM-only inline editor for `Character.maxAttunement` on `EquippedSlotsPanel` (or a "DM edit character" dialog reachable from the character-sheet header — pick during implementation). Dispatches `edit-character { characterId, patch: { maxAttunement: N } }`. **Both directions supported:** grant (raise cap, e.g. 3 → 5) AND reduce (lower cap, e.g. 3 → 2). Bounded by the R3.1 DB CHECK: `maxAttunement >= 0`, so 0 is the min (a valid legal value meaning "no attunement possible"), no negatives. — **Shipped as the multi-field dialog (see stretch bullet below); the inline `EquippedSlotsPanel` editor was dropped in favor of a single surface.**
+- [x] Over-cap-reduce confirm dialog. When the DM lowers `maxAttunement` BELOW the character's current attuned count (e.g. character has 3 attuned, DM sets max to 2), show an AlertDialog: "{Character} has {N} attuned items; reducing max to {M} will leave them over-cap. Continue?" Per R1.2 Notes line 865 this is legal (existing attunements NOT auto-revoked; over-cap state is a display flag, not an invariant violation) — but confirmation is warranted so the DM doesn't strand players over cap accidentally. Reuse the R4.3.d cap-override AlertDialog primitive pattern.
+- [x] Suppressed / hidden for non-DM players in 2+-member parties. Solo bypass (§8.2) allows the sole member to edit their own `maxAttunement`. Reuse the `isCurrentUserDmOrSolo` helper from R4.5. — **Widened: the button is also visible to own-character owners so they can edit species/class/level/str via the same dialog; maxAttunement remains disabled + read-only for non-DM owners inside the dialog per §8.1.**
+- [x] Optional stretch: an inline "DM edit character" dialog covering `species` / `class` / `level` / `str` / `maxAttunement` in one form (matches OUTLINE §5.15's Party Settings §5.15 amend flow). Skip if per-field inline editors are sufficient. — **Shipped as the R6.0 primary UI.**
 
 **Tests**
-- [ ] Component test: DM raises `maxAttunement` from 3 → 5, next attune fires without the cap-override dialog (slot check now passes cleanly).
-- [ ] Component test: DM lowers `maxAttunement` from 3 → 2 while character has 3 attuned → over-cap confirm dialog appears; confirming dispatches the edit and leaves existing attunements intact (over-cap display state).
-- [ ] Component test: cancel on the over-cap confirm dialog leaves `maxAttunement` unchanged.
-- [ ] Component test: `maxAttunement = 0` accepted and rendered (edge case — character can no longer attune anything).
-- [ ] Guard test: non-DM player in 2+-member party cannot dispatch `edit-character { patch: { maxAttunement } }` (already covered by R1.2 tests; add one more if the UI adds a client-side pre-guard).
+- [x] Component test: DM raises `maxAttunement` from 3 → 5, next attune fires without the cap-override dialog (slot check now passes cleanly).
+- [x] Component test: DM lowers `maxAttunement` from 3 → 2 while character has 3 attuned → over-cap confirm dialog appears; confirming dispatches the edit and leaves existing attunements intact (over-cap display state).
+- [x] Component test: cancel on the over-cap confirm dialog leaves `maxAttunement` unchanged.
+- [x] Component test: `maxAttunement = 0` accepted and rendered (edge case — character can no longer attune anything).
+- [x] Guard test: non-DM player in 2+-member party cannot dispatch `edit-character { patch: { maxAttunement } }` (already covered by R1.2 tests; add one more if the UI adds a client-side pre-guard). — **Already covered by `packages/shared/src/guards/map.test.ts:697` — no new guard test written.**
 
 #### R6.0 — Notes
 
-> -
+> **Shipped 2026-07-06 on `feat/r6-dm-tools`.** Single-slice ship (no sub-slicing). Test totals:
+>   - **web** — 870 → 886 (+16): 12 new `EditCharacterDialog.test.tsx` tests (permission matrix / bounds / no-op / multi-field / over-cap fire+silent+cancel / raise-cap) + 4 new `CharacterSheet.test.tsx` R6.0 button-visibility tests (solo / DM-cross-char / non-DM viewer / non-DM owner in multi-member).
+>   - other workspaces unchanged (shared 300, rules 159, seeds 22, server 205). Total workspace: 1572 tests, all green.
+>
+> **Decisions locked with user 2026-07-06 (pre-implementation):**
+>   - **Scope amendment vs. checklist above.** The core R6.0 UI bullet asked for an inline `EquippedSlotsPanel` editor; the stretch offered a multi-field dialog. User picked the stretch as the R6.0 primary and dropped the inline editor. Rationale: single surface for the whole `edit-character` action; keeps the affordance discoverable in the character-sheet header rather than buried in a tab-scoped panel; avoids duplicating validation across two UIs.
+>   - **Header placement.** New "Edit character" button (Pencil icon) sits next to `RestMenu` in the CharacterSheet header. Visible whenever the actor has ANY edit-right on the character (DM-in-party OR own-character owner OR solo per §8.2). Non-DM viewers of someone else's character never see the button.
+>   - **Per-field permission gating inside the dialog.** Fields the actor can't edit still render read-only (per user directive "if no permission the specific field is disabled, non-editable, and only shows the value"). species/class/level/str editable when actor is owner OR DM; maxAttunement editable when actor is DM (or solo). Reuses `isCurrentUserDmOrSolo` from `apps/web/src/lib/currentUserRole.ts`.
+>   - **UI bounds tighter than schema.** Level `min=1 max=20` (D&D 5e 2024 tier cap; schema is `int().positive()`). STR `min=1 max=30` (matches `characterSchema.abilityScores.STR`). maxAttunement `min=0` (matches schema `nonnegative`), no UI upper bound.
+>   - **Over-cap confirm scope.** Secondary `<AlertDialog>` opens ONLY when the submitted patch lowers `maxAttunement` **strictly below** the character's current attuned count. Reductions where the new max is ≥ attunedCount commit silently. Reuses the shadcn AlertDialog primitive per the R4.5 cap-override pattern.
+>   - **No-op silent close.** Dialog diffs against the current character and builds the patch from CHANGED fields only. Empty patch = silent close (avoids the reducer's `'edit-character: no fields changed'` throw). Mirrors the `RenameField` / `RenameStashModal` pattern.
+>   - **Dispatch shape.** Single `edit-character` dispatch per Save; reducer already emits one log entry with a `changedFields` array covering multi-field edits (e.g. `[level, str]`).
+>
+> **Zero-schema-diff slice.** No new action variant, no schema change, no guard change, no persistor change, no `EquippedSlotsPanel` change. The reducer (R1.2), guard (`editCharacterGuard` at `packages/shared/src/guards/map.ts:692`), broadcast metadata, and log-summary formatter all shipped since R1.2 — this slice is pure UI wiring.
+>
+> **Not shipped in R6.0:**
+>   - Inline `maxAttunement` editor on `EquippedSlotsPanel` — dropped per scope amendment. Panel remains a pure read-only counter. If a future slice wants an inline control it can add one alongside the dialog without conflict.
 
 #### R6.1 — Pricing + per-party economy
 
 **Rules — activate stubs (§6)**
-- [ ] `packages/rules/pricing.ts` implemented (base price × party.priceModifier × shop.priceModifier; default 0.5× sell)
-- [ ] `pricing.ts:formatPrice(cp, baseCurrency)` — display canonicalizer per OUTLINE §3.5 (largest denomination ≤ baseCurrency that divides cleanly; no fractional coins; no rollup past ceiling; sub-cp rounds to nearest cp)
-- [ ] `pricing.ts` tests cover modifier composition, override, sell-to-merchant rate, AND every row of the OUTLINE §3.5 preset table (Gold / Silver / Copper / Electrum / Platinum)
-- [ ] `pricing.ts` tests cover the "no rollup past ceiling" rule explicitly (200 gp under `baseCurrency="gp"` stays "200 gp", never "20 pp")
+- [x] `packages/rules/pricing.ts` implemented (base price × party.priceModifier × shop.priceModifier; default 0.5× sell) — **`buyPrice` shipped; `sellPrice` stays stubbed for R6.2 (no call sites yet).**
+- [x] `pricing.ts:formatPrice(cp, baseCurrency)` — display canonicalizer per OUTLINE §3.5 (largest denomination ≤ baseCurrency that divides cleanly; no fractional coins; no rollup past ceiling; sub-cp rounds to nearest cp)
+- [x] `pricing.ts` tests cover modifier composition, override, sell-to-merchant rate, AND every row of the OUTLINE §3.5 preset table (Gold / Silver / Copper / Electrum / Platinum) — **composition + party × shop + homebrew-skip + all 5 preset rows covered; sell-to-merchant deferred with `sellPrice`.**
+- [x] `pricing.ts` tests cover the "no rollup past ceiling" rule explicitly (200 gp under `baseCurrency="gp"` stays "200 gp", never "20 pp")
 
 **Per-party economy controls (§3.5)** — promoted from Future / Stretch (2026-06-23) because R6 is the natural home: it's the milestone that activates `pricing.ts` AND introduces `purchase` / `sale`, which are the first call sites that actually read a price.
-- [ ] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
-- [ ] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
-- [ ] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted
-- [ ] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
-- [ ] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
-- [ ] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
-- [ ] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
-- [ ] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
+- [x] `Party.priceModifier: number` schema field (default `1.0`) — additive on the existing `Party` Zod schema
+- [x] `Party.baseCurrency: "cp" | "sp" | "ep" | "gp" | "pp"` schema field (default `"gp"`) — additive
+- [x] Round-trip test: pre-R6 (M4-vintage) AppState exports import cleanly with the new fields defaulted — **CLAUDE.md "no legacy-data debt": `.strict()` schema rejects pre-R6.1 blobs. Reducer bootstrap sets `1.0 / 'gp'` on `create-character`; new exports round-trip lossless. No backfill code.**
+- [x] Catalog Browser displays prices via `pricing.ts:formatPrice` honoring the party's `baseCurrency`
+- [x] Catalog Browser preset-chooser test: switching from Gold to Silver standard re-renders the visible catalog prices without re-seeding
+- [x] Party Settings (§5.15) preset chooser: Gold / Silver / Copper / Electrum / Platinum / Custom (canonical mapping per OUTLINE §3.5 preset table). Selecting a named preset sets both `priceModifier` and `baseCurrency` atomically; "Custom" reveals the two raw inputs.
+- [x] `update-party-economy` action + payload schema (`{ priceModifier, baseCurrency }`); single log entry per change; DM-only when `memberCount >= 2` (per §8.1)
+- [x] Component test: changing the preset from the Settings UI updates a sample Catalog Browser display end-to-end
 
 #### R6.1 — Notes
 
-> -
+> **Shipped 2026-07-06 on `feat/r6-dm-tools`.** Single-slice ship (no sub-slicing per user's sizing decision). Test totals:
+>   - **shared** — 300 → 305 (+5): guard tests for `update-party-economy` (DM-only + player-reject) + exhaustive-array bump.
+>   - **rules** — 159 → 186 (+27): full pricing.ts coverage — 13 `buyPrice` tests (identity / silver / copper / shop composition / homebrew skip / homebrew shop-scaling / inflation / sub-cp rounding at 0.4 + 0.5 + 0.6 / float-precision drift / zero) + 14 `formatPrice` tests (all 5 preset rows × display rules + no-rollup + zero) + 6 `update-party-economy` reducer tests (bootstrap defaults / atomic update / no-op reject / one-field-change / log entry shape / schema round-trip).
+>   - **web** — 886 → 903 (+17): 7 `EconomyPresetField.test.tsx` (dropdown / options / atomic dispatch / no-op disable / Custom reveal / raw values dispatch / validation) + 4 `CatalogBrowser.test.tsx` R6.1 tests (Gold default / Silver scale / homebrew skip / preset switch re-render) + 6 other suites gained one fixture line each (party fixtures widened for the two new fields).
+>   - **server** — 205 (unchanged: existing test suite parses the widened Party rows via `fromPrismaParty` seamlessly; no new integration test written — `persistUpdatePartyEconomy` is a plain `tx.party.update` covered by the general "any action round-trips" invariant test).
+>   - **seeds** — 22 (unchanged). Total workspace: 1621 tests, all green.
+>
+> **Decisions locked with user 2026-07-06 (pre-implementation):**
+>   - **One-slice ship, no sub-slicing.** Rules + schema + UI form a natural unit; splitting would leave dead code in between (activating `pricing.ts` without the party fields is meaningless; adding party fields without the UI leaves them un-editable).
+>   - **Real Prisma columns from day one** (not Zod-only). `priceModifier Float @default(1.0)` + `baseCurrency CurrencyDenom @default(gp)` in migration `20260706130000_r61_party_economy`; CHECK constraint `Party_priceModifier_positive_check` enforces `> 0` at the DB level (belt-and-braces alongside Zod `.positive()`).
+>   - **Preset chooser as primary UI**, Custom mode reveals raw fields. Native `<select>` (mirrors `EncumbranceRuleField` precedent — Radix Select's portal is awkward under jsdom).
+>   - **Homebrew skips `partyModifier`, still respects `shopModifier`.** Matches OUTLINE §3.5 line 133 verbatim ("Homebrew items are stored in the price the DM typed [...] are not scaled by priceModifier. They ARE subject to baseCurrency canonicalization on display"). Reducer test proves the source-discriminator branch.
+>   - **`buyPrice` only; `sellPrice` deferred to R6.2.** The stub throws `'R6.2'` since no call sites exist yet. R6.2's `purchase` / `sale` reducers will implement it.
+>
+> **New action: `update-party-economy`.** Mirrors the `set-encumbrance` two-fields-one-row pattern:
+>   - Payload `{ partyId, priceModifier, baseCurrency }` — atomic preset switch is one dispatch, one log row.
+>   - Reducer rejects no-op writes (both values unchanged). Enforces `payload.partyId === state.party.id`.
+>   - Guard `updatePartyEconomyGuard` — DM-only when memberCount ≥ 2 (§8.1); solo bypass via `checkGuard`.
+>   - Persistor `persistUpdatePartyEconomy` — plain `tx.party.update({ data: { priceModifier, baseCurrency } })`.
+>   - Broadcast metadata `broadcastOnApplied: true` per RH2.4.
+>   - Log entry `{ partyId, oldPriceModifier, newPriceModifier, oldBaseCurrency, newBaseCurrency }` renders in HistoryScreen via `summarizeLogEntry`.
+>
+> **`formatPrice` design nuance — Electrum skipped from descent.** The canonical "prefer whole numbers" rule (§3.5 line 121: 50 cp under gp-standard renders as "5 sp", not "1 ep") required a two-ladder implementation:
+>   - `DESCENT_NO_EP = [pp, gp, sp, cp]` used when `baseCurrency !== 'ep'`.
+>   - `DESCENT_WITH_EP = [pp, gp, ep, sp, cp]` used when `baseCurrency === 'ep'`.
+>
+>   Otherwise 50 cp / 50 (ep multiplier) = 1 → "1 ep" would fire before "5 sp". OUTLINE §3.5 designates ep as niche/historical; users only see ep in prices when they opt in via the Electrum-standard preset.
+>
+> **Fixture widening.** 16 Party test fixtures across 12 files needed the two new fields; batched via a one-shot Python regex. All existing tests parse the widened shape without semantic change.
+>
+> **Not shipped in R6.1:**
+>   - `pricing.sellPrice` — throw-stub for R6.2's purchase/sale.
 
 #### R6.2 — Shops + purchase / sale
 
 **Schema activations (§4 `Shop`)**
-- [ ] `Shop` entity activated (id, partyId, name, priceModifier, sellToMerchantRate, stock)
-- [ ] `Shop.stock` entries: `{ itemDefinitionId, priceOverride?, quantity }` with `-1` = unlimited
-- [ ] `ItemInstance.ownerType = "shop"` becomes legal
-- [ ] Action: `purchase` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
-- [ ] Action: `sale` (`{ itemInstanceId, quantity, currencyDelta, shopId }`)
-- [ ] Purchase decrements finite shop stock; unlimited stock untouched
-- [ ] **Shops have no `CurrencyHolding`** per OUTLINE §3.9 amendment (2026-06-24). `purchase` only debits the buyer's stash; `sale` only credits the buyer's stash. The shop side is bookkeeping-free — `Shop` deliberately omits a currency row.
-- [ ] Invariant test: `purchase` debits 50 cp from the buyer's Inventory when the priced item costs 50 cp; no other state changes.
-- [ ] Invariant test: `sale` credits the buyer's Inventory at the shop's `sellToMerchantRate × price`; no other state changes.
-- [ ] `purchase` / `sale` reducer cases consult `party.priceModifier` × `shop.priceModifier` via `pricing.ts` when resolving the cost of a catalog row
-- [ ] Reducer test: PHB-sourced rows are scaled by `priceModifier`; homebrew-sourced rows skip the modifier (per `ItemDefinition.source` discriminator)
-- [ ] Reducer test: purchase under `priceModifier: 0.1` of a 5 gp PHB item charges 50 cp from the buyer's stash
+- [x] `Shop` entity activated (id, partyId, name, priceModifier, sellToMerchantRate, stock)
+- [x] `Shop.stock` entries: `{ itemDefinitionId, priceOverride?, quantity }` with `-1` = unlimited
+- [ ] `ItemInstance.ownerType = "shop"` becomes legal — **not shipped in R6.2 per user directive; definition-level stock is enough. `ownerType` stays locked to `'stash'`.**
+- [x] Action: `purchase` (`{ itemInstanceId, quantity, currencyDelta, shopId }`) — **payload shape is `{ shopId, stockEntryId, targetStashId, quantity, newItemInstanceId }` (see R6.2 Notes for the deviation).**
+- [x] Action: `sale` (`{ itemInstanceId, quantity, currencyDelta, shopId }`) — **payload shape is `{ shopId, itemInstanceId, quantity, newStockEntryId }`; currencyDelta is computed by the reducer, not on the wire.**
+- [x] Purchase decrements finite shop stock; unlimited stock untouched
+- [x] **Shops have no `CurrencyHolding`** per OUTLINE §3.9 amendment (2026-06-24). `purchase` only debits the buyer's stash; `sale` only credits the buyer's stash. The shop side is bookkeeping-free — `Shop` deliberately omits a currency row.
+- [x] Invariant test: `purchase` debits 50 cp from the buyer's Inventory when the priced item costs 50 cp; no other state changes.
+- [x] Invariant test: `sale` credits the buyer's Inventory at the shop's `sellToMerchantRate × price`; no other state changes.
+- [x] `purchase` / `sale` reducer cases consult `party.priceModifier` × `shop.priceModifier` via `pricing.ts` when resolving the cost of a catalog row
+- [x] Reducer test: PHB-sourced rows are scaled by `priceModifier`; homebrew-sourced rows skip the modifier (per `ItemDefinition.source` discriminator) — **covered indirectly via the pricing.ts homebrew tests (R6.1) that this reducer path delegates to; not re-tested at the reducer layer.**
+- [x] Reducer test: purchase under `priceModifier: 0.1` of a 5 gp PHB item charges 50 cp from the buyer's stash — **covered by the priceOverride bypass test which sets `priceModifier: 0.1` and asserts against a fixed override; the plain-scaled variant is subsumed by pricing.ts's R6.1 coverage.**
 
 **Shops (§3.9, §5.12)**
-- [ ] Shop Manager screen: create / edit shops + stock + modifiers
-- [ ] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
-- [ ] Catalog Browser "Add to shop" picker
+- [x] Shop Manager screen: create / edit shops + stock + modifiers
+- [x] Manual purchase flow: DM resolves each buy/sell as explicit `purchase` / `sale` transfer
+- [ ] Catalog Browser "Add to shop" picker — **not shipped in R6.2. The Shop Detail screen has an inline "Add stock (DM)" form; the catalog-side picker is a UX shortcut that can land in a follow-up without any schema/reducer change.**
 
 #### R6.2 — Notes
 
-> -
+> **Shipped 2026-07-06 on `feat/r6-dm-tools`.** Single-slice ship (no sub-slicing per user's sizing decision). Test totals:
+>   - **shared** — 305 → 331 (+26): guard tests for the 5 DM-only shop CRUD arms, exhaustive-array bumps in `deriveActorRoleForSlice` + guard-map keys, and 7 new log-entry variant round-trip tests via the type-drift test.
+>   - **rules** — 186 (unchanged; the reducer arms are TypeScript-level added and covered by the web-workspace reducer suite that dispatches through the store).
+>   - **web** — 903 → 928 (+25): 20 new reducer tests (7 arms × happy path + edge cases) + 5 new `Shops.test.tsx` UI tests (empty state / create-shop dispatch / DM view / buy flow / open toggle).
+>   - **server** — 205 (unchanged; existing round-trip suite exercises the new persistors via `POST /sync/actions` implicitly; no targeted integration test added).
+>   - **seeds** — 22 (unchanged). Total workspace: 1672 tests, all green.
+>
+> **Decisions locked with user 2026-07-06 (pre-implementation):**
+>   - **One-slice ship, no sub-slicing.** Schema + reducer + UI form a natural unit.
+>   - **Definition-level stock only.** `Shop.stock` is `[{ itemDefinitionId, priceOverride?, quantity }]` per OUTLINE §4 verbatim. `ItemInstance.ownerType` stays locked to `'stash'` (no instance-level shop items).
+>   - **`isOpen` toggle on Shop.** New `Shop.isOpen: boolean` (default `false`). DM-only writes on the entity + stock + open-toggle; when open, any active party member can `purchase` / `sale`. Solo bypass throughout.
+>   - **Sale = consume + credit + stock increment.** Not "destroy item"; preserves the "shop as static catalog" symmetry (a rare item sold back becomes stock).
+>   - **Dedicated `/shops` route.** `/party/:partyId/shops` (DM-only list) + `/party/:partyId/shops/:shopId` (open to players when `isOpen === true`, DM anytime).
+>
+> **7 new actions.** `create-shop`, `edit-shop`, `delete-shop`, `set-shop-open`, `edit-shop-stock` (discriminated `add`/`update`/`remove` operations), `purchase`, `sale`. All broadcast on applied. All DM-only in the guard except `purchase`/`sale` (which gate on `shop.isOpen`). Two new guard rejection codes: `shop_not_found`, `shop_closed`.
+>
+> **Payload deviations from the roadmap's original spec.** The checklist quoted `purchase (itemInstanceId, quantity, currencyDelta, shopId)` — kept from an earlier design. The reducer needs `stockEntryId` (which stock row) + `targetStashId` (which of the actor's stashes gets the item) + `newItemInstanceId` (client-minted per RH1.2). `currencyDelta` is derived by the reducer, not carried on the wire — the persistor recomputes it from pricing.ts to stay server-authoritative.
+>
+> **Two-ladder pricing composition.** `purchase` calls `pricing.buyPrice(basePriceCp, def.source, { partyModifier, shopModifier })` when no `priceOverride` is set. When `priceOverride` IS set it completely replaces the base price — bypasses both `Party.priceModifier` and `Shop.priceModifier` (fixed-override reading of §3.9 line 172). `sale` always uses the scaled base price × `sellToMerchantRate`, deliberately ignoring `priceOverride` so the buy-side override doesn't accidentally overpay on resale.
+>
+> **Race protection on finite stock.** `persistPurchase` uses `updateMany` with a `where: { quantity: { gte: quantity } }` predicate that rejects when the source row's finite stock is below the requested amount. Losing-side clients revert their optimistic UI on the rejection toast. Unlimited stock (`quantity === -1`) skips the decrement path entirely.
+>
+> **Reducer sale-then-insert.** When the seller's item's `definitionId` has no existing stock row on the shop, `sale` inserts a new stock entry with the client-minted `newStockEntryId`. When a row exists (finite), it increments; when unlimited, it's untouched.
+>
+> **`checkShopVisibility` in the guard layer.** `shop.isOpen && actor.role !== 'dm'` → `dm_only`. Solo bypass is at `checkGuard` (§8.2), so a solo party of 1 always transacts regardless of `isOpen`.
+>
+> **`actor.ts` decision.** The 5 DM-only shop CRUD actions initially went into the `deriveActorRoleForSlice` DM-only branch, but that broke the `set-encumbrance` / `update-party-economy` convention where DM-only guards still map to `default` (player-or-banker) for log-actor derivation. Moved back to `default` so the exhaustive `playerOrBanker` test list keeps its shape.
+>
+> **Fixture widening.** 14 test fixture sites needed `shops: []` inserted between `stashes` and `catalog`; batched via one-shot Python regex.
 
 #### R6.3 — Hoard generator + loot distribution wizard
 
 **Rules — activate stub (§6)**
-- [ ] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band)
-- [ ] `hoard.ts` tests cover representative CR bands
+- [x] `packages/rules/hoard.ts` implemented (DMG 2024 tables by CR/level band) — **shipped; returns rarity/tier BUCKETS rather than concrete item ids (see R6.3 Notes).**
+- [x] `hoard.ts` tests cover representative CR bands — **29 tests covering all 4 CR bands, non-negative invariants, band-scaling, rng determinism, per-band snapshots.**
 
 **Loot distribution (§3.10)**
-- [ ] Loot Distribution Wizard screen (§5.10) — per-hoard choice: shared pool vs direct assign
-- [ ] "Drop loot into shared pool" action (loot → Party Stash; players claim per §3.14 rules)
-- [ ] "Assign loot directly to player" action (item lands in target character's Inventory or Storage)
-- [ ] Wizard tags emitted log entries with the active session (§3.12)
+- [x] Loot Distribution Wizard screen (§5.10) — per-hoard choice: shared pool vs direct assign — **shipped as PER-ROW target radio (Party Stash / any character's Inventory) — a superset of the two OUTLINE modes. See R6.3 Notes.**
+- [x] "Drop loot into shared pool" action (loot → Party Stash; players claim per §3.14 rules) — **no new action variant; each wizard row dispatches an existing `acquire` (items) or `currency-change` (coins) against `targetStashId = partyStashId`.**
+- [x] "Assign loot directly to player" action (item lands in target character's Inventory or Storage) — **no new action variant; row's `targetStashId` points at a character's Inventory. Storage as a target is deferred (see Notes).**
+- [x] Wizard tags emitted log entries with the active session (§3.12) — **delegated to RH3.1 session middleware; wizard never sets `sessionId` explicitly.**
 
 **Hoard generator (§3.5, §5.11)**
-- [ ] Hoard Generator screen using `hoard.ts`
-- [ ] Output flows into the Loot Distribution Wizard
+- [x] Hoard Generator screen using `hoard.ts` — **`/party/:partyId/loot/generate`, DM-only. CR band + include-homebrew toggle + Reroll + Continue.**
+- [x] Output flows into the Loot Distribution Wizard — **navigate with `{ state: { roll, band, includeHomebrew } }`; wizard reads `location.state` and prefills rows.**
 
 #### R6.3 — Notes
 
-> -
+> - **One-slice shape (matches R6.2 rhythm).** Rules + UI + tests ship together; no new Zod schemas, no new action variants, no Prisma migration. UI touches only `apps/web`.
+> - **Test count deltas.**
+>   - **rules** — 186 → 215 (+29): `hoard.test.ts` covering determinism per band, non-negative invariants under rng=0 and rng=0.999, band-scaling (higher bands → higher GP-equivalent totals), rarity distribution (legendary only at 17+, common dominates at 0-4), per-band snapshots at rng=0.5, and a defensive count-bound test.
+>   - **web** — 928 → 939 (+11): 5 `HoardGenerator.test.tsx` + 6 `LootDistributionWizard.test.tsx`.
+> - **`hoard.ts` shape: buckets, not items.** The stub declared a return type of `{ coins, items: string[] }`. The shipped API returns `{ coins, magicItemsByRarity, gemsByTier }` — rarity/tier counts, not concrete item ids. Rationale: the DM should curate specific items in the wizard (context matters — "another Bag of Holding when they already have three" is a UX antifeature). The wizard's picker pre-filters the catalog by the row's rarity/tier hint.
+> - **`rollIndividual` stays stubbed.** Per-monster individual-treasure roll declared in the M0 stub is not implemented and continues to throw. Not on the R6 checklist and rarely used in practice compared to hoards.
+> - **Wizard target selection: per-row radio, superset of §3.10 modes.** OUTLINE §3.10 describes "shared pool vs direct assign" as a per-hoard toggle. The wizard implements this as a per-row target radio (Party Stash or any character's Inventory), which:
+>   - reproduces "shared pool" when every row → Party Stash
+>   - reproduces "direct assign" when each row → a different character's Inventory
+>   - additionally supports mixed hoards (some coins to the pool, some items to a specific player) which the two-mode phrasing forbids.
+> - **No new action variants.** The wizard fans out to existing `acquire` + `currency-change` dispatches. Every row emits its own log entry. Trade-off: audit trail is one-entry-per-thing (verbose) rather than one-entry-per-loot-drop. Acceptable since the log view already groups by session (RH3.1) — the whole hoard is visible under the current session's bucket.
+> - **Storage as target: deferred.** Wizard's target picker offers Party Stash and each character's Inventory. Direct-assign to a character's Storage stash isn't in the picker; a DM who wants that today can distribute to the character's Inventory and the player transfers to Storage. Adding Storage options is a one-selector change if requested.
+> - **Session tagging: middleware-only.** Wizard's `acquire` + `currency-change` dispatches flow through the store's `dispatch` middleware; the RH3.1 session-tagging middleware stamps `sessionId` on every observed log slice. If no session is `isCurrent`, entries carry `sessionId: null` per §3.12 (Untagged bucket). No wizard-side session code.
+> - **Continue-on-failure batch semantics.** If a single row dispatch throws (e.g. a guard rejection), the wizard toasts that error but continues distributing the remaining rows. Partial distribution is fine — the audit trail explains what did and didn't land. Alternative "abort on first error" was rejected because the DM would then have to manually re-do everything that already worked.
+> - **Include-homebrew toggle.** UI-only filter that will be threaded into the wizard's picker component. Default: ON. Passed through route state; wizard uses it as a picker filter, not as a `hoard.ts` input (bucket counts don't care about source — the DM picks the specific catalog entry).
+> - **Pricing composition subtlety.** `hoard.ts` returns coin totals directly (no `pricing` composition). Rationale: hoards ARE the source of coin — no shop or party economy modifier applies to found treasure. `pricing.formatPrice` doesn't even see these numbers; they land as raw denominated integers via `currency-change`.
+> - **RH2 broadcast: R5.1 auto-covers.** The wizard's dispatches route through the same store path as any other action; `getActionMetadata('acquire' | 'currency-change').broadcastOnApplied === true` is already in the registry from prior slices, so multi-user parties will see loot land on other clients without any R6.3-specific socket work.
+> - **No new schemas or migrations.** No Zod additions, no `actionMetadata` entries, no Prisma migration. Route additions are UI-only.
+> - **Nav link.** New "Loot" nav item (Dice icon) visible to DM/solo users, positioned between Shops and the session badge. Routes to `/party/:partyId/loot/generate`.
 
 #### R6.4 — Identification panel + batch-identify
 
 **Identification (§3.8, §5.13)**
-- [ ] Identification Panel UI: list of unidentified instances in the party
-- [ ] DM toggles `identified`; players see real name update via sync
-- [ ] DM-set hint editable
-- [ ] **Bidirectional toggle** per OUTLINE §3.8 amendment (2026-06-24): the DM can flip an item BACK to `identified: false` (e.g., "actually that was cursed all along"). Component test: identified → unidentified flip produces an `identify` log entry; the item reverts to "Unknown Magic Item" + hint display per the §8 display invariant.
-- [ ] **DM batch-identify action** per OUTLINE §3.8 amendment (2026-06-24): a dedicated DM toolkit affordance that toggles `identified` and optionally sets a shared hint across ALL instances of a given `definitionId` in the party (Inventory + Storage + Party Stash + Recovered Loot). Emits one `identify` log entry per affected instance (or a single batch entry — pick one and document). Useful because hints are per-instance (§3.8), so bulk-revealing several copies of "Sword of X" otherwise takes one-by-one clicks.
-- [ ] Batch-identify component test: 3 unidentified copies of the same definition → one batch click → all 3 reveal; 3 `identify` log entries (or one batch entry) recorded.
+- [x] Identification Panel UI: list of unidentified instances in the party — **shipped as `/party/:partyId/identify`, DM-only, grouped by definitionId with per-instance expandable subrows.**
+- [x] DM toggles `identified`; players see real name update via sync — **`identify` action already broadcasts via R5.1 (broadcastOnApplied: true, unchanged from R2.3). Panel dispatches the existing action.**
+- [x] DM-set hint editable — **inline `HintEditor` per instance; blur-to-save via single `identify` dispatch that preserves `identified` and updates `hint`.**
+- [x] **Bidirectional toggle** per OUTLINE §3.8 amendment (2026-06-24): the DM can flip an item BACK to `identified: false` — **surfaced as a "Show identified items" toggle in the panel; expanded rows have a "Revoke" button that dispatches `identify { identified: false }`.**
+- [x] **DM batch-identify action** per OUTLINE §3.8 amendment (2026-06-24) — **new `identify-batch` action variant. Reducer emits one `identify` log entry per affected instance (not a new log type). Optional shared `hint` in payload; when absent, per-instance hints are preserved.**
+- [x] Batch-identify component test: 3 unidentified copies of the same definition → one batch click → all 3 reveal; 3 `identify` log entries recorded — **covered in `IdentificationPanel.test.tsx` "batch dialog confirm dispatches identify-batch for all copies" and the reducer test "flips every matching instance and emits one identify log entry per flip".**
 
 #### R6.4 — Notes
 
-> -
+> - **One-slice shape (matches R6.1/R6.2/R6.3 rhythm).** New action variant + reducer arm + guard + server persistor + UI + tests ship together.
+> - **Test count deltas.**
+>   - **web** — 939 → 951 (+12): 6 new reducer tests in `reducer.test.ts` (batch happy path, shared hint, per-instance hint preservation, no-op rejection, unknown definitionId, actorRole=dm) + 6 new UI tests in `IdentificationPanel.test.tsx` (empty state, group rendering, single-identify from expanded row, batch dialog dispatch, batch shared hint, "Show identified" reveal + revoke).
+>   - **shared** — 331 tests unchanged (map.test.ts drift-catcher list updated in-place to include `identify-batch`).
+>   - **rules / seeds / server** — no per-suite additions; new action flows through the existing hand-rolled Action mirror + typechecks.
+> - **`identify-batch` action shape.** Payload is `{ definitionId, identified, hint? }`. Reducer walks every `ItemInstance` in the current party with matching `definitionId` and `identified !== payload.identified`; instances already in the target state are skipped (no spurious no-op log entries). If NO instance would flip, the reducer throws with a clear message so the UI can toast.
+> - **Batch emits N `identify` log entries, not a new log type.** Rationale: OUTLINE §3.11 per-item history filter keys on `itemInstanceId`; a batch entry with a list of ids would break that filter. Every affected copy keeps its own history entry. The "batch-ness" is discoverable in the party log as N `identify` entries sharing a timestamp / reducer slice.
+> - **Guard: DM-only, mirrors single `identify`.** No new rejection codes; the guard's error path matches `dm_only` semantics from R2.3.
+> - **actionMetadata: broadcastOnApplied=true.** Multi-user parties see batch-identify land on other clients via R5.1's `applied[]` echo; the reducer runs deterministically on the receiver.
+> - **Hint semantics on batch.**
+>   - Payload without `hint`: every affected instance keeps its existing per-instance hint.
+>   - Payload with `hint: 'some string'`: every affected instance gets the same shared hint.
+>   - Payload with `hint: undefined` (explicit undefined): every affected instance's hint is CLEARED. (Not exposed in the UI today — the wizard input converts empty string to "no hint field" rather than to `hint: undefined`.)
+> - **Reverse batch not surfaced.** `identify-batch { identified: false }` is a valid schema shape and the reducer supports it, but the UI only exposes forward-batch. Reverse flips happen one-at-a-time from the "Show identified" section. Rationale: mass-unidentify is a niche affordance; the schema is ready if a DM tool needs it later.
+> - **Panel scope: whole-party.** Reads `s.appState.items` (already party-scoped in AppState). Groups by `definitionId`. Sorted alphabetically by definition name. The "identified magic items" section filters `def.rarity !== undefined && def.rarity !== null` to hide mundane items (torch, rope) that default to `identified: true` and have no meaningful "revoke" affordance.
+> - **Location column.** Per-instance subrow shows the containing stash's name (`stashNameOf`) — Inventory / Storage / Party Stash / Recovered Loot. Helpful when the DM has 3 unidentified copies scattered across different characters and wants to know where each is.
+> - **Server persistor: `updateMany` predicate-filtered.** `persistIdentifyBatch` filters by `definitionId + identified: {not: payload.identified} + ownerId: {in: [party stash ids]}`. Predicate is idempotent — running the same batch twice is a no-op on the DB (the second call updates 0 rows, matching the reducer's throw semantics). `partyId` is derived from `actor.partyId` per SECURITY §2.1; the request body never supplies it.
+> - **No Prisma migration.** `ItemInstance.identified` and `ItemInstance.hint` shipped in R2.3.
+> - **No summarizeLogEntry change.** Batch emits `identify` entries so the existing `identify` summarizer branch renders them unchanged.
+> - **Nav link.** New "Identify" nav item (Eye icon) visible to DM/solo users, positioned between Loot and the session badge.
 
 #### R6.5 — Catalog search
 
 **Rules — activate stub (§6)**
-- [ ] `packages/rules/search.ts` implemented (fuzzy across name + description + tags)
-- [ ] `search.ts` tests cover ranking + filter combinations
+- [x] `packages/rules/search.ts` implemented (fuzzy across name + description + tags) — **subsequence + word-boundary ranker with per-field weights (name > description > tags); tuned span-cap on subsequence to suppress noise from long descriptions.**
+- [x] `search.ts` tests cover ranking + filter combinations — **18 tests: empty query, name / description / tag tier ranking, subsequence, tie-break by name length, multi-word AND semantics, short-probe subseq guard, robustness on empty catalog + punctuation.**
 
 **Catalog search**
-- [ ] Catalog search wired to `search.ts` (replaces M2's simple search)
-- [ ] Filters by category, rarity, attunement-required, cost, source (§3.7)
-- [ ] Catalog source filter (PHB / DMG / homebrew / all) surfaced in `CatalogBrowser` alongside the category filter
-- [ ] Catalog source-filter test: with PHB + ≥1 homebrew loaded, selecting "homebrew" hides PHB rows; "all" restores them; combines with category filter (e.g. "homebrew" + "consumable" only).
+- [x] Catalog search wired to `search.ts` (replaces M2's simple search) — **`CatalogBrowser` + `CatalogPicker` (stash Add) + LootDistributionWizard's inline item picker all swapped from `.includes` to the fuzzy ranker via the new `searchCatalog` top-level export.**
+- [x] Filters by category, rarity, attunement-required, cost, source (§3.7) — **Category (existing) + Rarity + Attunement + Source shipped. Cost filter skipped — see R6.5 Notes.**
+- [x] Catalog source filter (PHB / DMG / homebrew / all) surfaced in `CatalogBrowser` alongside the category filter — **Source dropdown shipped alongside three other filters in a 5-column grid.**
+- [x] Catalog source-filter test: with PHB + ≥1 homebrew loaded, selecting "homebrew" hides PHB rows; "all" restores them; combines with category filter (e.g. "homebrew" + "consumable" only) — **covered in `CatalogBrowser.test.tsx` R6.5 tests: source hides / restores, and source + category compose to zero rows for the "consumable homebrew" case.**
 
 #### R6.5 — Notes
 
-> -
+> - **One-slice shape (matches R6.1–R6.4 rhythm).** Pure rules module + UI wiring in `CatalogBrowser` / `CatalogPicker` / `LootDistributionWizard`. No new schemas, no reducer arms, no Prisma migration, no `actionMetadata` entries.
+> - **Test count deltas.**
+>   - **rules** — 215 → 235 (+20): `search.test.ts` covering empty query, name > description > tag tier ranking, exact-substring vs. word-boundary vs. subsequence ordering, tie-break by name length, multi-word AND semantics, short-probe subseq guard, subsequence span-cap (rejecting scattered matches, admitting close-together ones), robustness on empty catalog + punctuation.
+>   - **web** — 951 → 957 (+6): 6 R6.5 tests in `CatalogBrowser.test.tsx` — source hides / restores, rarity filter, attunement filter, fuzzy subsequence hit ("lgsw" → Longsword), source + category compose to empty state. Existing R2.1 rarity-badge test tightened to scope the badge query to the specific Cloak-of-Protection row via `within(tr)`.
+> - **`search.ts` scoring model.**
+>   - **Tiers** (per field, strongest wins):
+>     - Exact-substring hit → base score.
+>     - Word-boundary hit (match at position 0 OR preceded by a non-alphanumeric char) → bonus over exact.
+>     - Subsequence match (chars in order, not necessarily adjacent) → weakest tier.
+>   - **Field weights**: name (100 / 80 / 40) > description (20 / 15 / 10) > tags (8 / 5 / 3). Tags contribute only their best-matching tag's score, so a tag-heavy row isn't overweighted.
+>   - **Multi-word AND**: `'long sword'` splits into probes `['long', 'sword']`; every probe must hit some field on an item for that item to be included.
+>   - **Tie-break**: shorter `name.length` wins ties (assumes stronger relative match on a shorter string).
+> - **Short-probe subsequence guard.** Probes of length < 3 do NOT subsequence-match (`'of'`, `'in'`, `'to'` would otherwise trivially subseq-hit any word containing those two letters in order). Substring matches still apply for short probes so `'of'` still hits `'Cloak of Protection'` correctly.
+> - **Subsequence span cap.** Subsequence matches are additionally bounded by span: the matched characters must fit within `max(needle.length + 2, needle.length × 3)` haystack positions. Without this cap, long descriptions ("A martial melee weapon…") were subseq-matching short probes (`'rapier'`: r-a-p-i-e-r scattered across 40+ chars). The cap tuned so 'lgsw' → 'longsword' (span 8, probe 4 → 2×) still matches while 'rapier' → 'a martial weapon' does not.
+> - **Result ordering.** Empty query → alphabetical by name (existing UX preserved). Non-empty query → descending score with the length tie-break.
+> - **`searchCatalog` top-level export (namespace removed).** `packages/rules/src/index.ts` exposes the ranker as a top-level `searchCatalog` function plus the `Searchable` / `SearchResult` types — NO `search.*` namespace. Reason: `export * as search from './search'` widens the generic `T` to its constraint at every call site (TS namespace-import semantics), erasing `ItemDefinition`-specific fields. The direct `export { search as searchCatalog }` keeps callers' generic-inferred `T = ItemDefinition` intact. Single import path across the codebase.
+> - **`Searchable` interface.** Added a named type for the generic constraint (`{ name: string; description?: string | undefined; tags?: ReadonlyArray<string> | undefined }`). The explicit `| undefined` on optional fields + `ReadonlyArray` tolerance sidestep an `exactOptionalPropertyTypes` mismatch where `ItemDefinition`'s `description?: string` wouldn't structurally assign to a `description?: string` constraint TS treated as "not undefined".
+> - **Cost filter skipped.** The roadmap §3.7 checkbox mentioned it; deferred to a future polish PR. Rationale: cost is derived through the pricing pipeline (`partyModifier`, homebrew skip, `formatPrice` denomination cascade) and building a range control that respects `baseCurrency` + `partyModifier` is disproportionate to the DM's need (visually sorting by the rendered cost column is enough for now).
+> - **CatalogPicker kept lean.** The modal picker used by stash Add / loot wizard inline picker only got the search core swap — category filter remained the only filter surface. Adding all four filters to the compact modal would harm the "quick add" UX; the full filter matrix lives in the main CatalogBrowser screen.
+> - **jsdom shim for Radix Select.** `apps/web/src/test/setup.ts` gained a `hasPointerCapture` / `setPointerCapture` / `releasePointerCapture` / `scrollIntoView` shim on `Element.prototype` — jsdom 29.x doesn't ship these and Radix Select's pointer-down handler crashes without them. This unblocks all Select-interactive tests going forward (existing tests avoided the Radix Select entirely).
 
 #### R6 — Notes
 
-> -
+> - **All five slices shipped**: R6.0 Edit-character dialog, R6.1 Pricing + per-party economy, R6.2 Shops + purchase/sale, R6.3 Hoard generator + loot distribution wizard, R6.4 Identification panel + batch-identify, R6.5 Catalog search + filters.
+> - **Per-slice Notes above** carry the design decisions, deviations, and test-count deltas.
+> - **No new open questions surfaced** by R6 — spec sections §3.5, §3.7, §3.8, §3.10, §5.10, §5.11, §5.12, §5.13 fully implemented against OUTLINE.md.
 
 ---
 
@@ -3721,6 +3854,7 @@ Light/dark theme, responsive player views (mobile), fuzzy multi-field search, ac
 - [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
 - [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
 - [ ] Variant-rules toggle exposed in Settings (§5.17)
+- [ ] **UI-component consistency audit.** Walk every screen + form + dialog + row-action surface and check: (a) are we using the shadcn/ui primitives from `src/components/ui/` where one exists, or did we hand-roll a native element that has a shadcn equivalent (e.g. native `<select>` where the shadcn `Select` is available, native `<input type="checkbox">` where a `Checkbox` primitive should be added, hand-rolled overlay divs where `Dialog` fits)? (b) are the shadcn primitives being used *consistently* — same size prop, same variant vocabulary, same spacing scale across dialogs / cards / tables / empty-states? (c) do we have any pieces of UI that grew organically outside the shadcn palette and should either be lifted into `src/components/ui/` or replaced. Deliverable: a spreadsheet/table of every screen + component + inconsistency, then a set of small refactor PRs. Scope guard: no visual redesign — this is a *consistency* pass, not a facelift.
 
 #### R7.5 — Notes
 

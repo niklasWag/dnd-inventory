@@ -588,3 +588,121 @@ describe('CharacterSheet — R4.5 cross-character DM cue', () => {
     expect(screen.queryByRole('note')).toBeNull();
   });
 });
+
+// -------------------------------------------------------------------- //
+// R6.0 — "Edit character" header button visibility
+// -------------------------------------------------------------------- //
+
+describe('CharacterSheet — R6.0 Edit character button', () => {
+  it('solo actor sees the Edit character button', () => {
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.getByRole('button', { name: /edit character/i })).toBeInTheDocument();
+  });
+
+  it("DM viewing another player's character sees the button", () => {
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    const bobCharId = 'char-bob';
+    const bobMembership: PartyMembership = {
+      userId: 'bob-user',
+      partyId: state.party.id,
+      role: 'player',
+      characterId: bobCharId,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    const bobCharacter: Character = {
+      id: bobCharId,
+      partyId: state.party.id,
+      ownerUserId: 'bob-user',
+      name: 'Bob',
+      species: 'Elf',
+      size: 'medium',
+      class: 'Rogue',
+      level: 3,
+      abilityScores: { STR: 8 },
+      maxAttunement: 3,
+      inventoryStashId: 's-inv-bob',
+    };
+    const bobStash: Stash = {
+      id: 's-inv-bob',
+      scope: 'character',
+      name: 'Inventory',
+      ownerCharacterId: bobCharId,
+      partyId: null,
+      isCarried: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: [...state.memberships, bobMembership],
+        characters: [...state.characters, bobCharacter],
+        stashes: [...state.stashes, bobStash],
+        currencies: [
+          ...state.currencies,
+          { id: 'c-bob', stashId: 's-inv-bob', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+        ],
+      },
+    });
+    void base;
+
+    renderAt(`/character/${bobCharId}`);
+    expect(screen.getByRole('button', { name: /edit character/i })).toBeInTheDocument();
+  });
+
+  it("non-DM viewer of another player's character does NOT see the button", () => {
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    // Drop the DM row and reassign the character to a stranger; also add
+    // a second member so isSolo becomes false.
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: state.memberships.filter((m) => m.role !== 'dm'),
+        characters: [{ ...state.characters[0]!, ownerUserId: 'stranger' }],
+      },
+    });
+    const s2 = useStore.getState().appState!;
+    const strangerMembership: PartyMembership = {
+      userId: 'stranger',
+      partyId: s2.party.id,
+      role: 'player',
+      characterId: s2.characters[0]!.id,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    useStore.setState({
+      appState: {
+        ...s2,
+        memberships: [...s2.memberships, strangerMembership],
+      },
+    });
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.queryByRole('button', { name: /edit character/i })).toBeNull();
+  });
+
+  it('non-DM owner of own character in a multi-member party sees the button', () => {
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    // Keep the actor as owner but drop their DM membership; add a
+    // second player so the party is multi-member.
+    const strangerMembership: PartyMembership = {
+      userId: 'stranger',
+      partyId: state.party.id,
+      role: 'player',
+      characterId: null,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: [...state.memberships.filter((m) => m.role !== 'dm'), strangerMembership],
+      },
+    });
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.getByRole('button', { name: /edit character/i })).toBeInTheDocument();
+  });
+});

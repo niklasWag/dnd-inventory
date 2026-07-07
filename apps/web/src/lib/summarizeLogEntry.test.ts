@@ -53,6 +53,8 @@ function makeState(): AppState {
       bankerUserId: null,
       encumbranceRule: 'off',
       enforceEncumbrance: false,
+      priceModifier: 1.0,
+      baseCurrency: 'gp',
       createdAt: BASE_TS,
     },
     memberships: [
@@ -127,6 +129,7 @@ function makeState(): AppState {
         createdAt: BASE_TS,
       },
     ],
+    shops: [],
     catalog: [rope],
     items: [
       {

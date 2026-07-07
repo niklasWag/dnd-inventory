@@ -32,6 +32,8 @@ function makeAppState(opts: {
       bankerUserId: null,
       encumbranceRule: 'off',
       enforceEncumbrance: false,
+      priceModifier: 1.0,
+      baseCurrency: 'gp',
       createdAt: '2026-01-01T00:00:00.000Z',
     },
     memberships: memberships.map((m) => ({
@@ -58,6 +60,7 @@ function makeAppState(opts: {
     })),
     gameSessions: [],
     stashes: [],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [],

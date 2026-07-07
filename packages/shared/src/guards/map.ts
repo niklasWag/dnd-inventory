@@ -524,6 +524,165 @@ const setEncumbranceGuard: Guard<Extract<Action, { type: 'set-encumbrance' }>> =
   return { ok: true };
 };
 
+/**
+ * R6.1 — `update-party-economy` (OUTLINE §3.5). DM-only when the party
+ * has 2+ members (§8.1). Solo bypass via `checkGuard` — the sole
+ * member wears both hats and always reaches the reducer.
+ */
+const updatePartyEconomyGuard: Guard<Extract<Action, { type: 'update-party-economy' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return {
+      ok: false,
+      code: 'state_not_initialized',
+      message: 'update-party-economy: no state.',
+    };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'update-party-economy is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * R6.2 — Shop CRUD guards (OUTLINE §3.9; user directive 2026-07-06:
+ * "Players only buy/sell, DM creates/updates/deletes a shop").
+ *
+ * All shop WRITES on the entity itself + stock array + open-toggle are
+ * DM-only when memberCount ≥ 2 (§8.2 solo bypass via `checkGuard`).
+ */
+const createShopGuard: Guard<Extract<Action, { type: 'create-shop' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'create-shop: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'create-shop is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const editShopGuard: Guard<Extract<Action, { type: 'edit-shop' }>> = (state, _payload, actor) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'edit-shop: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'edit-shop is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const deleteShopGuard: Guard<Extract<Action, { type: 'delete-shop' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'delete-shop: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'delete-shop is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const setShopOpenGuard: Guard<Extract<Action, { type: 'set-shop-open' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'set-shop-open: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'set-shop-open is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+const editShopStockGuard: Guard<Extract<Action, { type: 'edit-shop-stock' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return {
+      ok: false,
+      code: 'state_not_initialized',
+      message: 'edit-shop-stock: no state.',
+    };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'edit-shop-stock is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * R6.2 — `purchase` / `sale` guards. Any active party member may
+ * transact IF the shop is open; when closed, DM-only. Solo party
+ * (memberCount === 1) always allowed via §8.2 union-of-rights
+ * (handled by `checkGuard`'s solo bypass; these guards run only in
+ * multi-member parties).
+ */
+const purchaseGuard: Guard<Extract<Action, { type: 'purchase' }>> = (state, payload, actor) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'purchase: no state.' };
+  const shop = state.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    return { ok: false, code: 'shop_not_found', message: `Shop ${payload.shopId} not found.` };
+  }
+  if (!shop.isOpen && actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'shop_closed',
+      message: 'This shop is closed. Only the DM can transact.',
+    };
+  }
+  return { ok: true };
+};
+
+const saleGuard: Guard<Extract<Action, { type: 'sale' }>> = (state, payload, actor) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'sale: no state.' };
+  const shop = state.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    return { ok: false, code: 'shop_not_found', message: `Shop ${payload.shopId} not found.` };
+  }
+  if (!shop.isOpen && actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'shop_closed',
+      message: 'This shop is closed. Only the DM can transact.',
+    };
+  }
+  return { ok: true };
+};
+
 const equipGuard: Guard<Extract<Action, { type: 'equip' }>> = (state, payload, actor) => {
   if (state === null)
     return { ok: false, code: 'state_not_initialized', message: 'equip: no state.' };
@@ -684,6 +843,28 @@ const identifyGuard: Guard<Extract<Action, { type: 'identify' }>> = (state, _pay
       ok: false,
       code: 'dm_only',
       message: 'identify is a DM-only action when the party has 2+ members.',
+    };
+  }
+  return { ok: true };
+};
+
+/**
+ * R6.4 — batch-identify guard. Same DM-only rule as single `identify`.
+ * The reducer verifies definitionId exists and that ≥1 matching
+ * instance would actually flip; the guard here only judges authority.
+ */
+const identifyBatchGuard: Guard<Extract<Action, { type: 'identify-batch' }>> = (
+  state,
+  _payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'identify-batch: no state.' };
+  if (actor.role !== 'dm') {
+    return {
+      ok: false,
+      code: 'dm_only',
+      message: 'identify-batch is a DM-only action when the party has 2+ members.',
     };
   }
   return { ok: true };
@@ -1140,6 +1321,14 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'rename-character': renameCharacterGuard,
   'rename-party': renamePartyGuard,
   'set-encumbrance': setEncumbranceGuard,
+  'update-party-economy': updatePartyEconomyGuard,
+  'create-shop': createShopGuard,
+  'edit-shop': editShopGuard,
+  'delete-shop': deleteShopGuard,
+  'set-shop-open': setShopOpenGuard,
+  'edit-shop-stock': editShopStockGuard,
+  purchase: purchaseGuard,
+  sale: saleGuard,
   equip: equipGuard,
   unequip: unequipGuard,
   attune: attuneGuard,
@@ -1147,6 +1336,7 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'use-charge': useChargeGuard,
   recharge: rechargeGuard,
   identify: identifyGuard,
+  'identify-batch': identifyBatchGuard,
   'edit-character': editCharacterGuard,
   'delete-character': deleteCharacterGuard,
   'leave-party': leavePartyGuard,

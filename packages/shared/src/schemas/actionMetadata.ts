@@ -82,6 +82,14 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   // Party-scope actions
   'rename-party': { broadcastOnApplied: true },
   'set-encumbrance': { broadcastOnApplied: true },
+  'update-party-economy': { broadcastOnApplied: true },
+  'create-shop': { broadcastOnApplied: true },
+  'edit-shop': { broadcastOnApplied: true },
+  'delete-shop': { broadcastOnApplied: true },
+  'set-shop-open': { broadcastOnApplied: true },
+  'edit-shop-stock': { broadcastOnApplied: true },
+  purchase: { broadcastOnApplied: true },
+  sale: { broadcastOnApplied: true },
   'appoint-banker': { broadcastOnApplied: true },
   'revoke-banker': { broadcastOnApplied: true },
 
@@ -114,6 +122,7 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   'use-charge': { broadcastOnApplied: true },
   recharge: { broadcastOnApplied: true },
   identify: { broadcastOnApplied: true },
+  'identify-batch': { broadcastOnApplied: true },
 
   // Homebrew
   'create-homebrew': { broadcastOnApplied: true },

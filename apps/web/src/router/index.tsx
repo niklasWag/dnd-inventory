@@ -8,14 +8,19 @@ import { CharacterSheet } from '@/screens/CharacterSheet';
 import { CatalogBrowser } from '@/screens/CatalogBrowser';
 import { DmDashboard, DmOnlyRoute } from '@/screens/DmDashboard';
 import { HistoryScreen } from '@/screens/HistoryScreen';
+import { HoardGenerator } from '@/screens/HoardGenerator';
 import { Hub } from '@/screens/Hub';
+import { IdentificationPanel } from '@/screens/IdentificationPanel';
 import { ItemDetail } from '@/screens/ItemDetail';
+import { LootDistributionWizard } from '@/screens/LootDistributionWizard';
 import { Login } from '@/screens/Login';
 import { LoginDisplayName } from '@/screens/LoginDisplayName';
 import { LoginEmail } from '@/screens/LoginEmail';
 import { LoginEmailVerify } from '@/screens/LoginEmailVerify';
 import { PartySettings } from '@/screens/PartySettings';
 import { Settings } from '@/screens/Settings';
+import { ShopDetail } from '@/screens/ShopDetail';
+import { ShopsList } from '@/screens/ShopsList';
 import { StorageDetail } from '@/screens/StorageDetail';
 
 /**
@@ -106,9 +111,26 @@ export const router = createBrowserRouter([
                   { path: 'history', Component: HistoryScreen },
                   { path: 'item/:itemInstanceId', Component: ItemDetail },
                   { path: 'stash/:stashId', Component: StorageDetail },
+                  // R6.2 — Shop routes. Detail is open to players when
+                  // `shop.isOpen === true` (component-level redirect
+                  // handles closed shops for non-DM viewers). List is
+                  // visible to every party member; `ShopsList` filters
+                  // to open shops and hides DM affordances for players.
+                  { path: 'shops/:shopId', Component: ShopDetail },
+                  { path: 'shops', Component: ShopsList },
                   {
                     Component: DmOnlyRoute,
-                    children: [{ path: 'dm', Component: DmDashboard }],
+                    children: [
+                      { path: 'dm', Component: DmDashboard },
+                      // R6.3 — Hoard generator + Loot distribution wizard.
+                      // Both DM-only; wizard is reachable both via the
+                      // generator's Continue button (with roll in route
+                      // state) and directly (empty wizard).
+                      { path: 'loot/generate', Component: HoardGenerator },
+                      { path: 'loot/distribute', Component: LootDistributionWizard },
+                      // R6.4 — Identification panel. DM-only.
+                      { path: 'identify', Component: IdentificationPanel },
+                    ],
                   },
                 ],
               },

@@ -66,6 +66,42 @@ if (!('locks' in navigator)) {
   });
 }
 
+/**
+ * R6.5 — test-only jsdom shims for Radix UI's pointer-capture usage.
+ *
+ * Radix `Select` (and other floating primitives) calls
+ * `Element#hasPointerCapture` / `#setPointerCapture` / `#releasePointerCapture`
+ * on pointer-down events. jsdom 29.x doesn't ship these on the
+ * `Element` prototype, so any userEvent.click on a `SelectTrigger`
+ * throws `TypeError: target.hasPointerCapture is not a function`.
+ *
+ * Additionally, Radix uses `Element#scrollIntoView` inside its option
+ * navigation which is also missing from jsdom.
+ *
+ * These are safe no-op shims: production browsers implement them
+ * natively; here we just satisfy Radix's feature check.
+ */
+if (typeof Element !== 'undefined') {
+  const proto = Element.prototype as unknown as {
+    hasPointerCapture?: (id: number) => boolean;
+    setPointerCapture?: (id: number) => void;
+    releasePointerCapture?: (id: number) => void;
+    scrollIntoView?: (arg?: boolean | ScrollIntoViewOptions) => void;
+  };
+  if (typeof proto.hasPointerCapture !== 'function') {
+    proto.hasPointerCapture = () => false;
+  }
+  if (typeof proto.setPointerCapture !== 'function') {
+    proto.setPointerCapture = () => undefined;
+  }
+  if (typeof proto.releasePointerCapture !== 'function') {
+    proto.releasePointerCapture = () => undefined;
+  }
+  if (typeof proto.scrollIntoView !== 'function') {
+    proto.scrollIntoView = () => undefined;
+  }
+}
+
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' });
 });

@@ -178,6 +178,8 @@ function makeState(opts: {
       bankerUserId: null,
       encumbranceRule: 'off',
       enforceEncumbrance: false,
+      priceModifier: 1.0,
+      baseCurrency: 'gp',
       createdAt: BASE_TS,
     },
     memberships: [
@@ -188,6 +190,7 @@ function makeState(opts: {
     characters: CHARACTERS,
     gameSessions: GAME_SESSIONS,
     stashes: STASHES,
+    shops: [],
     catalog: [],
     items: ITEMS,
     currencies: [],

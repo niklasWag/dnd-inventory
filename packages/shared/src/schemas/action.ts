@@ -333,6 +333,144 @@ const setEncumbranceAction = z.object({
   }),
 });
 
+/**
+ * R6.1 — `update-party-economy`. Sets `Party.priceModifier` +
+ * `Party.baseCurrency` in a single dispatch (matches the
+ * `set-encumbrance` "both-fields-in-one-row" pattern so a preset switch
+ * commits atomically). DM-only when memberCount ≥ 2 (§8.1); solo
+ * bypass via `checkGuard`. Reducer rejects no-op writes (both values
+ * unchanged).
+ */
+const updatePartyEconomyAction = z.object({
+  type: z.literal('update-party-economy'),
+  payload: z.object({
+    partyId: z.string().min(1),
+    priceModifier: z.number().positive(),
+    baseCurrency: currencyDenominationSchema,
+  }),
+});
+
+// -----------------------------------------------------------------------------
+// R6.2 — Shop CRUD + purchase / sale (OUTLINE §3.9, §5.12).
+// -----------------------------------------------------------------------------
+
+/**
+ * `create-shop` — DM-only mint of a new shop with default modifiers
+ * (`priceModifier: 1.0`, `sellToMerchantRate: 0.5`, `isOpen: false`,
+ * empty stock). Solo bypass via `checkGuard`.
+ */
+const createShopAction = z.object({
+  type: z.literal('create-shop'),
+  payload: z.object({
+    newShopId: z.string().min(1),
+    name: z.string().min(1).max(60),
+  }),
+});
+
+/**
+ * `edit-shop` — DM-only patch of scalar shop fields. `isOpen` has its
+ * own action (`set-shop-open`) so a visibility flip broadcasts as a
+ * distinct event. Rejects no-op writes.
+ */
+const editShopAction = z.object({
+  type: z.literal('edit-shop'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    patch: z
+      .object({
+        name: z.string().min(1).max(60).optional(),
+        priceModifier: z.number().positive().optional(),
+        sellToMerchantRate: z.number().positive().optional(),
+      })
+      .strict(),
+  }),
+});
+
+/** `delete-shop` — DM-only. Removes the shop + cascade its stock rows. */
+const deleteShopAction = z.object({
+  type: z.literal('delete-shop'),
+  payload: z.object({
+    shopId: z.string().min(1),
+  }),
+});
+
+/**
+ * `set-shop-open` — DM-only toggle. Separate action so the broadcast
+ * carries the visibility change explicitly (players' UI reacts).
+ * Rejects no-op writes.
+ */
+const setShopOpenAction = z.object({
+  type: z.literal('set-shop-open'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    isOpen: z.boolean(),
+  }),
+});
+
+/**
+ * `edit-shop-stock` — DM-only mutation of the stock array. One
+ * dispatch = one stock operation (add / update / remove). The
+ * discriminated `operation` keeps the reducer + persistor tiny.
+ */
+const editShopStockAction = z.object({
+  type: z.literal('edit-shop-stock'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    operation: z.discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('add'),
+        newStockEntryId: z.string().min(1),
+        itemDefinitionId: z.string().min(1),
+        priceOverride: z.number().int().nonnegative().optional(),
+        quantity: z.number().int(),
+      }),
+      z.object({
+        kind: z.literal('update'),
+        stockEntryId: z.string().min(1),
+        priceOverride: z.number().int().nonnegative().nullable().optional(),
+        quantity: z.number().int().optional(),
+      }),
+      z.object({
+        kind: z.literal('remove'),
+        stockEntryId: z.string().min(1),
+      }),
+    ]),
+  }),
+});
+
+/**
+ * `purchase` — any active party member. Debits buyer's currency,
+ * creates an ItemInstance in `targetStashId` (auto-stacks per §4),
+ * decrements finite shop stock. Guard: shop must be open for players
+ * (DM anytime).
+ */
+const purchaseAction = z.object({
+  type: z.literal('purchase'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    stockEntryId: z.string().min(1),
+    targetStashId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    newItemInstanceId: z.string().min(1),
+  }),
+});
+
+/**
+ * `sale` — any active party member. Consumes an item from
+ * `itemInstanceId`, credits the source stash's currency, increments
+ * (or inserts) the shop's stock row for the item's definition. Guard:
+ * shop must be open for players (DM anytime).
+ */
+const saleAction = z.object({
+  type: z.literal('sale'),
+  payload: z.object({
+    shopId: z.string().min(1),
+    itemInstanceId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    newStockEntryId: z.string().min(1),
+  }),
+});
+
 const equipAction = z.object({
   type: z.literal('equip'),
   payload: z.object({
@@ -424,6 +562,28 @@ const identifyAction = z.object({
     // is differentiated by the reducer; runtime Zod accepts any of the
     // three (`undefined` is encoded as absent at the wire boundary; the
     // server's diff loop treats it the same way as the web reducer).
+    hint: z.string().optional(),
+  }),
+});
+
+/**
+ * R6.4 — Batch-identify (OUTLINE §3.8 amendment 2026-06-24).
+ *
+ * Flips `identified` on every `ItemInstance` in the current party whose
+ * `definitionId` matches, in a single reducer slice. Optional shared
+ * `hint` overrides per-instance hints when present; when absent, each
+ * affected instance keeps its existing hint.
+ *
+ * The reducer emits one `identify` log entry per affected instance
+ * (mirrors the single-`identify` log shape) so per-item history
+ * filters keep working. There is no dedicated `identify-batch`
+ * TransactionLog type.
+ */
+const identifyBatchAction = z.object({
+  type: z.literal('identify-batch'),
+  payload: z.object({
+    definitionId: z.string().min(1),
+    identified: z.boolean(),
     hint: z.string().optional(),
   }),
 });
@@ -666,6 +826,14 @@ export const actionSchema = z.discriminatedUnion('type', [
   renameCharacterAction,
   renamePartyAction,
   setEncumbranceAction,
+  updatePartyEconomyAction,
+  createShopAction,
+  editShopAction,
+  deleteShopAction,
+  setShopOpenAction,
+  editShopStockAction,
+  purchaseAction,
+  saleAction,
   equipAction,
   unequipAction,
   attuneAction,
@@ -673,6 +841,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   useChargeAction,
   rechargeAction,
   identifyAction,
+  identifyBatchAction,
   editCharacterAction,
   deleteCharacterAction,
   leavePartyAction,

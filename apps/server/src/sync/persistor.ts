@@ -25,7 +25,7 @@
  * if a pattern emerges (e.g. `applyItemDelta`).
  */
 import type { Action, Actor, AppState } from '@app/shared';
-import { currency, type ReducerContext } from '@app/rules';
+import { currency, pricing, type ReducerContext } from '@app/rules';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
 import {
@@ -100,6 +100,22 @@ export async function applyDelta(
       return persistRenameParty(tx, action.payload);
     case 'set-encumbrance':
       return persistSetEncumbrance(tx, action.payload);
+    case 'update-party-economy':
+      return persistUpdatePartyEconomy(tx, action.payload);
+    case 'create-shop':
+      return persistCreateShop(tx, action.payload, actor);
+    case 'edit-shop':
+      return persistEditShop(tx, action.payload);
+    case 'delete-shop':
+      return persistDeleteShop(tx, action.payload);
+    case 'set-shop-open':
+      return persistSetShopOpen(tx, action.payload);
+    case 'edit-shop-stock':
+      return persistEditShopStock(tx, action.payload);
+    case 'purchase':
+      return persistPurchase(tx, action.payload);
+    case 'sale':
+      return persistSale(tx, action.payload);
     case 'equip':
       return persistEquip(tx, action.payload);
     case 'unequip':
@@ -114,6 +130,8 @@ export async function applyDelta(
       return persistRecharge(tx, action.payload);
     case 'identify':
       return persistIdentify(tx, action.payload);
+    case 'identify-batch':
+      return persistIdentifyBatch(tx, action.payload, actor);
     case 'edit-character':
       return persistEditCharacter(tx, action.payload);
     case 'delete-character':
@@ -785,6 +803,301 @@ async function persistSetEncumbrance(
 }
 
 /**
+ * R6.1 — `update-party-economy` persistor (OUTLINE §3.5). Writes both
+ * `priceModifier` and `baseCurrency` in one UPDATE — matches the
+ * atomic-preset-switch semantics of the reducer + guard.
+ */
+async function persistUpdatePartyEconomy(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'update-party-economy' }>['payload'],
+): Promise<void> {
+  await tx.party.update({
+    where: { id: payload.partyId },
+    data: { priceModifier: payload.priceModifier, baseCurrency: payload.baseCurrency },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// R6.2 — Shop persistors
+// ---------------------------------------------------------------------------
+
+async function persistCreateShop(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'create-shop' }>['payload'],
+  actor: Actor,
+): Promise<void> {
+  await tx.shop.create({
+    data: {
+      id: payload.newShopId,
+      partyId: actor.partyId,
+      name: payload.name,
+    },
+  });
+}
+
+async function persistEditShop(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'edit-shop' }>['payload'],
+): Promise<void> {
+  await tx.shop.update({
+    where: { id: payload.shopId },
+    data: {
+      ...(payload.patch.name !== undefined ? { name: payload.patch.name } : {}),
+      ...(payload.patch.priceModifier !== undefined
+        ? { priceModifier: payload.patch.priceModifier }
+        : {}),
+      ...(payload.patch.sellToMerchantRate !== undefined
+        ? { sellToMerchantRate: payload.patch.sellToMerchantRate }
+        : {}),
+    },
+  });
+}
+
+async function persistDeleteShop(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'delete-shop' }>['payload'],
+): Promise<void> {
+  // Cascade delete removes stock rows via the FK constraint.
+  await tx.shop.delete({ where: { id: payload.shopId } });
+}
+
+async function persistSetShopOpen(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'set-shop-open' }>['payload'],
+): Promise<void> {
+  await tx.shop.update({
+    where: { id: payload.shopId },
+    data: { isOpen: payload.isOpen },
+  });
+}
+
+async function persistEditShopStock(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'edit-shop-stock' }>['payload'],
+): Promise<void> {
+  const op = payload.operation;
+  if (op.kind === 'add') {
+    await tx.shopStockEntry.create({
+      data: {
+        id: op.newStockEntryId,
+        shopId: payload.shopId,
+        itemDefinitionId: op.itemDefinitionId,
+        priceOverride: op.priceOverride ?? null,
+        quantity: op.quantity,
+      },
+    });
+    return;
+  }
+  if (op.kind === 'update') {
+    await tx.shopStockEntry.update({
+      where: { id: op.stockEntryId },
+      data: {
+        ...(op.priceOverride !== undefined ? { priceOverride: op.priceOverride } : {}),
+        ...(op.quantity !== undefined ? { quantity: op.quantity } : {}),
+      },
+    });
+    return;
+  }
+  // op.kind === 'remove'
+  await tx.shopStockEntry.delete({ where: { id: op.stockEntryId } });
+}
+
+/**
+ * `persistPurchase` — redo the reducer's calc against fresh DB rows.
+ * Debits the target stash's currency, upserts an item instance
+ * (auto-stack merge or insert with the client-minted id), and
+ * decrements finite shop stock.
+ *
+ * Race protection: the stock decrement uses a conditional update that
+ * rejects if the source row's quantity is below the requested amount
+ * (implemented via `updateMany` with a `where` predicate — Prisma's
+ * default `update` throws on `where: { id, quantity: >= q }` if no row
+ * matches). Losing-side clients revert their optimistic UI on the
+ * rejection toast.
+ */
+async function persistPurchase(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'purchase' }>['payload'],
+): Promise<void> {
+  const shop = await tx.shop.findUnique({ where: { id: payload.shopId } });
+  if (shop === null) throw new Error(`persistPurchase: unknown shopId ${payload.shopId}`);
+  const stockEntry = await tx.shopStockEntry.findUnique({
+    where: { id: payload.stockEntryId },
+  });
+  if (stockEntry === null) {
+    throw new Error(`persistPurchase: unknown stockEntryId ${payload.stockEntryId}`);
+  }
+  const def = await tx.itemDefinition.findUnique({
+    where: { id: stockEntry.itemDefinitionId },
+  });
+  if (def === null) {
+    throw new Error(`persistPurchase: unknown itemDefinition ${stockEntry.itemDefinitionId}`);
+  }
+  const targetStash = await tx.stash.findUnique({ where: { id: payload.targetStashId } });
+  if (targetStash === null) {
+    throw new Error(`persistPurchase: unknown targetStashId ${payload.targetStashId}`);
+  }
+  const party = await tx.party.findUnique({ where: { id: shop.partyId } });
+  if (party === null) throw new Error(`persistPurchase: shop's party missing`);
+
+  // Compute unit cost via pricing.ts (mirrors reducer).
+  let unitCostCp: number;
+  if (stockEntry.priceOverride !== null) {
+    unitCostCp = stockEntry.priceOverride;
+  } else {
+    if (def.costAmount === null || def.costCurrency === null) {
+      throw new Error(`persistPurchase: catalog row ${def.id} has no cost`);
+    }
+    const baseCp = currency.toCopper({ [def.costCurrency]: def.costAmount });
+    unitCostCp = pricing.buyPrice(baseCp, def.source, {
+      partyModifier: party.priceModifier,
+      shopModifier: shop.priceModifier,
+    });
+  }
+  const totalCostCp = unitCostCp * payload.quantity;
+
+  // Debit currency.
+  const currencyRow = await tx.currencyHolding.findFirst({
+    where: { stashId: targetStash.id },
+  });
+  if (currencyRow === null) {
+    throw new Error(`persistPurchase: no CurrencyHolding for stash ${targetStash.id}`);
+  }
+  const balanceCp = currency.toCopper(currencyRow);
+  if (balanceCp < totalCostCp) {
+    throw new Error('persistPurchase: insufficient funds');
+  }
+  const nextCoins = currency.fromCopper(balanceCp - totalCostCp);
+  await tx.currencyHolding.update({
+    where: { id: currencyRow.id },
+    data: nextCoins,
+  });
+
+  // Auto-stack: upsert item instance in the target stash.
+  const existing = await tx.itemInstance.findFirst({
+    where: {
+      ownerId: targetStash.id,
+      definitionId: def.id,
+      notes: null,
+      containerInstanceId: null,
+    },
+  });
+  if (existing !== null) {
+    await tx.itemInstance.update({
+      where: { id: existing.id },
+      data: { quantity: existing.quantity + payload.quantity },
+    });
+  } else {
+    await tx.itemInstance.create({
+      data: {
+        id: payload.newItemInstanceId,
+        definitionId: def.id,
+        ownerType: 'stash',
+        ownerId: targetStash.id,
+        containerInstanceId: null,
+        quantity: payload.quantity,
+        equipped: false,
+        attuned: false,
+        identified: true,
+        currentCharges: null,
+      },
+    });
+  }
+
+  // Decrement finite stock (race-safe: require quantity >= payload.quantity).
+  if (stockEntry.quantity !== -1) {
+    const updated = await tx.shopStockEntry.updateMany({
+      where: { id: stockEntry.id, quantity: { gte: payload.quantity } },
+      data: { quantity: { decrement: payload.quantity } },
+    });
+    if (updated.count === 0) {
+      throw new Error('persistPurchase: stock decrement failed (race with another buyer)');
+    }
+  }
+}
+
+/**
+ * `persistSale` — redo the reducer's calc, consume the item, credit
+ * currency, increment (or insert) the shop's stock row. When the item
+ * quantity drops to zero, delete the row. When no stock entry exists
+ * for the definitionId, insert a new one with the client-minted id.
+ */
+async function persistSale(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'sale' }>['payload'],
+): Promise<void> {
+  const shop = await tx.shop.findUnique({ where: { id: payload.shopId } });
+  if (shop === null) throw new Error(`persistSale: unknown shopId ${payload.shopId}`);
+  const item = await tx.itemInstance.findUnique({ where: { id: payload.itemInstanceId } });
+  if (item === null)
+    throw new Error(`persistSale: unknown itemInstanceId ${payload.itemInstanceId}`);
+  if (item.quantity < payload.quantity) {
+    throw new Error('persistSale: insufficient item quantity');
+  }
+  const def = await tx.itemDefinition.findUnique({ where: { id: item.definitionId } });
+  if (def === null) throw new Error(`persistSale: unknown itemDefinition ${item.definitionId}`);
+  if (def.costAmount === null || def.costCurrency === null) {
+    throw new Error(`persistSale: catalog row ${def.id} has no cost`);
+  }
+  const party = await tx.party.findUnique({ where: { id: shop.partyId } });
+  if (party === null) throw new Error(`persistSale: shop's party missing`);
+
+  const baseCp = currency.toCopper({ [def.costCurrency]: def.costAmount });
+  const scaled = pricing.buyPrice(baseCp, def.source, {
+    partyModifier: party.priceModifier,
+    shopModifier: shop.priceModifier,
+  });
+  const unitCreditCp = Math.floor(scaled * shop.sellToMerchantRate + 0.5);
+  const totalCreditCp = unitCreditCp * payload.quantity;
+
+  // Credit seller's stash currency.
+  const currencyRow = await tx.currencyHolding.findFirst({
+    where: { stashId: item.ownerId },
+  });
+  if (currencyRow === null) {
+    throw new Error(`persistSale: no CurrencyHolding for stash ${item.ownerId}`);
+  }
+  const newBalance = currency.toCopper(currencyRow) + totalCreditCp;
+  await tx.currencyHolding.update({
+    where: { id: currencyRow.id },
+    data: currency.fromCopper(newBalance),
+  });
+
+  // Consume item.
+  if (item.quantity === payload.quantity) {
+    await tx.itemInstance.delete({ where: { id: item.id } });
+  } else {
+    await tx.itemInstance.update({
+      where: { id: item.id },
+      data: { quantity: item.quantity - payload.quantity },
+    });
+  }
+
+  // Stock: increment existing row for this def, else insert a new one.
+  const existingStock = await tx.shopStockEntry.findFirst({
+    where: { shopId: shop.id, itemDefinitionId: item.definitionId },
+  });
+  if (existingStock !== null) {
+    if (existingStock.quantity !== -1) {
+      await tx.shopStockEntry.update({
+        where: { id: existingStock.id },
+        data: { quantity: existingStock.quantity + payload.quantity },
+      });
+    }
+  } else {
+    await tx.shopStockEntry.create({
+      data: {
+        id: payload.newStockEntryId,
+        shopId: shop.id,
+        itemDefinitionId: item.definitionId,
+        priceOverride: null,
+        quantity: payload.quantity,
+      },
+    });
+  }
+}
+
+/**
  * BUG-008 — `equip` persistor with auto-split. When the source row has
  * quantity > 1, splits off a fresh quantity-1 row (using
  * `newItemInstanceId` from the action payload) and equips THAT.
@@ -1056,6 +1369,46 @@ async function persistIdentify(
     data.hint = payload.hint ?? null;
   }
   await tx.itemInstance.update({ where: { id: payload.itemInstanceId }, data });
+}
+
+/**
+ * R6.4 — batch-identify. Flips `identified` on every party ItemInstance
+ * with matching `definitionId` whose current value differs from the
+ * payload target. Uses `updateMany` predicate-filtered so concurrent
+ * dispatches can't double-flip: rows already in the target state are
+ * silently skipped by the predicate. `partyId` is derived from
+ * `actor.partyId` (SECURITY §2.1) so the update is party-scoped via the
+ * stash → party join.
+ */
+async function persistIdentifyBatch(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'identify-batch' }>['payload'],
+  actor: Actor,
+): Promise<void> {
+  // Fetch every stash id in the actor's party so the ItemInstance
+  // filter is party-scoped. This mirrors the reducer's iteration over
+  // `state.items` (which is already party-scoped in AppState).
+  const stashRows = await tx.stash.findMany({
+    where: { partyId: actor.partyId },
+    select: { id: true },
+  });
+  const stashIds = stashRows.map((s) => s.id);
+  if (stashIds.length === 0) return;
+
+  const data: Prisma.ItemInstanceUpdateManyMutationInput = {
+    identified: payload.identified,
+  };
+  if (Object.prototype.hasOwnProperty.call(payload, 'hint')) {
+    data.hint = payload.hint ?? null;
+  }
+  await tx.itemInstance.updateMany({
+    where: {
+      definitionId: payload.definitionId,
+      identified: { not: payload.identified },
+      ownerId: { in: stashIds },
+    },
+    data,
+  });
 }
 
 async function persistEditCharacter(

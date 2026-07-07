@@ -1,6 +1,8 @@
 import { type ReactElement, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
+import { searchCatalog } from '@app/rules';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,10 +41,10 @@ const ALL_CATEGORIES: ReadonlyArray<{ value: 'all' | ItemCategory; label: string
 ];
 
 /**
- * Catalog tab of the AddItemModal. Substring search across
- * `name + description + tags` (per MVP §12 "default to fuzzy across…" —
- * MVP ships substring; R6 swaps in the real fuzzy ranker from
- * `rules/search.ts`). Category filter via shadcn select.
+ * Catalog tab of the AddItemModal. Fuzzy multi-field search across
+ * `name + description + tags` via `@app/rules`'s `searchCatalog` ranker
+ * (R6.5 — subsequence + word-boundary scoring). Category filter via
+ * shadcn select.
  *
  * Each row has its own quantity stepper + Add button so the user can pick
  * multiple distinct items without closing the modal between adds.
@@ -54,16 +56,15 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
   const [category, setCategory] = useState<'all' | ItemCategory>('all');
 
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return catalog
-      .filter((d) => category === 'all' || d.category === category)
-      .filter((d) => {
-        if (q === '') return true;
-        if (d.name.toLowerCase().includes(q)) return true;
-        if ((d.description ?? '').toLowerCase().includes(q)) return true;
-        if ((d.tags ?? []).some((t) => t.toLowerCase().includes(q))) return true;
-        return false;
-      })
+    // Category filter first (cheap), then fuzzy search across the
+    // surviving items. Result cap keeps the modal snappy.
+    const filtered = catalog.filter((d) => category === 'all' || d.category === category);
+    const q = query.trim();
+    if (q === '') {
+      return [...filtered].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 50);
+    }
+    return searchCatalog(q, filtered)
+      .map((r) => r.item)
       .slice(0, 50); // cap result list — the modal isn't a Catalog Browser.
   }, [catalog, query, category]);
 

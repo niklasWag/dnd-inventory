@@ -13,6 +13,7 @@ import * as capacity from '../capacity';
 import * as charges from '../charges';
 import * as currency from '../currency';
 import * as inventory from '../inventory';
+import * as pricing from '../pricing';
 import * as weightRules from '../weight';
 
 import type { Action, AppState } from './types';
@@ -135,6 +136,22 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return renameParty(state, action.payload);
     case 'set-encumbrance':
       return setEncumbrance(state, action.payload);
+    case 'update-party-economy':
+      return updatePartyEconomy(state, action.payload);
+    case 'create-shop':
+      return createShop(state, action.payload, ctx);
+    case 'edit-shop':
+      return editShop(state, action.payload);
+    case 'delete-shop':
+      return deleteShop(state, action.payload);
+    case 'set-shop-open':
+      return setShopOpen(state, action.payload);
+    case 'edit-shop-stock':
+      return editShopStock(state, action.payload);
+    case 'purchase':
+      return purchase(state, action.payload);
+    case 'sale':
+      return sale(state, action.payload);
     case 'equip':
     case 'unequip':
       return equipOrUnequip(state, action.type, action.payload);
@@ -147,6 +164,8 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return rechargeAction(state, action.payload);
     case 'identify':
       return identifyAction(state, action.payload);
+    case 'identify-batch':
+      return identifyBatchAction(state, action.payload);
     case 'edit-character':
       return editCharacter(state, action.payload);
     case 'delete-character':
@@ -496,6 +515,8 @@ function createCharacter(
     bankerUserId: null,
     encumbranceRule: 'off',
     enforceEncumbrance: false,
+    priceModifier: 1.0,
+    baseCurrency: 'gp',
     createdAt: now,
   } as const;
   const dmMembership = {
@@ -556,6 +577,7 @@ function createCharacter(
       characters: [],
       gameSessions: [],
       stashes: [partyStash, recoveredLootStash],
+      shops: [],
       catalog: [],
       items: [],
       currencies: [partyStashCurrency, recoveredLootCurrency],
@@ -644,6 +666,7 @@ function createCharacter(
       partyStashCurrency,
       recoveredLootCurrency,
     ],
+    shops: [],
     log: [],
   };
 
@@ -2277,6 +2300,601 @@ function setEncumbrance(
   };
 }
 
+/**
+ * R6.1 — `update-party-economy` (OUTLINE §3.5). Sets
+ * `Party.priceModifier` and `Party.baseCurrency` in one dispatch (both
+ * are pieces of the same "campaign economy" decision — a preset switch
+ * atomically flips both, so recording them together mirrors the
+ * `set-encumbrance` "both-fields-one-row" precedent). Rejects a no-op
+ * write per the "every dispatch appends exactly one log entry"
+ * invariant.
+ */
+function updatePartyEconomy(
+  state: AppState,
+  payload: Extract<Action, { type: 'update-party-economy' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'update-party-economy');
+
+  if (payload.partyId !== s.party.id) {
+    throw new Error(
+      `update-party-economy: partyId ${payload.partyId} does not match state.party.id ${s.party.id}`,
+    );
+  }
+  const priceUnchanged = payload.priceModifier === s.party.priceModifier;
+  const currencyUnchanged = payload.baseCurrency === s.party.baseCurrency;
+  if (priceUnchanged && currencyUnchanged) {
+    throw new Error('update-party-economy: nothing changed');
+  }
+
+  const oldPriceModifier = s.party.priceModifier;
+  const oldBaseCurrency = s.party.baseCurrency;
+  return {
+    state: {
+      ...s,
+      party: {
+        ...s.party,
+        priceModifier: payload.priceModifier,
+        baseCurrency: payload.baseCurrency,
+      },
+    },
+    logEntries: [
+      {
+        type: 'update-party-economy',
+        payload: {
+          partyId: s.party.id,
+          oldPriceModifier,
+          newPriceModifier: payload.priceModifier,
+          oldBaseCurrency,
+          newBaseCurrency: payload.baseCurrency,
+        },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// R6.2 — Shop CRUD + purchase / sale (OUTLINE §3.9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Editable `Shop` scalar fields — mirrors `edit-shop`'s payload patch
+ * shape. `isOpen` has its own action; stock has its own action.
+ */
+const EDIT_SHOP_FIELDS = ['name', 'priceModifier', 'sellToMerchantRate'] as const;
+type EditShopField = (typeof EDIT_SHOP_FIELDS)[number];
+
+function createShop(
+  state: AppState,
+  payload: Extract<Action, { type: 'create-shop' }>['payload'],
+  ctx: ReducerContext,
+): ReducerResult {
+  const s = requireState(state, 'create-shop');
+  if (!isValidUuidV7(payload.newShopId)) {
+    throw new Error('create-shop: newShopId must be a valid UUID v7');
+  }
+  if (s.shops.some((sh) => sh.id === payload.newShopId)) {
+    throw new Error(`create-shop: shopId ${payload.newShopId} already exists`);
+  }
+  const now = ctx.now();
+  const newShop = {
+    id: payload.newShopId,
+    partyId: s.party.id,
+    name: payload.name,
+    priceModifier: 1.0,
+    sellToMerchantRate: 0.5,
+    isOpen: false,
+    stock: [],
+    createdAt: now,
+  };
+  return {
+    state: { ...s, shops: [...s.shops, newShop] },
+    logEntries: [
+      {
+        type: 'create-shop',
+        payload: { shopId: newShop.id, name: newShop.name },
+      },
+    ],
+  };
+}
+
+function editShop(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-shop' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-shop');
+  const shop = s.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    throw new Error(`edit-shop: unknown shopId ${payload.shopId}`);
+  }
+  const changedFields: EditShopField[] = [];
+  const next = { ...shop };
+  for (const key of EDIT_SHOP_FIELDS) {
+    if (!(key in payload.patch)) continue;
+    const newVal = payload.patch[key];
+    if (newVal === undefined) continue;
+    if (newVal !== shop[key]) {
+      changedFields.push(key);
+      (next as Record<string, unknown>)[key] = newVal;
+    }
+  }
+  if (changedFields.length === 0) {
+    throw new Error('edit-shop: no fields changed');
+  }
+  return {
+    state: {
+      ...s,
+      shops: s.shops.map((sh) => (sh.id === shop.id ? next : sh)),
+    },
+    logEntries: [
+      {
+        type: 'edit-shop',
+        payload: { shopId: shop.id, changedFields },
+      },
+    ],
+  };
+}
+
+function deleteShop(
+  state: AppState,
+  payload: Extract<Action, { type: 'delete-shop' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'delete-shop');
+  const shop = s.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    throw new Error(`delete-shop: unknown shopId ${payload.shopId}`);
+  }
+  return {
+    state: { ...s, shops: s.shops.filter((sh) => sh.id !== shop.id) },
+    logEntries: [
+      {
+        type: 'delete-shop',
+        payload: { shopId: shop.id, name: shop.name },
+      },
+    ],
+  };
+}
+
+function setShopOpen(
+  state: AppState,
+  payload: Extract<Action, { type: 'set-shop-open' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'set-shop-open');
+  const shop = s.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    throw new Error(`set-shop-open: unknown shopId ${payload.shopId}`);
+  }
+  if (shop.isOpen === payload.isOpen) {
+    throw new Error('set-shop-open: nothing changed');
+  }
+  return {
+    state: {
+      ...s,
+      shops: s.shops.map((sh) => (sh.id === shop.id ? { ...sh, isOpen: payload.isOpen } : sh)),
+    },
+    logEntries: [
+      {
+        type: 'set-shop-open',
+        payload: { shopId: shop.id, isOpen: payload.isOpen },
+      },
+    ],
+  };
+}
+
+function editShopStock(
+  state: AppState,
+  payload: Extract<Action, { type: 'edit-shop-stock' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'edit-shop-stock');
+  const shop = s.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    throw new Error(`edit-shop-stock: unknown shopId ${payload.shopId}`);
+  }
+  const op = payload.operation;
+
+  if (op.kind === 'add') {
+    if (!isValidUuidV7(op.newStockEntryId)) {
+      throw new Error('edit-shop-stock/add: newStockEntryId must be a valid UUID v7');
+    }
+    if (shop.stock.some((e) => e.id === op.newStockEntryId)) {
+      throw new Error(`edit-shop-stock/add: stock entry ${op.newStockEntryId} already exists`);
+    }
+    if (op.quantity !== -1 && op.quantity < 0) {
+      throw new Error('edit-shop-stock/add: quantity must be -1 (unlimited) or >= 0');
+    }
+    // BUG-013 — a no-cost catalog row (e.g. DMG magic items, which don't
+    // publish market prices) is unsellable without an explicit override.
+    // Reject at add time so the trap doesn't fire at buy time.
+    const def = s.catalog.find((d) => d.id === op.itemDefinitionId);
+    if (def === undefined) {
+      throw new Error(`edit-shop-stock/add: unknown itemDefinitionId ${op.itemDefinitionId}`);
+    }
+    if (def.cost === undefined && op.priceOverride === undefined) {
+      throw new Error('edit-shop-stock/add: item has no catalog cost — set a price override');
+    }
+    const newEntry = {
+      id: op.newStockEntryId,
+      itemDefinitionId: op.itemDefinitionId,
+      ...(op.priceOverride !== undefined ? { priceOverride: op.priceOverride } : {}),
+      quantity: op.quantity,
+    };
+    return {
+      state: {
+        ...s,
+        shops: s.shops.map((sh) =>
+          sh.id === shop.id ? { ...sh, stock: [...sh.stock, newEntry] } : sh,
+        ),
+      },
+      logEntries: [
+        {
+          type: 'edit-shop-stock',
+          payload: {
+            shopId: shop.id,
+            operation: {
+              kind: 'add' as const,
+              stockEntryId: newEntry.id,
+              itemDefinitionId: newEntry.itemDefinitionId,
+              ...(op.priceOverride !== undefined ? { priceOverride: op.priceOverride } : {}),
+              quantity: newEntry.quantity,
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  if (op.kind === 'update') {
+    const entry = shop.stock.find((e) => e.id === op.stockEntryId);
+    if (entry === undefined) {
+      throw new Error(`edit-shop-stock/update: unknown stockEntryId ${op.stockEntryId}`);
+    }
+    const priceChanged =
+      op.priceOverride !== undefined && op.priceOverride !== (entry.priceOverride ?? null);
+    const qtyChanged = op.quantity !== undefined && op.quantity !== entry.quantity;
+    if (!priceChanged && !qtyChanged) {
+      throw new Error('edit-shop-stock/update: nothing changed');
+    }
+    if (op.quantity !== undefined && op.quantity !== -1 && op.quantity < 0) {
+      throw new Error('edit-shop-stock/update: quantity must be -1 (unlimited) or >= 0');
+    }
+    const oldPriceOverride = entry.priceOverride ?? null;
+    const oldQuantity = entry.quantity;
+    const newPriceOverride = op.priceOverride === undefined ? oldPriceOverride : op.priceOverride;
+    const newQuantity = op.quantity ?? oldQuantity;
+    // BUG-013 — same guard as `add`: reject an update that would leave
+    // the row with no override on a no-cost catalog def. Only fires when
+    // the update EXPLICITLY sets priceOverride to null; qty-only updates
+    // on pre-existing broken rows still go through (DM's escape hatch —
+    // they can adjust stock while they sort out pricing).
+    if (op.priceOverride === null) {
+      const def = s.catalog.find((d) => d.id === entry.itemDefinitionId);
+      if (def !== undefined && def.cost === undefined) {
+        throw new Error('edit-shop-stock/update: item has no catalog cost — set a price override');
+      }
+    }
+    const nextEntry = {
+      id: entry.id,
+      itemDefinitionId: entry.itemDefinitionId,
+      ...(newPriceOverride !== null ? { priceOverride: newPriceOverride } : {}),
+      quantity: newQuantity,
+    };
+    return {
+      state: {
+        ...s,
+        shops: s.shops.map((sh) =>
+          sh.id === shop.id
+            ? { ...sh, stock: sh.stock.map((e) => (e.id === entry.id ? nextEntry : e)) }
+            : sh,
+        ),
+      },
+      logEntries: [
+        {
+          type: 'edit-shop-stock',
+          payload: {
+            shopId: shop.id,
+            operation: {
+              kind: 'update' as const,
+              stockEntryId: entry.id,
+              itemDefinitionId: entry.itemDefinitionId,
+              oldPriceOverride,
+              newPriceOverride,
+              oldQuantity,
+              newQuantity,
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  // op.kind === 'remove'
+  const entry = shop.stock.find((e) => e.id === op.stockEntryId);
+  if (entry === undefined) {
+    throw new Error(`edit-shop-stock/remove: unknown stockEntryId ${op.stockEntryId}`);
+  }
+  return {
+    state: {
+      ...s,
+      shops: s.shops.map((sh) =>
+        sh.id === shop.id ? { ...sh, stock: sh.stock.filter((e) => e.id !== entry.id) } : sh,
+      ),
+    },
+    logEntries: [
+      {
+        type: 'edit-shop-stock',
+        payload: {
+          shopId: shop.id,
+          operation: {
+            kind: 'remove' as const,
+            stockEntryId: entry.id,
+            itemDefinitionId: entry.itemDefinitionId,
+          },
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Resolve the buy-side unit cost for a stock entry. `priceOverride`
+ * (when set) completely replaces the base price — bypasses both
+ * `Party.priceModifier` and `Shop.priceModifier`. Otherwise the entry's
+ * base cost is derived from the catalog row and scaled through
+ * `pricing.buyPrice` with both modifiers.
+ */
+function resolvePurchaseUnitCostCp(
+  s: NonNullable<AppState>,
+  def: ItemDefinition,
+  stockEntry: { priceOverride?: number | undefined },
+  shopPriceModifier: number,
+): number {
+  if (stockEntry.priceOverride !== undefined) {
+    return stockEntry.priceOverride;
+  }
+  if (def.cost === undefined) {
+    throw new Error(`purchase: catalog row ${def.id} has no cost`);
+  }
+  const baseCp = currency.toCopper({ [def.cost.currency]: def.cost.amount });
+  return pricing.buyPrice(baseCp, def.source, {
+    partyModifier: s.party.priceModifier,
+    shopModifier: shopPriceModifier,
+  });
+}
+
+function purchase(
+  state: AppState,
+  payload: Extract<Action, { type: 'purchase' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'purchase');
+  if (!isValidUuidV7(payload.newItemInstanceId)) {
+    throw new Error('purchase: newItemInstanceId must be a valid UUID v7');
+  }
+  const shop = s.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    throw new Error(`purchase: unknown shopId ${payload.shopId}`);
+  }
+  const stockEntry = shop.stock.find((e) => e.id === payload.stockEntryId);
+  if (stockEntry === undefined) {
+    throw new Error(`purchase: unknown stockEntryId ${payload.stockEntryId}`);
+  }
+  if (stockEntry.quantity !== -1 && stockEntry.quantity < payload.quantity) {
+    throw new Error(
+      `purchase: insufficient stock (available: ${String(stockEntry.quantity)}, requested: ${String(payload.quantity)})`,
+    );
+  }
+  const targetStash = s.stashes.find((st) => st.id === payload.targetStashId);
+  if (targetStash === undefined) {
+    throw new Error(`purchase: unknown targetStashId ${payload.targetStashId}`);
+  }
+  const def = s.catalog.find((d) => d.id === stockEntry.itemDefinitionId);
+  if (def === undefined) {
+    throw new Error(`purchase: catalog missing definition ${stockEntry.itemDefinitionId}`);
+  }
+  const unitCostCp = resolvePurchaseUnitCostCp(s, def, stockEntry, shop.priceModifier);
+  const totalCostCp = unitCostCp * payload.quantity;
+
+  // Debit the target stash's currency.
+  const currencyRow = s.currencies.find((c) => c.stashId === targetStash.id);
+  if (currencyRow === undefined) {
+    throw new Error(`purchase: no CurrencyHolding for stash ${targetStash.id}`);
+  }
+  const balance = currency.toCopper(currencyRow);
+  if (balance < totalCostCp) {
+    throw new Error(
+      `purchase: insufficient funds (have ${String(balance)} cp, need ${String(totalCostCp)} cp)`,
+    );
+  }
+  // Debit greedy from largest denom down (mirrors `currency.subtract`
+  // pattern by converting to cp then rebuilding via `fromCopper`).
+  const remainingCp = balance - totalCostCp;
+  const nextCurrency = { ...currencyRow, ...currency.fromCopper(remainingCp) };
+
+  // Acquire — auto-stack per (definitionId, notes ?? "") in the target stash.
+  const autoStackKey = `${def.id}|`;
+  const existingRow = s.items.find(
+    (it) =>
+      it.ownerType === 'stash' &&
+      it.ownerId === targetStash.id &&
+      it.containerInstanceId === null &&
+      `${it.definitionId}|${it.notes ?? ''}` === autoStackKey,
+  );
+  let acquiredItemInstanceId: string;
+  let nextItems: ItemInstance[];
+  if (existingRow !== undefined) {
+    acquiredItemInstanceId = existingRow.id;
+    nextItems = s.items.map((it) =>
+      it.id === existingRow.id ? { ...it, quantity: it.quantity + payload.quantity } : it,
+    );
+  } else {
+    acquiredItemInstanceId = payload.newItemInstanceId;
+    const newRow: ItemInstance = {
+      id: payload.newItemInstanceId,
+      definitionId: def.id,
+      ownerType: 'stash',
+      ownerId: targetStash.id,
+      containerInstanceId: null,
+      quantity: payload.quantity,
+      equipped: false,
+      attuned: false,
+      // Matches `acquire`: newly minted rows default to `identified: true`.
+      // DM can flip via `identify` action if needed.
+      identified: true,
+      currentCharges:
+        targetStash.scope === 'character' && targetStash.isCarried && def.charges !== undefined
+          ? def.charges.max
+          : null,
+    };
+    nextItems = [...s.items, newRow];
+  }
+
+  // Decrement stock if finite.
+  const nextShops = s.shops.map((sh) =>
+    sh.id === shop.id
+      ? {
+          ...sh,
+          stock: sh.stock.map((e) =>
+            e.id === stockEntry.id && e.quantity !== -1
+              ? { ...e, quantity: e.quantity - payload.quantity }
+              : e,
+          ),
+        }
+      : sh,
+  );
+
+  return {
+    state: {
+      ...s,
+      items: nextItems,
+      currencies: s.currencies.map((c) => (c.stashId === targetStash.id ? nextCurrency : c)),
+      shops: nextShops,
+    },
+    logEntries: [
+      {
+        type: 'purchase',
+        payload: {
+          shopId: shop.id,
+          stockEntryId: stockEntry.id,
+          itemDefinitionId: def.id,
+          itemInstanceId: acquiredItemInstanceId,
+          targetStashId: targetStash.id,
+          quantity: payload.quantity,
+          unitCostCp,
+          totalCostCp,
+        },
+      },
+    ],
+  };
+}
+
+function sale(
+  state: AppState,
+  payload: Extract<Action, { type: 'sale' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'sale');
+  if (!isValidUuidV7(payload.newStockEntryId)) {
+    throw new Error('sale: newStockEntryId must be a valid UUID v7');
+  }
+  const shop = s.shops.find((sh) => sh.id === payload.shopId);
+  if (shop === undefined) {
+    throw new Error(`sale: unknown shopId ${payload.shopId}`);
+  }
+  const item = s.items.find((it) => it.id === payload.itemInstanceId);
+  if (item === undefined) {
+    throw new Error(`sale: unknown itemInstanceId ${payload.itemInstanceId}`);
+  }
+  if (item.quantity < payload.quantity) {
+    throw new Error(
+      `sale: insufficient item quantity (have ${String(item.quantity)}, selling ${String(payload.quantity)})`,
+    );
+  }
+  const sellerStash = s.stashes.find((st) => st.id === item.ownerId);
+  if (sellerStash === undefined) {
+    throw new Error(`sale: item ${item.id} has no owning stash`);
+  }
+  const def = s.catalog.find((d) => d.id === item.definitionId);
+  if (def === undefined) {
+    throw new Error(`sale: catalog missing definition ${item.definitionId}`);
+  }
+  if (def.cost === undefined) {
+    throw new Error(`sale: catalog row ${def.id} has no cost — cannot compute sell price`);
+  }
+
+  // Sell price ignores `priceOverride` (see plan). Scaled base × sellToMerchantRate.
+  const baseCp = currency.toCopper({ [def.cost.currency]: def.cost.amount });
+  const scaled = pricing.buyPrice(baseCp, def.source, {
+    partyModifier: s.party.priceModifier,
+    shopModifier: shop.priceModifier,
+  });
+  const unitCreditCp = Math.floor(scaled * shop.sellToMerchantRate + 0.5);
+  const totalCreditCp = unitCreditCp * payload.quantity;
+
+  // Credit the seller's stash currency.
+  const currencyRow = s.currencies.find((c) => c.stashId === sellerStash.id);
+  if (currencyRow === undefined) {
+    throw new Error(`sale: no CurrencyHolding for stash ${sellerStash.id}`);
+  }
+  const newBalance = currency.toCopper(currencyRow) + totalCreditCp;
+  const nextCurrency = { ...currencyRow, ...currency.fromCopper(newBalance) };
+
+  // Consume from the item row. Drops the row when quantity → 0.
+  const remainingQty = item.quantity - payload.quantity;
+  const nextItems =
+    remainingQty === 0
+      ? s.items.filter((it) => it.id !== item.id)
+      : s.items.map((it) => (it.id === item.id ? { ...it, quantity: remainingQty } : it));
+
+  // Stock increment or insert. Look for an existing stock row for this
+  // definitionId; if found, increment (unless unlimited — then skip).
+  // If none found, insert a new stock row (unless the shop already has
+  // multiple entries for this def, in which case use the first — but
+  // stock uniqueness by def is not a schema invariant, just a common
+  // shape).
+  const existingStock = shop.stock.find((e) => e.itemDefinitionId === item.definitionId);
+  let resultStockEntryId: string;
+  let nextStock: typeof shop.stock;
+  if (existingStock !== undefined) {
+    resultStockEntryId = existingStock.id;
+    nextStock = shop.stock.map((e) =>
+      e.id === existingStock.id && e.quantity !== -1
+        ? { ...e, quantity: e.quantity + payload.quantity }
+        : e,
+    );
+  } else {
+    resultStockEntryId = payload.newStockEntryId;
+    nextStock = [
+      ...shop.stock,
+      {
+        id: payload.newStockEntryId,
+        itemDefinitionId: item.definitionId,
+        quantity: payload.quantity,
+      },
+    ];
+  }
+
+  return {
+    state: {
+      ...s,
+      items: nextItems,
+      currencies: s.currencies.map((c) => (c.stashId === sellerStash.id ? nextCurrency : c)),
+      shops: s.shops.map((sh) => (sh.id === shop.id ? { ...sh, stock: nextStock } : sh)),
+    },
+    logEntries: [
+      {
+        type: 'sale',
+        payload: {
+          shopId: shop.id,
+          stockEntryId: resultStockEntryId,
+          itemDefinitionId: item.definitionId,
+          itemInstanceId: item.id,
+          sellerStashId: sellerStash.id,
+          quantity: payload.quantity,
+          unitCreditCp,
+          totalCreditCp,
+        },
+      },
+    ],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // equip / unequip / attune / unattune (R1.2)
 // ---------------------------------------------------------------------------
@@ -2985,6 +3603,93 @@ function identifyAction(
         payload: logPayload,
       },
     ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// identify-batch (R6.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * OUTLINE §3.8 amendment (2026-06-24): a DM-toolkit affordance that
+ * flips `identified` across every `ItemInstance` in the party matching
+ * `definitionId` in one reducer slice. Optional shared `hint` in the
+ * payload overrides per-instance hints when present; when absent,
+ * every affected row keeps its existing hint.
+ *
+ * The reducer emits one `identify` log entry per affected instance
+ * (matches the single-`identify` shape) so the OUTLINE §3.11 per-item
+ * history filter continues to work. There is no dedicated
+ * `identify-batch` TransactionLog type.
+ *
+ * "Matching instance" means `it.definitionId === payload.definitionId
+ * AND it.identified !== payload.identified` — instances already in the
+ * target state are skipped (they'd log a spurious no-op otherwise). If
+ * NO instance would flip, the reducer throws so the UI can surface it
+ * as an error toast.
+ */
+function identifyBatchAction(
+  state: AppState,
+  payload: Extract<Action, { type: 'identify-batch' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'identify-batch');
+
+  const affected = s.items.filter(
+    (it) => it.definitionId === payload.definitionId && it.identified !== payload.identified,
+  );
+  if (affected.length === 0) {
+    throw new Error(
+      `identify-batch: no matching instances to change for definitionId ${payload.definitionId}`,
+    );
+  }
+
+  // `hint` field semantics on payload:
+  //   - absent (`'hint' in payload === false`): preserve each row's
+  //     existing hint.
+  //   - explicit `undefined`: clear every affected row's hint.
+  //   - explicit string: write that shared hint on every affected row.
+  const hintInPayload = 'hint' in payload;
+  const sharedHint = hintInPayload ? payload.hint : undefined;
+
+  const affectedIds = new Set(affected.map((it) => it.id));
+  const nextItems: ItemInstance[] = s.items.map((it) => {
+    if (!affectedIds.has(it.id)) return it;
+    const nextRow: ItemInstance = { ...it, identified: payload.identified };
+    if (hintInPayload) {
+      if (sharedHint === undefined) {
+        delete nextRow.hint;
+      } else {
+        nextRow.hint = sharedHint;
+      }
+    }
+    return nextRow;
+  });
+
+  const logEntries: LogEntrySlice[] = affected.map((row) => {
+    const previousHint = row.hint;
+    const newHint = hintInPayload ? sharedHint : previousHint;
+    const logPayload: {
+      itemInstanceId: string;
+      previousIdentified: boolean;
+      newIdentified: boolean;
+      previousHint?: string;
+      newHint?: string;
+    } = {
+      itemInstanceId: row.id,
+      previousIdentified: row.identified,
+      newIdentified: payload.identified,
+    };
+    if (previousHint !== undefined) logPayload.previousHint = previousHint;
+    if (newHint !== undefined) logPayload.newHint = newHint;
+    return {
+      type: 'identify',
+      payload: logPayload,
+    };
+  });
+
+  return {
+    state: { ...s, items: nextItems },
+    logEntries,
   };
 }
 

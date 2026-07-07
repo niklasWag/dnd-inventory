@@ -2,7 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import { Moon } from 'lucide-react';
+import { Moon, Pencil } from 'lucide-react';
 
 import { charges as chargesRules } from '@app/rules';
 
@@ -16,6 +16,7 @@ import {
 import { CapacityBar } from '@/components/inventory/CapacityBar';
 import { EquippedSlotsPanel } from '@/components/inventory/EquippedSlotsPanel';
 import { RestRollModal } from '@/components/inventory/RestRollModal';
+import { EditCharacterDialog } from '@/components/character/EditCharacterDialog';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
@@ -76,6 +77,17 @@ export function CharacterSheet(): ReactElement {
       // the character name.
       const isCrossCharacterDmView =
         userIsDm && c.ownerUserId !== null && c.ownerUserId !== myUserId;
+      // R6.0 — "Edit character" button visibility. Owner OR DM OR solo
+      // (solo party of one — per §8.2 union-of-rights the sole member
+      // acts as both). Non-DM viewers of someone else's character
+      // never see the button. The dialog itself does per-field
+      // disabled gating; this flag just controls whether the button
+      // even appears.
+      const activeMemberships = s.appState.memberships.filter((m) => m.leftAt === null);
+      const distinctUserIds = new Set(activeMemberships.map((m) => m.userId));
+      const isSolo = distinctUserIds.size === 1;
+      const isOwner = c.ownerUserId === myUserId;
+      const canEditCharacter = userIsDm || isOwner || isSolo;
       return {
         character: c,
         inventoryStashId: c.inventoryStashId,
@@ -85,11 +97,13 @@ export function CharacterSheet(): ReactElement {
         userIsBanker,
         userIsDm,
         isCrossCharacterDmView,
+        canEditCharacter,
       };
     }),
   );
   const [tab, setTab] = useState<Tab>('inventory');
   const [adding, setAdding] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   if (sheet === null) {
     return <Navigate to="/" replace />;
@@ -104,6 +118,7 @@ export function CharacterSheet(): ReactElement {
     userIsBanker,
     userIsDm,
     isCrossCharacterDmView,
+    canEditCharacter,
   } = sheet;
   const targetStash = stashForTab(tab, {
     inventoryStashId,
@@ -135,8 +150,24 @@ export function CharacterSheet(): ReactElement {
             STR {character.abilityScores.STR}
           </p>
         </div>
-        <RestMenu characterId={character.id} />
+        <div className="flex items-center gap-2">
+          {canEditCharacter ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+              <Pencil className="mr-2 h-4 w-4" aria-hidden="true" />
+              Edit character
+            </Button>
+          ) : null}
+          <RestMenu characterId={character.id} />
+        </div>
       </header>
+
+      {canEditCharacter ? (
+        <EditCharacterDialog
+          characterId={character.id}
+          open={editOpen}
+          onOpenChange={setEditOpen}
+        />
+      ) : null}
 
       {isCrossCharacterDmView ? (
         <div

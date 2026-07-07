@@ -34,6 +34,8 @@ describe('appStateSchema round-trip', () => {
       bankerUserId: null,
       encumbranceRule: 'off',
       enforceEncumbrance: false,
+      priceModifier: 1.0,
+      baseCurrency: 'gp',
       createdAt: '2026-06-23T10:00:00.000Z',
     },
     memberships: [
@@ -99,6 +101,7 @@ describe('appStateSchema round-trip', () => {
         createdAt: '2026-06-23T10:00:00.000Z',
       },
     ],
+    shops: [],
     catalog: [],
     items: [],
     currencies: [
