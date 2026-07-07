@@ -141,4 +141,50 @@ describe('ShopDetail (R6.2)', () => {
     await user.click(screen.getByRole('button', { name: /^open shop$/i }));
     expect(screen.getByText(/^Open$/)).toBeInTheDocument();
   });
+
+  it('add-stock has no raw id input — DM picks item via the catalog picker', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: false });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    // Old raw-id input is gone.
+    expect(screen.queryByLabelText(/item definition id/i)).not.toBeInTheDocument();
+
+    // Pick a hempen rope from the catalog picker.
+    await user.click(screen.getByRole('button', { name: /^pick item$/i }));
+    const search = await screen.findByLabelText(/^search$/i);
+    await user.type(search, 'rope, hempen');
+    const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
+    // First match wins — searchCatalog ranks name-exact highest.
+    await user.click(pickBtns[0]!);
+
+    // Confirm the selection is reflected in the read-only display.
+    expect(screen.getByText(/rope, hempen/i)).toBeInTheDocument();
+
+    // Set qty=5, submit.
+    const qty = screen.getByLabelText(/^quantity$/i);
+    await user.clear(qty);
+    await user.type(qty, '5');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
+    expect(shop.stock).toHaveLength(1);
+    expect(shop.stock[0]!.itemDefinitionId).toBe('phb-2024:rope-hempen-50ft');
+    expect(shop.stock[0]!.quantity).toBe(5);
+    expect(shop.stock[0]!.priceOverride).toBeUndefined();
+  });
+
+  it('clicking Add with no item picked toasts an error and does not dispatch', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: false });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    expect(await screen.findByText(/pick an item first/i)).toBeInTheDocument();
+    const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
+    expect(shop.stock).toHaveLength(0);
+  });
 });

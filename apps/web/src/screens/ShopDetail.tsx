@@ -6,6 +6,7 @@ import { Trash2, ArrowLeft } from 'lucide-react';
 
 import { pricing, currency } from '@app/rules';
 import { newUuidV7 } from '@app/shared';
+import type { ItemDefinition } from '@app/shared';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ItemPicker } from '@/components/catalog/ItemPicker';
 import { useStore } from '@/store';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
@@ -65,7 +67,8 @@ export function ShopDetail(): ReactElement {
   );
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [addStockDefId, setAddStockDefId] = useState('');
+  const [pickedDef, setPickedDef] = useState<ItemDefinition | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [addStockQty, setAddStockQty] = useState('1');
   const [addStockOverride, setAddStockOverride] = useState('');
   const [sellItemId, setSellItemId] = useState('');
@@ -143,13 +146,13 @@ export function ShopDetail(): ReactElement {
   }
 
   function onAddStock(): void {
+    if (pickedDef === null) {
+      toast.error('Pick an item first');
+      return;
+    }
     const qty = Number.parseInt(addStockQty, 10);
     if (!Number.isFinite(qty) || (qty !== -1 && qty < 0)) {
       toast.error('Quantity must be -1 (unlimited) or non-negative');
-      return;
-    }
-    if (addStockDefId.trim().length === 0) {
-      toast.error('Item is required');
       return;
     }
     const override =
@@ -166,14 +169,14 @@ export function ShopDetail(): ReactElement {
           operation: {
             kind: 'add',
             newStockEntryId: newUuidV7(),
-            itemDefinitionId: addStockDefId,
+            itemDefinitionId: pickedDef.id,
             quantity: qty,
             ...(override !== undefined ? { priceOverride: override } : {}),
           },
         },
       });
       toast.success('Stock added');
-      setAddStockDefId('');
+      setPickedDef(null);
       setAddStockQty('1');
       setAddStockOverride('');
     } catch (err) {
@@ -374,19 +377,24 @@ export function ShopDetail(): ReactElement {
         <section className="space-y-2 rounded-lg border border-border p-4">
           <h2 className="text-lg font-semibold">Add stock (DM)</h2>
           <p className="text-sm text-muted-foreground">
-            Enter a catalog id (e.g. <code>phb-2024:rope-hempen-50ft</code>). Quantity{' '}
-            <code>-1</code> = unlimited. Price override is optional (integer CP; bypasses
-            modifiers).
+            Pick an item from the catalog. Quantity <code>-1</code> = unlimited. Price override is
+            optional (integer CP; bypasses modifiers).
           </p>
           <div className="grid gap-3 sm:grid-cols-4">
             <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="add-stock-def">Item definition id</Label>
-              <Input
-                id="add-stock-def"
-                value={addStockDefId}
-                onChange={(e) => setAddStockDefId(e.target.value)}
-                placeholder="phb-2024:rope-hempen-50ft"
-              />
+              <span className="text-sm font-medium leading-none">Item</span>
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1 truncate rounded-md border border-input bg-background px-3 py-2 text-sm">
+                  {pickedDef !== null ? (
+                    pickedDef.name
+                  ) : (
+                    <span className="text-muted-foreground">No item selected</span>
+                  )}
+                </div>
+                <Button type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+                  Pick item
+                </Button>
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="add-stock-qty">Quantity</Label>
@@ -415,6 +423,17 @@ export function ShopDetail(): ReactElement {
             </Button>
           </div>
         </section>
+      ) : null}
+
+      {pickerOpen ? (
+        <ItemPicker
+          catalog={catalog}
+          onCancel={() => setPickerOpen(false)}
+          onPick={(def) => {
+            setPickedDef(def);
+            setPickerOpen(false);
+          }}
+        />
       ) : null}
 
       <section className="space-y-2 rounded-lg border border-border p-4">
