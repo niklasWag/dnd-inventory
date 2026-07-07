@@ -1065,3 +1065,166 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
     expect(screen.queryByLabelText(/^Charges:/)).not.toBeInTheDocument();
   });
 });
+
+// -------------------- R7.5 — fuzzy filter --------------------
+
+describe('StashItemsTable — fuzzy filter (R7.5)', () => {
+  function renderWithQuery(stashId: string, query: string): { rerender: (next: string) => void } {
+    const partyId = useStore.getState().appState?.party.id ?? 'test-party';
+    const { rerender } = render(
+      <MemoryRouter initialEntries={[`/party/${partyId}/character/test`]}>
+        <Routes>
+          <Route
+            path="/party/:partyId/character/:id"
+            element={<StashItemsTable stashId={stashId} query={query} />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    return {
+      rerender: (next: string) => {
+        rerender(
+          <MemoryRouter initialEntries={[`/party/${partyId}/character/test`]}>
+            <Routes>
+              <Route
+                path="/party/:partyId/character/:id"
+                element={<StashItemsTable stashId={stashId} query={next} />}
+              />
+            </Routes>
+          </MemoryRouter>,
+        );
+      },
+    };
+  }
+
+  it('empty query renders every row (undefined and "" are equivalent no-ops)', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    renderWithQuery(inventoryStashId, '');
+    expect(screen.getByRole('button', { name: /open details for torch/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open details for.*rope/i })).toBeInTheDocument();
+  });
+
+  it('filters visible rows by name (torch keeps, rope drops)', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: rope.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    renderWithQuery(inventoryStashId, 'torch');
+    expect(screen.getByRole('button', { name: /open details for torch/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /open details for.*rope/i })).toBeNull();
+  });
+
+  it('shows the empty-state hint when the filter drops every row', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    renderWithQuery(inventoryStashId, 'zzzznothingmatchesthis');
+    expect(screen.getByText(/no items match your search/i)).toBeInTheDocument();
+  });
+
+  it('respects OUTLINE §8: unidentified row is NOT findable by its real name', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    const wandRowId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    // Mark unidentified with a DM hint.
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: wandRowId, identified: false, hint: 'smells of ozone' },
+    });
+
+    // Search for the real name — should MISS.
+    renderWithQuery(inventoryStashId, 'wand');
+    expect(screen.queryByRole('button', { name: /open details for/i })).toBeNull();
+    expect(screen.getByText(/no items match your search/i)).toBeInTheDocument();
+  });
+
+  it('unidentified row IS findable by the hint text', () => {
+    const { inventoryStashId, catalog } = bootstrap();
+    const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
+    useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: wand.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    const wandRowId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === wand.id)!.id;
+    useStore.getState().dispatch({
+      type: 'identify',
+      payload: { itemInstanceId: wandRowId, identified: false, hint: 'smells of ozone' },
+    });
+
+    renderWithQuery(inventoryStashId, 'ozone');
+    // "Unknown Magic Item" label rendered (the identify display invariant).
+    expect(
+      screen.getByRole('button', { name: /open details for unknown magic item/i }),
+    ).toBeInTheDocument();
+  });
+});

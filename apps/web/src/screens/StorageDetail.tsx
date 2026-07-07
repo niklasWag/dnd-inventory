@@ -9,6 +9,7 @@ import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyBreakdown } from '@/components/stash/CurrencyBreakdown';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
+import { StashSearchInput } from '@/components/stash/StashSearchInput';
 import { CreateStashModal as _CreateStashModal } from '@/components/stash/CreateStashModal'; // ensure no circular import issues
 import { RenameStashModal } from '@/components/stash/RenameStashModal';
 import { DeleteStashDialog } from '@/components/stash/DeleteStashDialog';
@@ -75,6 +76,8 @@ export function StorageDetail(): ReactElement {
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [adding, setAdding] = useState(false);
+  // R7.5 — fuzzy filter local to this Storage detail screen.
+  const [query, setQuery] = useState('');
 
   if (view === null) return <Navigate to="/" replace />;
   const { stashName, characterId, characterName } = view;
@@ -143,7 +146,13 @@ export function StorageDetail(): ReactElement {
             + Add item
           </Button>
         </div>
-        <StashItemsTable stashId={view.stashId} />
+        <StashSearchInput
+          value={query}
+          onChange={setQuery}
+          label="Search items"
+          idPrefix="storage-search"
+        />
+        <StashItemsTable stashId={view.stashId} query={query} />
       </section>
 
       <AddItemModal

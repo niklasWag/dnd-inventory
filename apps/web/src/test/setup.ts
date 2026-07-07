@@ -102,6 +102,46 @@ if (typeof Element !== 'undefined') {
   }
 }
 
+/**
+ * R7.1.a — test-only `matchMedia` shim.
+ *
+ * jsdom 29.x doesn't ship `window.matchMedia`. The theme store
+ * (`apps/web/src/store/theme.ts`) queries `prefers-color-scheme` to
+ * resolve `'system'` mode; a missing implementation would throw at
+ * module load. This default returns a `MediaQueryList`-shaped stub
+ * with `matches: false` (i.e. light system default). Tests that need
+ * to flip the value can `vi.spyOn(window, 'matchMedia')` and return
+ * a custom stub.
+ */
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string): MediaQueryList => {
+      const listeners = new Set<EventListenerOrEventListenerObject>();
+      const mql: MediaQueryList = {
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+          if (type === 'change') {
+            listeners.add(listener);
+          }
+        },
+        removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+          if (type === 'change') {
+            listeners.delete(listener);
+          }
+        },
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        dispatchEvent: () => false,
+      };
+      return mql;
+    },
+  });
+}
+
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' });
 });

@@ -205,3 +205,114 @@ describe('CurrencyRow — bankerContext visibility (R4.2.e)', () => {
     expect(screen.getByLabelText(/increment gp/i)).toBeInTheDocument();
   });
 });
+
+// -------------------- R7.4 — bulk currency edit --------------------
+
+describe('CurrencyRow — bulk edit (R7.4)', () => {
+  it('typing +300 into the sp cell + Enter dispatches a single currency-change with delta.sp=+300', async () => {
+    const user = userEvent.setup();
+    const { inventoryStashId } = bootstrap();
+    render(<CurrencyRow stashId={inventoryStashId} />);
+
+    const beforeLen = useStore.getState().log.length;
+
+    // Click the value to open the editor.
+    await user.click(screen.getByRole('button', { name: /^sp$/i }));
+    const input = screen.getByRole('textbox', { name: /edit sp/i });
+    await user.clear(input);
+    await user.type(input, '+300');
+    await user.keyboard('{Enter}');
+
+    const log = useStore.getState().log;
+    expect(log.length).toBe(beforeLen + 1);
+    const last = log.at(-1)!;
+    if (last.type !== 'currency-change') throw new Error('expected currency-change');
+    expect(last.payload.stashId).toBe(inventoryStashId);
+    expect(last.payload.delta).toEqual({ cp: 0, sp: 300, ep: 0, gp: 0, pp: 0 });
+    expect(last.payload.reason).toBe('deposit');
+    expect(screen.getByRole('button', { name: /^sp$/i })).toHaveTextContent('300');
+  });
+
+  it('typing -50 into a cell with insufficient funds blocks the dispatch and keeps the input open', async () => {
+    const user = userEvent.setup();
+    const { inventoryStashId } = bootstrap();
+    render(<CurrencyRow stashId={inventoryStashId} />);
+
+    const beforeLen = useStore.getState().log.length;
+    await user.click(screen.getByRole('button', { name: /^sp$/i }));
+    const input = screen.getByRole('textbox', { name: /edit sp/i });
+    await user.clear(input);
+    await user.type(input, '-50');
+    await user.keyboard('{Enter}');
+
+    // No dispatch.
+    expect(useStore.getState().log.length).toBe(beforeLen);
+    // Input still visible + marked invalid.
+    const stillOpen = screen.getByRole('textbox', { name: /edit sp/i });
+    expect(stillOpen).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('typing =42 into a cell holding 30 dispatches a delta of +12', async () => {
+    const user = userEvent.setup();
+    const { inventoryStashId } = bootstrap();
+    // Seed the sp cell to 30 first.
+    useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 30, ep: 0, gp: 0, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    render(<CurrencyRow stashId={inventoryStashId} />);
+
+    const beforeLen = useStore.getState().log.length;
+    await user.click(screen.getByRole('button', { name: /^sp$/i }));
+    const input = screen.getByRole('textbox', { name: /edit sp/i });
+    await user.clear(input);
+    await user.type(input, '=42');
+    await user.keyboard('{Enter}');
+
+    expect(useStore.getState().log.length).toBe(beforeLen + 1);
+    const last = useStore.getState().log.at(-1)!;
+    if (last.type !== 'currency-change') throw new Error('expected currency-change');
+    expect(last.payload.delta).toEqual({ cp: 0, sp: 12, ep: 0, gp: 0, pp: 0 });
+    expect(last.payload.reason).toBe('deposit');
+    expect(screen.getByRole('button', { name: /^sp$/i })).toHaveTextContent('42');
+  });
+
+  it('Escape cancels an in-flight edit without dispatching', async () => {
+    const user = userEvent.setup();
+    const { inventoryStashId } = bootstrap();
+    render(<CurrencyRow stashId={inventoryStashId} />);
+    const beforeLen = useStore.getState().log.length;
+    await user.click(screen.getByRole('button', { name: /^gp$/i }));
+    const input = screen.getByRole('textbox', { name: /edit gp/i });
+    await user.clear(input);
+    await user.type(input, '+9999');
+    await user.keyboard('{Escape}');
+
+    expect(useStore.getState().log.length).toBe(beforeLen);
+    // Input is gone, value cell shows the pre-edit value.
+    expect(screen.queryByRole('textbox', { name: /edit gp/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /^gp$/i })).toHaveTextContent('0');
+  });
+
+  it('a gated-pool viewer sees the value as an inert span, not editable', () => {
+    const { partyStashId } = bootstrap();
+    render(
+      <CurrencyRow
+        stashId={partyStashId}
+        bankerContext={{
+          userIsBanker: false,
+          userIsDmWithBankerActive: false,
+          userIsGatedFromPool: true,
+          isPartyStash: true,
+        }}
+      />,
+    );
+    // Not a button — a plain labelled span.
+    expect(screen.queryByRole('button', { name: /^gp$/i })).toBeNull();
+    expect(screen.getByLabelText(/^gp$/i)).toBeInTheDocument();
+  });
+});

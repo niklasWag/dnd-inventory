@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { ConvertCurrencyModal } from './ConvertCurrencyModal';
 import { CurrencyTransferModal } from './CurrencyTransferModal';
 import { SplitEvenlyModal } from './SplitEvenlyModal';
 import { DrainCurrencyModal } from './DrainCurrencyModal';
+import { parseCurrencyEdit } from './parseCurrencyEdit';
 
 /**
  * R4.2.e — Banker-context flags for shared-pool CurrencyRow rendering.
@@ -107,6 +108,24 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
     });
   };
 
+  /**
+   * R7.4 — dispatch a bulk edit produced by `parseCurrencyEdit`. Uses
+   * the same `currency-change` action as the ±1 buttons; only the
+   * magnitude differs. Reason is derived from delta sign.
+   */
+  const dispatchBulkEdit = (
+    denom: Denom,
+    deltaValue: number,
+    reason: 'deposit' | 'withdraw',
+  ): void => {
+    const delta = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
+    delta[denom] = deltaValue;
+    dispatch({
+      type: 'currency-change',
+      payload: { stashId, delta, reason },
+    });
+  };
+
   // R4.2.e visibility flags. Character-scope stashes (bankerContext
   // undefined) get the full default control set. Shared pools consult
   // the flags per role.
@@ -184,12 +203,15 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
                   −
                 </Button>
               ) : null}
-              <span
-                aria-label={DENOM_LABEL[d]}
-                className="min-w-[2ch] text-center tabular-nums text-sm"
-              >
-                {holding[d]}
-              </span>
+              <CurrencyValueCell
+                denom={d}
+                label={DENOM_LABEL[d]}
+                value={holding[d]}
+                editable={showWithdrawInline && showDepositInline}
+                onCommit={(deltaValue, reason) => {
+                  dispatchBulkEdit(d, deltaValue, reason);
+                }}
+              />
               {showDepositInline ? (
                 <Button
                   type="button"
@@ -224,5 +246,138 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
         />
       ) : null}
     </section>
+  );
+}
+
+/**
+ * R7.4 — click-to-edit denomination cell.
+ *
+ * Idle state: renders a button-styled span showing the current value.
+ * Clicking flips it into a text input that accepts the syntax parsed
+ * by `parseCurrencyEdit`:
+ *   - `+N` / `-N` → signed delta
+ *   - `=N` / bare `N` → absolute target (dispatch the diff)
+ *   - empty / no-op → cancel silently
+ *
+ * Commit gestures: Enter or blur. Cancel gesture: Escape (reverts).
+ * On a reject (parser error or would-push-negative), the input is
+ * marked `aria-invalid` and stays open with the user's text so they
+ * can correct it — no dispatch, no revert.
+ *
+ * When `editable` is false (gated-pool viewers, DM with Banker), the
+ * value renders as an inert span so screen-readers and tests can still
+ * find it by the denomination label.
+ */
+interface CurrencyValueCellProps {
+  readonly denom: Denom;
+  readonly label: string;
+  readonly value: number;
+  readonly editable: boolean;
+  readonly onCommit: (deltaValue: number, reason: 'deposit' | 'withdraw') => void;
+}
+
+function CurrencyValueCell({
+  denom,
+  label,
+  value,
+  editable,
+  onCommit,
+}: CurrencyValueCellProps): ReactElement {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(String(value));
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Reset the draft whenever the underlying value changes while idle —
+  // keeps the cell in sync with dispatches from ±1 buttons and other
+  // clients (R5.1 broadcast reconciliation).
+  useEffect(() => {
+    if (!editing) setDraft(String(value));
+  }, [value, editing]);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  if (!editable) {
+    return (
+      <span aria-label={label} className="min-w-[2ch] text-center tabular-nums text-sm">
+        {value}
+      </span>
+    );
+  }
+
+  const commit = (): void => {
+    const result = parseCurrencyEdit(draft, value);
+    if (result.kind === 'noop') {
+      setEditing(false);
+      setDraft(String(value));
+      setError(null);
+      return;
+    }
+    if (result.kind === 'reject') {
+      setError(result.message);
+      // Keep the field open so the user can correct their input.
+      return;
+    }
+    onCommit(result.deltaValue, result.reason);
+    setEditing(false);
+    setError(null);
+    // draft resyncs from the effect above once `value` updates.
+  };
+
+  const cancel = (): void => {
+    setEditing(false);
+    setDraft(String(value));
+    setError(null);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        title={`Edit ${label} — accepts +N, -N, =N, or an absolute value`}
+        className="min-w-[2ch] rounded px-1 text-center tabular-nums text-sm hover:bg-muted"
+        onClick={() => {
+          setEditing(true);
+        }}
+      >
+        {value}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="numeric"
+      aria-label={`Edit ${label}`}
+      aria-invalid={error !== null}
+      aria-describedby={error !== null ? `${denom}-edit-error` : undefined}
+      title={error ?? undefined}
+      value={draft}
+      className="w-12 rounded border border-input bg-background px-1 text-center tabular-nums text-sm aria-[invalid=true]:border-destructive"
+      onChange={(e) => {
+        setDraft(e.currentTarget.value);
+        if (error !== null) setError(null);
+      }}
+      onBlur={() => {
+        commit();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancel();
+        }
+      }}
+    />
   );
 }

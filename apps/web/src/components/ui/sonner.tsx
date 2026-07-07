@@ -2,18 +2,21 @@ import type { ReactElement } from 'react';
 import { CircleCheck, Info, LoaderCircle, OctagonX, TriangleAlert } from 'lucide-react';
 import { Toaster as Sonner } from 'sonner';
 
-// shadcn-generated primitive. We diverge from the upstream template only to
-// drop the `next-themes` dependency — this is a Vite + plain Tailwind app
-// that forces dark mode via `<html class="dark">` (theme toggle is an R7
-// task per docs/roadmap.md M0 Notes). When the theme system lands, swap
-// the hard-coded `'dark'` for a real subscription.
+import { resolveTheme, useThemeStore } from '@/store/theme';
+
+// shadcn-generated primitive. We diverge from the upstream template only
+// to drop the `next-themes` dependency — this is a Vite + plain Tailwind
+// app. R7.1.a — theme is owned by `store/theme.ts` (Zustand + Dexie);
+// this primitive subscribes to the resolved value so toasts follow the
+// user's Light / Dark / System preference.
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const Toaster = ({ ...props }: ToasterProps): ReactElement => {
+  const theme = useThemeStore((s) => resolveTheme(s));
   return (
     <Sonner
-      theme="dark"
+      theme={theme}
       className="toaster group"
       icons={{
         success: <CircleCheck className="h-4 w-4" />,
