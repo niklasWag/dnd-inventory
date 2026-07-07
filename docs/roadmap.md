@@ -3816,14 +3816,17 @@ Behavior-focused polish: theme system (shipped), bulk currency edit, fuzzy multi
 
 #### R7.4 — Bulk currency edit
 
-- [ ] **Bulk currency edit on `<CurrencyRow>`** — *promoted from Future / Stretch (2026-06-23); R7 is the natural home alongside other bulk-action UX*. M4's ±1 inline controls handle small tweaks; "loot drop: +300 sp" is painful. Plan: editable inline cells that accept signed integers (`+300`, `-50`, or an absolute target `=42`) and dispatch a single `currency-change` carrying the diff. Schema-additive — same action, richer UI on top. Keyboard ergonomic: tab through cells, type signed integer, Enter dispatches.
-- [ ] Bulk currency edit test: type `+300` into the sp cell, Enter, sp holding moves by exactly +300, one `currency-change` log entry with reason `'deposit'`
-- [ ] Bulk currency edit test: type `-50` into a cell with insufficient funds, submit-blocks (mirrors the existing `−` button's disabled-at-0 behavior)
-- [ ] Bulk currency edit test: absolute-target syntax (`=42`) dispatches the computed diff (e.g. holding 30, type `=42` → log entry with delta `+12`)
+- [x] **Bulk currency edit on `<CurrencyRow>`** — *promoted from Future / Stretch (2026-06-23); R7 is the natural home alongside other bulk-action UX*. M4's ±1 inline controls handle small tweaks; "loot drop: +300 sp" is painful. Plan: editable inline cells that accept signed integers (`+300`, `-50`, or an absolute target `=42`) and dispatch a single `currency-change` carrying the diff. Schema-additive — same action, richer UI on top. Keyboard ergonomic: tab through cells, type signed integer, Enter dispatches.
+- [x] Bulk currency edit test: type `+300` into the sp cell, Enter, sp holding moves by exactly +300, one `currency-change` log entry with reason `'deposit'`
+- [x] Bulk currency edit test: type `-50` into a cell with insufficient funds, submit-blocks (mirrors the existing `−` button's disabled-at-0 behavior)
+- [x] Bulk currency edit test: absolute-target syntax (`=42`) dispatches the computed diff (e.g. holding 30, type `=42` → log entry with delta `+12`)
 
 #### R7.4 — Notes
 
-> -
+> - Click-to-edit widget: idle value renders as a `<button>` (labelled by the denomination code); click swaps in a text `<input>`; Enter or blur commits, Escape cancels. Reject state (parser error or insufficient funds) marks the input `aria-invalid` and keeps it open so the user can correct without re-clicking.
+> - Parser is pure and lives in `apps/web/src/components/stash/parseCurrencyEdit.ts` (14 test cases in `parseCurrencyEdit.test.ts`). Bare integer (`42`) is treated as absolute target (equivalent to `=42`).
+> - Gated-pool viewers and any role missing BOTH `showWithdrawInline` and `showDepositInline` render the value as an inert span — no accidental editability under Banker rules.
+> - No reducer / schema change: `currency-change` already accepts arbitrary signed integer deltas; this slice is pure UI on top.
 
 #### R7.5 — Behavior polish
 
