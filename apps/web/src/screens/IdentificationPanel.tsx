@@ -184,7 +184,7 @@ export function IdentificationPanel(): ReactElement {
             {showIdentified ? 'Hide' : 'Show'} identified items
           </Button>
           <span className="text-sm text-muted-foreground">
-            Bidirectional flip per OUTLINE §3.8 — revoke identification on any single copy.
+            Bidirectional flip — revoke identification on any single copy.
           </span>
         </div>
         {showIdentified ? (
