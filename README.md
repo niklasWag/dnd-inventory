@@ -27,7 +27,7 @@ A **private-use** D&D 5e (2024) inventory manager. Local-first browser app with 
 
 ## Features
 
-|                     |                                                                                                |
+| Feature             | Details                                                                                        |
 | ------------------- | ---------------------------------------------------------------------------------------------- |
 | 🎒 **Stashes**      | Inventory, Storage, Party Stash, Recovered Loot — with containers (Bag of Holding etc.)        |
 | 💰 **Currency**     | Per-stash CP/SP/EP/GP/PP holdings, integer-CP math, convert, transfer, split evenly, bulk edit |
