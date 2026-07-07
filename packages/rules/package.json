@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "eslint": "^9.18.0",
+    "eslint": "^10.6.0",
     "fast-check": "^4.8.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.21.0",
