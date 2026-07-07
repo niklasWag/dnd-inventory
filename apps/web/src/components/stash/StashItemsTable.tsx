@@ -19,10 +19,11 @@ import {
 import { useStore, dispatchMintingAction } from '@/store';
 import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
-import { attunement } from '@app/rules';
+import { attunement, searchCatalog } from '@app/rules';
 import { rarityDotClass, rarityLabel } from '@/lib/rarity';
 import { formatChargesShort } from '@/lib/charges';
 import { displayName as computeDisplayName } from '@/lib/identify';
+import { stashRowSearchable } from '@/lib/stashSearch';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { MoveItemModal } from './MoveItemModal';
 import { PackItemModal } from './PackItemModal';
@@ -42,6 +43,20 @@ interface StashItemsTableProps {
    * Loot / Storage tabs (those scopes ignore the flags per OUTLINE §4).
    */
   characterId?: string;
+  /**
+   * R7.5 — free-text query. When present and non-empty, rows are
+   * filtered by `searchCatalog` (the same fuzzy ranker the Catalog
+   * Browser uses) applied to a Searchable adapter that respects the
+   * OUTLINE §8 identify invariant (unidentified rows are only findable
+   * by hint text, not by their real name). Rows are surfaced in ranked
+   * order; container/child pairs are decoupled so a matching child
+   * whose parent doesn't match still shows (hoisted to depth 0).
+   *
+   * When the prop is `undefined` or an all-whitespace string, this is
+   * a no-op — the table renders every row in its normal
+   * parent-then-children order.
+   */
+  query?: string;
 }
 
 /**
@@ -67,7 +82,11 @@ interface StashItemsTableProps {
  * `CharacterSheet` mounts `AddItemModal` once per tab). The active
  * `itemInstanceId` is stored in component state.
  */
-export function StashItemsTable({ stashId, characterId }: StashItemsTableProps): ReactElement {
+export function StashItemsTable({
+  stashId,
+  characterId,
+  query,
+}: StashItemsTableProps): ReactElement {
   const navigate = useNavigate();
   const partyId = useCurrentPartyId();
   const items = useStore(
@@ -111,6 +130,24 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
   // than being pre-disabled. Confirming dispatches `attune` with
   // `overrideCap: true` per OUTLINE §3.8 amendment.
   const userIsDmOrSolo = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
+
+  /**
+   * R7.5 — fuzzy filter. Empty / all-whitespace query keeps every row
+   * (`null` sentinel). Non-empty query builds a set of row ids the
+   * fuzzy ranker matched; downstream `displayRows` construction reads
+   * this set to decide inclusion. Recomputed only when items, catalog,
+   * or query change.
+   */
+  const normalizedQuery = (query ?? '').trim();
+  const matchedRowIds = useMemo<ReadonlySet<string> | null>(() => {
+    if (normalizedQuery === '') return null;
+    const searchables = items.map((row) =>
+      stashRowSearchable(row, catalogById.get(row.definitionId)),
+    );
+    const hits = searchCatalog(normalizedQuery, searchables);
+    return new Set(hits.map((h) => h.item.id));
+  }, [items, catalogById, normalizedQuery]);
+  const filterActive = matchedRowIds !== null;
 
   // Modal state — one of each mounted at the table level; `activeItemId`
   // tells the modal which row to operate on.
@@ -160,8 +197,15 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
    * references a row in a DIFFERENT stash are rendered as top-level
    * here (defensive — shouldn't happen in practice, but the cascade
    * across §3.4 keeps the (parent, child) pair in the same stash).
+   *
+   * R7.5 — when a fuzzy filter is active, drop rows that didn't match.
+   * A matching child of a filtered-out parent gets hoisted to depth 0
+   * so the search result is visible even though its container isn't.
    */
   const displayRows: { row: (typeof items)[number]; depth: 0 | 1 }[] = (() => {
+    const includeAll = matchedRowIds === null;
+    const isMatch = (id: string): boolean => includeAll || matchedRowIds.has(id);
+
     const byParent = new Map<string, (typeof items)[number][]>();
     const stashIds = new Set(items.map((i) => i.id));
     const tops: (typeof items)[number][] = [];
@@ -175,14 +219,35 @@ export function StashItemsTable({ stashId, characterId }: StashItemsTableProps):
       }
     }
     const out: { row: (typeof items)[number]; depth: 0 | 1 }[] = [];
+    const emittedIds = new Set<string>();
     for (const parent of tops) {
-      out.push({ row: parent, depth: 0 });
-      for (const child of byParent.get(parent.id) ?? []) {
-        out.push({ row: child, depth: 1 });
+      const children = byParent.get(parent.id) ?? [];
+      if (isMatch(parent.id)) {
+        out.push({ row: parent, depth: 0 });
+        emittedIds.add(parent.id);
+        for (const child of children) {
+          if (isMatch(child.id)) {
+            out.push({ row: child, depth: 1 });
+            emittedIds.add(child.id);
+          }
+        }
+      } else if (!includeAll) {
+        // Parent filtered out — but any matching child is still shown,
+        // hoisted to depth 0 so it doesn't visually dangle.
+        for (const child of children) {
+          if (isMatch(child.id) && !emittedIds.has(child.id)) {
+            out.push({ row: child, depth: 0 });
+            emittedIds.add(child.id);
+          }
+        }
       }
     }
     return out;
   })();
+
+  if (filterActive && displayRows.length === 0) {
+    return <p className="text-sm text-muted-foreground">No items match your search.</p>;
+  }
 
   /**
    * Wraps a `dispatch` call so reducer rejections surface as a toast

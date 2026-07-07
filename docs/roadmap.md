@@ -3830,7 +3830,7 @@ Behavior-focused polish: theme system (shipped), bulk currency edit, fuzzy multi
 
 #### R7.5 — Behavior polish
 
-- [ ] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6)
+- [x] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6) — R7.5 wires `searchCatalog` (R6.5 kernel) into `StashItemsTable` behind a new `query?: string` prop. Each mount site (Character Sheet's 3 tabs; Storage Detail) owns local search state via `StashSearchInput`. Adapter (`lib/stashSearch.ts`) respects the OUTLINE §8 identify invariant — unidentified rows expose only the hint as searchable text, never their real name.
 - [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
 - [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
 - [x] Variant-rules toggle exposed in Settings (§5.17) — both variant-rule dimensions ship on `/party/settings`: encumbrance rule + enforce flag via `EncumbranceRuleField` (BUG-011, 2026-07-06); economy preset (`priceModifier` + `baseCurrency`) via `EconomyPresetField` (R6.1). Per OUTLINE §3.5 line 134, the economy preset IS the "§5.17 variant-rules toggle".
@@ -3838,7 +3838,10 @@ Behavior-focused polish: theme system (shipped), bulk currency edit, fuzzy multi
 
 #### R7.5 — Notes
 
-> -
+> - Fuzzy search adapter (`apps/web/src/lib/stashSearch.ts`) collapses `ItemInstance + ItemDefinition → Searchable` while enforcing the OUTLINE §8 identify invariant: unidentified rows expose `name = 'Unknown Magic Item'`, `description = ''`, `tags = [hint]`. `customName` is suppressed on unidentified rows (spoiler protection).
+> - Search input owned by each mount site: `CharacterSheet` keeps a `Record<Tab, string>` so switching tabs preserves each tab's query independently; `StorageDetail` keeps one `useState<string>`.
+> - Container hoisting: when the fuzzy filter excludes a parent container but includes one of its children, the child renders at depth 0 (no dangling arrow), so `"longsword"` finds a longsword inside a packed backpack even though the backpack itself doesn't match.
+> - Catalog Browser input was already wired (R6.5); this slice only added the stash-table side.
 
 #### R7 — Notes
 

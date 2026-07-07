@@ -20,6 +20,7 @@ import { EditCharacterDialog } from '@/components/character/EditCharacterDialog'
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { StashItemsTable } from '@/components/stash/StashItemsTable';
+import { StashSearchInput } from '@/components/stash/StashSearchInput';
 import { StorageStashList } from '@/components/stash/StorageStashList';
 import { useStore } from '@/store';
 import { BATCH_TRIGGER_ORDER, batchTriggerLabel, type BatchRechargeTrigger } from '@/lib/charges';
@@ -104,6 +105,15 @@ export function CharacterSheet(): ReactElement {
   const [tab, setTab] = useState<Tab>('inventory');
   const [adding, setAdding] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  // R7.5 — per-tab fuzzy search state. Kept independent so switching
+  // tabs doesn't leak a filter from Inventory into Party Stash. Storage
+  // has no `<StashItemsTable>` mount, so its slot is unused.
+  const [searchByTab, setSearchByTab] = useState<Record<Tab, string>>({
+    inventory: '',
+    storage: '',
+    party: '',
+    'recovered-loot': '',
+  });
 
   if (sheet === null) {
     return <Navigate to="/" replace />;
@@ -228,9 +238,16 @@ export function CharacterSheet(): ReactElement {
                 + Add item
               </Button>
             </div>
+            <StashSearchInput
+              value={searchByTab[tab]}
+              onChange={(next) => setSearchByTab((prev) => ({ ...prev, [tab]: next }))}
+              label={`Search ${labelForTab(tab)}`}
+              idPrefix={`stash-search-${tab}`}
+            />
             <StashItemsTable
               stashId={targetStash}
               {...(tab === 'inventory' ? { characterId: character.id } : {})}
+              query={searchByTab[tab]}
             />
           </div>
         )}
