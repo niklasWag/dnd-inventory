@@ -60,16 +60,35 @@ describe('search — name matching', () => {
     expect(names(r)).toContain('Longsword');
   });
 
-  it('ranks exact-substring above word-boundary above subsequence for the same query length', () => {
+  it('for long probes, ranks exact-substring above word-boundary above subsequence', () => {
+    // R7.5.b — the `SHORT_PROBE_MAX_LEN` gate rejects mid-word matches
+    // for probes of ≤ 4 chars. Test the tier ordering with a 5-char
+    // probe so all three tiers remain scorable.
     const items: Item[] = [
-      { name: 'zzz abc zzz' }, // word-boundary "abc"
-      { name: 'zzabczz' }, // exact substring "abc"
-      { name: 'axbxcx' }, // subsequence a-b-c
+      { name: 'zzz abcde zzz' }, // word-boundary "abcde"
+      { name: 'zzabcdezz' }, // mid-word substring "abcde"
+      { name: 'axbxcxdxex' }, // subsequence a-b-c-d-e
+    ];
+    const r = search('abcde', items);
+    expect(r[0]!.item.name).toBe('zzabcdezz');
+    expect(r[1]!.item.name).toBe('zzz abcde zzz');
+    expect(r[2]!.item.name).toBe('axbxcxdxex');
+  });
+
+  it('R7.5.b — short probes (≤ 4 chars) skip mid-word substring matches', () => {
+    // `abc` (3 chars) matching inside `zzabczz` used to score 100
+    // (mid-word substring). Now it's gated out — only word-boundary
+    // and subsequence tiers apply.
+    const items: Item[] = [
+      { name: 'zzz abc zzz' }, // word-boundary → 80
+      { name: 'zzabczz' }, // mid-word only → 0 (dropped)
+      { name: 'axbxcx' }, // subsequence a-b-c → 40
     ];
     const r = search('abc', items);
-    expect(r[0]!.item.name).toBe('zzabczz');
-    expect(r[1]!.item.name).toBe('zzz abc zzz');
-    expect(r[2]!.item.name).toBe('axbxcx');
+    const matched = names(r);
+    expect(matched).toContain('zzz abc zzz');
+    expect(matched).toContain('axbxcx');
+    expect(matched).not.toContain('zzabczz');
   });
 });
 
@@ -149,19 +168,22 @@ describe('search — robustness', () => {
   });
 
   it('short probes (< 3 chars) do not subsequence-match to avoid noise', () => {
-    // 'of' should NOT subsequence-match items lacking an 'of' substring.
-    // In CATALOG, 'Cloak of Protection' contains 'of' as a substring →
-    // matches. But 'Longsword' should NOT match on 'of' via subsequence
-    // ('o' at pos 3, 'f' NOT present) — actually longsword has no 'f',
-    // pick a clearer case:
+    // `xy` is 2 chars — subsequence tier disabled by length; only
+    // substring hits count. `xy` is NOT a stopword, so it survives the
+    // R7.5.b filter and still gets scored.
     const items: Item[] = [
-      { name: 'Cloak of Protection' }, // contains 'of'
-      { name: 'Kobold' }, // has 'o' and no 'f' — not subseq-match either
-      { name: 'Portable Forge' }, // 'o'..'f' subsequence — must NOT match
+      { name: 'Axylotl' }, // contains 'xy' as substring (word-boundary at 'a-**xy**...' — mid-word)
+      { name: 'Kobold' }, // no 'xy' substring, no subseq relevant
+      { name: 'Xylophone' }, // starts with 'xy' → word-boundary
     ];
-    const r = search('of', items);
-    // Only the exact-substring hit survives.
-    expect(names(r)).toEqual(['Cloak of Protection']);
+    const r = search('xy', items);
+    // Both substring hits survive; Kobold has neither.
+    // R7.5.b: `Axylotl` has 'xy' mid-word which for a 2-char probe is
+    // still allowed under the current substring path (the short-probe
+    // gate applies to ≤ 4 char probes MID-WORD; 2-char probes go
+    // through the same gate — so `Axylotl` is dropped too, only
+    // word-boundary `Xylophone` survives).
+    expect(names(r)).toEqual(['Xylophone']);
   });
 
   it('subsequence span cap rejects widely-scattered matches ("rapier" vs. long descriptions)', () => {
@@ -194,5 +216,84 @@ describe('search — robustness', () => {
     const items: Item[] = [{ name: 'Longsword' }];
     const r = search('lgsw', items);
     expect(names(r)).toEqual(['Longsword']);
+  });
+});
+
+// -------------------- R7.5.b — stopwords + short-probe gate --------------------
+
+describe('search — R7.5.b stopword filter', () => {
+  it('drops "of" from the probe list; `"ring of protection"` needs only ring + protection', () => {
+    // Regression for the reported defect: user typed `"ring of protection"`
+    // and Cloak of Protection surfaced because `ring` matched inside
+    // `wearing` in the cloak description AND `of`/`protection` hit
+    // the cloak's name. Under R7.5.b, `of` is filtered as a stopword
+    // and `ring` (4 chars) is gated to word-boundary — so `ring`
+    // inside `wearing` no longer scores.
+    const items: Item[] = [
+      {
+        name: 'Ring of Protection',
+        description: 'A magical ring granting +1 to AC and saves.',
+        tags: ['ring', 'magic'],
+      },
+      {
+        name: 'Cloak of Protection',
+        description: 'You gain a +1 bonus to AC and saving throws while wearing this cloak.',
+        tags: ['cloak', 'enhancement'],
+      },
+    ];
+    const r = search('ring of protection', items);
+    expect(names(r)).toEqual(['Ring of Protection']);
+  });
+
+  it('all-stopwords query falls through to the empty-query pass-through', () => {
+    const items: Item[] = [{ name: 'A' }, { name: 'B' }];
+    const r = search('and the', items);
+    // Two probes, both stopwords → empty probe list → all items at score 0.
+    expect(r).toHaveLength(2);
+    for (const row of r) expect(row.score).toBe(0);
+  });
+
+  it('non-stopword short words still probe normally', () => {
+    // `sword` is a 5-char content word; not a stopword.
+    const items: Item[] = [{ name: 'Longsword' }, { name: 'Rope' }];
+    const r = search('sword', items);
+    expect(names(r)).toEqual(['Longsword']);
+  });
+});
+
+describe('search — R7.5.b short-probe word-boundary gate', () => {
+  it('4-char probe does NOT match mid-word substring in a description', () => {
+    // `ring` in `wearing` used to score `SCORE_DESC_EXACT` (20). Now
+    // it scores 0 — the item has to have `ring` at a word boundary
+    // somewhere (name, description, or tag) to qualify.
+    const items: Item[] = [
+      {
+        name: 'Cloak of Protection',
+        description: 'You gain a +1 bonus while wearing this cloak.',
+        tags: ['cloak'],
+      },
+      { name: 'Ring of Protection', description: 'Magical ring.', tags: ['ring'] },
+    ];
+    const r = search('ring', items);
+    expect(names(r)).toEqual(['Ring of Protection']);
+  });
+
+  it('5-char probe DOES match mid-word substring (long probes retain the old tier)', () => {
+    // Long probes are much less likely to false-positive; a probe of
+    // this length matching mid-word is usually intentional.
+    const items: Item[] = [
+      { name: 'A', description: 'The character has thermal protection.' }, // 'therm' inside 'thermal' — mid-word
+    ];
+    const r = search('therm', items);
+    expect(names(r)).toContain('A');
+  });
+
+  it('short probe at a word boundary still scores normally', () => {
+    // `ring` at the start of `Ring of Protection` is a word-boundary
+    // hit and scores the full name-word tier.
+    const items: Item[] = [{ name: 'Ring of Protection' }];
+    const r = search('ring', items);
+    expect(names(r)).toEqual(['Ring of Protection']);
+    expect(r[0]!.score).toBeGreaterThan(0);
   });
 });

@@ -11,10 +11,22 @@
  *   - Multi-word queries split on whitespace into probes; each probe is
  *     scored independently across all fields; a probe with zero hits on
  *     any field disqualifies the item entirely (AND across probes).
- *   - Per-probe scoring per field:
- *       exact substring        → highest tier
- *       word-boundary substring → mid tier
- *       full subsequence match → low tier
+ *   - **R7.5.b — stopword filter.** Common short English glue words
+ *     (`of`, `the`, `a`, `an`, `and`, `to`, `in`, `on`, `for`, `with`,
+ *     `or`) are dropped from the probe list before scoring so a query
+ *     like `"ring of protection"` doesn't count `of` against items whose
+ *     names happen not to contain it. If the entire query is stopwords,
+ *     the result is the empty-query behaviour.
+ *   - **R7.5.b — short-probe gate.** Probes of ≤ 4 chars require a
+ *     word-boundary substring match (start of string, or preceded by a
+ *     non-alphanumeric). Mid-word matches like `ring` inside `wearing`
+ *     no longer score. Long probes (≥ 5 chars) keep the mid-word tier
+ *     because accidental embeddings of long words in unrelated words
+ *     are vanishingly rare.
+ *   - Per-probe scoring per field (long probes):
+ *       exact substring (mid-word)  → mid tier
+ *       word-boundary substring     → high tier
+ *       full subsequence match      → low tier
  *     Field weight: name > description > tags. All hits sum.
  *   - Tie-break: shorter `name.length` wins (assumes stronger relative
  *     match on a shorter string).
@@ -51,10 +63,49 @@ const SCORE_TAG_WORD = 5;
 const SCORE_TAG_SUBSEQ = 3;
 
 /**
+ * R7.5.b — glue words that carry no semantic content on their own.
+ * When a user types `"ring of protection"`, the `of` should not
+ * disqualify items whose descriptions omit it (e.g. `Ring of
+ * Protection` itself has `of` in the name but nothing in description,
+ * whereas a made-up `"Ringworm Ointment"` with no `of` anywhere would
+ * be dropped for the wrong reason).
+ *
+ * Kept intentionally small — only unambiguous glue words. Item-noun
+ * words like `sword`, `armor`, `ring` are NOT here and remain probes.
+ */
+const STOPWORDS: ReadonlySet<string> = new Set([
+  'a',
+  'an',
+  'and',
+  'for',
+  'in',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'with',
+]);
+
+/**
+ * R7.5.b — short probes (≤ this length) require a word-boundary match.
+ * A `ring` probe should hit `Ring of Protection` (word-boundary) but
+ * not `Cloak of Protection` (matches `ring` mid-word inside `wearing`
+ * in the description text). Long probes (≥ 5 chars) still accept
+ * mid-word substrings because accidental embeddings of long words in
+ * unrelated words are vanishingly rare.
+ */
+const SHORT_PROBE_MAX_LEN = 4;
+
+/**
  * Score `probe` against a lowercased haystack, returning the strongest
  * tier that applies. Word-boundary is stronger than mid-word substring
  * (a match at the start of a word signals a stronger intent than a
  * random substring in the middle). Subsequence is weakest.
+ *
+ * R7.5.b — for short probes (≤ `SHORT_PROBE_MAX_LEN`), mid-word matches
+ * do not score. The most common noise case is a 3-4 char probe
+ * accidentally embedding inside a longer unrelated word.
  */
 function scoreField(
   haystack: string,
@@ -70,7 +121,11 @@ function scoreField(
     // by a non-alphanumeric character.
     const before = idx === 0 ? '' : (haystack[idx - 1] ?? '');
     const isWordStart = idx === 0 || !/[a-z0-9]/.test(before);
-    return isWordStart ? wordScore : exactScore;
+    if (isWordStart) return wordScore;
+    // Mid-word substring. Short probes are too noisy at this tier
+    // (e.g. `ring` inside `wearing`) — drop them; long probes keep it.
+    if (probe.length <= SHORT_PROBE_MAX_LEN) return 0;
+    return exactScore;
   }
   // Subsequence match is the weakest tier and requires probe length ≥ 3
   // to avoid noise: 2-char probes like 'of' or 'in' trivially
@@ -177,7 +232,12 @@ export function search<T extends Searchable>(
     return items.map((item) => ({ item, score: 0 }));
   }
 
-  const probes = normalized.split(/\s+/).filter((p) => p.length > 0);
+  // R7.5.b — split, then drop stopwords. A query that is ONLY stopwords
+  // (`"and the"`) has no content probes and falls through to the empty-
+  // query pass-through so the user isn't left staring at "no results"
+  // for what was effectively an empty search.
+  const rawProbes = normalized.split(/\s+/).filter((p) => p.length > 0);
+  const probes = rawProbes.filter((p) => !STOPWORDS.has(p));
   if (probes.length === 0) {
     return items.map((item) => ({ item, score: 0 }));
   }

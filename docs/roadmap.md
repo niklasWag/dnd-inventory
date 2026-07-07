@@ -3842,6 +3842,7 @@ Behavior-focused polish: theme system (shipped), bulk currency edit, fuzzy multi
 > - Search input owned by each mount site: `CharacterSheet` keeps a `Record<Tab, string>` so switching tabs preserves each tab's query independently; `StorageDetail` keeps one `useState<string>`.
 > - Container hoisting: when the fuzzy filter excludes a parent container but includes one of its children, the child renders at depth 0 (no dangling arrow), so `"longsword"` finds a longsword inside a packed backpack even though the backpack itself doesn't match.
 > - Catalog Browser input was already wired (R6.5); this slice only added the stash-table side.
+> - R7.5.b (2026-07-07 follow-up) tightened the ranker: common English stopwords (`of, the, a, an, and, to, in, on, for, with, or`) are dropped from the probe list; probes ≤ 4 chars require a word-boundary match (mid-word substrings like `ring` inside `wearing` no longer score). Fixed the reported defect where `"ring of protection"` surfaced both Ring of Protection AND Cloak of Protection. Inline pointer: `packages/rules/src/search.ts`.
 
 #### R7 — Notes
 
