@@ -3833,7 +3833,7 @@ Behavior-focused polish: theme system (shipped), bulk currency edit, fuzzy multi
 - [ ] Fuzzy multi-field search live across Catalog + stash tables (uses `search.ts` from R6)
 - [ ] Performance pass on log size (capping, IndexedDB pagination if needed)
 - [ ] Re-seed conflict hints ("this item has updates" on duplicated PHB/DMG rows) (per `MVP.md` §12)
-- [ ] Variant-rules toggle exposed in Settings (§5.17)
+- [x] Variant-rules toggle exposed in Settings (§5.17) — both variant-rule dimensions ship on `/party/settings`: encumbrance rule + enforce flag via `EncumbranceRuleField` (BUG-011, 2026-07-06); economy preset (`priceModifier` + `baseCurrency`) via `EconomyPresetField` (R6.1). Per OUTLINE §3.5 line 134, the economy preset IS the "§5.17 variant-rules toggle".
 - [ ] **Multi-party "vault" export** —The current §3.13 JSON export envelope (`apps/web/src/io/export.ts`, `import.ts`) handles ONE party at a time (the active party in memory). With local mode now supporting N parties, a user wanting to back up their full local-mode footprint has to export each party individually. **Recommended shape:** per-party-iteration — a Hub-level "Export all parties" button that iterates `listKnownPartyIds()` and produces a ZIP / JSON-array of envelopes. Preserves the existing per-party import path; no new Zod schema needed. Promote to a "vault" envelope shape only if users actually ask for it. Server-mode already covers this via `GET /sync/export?partyId=...` (R3.4.b), so the concern is purely local-mode. Inline pointer: `apps/web/src/io/export.ts`, `apps/web/src/io/import.ts`, `packages/shared/src/schemas/exportEnvelope.ts`. (Source: R4.1 followup 2026-06-29.)
 
 #### R7.5 — Notes
