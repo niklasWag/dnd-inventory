@@ -204,7 +204,7 @@ describe('POST /auth/email/request-otp — R8.1 per-IP rate limit', () => {
       });
       expect(tripped.statusCode).toBe(429);
       expect(tripped.headers['retry-after']).toBeDefined();
-      const body = tripped.json() as { error: string; retryAfter: string };
+      const body = tripped.json<{ error: string; retryAfter: string }>();
       expect(body.error).toBe('rate_limited');
       expect(new Date(body.retryAfter).getTime()).toBeGreaterThan(Date.now());
 
