@@ -128,18 +128,12 @@ services:
     depends_on:
       server:
         condition: service_started
-    # `vite preview` (Dockerfile.web CMD) reads VITE_ALLOWED_HOSTS at
-    # runtime — no rebuild needed to update it. Comma-separated list of
-    # hostnames the container will be reached under (typically the
-    # public domain fronted by the reverse proxy). Special values:
-    #   - unset / empty → allow only `localhost` (dev default)
-    #   - `*` → allow any host (safe behind a trusted reverse proxy)
-    # Without this, Vite 5+ rejects reverse-proxied requests with
-    # "Blocked request. This host ... is not allowed."
-    environment:
-      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-}
+    # R8.2 — the web container now serves the static bundle via
+    # `nginx:alpine` on port 80. No Node/Vite runtime, no
+    # `VITE_ALLOWED_HOSTS` (that was a `vite preview` knob). Host-facing
+    # port keeps its default of 5173 so existing URLs don't change.
     ports:
-      - '${WEB_PORT:-5173}:5173'
+      - '${WEB_PORT:-5173}:80'
 
   # R3.3 — Optional Mailpit SMTP sink for local OTP testing.
   #

@@ -1,11 +1,16 @@
-# Multi-stage Dockerfile for `apps/web` (R3.1).
-# Serves the production build via `vite preview` (nginx deferred to R7).
+# Multi-stage Dockerfile for `apps/web`.
 #
 # R3.5 — build-time `VITE_SERVER_URL` selects between local-only and
 # server modes. **Vite inlines this value at build time**, so it MUST
 # be supplied as a `--build-arg` to `docker build` (or as the matching
 # key in docker-compose's `build.args` block). Leaving it unset / empty
 # produces the local-only bundle (no Login / Logout / Account chrome).
+#
+# R8.2 (2026-07-08) — runtime stage switched from `vite preview` on a
+# full Node runtime to `nginx:alpine` serving the static build. Drops
+# the base image from ~170 MB (node:22-alpine + corepack + yarn) to
+# ~8 MB (nginx:alpine), and drops the entire workspace `node_modules`
+# from the runtime image (~490 MB → 0). Net: ~684 MB → ~15 MB.
 #
 # Build manually:
 #   docker build \
@@ -46,18 +51,22 @@ ENV VITE_SERVER_URL=$VITE_SERVER_URL
 RUN pnpm --filter @app/web build
 
 # ---------- Stage 2: runtime ----------
-FROM node:22-alpine AS runtime
-RUN corepack enable && corepack prepare pnpm@11.8.0 --activate
+# nginx:alpine is ~8 MB. The final image contains only the static bundle
+# (`dist/`) + the SPA-mode nginx config. No Node runtime, no pnpm, no
+# workspace node_modules.
+FROM nginx:alpine AS runtime
 
-WORKDIR /repo
+# SPA history-mode fallback: any path that doesn't match a real file
+# gets rewritten to /index.html so React Router can handle client-side
+# routing. Without this, direct navigation to /party/:id/* returns 404.
+COPY infra/docker/nginx.conf /etc/nginx/conf.d/default.conf
 
-COPY --from=build /repo/node_modules ./node_modules
-COPY --from=build /repo/apps/web ./apps/web
-COPY --from=build /repo/packages ./packages
-COPY --from=build /repo/package.json ./package.json
-COPY --from=build /repo/pnpm-workspace.yaml ./pnpm-workspace.yaml
-COPY --from=build /repo/pnpm-lock.yaml ./pnpm-lock.yaml
+# The vite build output is a plain static bundle. `/usr/share/nginx/html`
+# is the default docroot in `nginx:alpine`, so `try_files` picks up
+# assets by relative path (`/assets/index-abcd.js`) automatically.
+COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
 
-WORKDIR /repo/apps/web
-EXPOSE 5173
-CMD ["pnpm", "exec", "vite", "preview", "--host", "0.0.0.0", "--port", "5173"]
+EXPOSE 80
+# `nginx:alpine`'s default CMD is `nginx -g 'daemon off;'`, which is
+# exactly what we want (foreground for docker's PID 1). No override
+# needed.
