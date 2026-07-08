@@ -3897,6 +3897,21 @@ Server-side hardening: auth-flow sweeps, rate limits, operator observability, sm
 
 > -
 
+#### R8.5 — Mutation outcome authority (BUG-005 class fix)
+
+Retires the "green success toast flashes before red rejection toast" class (BUG-005): today the client's UI fires a terminal signal (success toast) before the mutation reaches a terminal outcome. Point-fixing one rejection channel (e.g. client pre-guard) leaves the class open for server-only codes, network errors, timeouts. R8.5 makes the mutation outcome an addressable `Promise<MutationOutcome>` returned from `dispatch`, makes the queue the single authority producing that value in server mode + a synchronous shim in local mode, and routes terminal toasts through a `useDispatch` hook consuming the outcome. Same architectural pattern as RH1 (id authority), RH2.6 (log authority), RH4 (partyId authority): pick one canonical layer for each correctness-critical concern.
+
+- [ ] **Dispatch contract** — `store::dispatch` returns `Promise<MutationOutcome>` where `MutationOutcome = { ok: true; applied } | { ok: false; code; message }`. Local-mode resolves synchronously after `set()`; server-mode resolves via the queue. Offline write-block + reducer-throw paths both resolve `{ ok: false, code }` instead of returning `undefined` / throwing. (Source: BUG-005; SECURITY §2.1.)
+- [ ] **Queue outcome-broadcast** — per-dispatch correlation id (UUID v7); `sync/queue.ts` maintains a `Map<dispatchId, resolve>` drained by `flushBatch`. Rejection-code-to-message map extracted from `queue.ts:247` inline body into `apps/web/src/sync/rejectionToast.ts` (shared with `useDispatch`). Existing 422 rollback + outbox retry paths unchanged; each now resolves the correlation instead of firing a toast directly.
+- [ ] **`useDispatch` hook** — `apps/web/src/lib/useDispatch.ts` returns `(action, opts?) => Promise<MutationOutcome>` with `{ onSuccess?, onRejection?, queuedToast? }`. Sonner's `toast.promise(...)` handles the "Queued..." → success/rejection transition. Default rejection consumer registered at boot in `main.tsx` so orphan dispatches don't fail silently.
+- [ ] **Screen migration** — ~15 mutation-preceded `dispatch(...) + toast.success(...)` callsites migrate to `useDispatch({ onSuccess })`. Batched by area (PartySettings; ItemDetail/ShopDetail/ShopsList; DmDashboard/IdentificationPanel/LootDistributionWizard; CharacterSheet + settings fields). Non-mutation `toast.success` sites (clipboard copy, file export, direct Dexie wipe, hydrate not dispatch) stay unchanged. Callsite list: `grep -rn "toast.success" apps/web/src`.
+- [ ] **Enforcement** — custom eslint rule `no-sync-toast-success-after-dispatch` flags naive `dispatch(); toast.success()` in the same block scope; allows `useDispatch({ onSuccess })` shape and non-dispatch `toast.success`.
+- [ ] **BUG-005 graduation + docs** — move BUG-005 to `docs/BUGS.md` "Recently fixed"; add one-paragraph clarification to `docs/SECURITY.md` §2.1 (optimistic UI includes the "Queued..." intermediate; terminal success signal waits for server ack or local-mode shim resolution).
+
+#### R8.5 — Notes
+
+> -
+
 #### R8 — Notes
 
 > -
