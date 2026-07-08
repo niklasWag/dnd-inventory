@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-progress runs for the same PR / branch when a new commit lands.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: typecheck / lint / format
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # No cache: keeps us well clear of the 500 MB Actions storage quota.
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Provision example seed files
+        # PHB/DMG seeds are gitignored (WotC content, private-use only per
+        # CLAUDE.md). The redistributable example files satisfy the loader's
+        # JSON imports so typecheck resolves them — see
+        # packages/seeds/data/examples/README.md.
+        run: |
+          cp packages/seeds/data/examples/phb-2024-mundane.example.json \
+             packages/seeds/data/phb-2024-mundane.json
+          cp packages/seeds/data/examples/dmg-2024.example.json \
+             packages/seeds/data/dmg-2024.json
+
+      - name: Generate Prisma client
+        # The generated client (apps/server/prisma/generated/prisma) is
+        # gitignored; typecheck / lint need it materialized. Uses the schema
+        # only (no DB connection required).
+        working-directory: apps/server
+        run: pnpm exec prisma generate
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm -r lint
