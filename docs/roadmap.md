@@ -3876,13 +3876,17 @@ Server-side hardening: auth-flow sweeps, rate limits, operator observability, sm
 
 #### R8.2 — Operator surface
 
-- [ ] **Snapshot-age operator metric** —"Snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). R8.2 kick-off decides the shape (drop-in `/admin/health` JSON vs. OTel exporter). (Source: R3.4.b Notes.)
-- [ ] **Explicit `archivedAt` check in `POST /sync/actions`** —R4.1.e ships the `Party.archivedAt` column + filters it out of `GET /sync/parties`, but the `/sync/actions` route relies on the existing `not_a_member` guard (every member's row is `leftAt: NOT null` after archive, so guards reject). Adding an upfront `archivedAt IS NOT NULL` check would surface a cleaner `party_archived` error code. Inline pointer: `apps/server/src/sync/routes.ts:226`. (Source: R4.1.e Notes.)
+- [x] **Snapshot-age operator metric** —"Snapshot age per party" gauge surfaces a stuck cron / disk-full situation. Wire into a future `/admin/health` endpoint (or expose via Prometheus / OpenTelemetry once metrics infra lands). R8.2 kick-off decides the shape (drop-in `/admin/health` JSON vs. OTel exporter). (Source: R3.4.b Notes.)
+- [x] **Explicit `archivedAt` check in `POST /sync/actions`** —R4.1.e ships the `Party.archivedAt` column + filters it out of `GET /sync/parties`, but the `/sync/actions` route relies on the existing `not_a_member` guard (every member's row is `leftAt: NOT null` after archive, so guards reject). Adding an upfront `archivedAt IS NOT NULL` check would surface a cleaner `party_archived` error code. Inline pointer: `apps/server/src/sync/routes.ts:226`. (Source: R4.1.e Notes.)
 - [ ] **Shrink Docker image size** — both `apps/server` and `apps/web` runtime images are currently ~600 MB each; that's ~10× bigger than expected for a Node backend + a static SPA. Obvious wastes visible in the current Dockerfiles: (a) **web runtime** ships full workspace `node_modules` + `pnpm` binary to run `vite preview` — should be `nginx:alpine` (or `caddy:alpine`) serving `apps/web/dist` statically, dropping the entire Node runtime; (b) **server runtime** copies the build stage's `node_modules` verbatim, which includes every workspace's devDependencies (vite, vitest, eslint, tsx, prisma CLI extras, etc.) — should run `pnpm --filter @app/server deploy --prod ./deploy` (or `pnpm install --prod --frozen-lockfile`) in the runtime stage and copy only the pruned tree. Kick-off measures baseline (`docker image ls`, `docker history`), applies the two changes above, re-measures, and considers `node:22-alpine-slim` / distroless for a further trim. Inline pointer: `infra/docker/Dockerfile.web`, `infra/docker/Dockerfile.server`. (Source: 2026-07-07 observation.)
 
 #### R8.2 — Notes
 
-> -
+> **Server items shipped 2026-07-08 on `feat/r8-hardening`.** Docker image slim deferred to a follow-up commit.
+>
+> - **`GET /admin/health`** — new session-authenticated route in `apps/server/src/routes/admin-health.ts`. Per-user scope: returns `{ snapshotAges: { partyId: hours | null } }` for parties the caller is an ACTIVE member of AND not archived. `null` = no snapshot on disk yet; a real number = hours since newest `.json` mtime in `<SNAPSHOT_DIR>/<partyId>/`. Auth-shape choice: session cookie (not an operator token) per user selection — matches the existing `/sync/*` auth surface and doesn't add a new auth axis.
+> - **`party_archived` check on `POST /sync/actions`** — new 410 response when `Party.archivedAt !== null`. Runs at the top of the route, right after `req.body` parse. Cleaner than the previous fall-through to `not_a_member`.
+> - Docker image slim item was flagged as too big to bundle here (requires baseline `docker image ls` + `docker history` + rewrite of two Dockerfiles + re-measure). Landed as a separate commit on the same branch.
 
 #### R8.3 — Server-surface polish
 

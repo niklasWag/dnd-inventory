@@ -32,6 +32,7 @@ import { startPendingLinkSweepCron } from './auth/pending-link-sweep.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { getSession, type SessionAndUser } from './auth/session.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerAdminHealthRoute } from './routes/admin-health.js';
 import { registerPartyRoutes } from './parties/routes.js';
 import { attachRealtime, type BroadcastApplied } from './realtime/io.js';
 import { startSnapshotCron } from './snapshots/scheduler.js';
@@ -99,6 +100,7 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
     opts.mailService ?? (isEmailAuthEnabled(opts.env) ? buildMailService(opts.env) : undefined);
 
   registerHealthRoute(app);
+  registerAdminHealthRoute(app, { env: opts.env, prisma: opts.prisma });
   registerAuthRoutes(app, {
     env: opts.env,
     prisma: opts.prisma,

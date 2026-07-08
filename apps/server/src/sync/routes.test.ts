@@ -282,6 +282,70 @@ describe('POST /sync/actions — auth + display-name gates (R3.4.a)', () => {
   });
 });
 
+describe('POST /sync/actions — R8.2 party_archived', () => {
+  it('returns 410 party_archived when the target party has archivedAt set', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      // Bootstrap a party first so we have something to archive.
+      const bootstrapIds = createCharacterIds();
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: bootstrapIds.newPartyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'Alice',
+                species: 'Human',
+                size: 'medium',
+                class: 'Wizard',
+                level: 3,
+                str: 8,
+                ...bootstrapIds,
+              },
+            },
+          ],
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+
+      // Archive the party out-of-band (simulates a completed archive
+      // flow — see R4.1.e for the actual archive route).
+      await prisma.party.update({
+        where: { id: bootstrapIds.newPartyId },
+        data: { archivedAt: new Date() },
+      });
+
+      // A subsequent /sync/actions dispatch against the archived party
+      // must surface `party_archived`, not fall through to the generic
+      // `not_a_member` guard.
+      const acquireRes = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, token) },
+        payload: {
+          partyId: bootstrapIds.newPartyId,
+          actions: [
+            {
+              type: 'rename-party',
+              payload: { partyId: bootstrapIds.newPartyId, newName: 'X' },
+            },
+          ],
+        },
+      });
+      expect(acquireRes.statusCode).toBe(410);
+      expect(acquireRes.json()).toEqual({ error: 'party_archived' });
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe('POST /sync/actions — bootstrap create-character (R3.4.a)', () => {
   it('creates user, party, memberships, character, 3 stashes, 3 currencies + a log entry', async () => {
     const { userId } = await seedUser();

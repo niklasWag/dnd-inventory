@@ -265,8 +265,18 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
     // `state_not_initialized` (state stays null on the isBootstrap path).
     const partyExists = await prisma.party.findUnique({
       where: { id: partyId },
-      select: { id: true },
+      select: { id: true, archivedAt: true },
     });
+    // R8.2 — surface `party_archived` explicitly. Without this the
+    // request falls through to `applyDelta` and hits the `not_a_member`
+    // guard (every member row is `leftAt: NOT null` after archive), so
+    // the caller sees a generic 403 that doesn't distinguish "you were
+    // never a member" from "the party is archived." R4.1.e added the
+    // column + filters archived parties out of `GET /sync/parties`; this
+    // check completes the surface.
+    if (partyExists?.archivedAt !== null && partyExists?.archivedAt !== undefined) {
+      return reply.code(410).send({ error: 'party_archived' });
+    }
     const isBootstrap = partyExists === null;
     let actor: Actor;
     if (isBootstrap) {
