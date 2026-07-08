@@ -35,6 +35,33 @@ export const MAX_FAILED_ATTEMPTS = 5;
  */
 export const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
+/**
+ * R8.1 — per-IP request-side rate limit for `POST /auth/email/request-otp`.
+ *
+ * The verify side is already lockout-protected via `recordFailedAttempt`
+ * (5 strikes → 15-min lockout). The request side is only protected by
+ * the constant-time pad, which defends against timing enumeration but
+ * NOT against request-flood abuse (an attacker can burn the SMTP quota
+ * by requesting codes for every guessable email).
+ *
+ * The request-side rate limit reuses the `EmailAuthAttempt` keyspace
+ * per SECURITY §1.2 (roadmap R8.1 directive): rows with `email = ''`
+ * represent the IP-only axis. `checkLockout` already queries
+ * `email = ? OR ip = ?`, so an empty-string-email row matches only the
+ * IP axis and never a real-email query — the two axes don't
+ * cross-contaminate.
+ *
+ * Threshold: OTP_REQUEST_MAX per IP within OTP_REQUEST_WINDOW_MS. Once
+ * the threshold trips, the IP-only row's `lockedUntil` is set to
+ * `now + LOCKOUT_DURATION_MS` and the verify-side `checkLockout` picks
+ * it up automatically.
+ */
+export const OTP_REQUEST_MAX = 10;
+export const OTP_REQUEST_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+/** Sentinel value used as `EmailAuthAttempt.email` for IP-only rows. */
+const IP_ONLY_EMAIL = '';
+
 export type LockoutCheck = { locked: true; until: Date } | { locked: false };
 
 /**
@@ -124,4 +151,73 @@ export async function resetAttempts(
   // an existing row, and deleteMany silently no-ops on zero matches
   // (delete throws P2025).
   await prisma.emailAuthAttempt.deleteMany({ where: { email, ip } });
+}
+
+/**
+ * R8.1 — record a `POST /auth/email/request-otp` hit from `ip`. On the
+ * Nth call within OTP_REQUEST_WINDOW_MS we set `lockedUntil = now +
+ * LOCKOUT_DURATION_MS` on the IP-only row so `checkLockout` picks it
+ * up at the top of the next request (and any concurrent verify from
+ * the same IP is also blocked, symmetric with the verify-side lockout).
+ *
+ * The counter reads `lastAttempt` to decide whether to increment the
+ * existing row or start over: if the previous request was OUTSIDE the
+ * window, we reset `failedCount` to 1. Inside the window, we increment.
+ * (Prisma's `upsert` doesn't support conditional field updates in a
+ * single query, so we read + branch in code. Two round-trips per hit
+ * is fine — this is a low-frequency endpoint by design.)
+ *
+ * Returns whether the caller should short-circuit with 429 without
+ * doing the OTP send. Callers that get `{ locked: false }` should
+ * proceed to the normal `checkLockout` (per-email + per-IP mix) before
+ * sending.
+ */
+export async function recordOtpRequest(prisma: PrismaClient, ip: string): Promise<LockoutCheck> {
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - OTP_REQUEST_WINDOW_MS);
+
+  const existing = await prisma.emailAuthAttempt.findUnique({
+    where: { email_ip: { email: IP_ONLY_EMAIL, ip } },
+  });
+
+  // Already locked and the lockout hasn't elapsed? Return it verbatim
+  // so the caller can surface `retry-after`. The row is preserved; the
+  // sweep (attempt-sweep.ts) reaps it once `lockedUntil < now - 24h`.
+  if (existing?.lockedUntil && existing.lockedUntil > now) {
+    return { locked: true, until: existing.lockedUntil };
+  }
+
+  // Compute the next counter value:
+  //   - no existing row → 1
+  //   - existing row's lastAttempt is BEFORE the sliding window → reset to 1
+  //   - existing row within the window → increment
+  const nextCount =
+    existing === null || existing.lastAttempt < windowStart ? 1 : existing.failedCount + 1;
+
+  // Nth hit trips the lockout. Store `lockedUntil` so `checkLockout`
+  // picks it up on the next request from any endpoint using this
+  // keyspace.
+  const shouldLock = nextCount >= OTP_REQUEST_MAX;
+  const lockedUntil = shouldLock ? new Date(now.getTime() + LOCKOUT_DURATION_MS) : null;
+
+  await prisma.emailAuthAttempt.upsert({
+    where: { email_ip: { email: IP_ONLY_EMAIL, ip } },
+    create: {
+      email: IP_ONLY_EMAIL,
+      ip,
+      failedCount: nextCount,
+      lastAttempt: now,
+      lockedUntil,
+    },
+    update: {
+      failedCount: nextCount,
+      lastAttempt: now,
+      lockedUntil,
+    },
+  });
+
+  if (shouldLock) {
+    return { locked: true, until: lockedUntil! };
+  }
+  return { locked: false };
 }

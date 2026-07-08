@@ -26,7 +26,9 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import type { Env } from './config/env.js';
 import type { PrismaClient } from '../prisma/generated/prisma/client.js';
 import { isEmailAuthEnabled } from './auth/config.js';
+import { startEmailAttemptSweepCron } from './auth/email/attempt-sweep.js';
 import { buildMailService, type MailService } from './auth/email/smtp.js';
+import { startPendingLinkSweepCron } from './auth/pending-link-sweep.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { getSession, type SessionAndUser } from './auth/session.js';
 import { registerHealthRoute } from './routes/health.js';
@@ -137,6 +139,30 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
   if (snapshotCron !== null) {
     app.addHook('onClose', async () => {
       await snapshotCron.stop();
+    });
+  }
+
+  // R8.1 — daily auth sweeps (offset from the snapshot tick so they
+  // don't fire simultaneously). Each returns null when its
+  // corresponding env flag is false (test path).
+  const emailAttemptSweepCron = startEmailAttemptSweepCron({
+    env: opts.env,
+    prisma: opts.prisma,
+    log: (msg, meta) => app.log.info(meta ?? {}, msg),
+  });
+  if (emailAttemptSweepCron !== null) {
+    app.addHook('onClose', async () => {
+      await emailAttemptSweepCron.stop();
+    });
+  }
+  const pendingLinkSweepCron = startPendingLinkSweepCron({
+    env: opts.env,
+    prisma: opts.prisma,
+    log: (msg, meta) => app.log.info(meta ?? {}, msg),
+  });
+  if (pendingLinkSweepCron !== null) {
+    app.addHook('onClose', async () => {
+      await pendingLinkSweepCron.stop();
     });
   }
 

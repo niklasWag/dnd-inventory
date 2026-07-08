@@ -33,6 +33,9 @@ const baseEnv: Env = {
   SNAPSHOTS_ENABLED: false,
   SNAPSHOT_DIR: './snapshots',
   SNAPSHOT_RETENTION_DAYS: 30,
+  EMAIL_ATTEMPT_SWEEP_ENABLED: false,
+  EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS: 24,
+  PENDING_LINK_SWEEP_ENABLED: false,
 };
 
 const envWithDiscord: Env = {

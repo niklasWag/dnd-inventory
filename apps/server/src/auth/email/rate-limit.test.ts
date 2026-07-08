@@ -14,7 +14,9 @@ import {
   checkLockout,
   LOCKOUT_DURATION_MS,
   MAX_FAILED_ATTEMPTS,
+  OTP_REQUEST_MAX,
   recordFailedAttempt,
+  recordOtpRequest,
   resetAttempts,
 } from './rate-limit.js';
 
@@ -165,5 +167,94 @@ describe('rate-limit: resetAttempts', () => {
 
   it('is a no-op when no row exists (idempotent)', async () => {
     await expect(resetAttempts(prisma, 'never@example.com', '10.0.0.1')).resolves.toBeUndefined();
+  });
+});
+
+describe('rate-limit: recordOtpRequest (R8.1)', () => {
+  it('first hit from a fresh IP is not locked', async () => {
+    const result = await recordOtpRequest(prisma, '10.0.0.1');
+    expect(result).toEqual({ locked: false });
+    const row = await prisma.emailAuthAttempt.findUnique({
+      where: { email_ip: { email: '', ip: '10.0.0.1' } },
+    });
+    expect(row?.failedCount).toBe(1);
+    expect(row?.lockedUntil).toBeNull();
+  });
+
+  it('increments the IP-only counter on subsequent hits within the window', async () => {
+    await recordOtpRequest(prisma, '10.0.0.1');
+    await recordOtpRequest(prisma, '10.0.0.1');
+    const result = await recordOtpRequest(prisma, '10.0.0.1');
+    expect(result.locked).toBe(false);
+    const row = await prisma.emailAuthAttempt.findUnique({
+      where: { email_ip: { email: '', ip: '10.0.0.1' } },
+    });
+    expect(row?.failedCount).toBe(3);
+  });
+
+  it('trips the lockout on the Nth hit (N = OTP_REQUEST_MAX)', async () => {
+    for (let i = 0; i < OTP_REQUEST_MAX - 1; i++) {
+      const r = await recordOtpRequest(prisma, '10.0.0.1');
+      expect(r.locked).toBe(false);
+    }
+    const before = Date.now();
+    const tripping = await recordOtpRequest(prisma, '10.0.0.1');
+    expect(tripping.locked).toBe(true);
+    if (tripping.locked) {
+      const expectedAt = before + LOCKOUT_DURATION_MS;
+      expect(Math.abs(tripping.until.getTime() - expectedAt)).toBeLessThan(5000);
+    }
+  });
+
+  it('once locked, subsequent hits return locked without re-incrementing beyond the trip point', async () => {
+    for (let i = 0; i < OTP_REQUEST_MAX; i++) {
+      await recordOtpRequest(prisma, '10.0.0.1');
+    }
+    // The (N+1)th hit: still locked, `until` unchanged.
+    const rowBefore = await prisma.emailAuthAttempt.findUniqueOrThrow({
+      where: { email_ip: { email: '', ip: '10.0.0.1' } },
+    });
+    const result = await recordOtpRequest(prisma, '10.0.0.1');
+    expect(result.locked).toBe(true);
+    if (result.locked) {
+      expect(result.until.getTime()).toBe(rowBefore.lockedUntil!.getTime());
+    }
+    // Guard: counter did NOT advance past OTP_REQUEST_MAX on the read-only
+    // return path.
+    const rowAfter = await prisma.emailAuthAttempt.findUniqueOrThrow({
+      where: { email_ip: { email: '', ip: '10.0.0.1' } },
+    });
+    expect(rowAfter.failedCount).toBe(rowBefore.failedCount);
+  });
+
+  it('is per-IP: two different IPs have independent counters', async () => {
+    for (let i = 0; i < OTP_REQUEST_MAX; i++) {
+      await recordOtpRequest(prisma, '10.0.0.1');
+    }
+    const other = await recordOtpRequest(prisma, '10.0.0.2');
+    expect(other.locked).toBe(false);
+  });
+
+  it('IP-only rows do not interfere with per-(email, ip) lockouts', async () => {
+    // Trip the IP-only lockout for 10.0.0.1.
+    for (let i = 0; i < OTP_REQUEST_MAX; i++) {
+      await recordOtpRequest(prisma, '10.0.0.1');
+    }
+    // But checkLockout for a (real-email, DIFFERENT-ip) tuple must NOT
+    // trip on the IP-only row (the email axis matches an empty string,
+    // which we never query with, and the IP axis is different).
+    const check = await checkLockout(prisma, 'user@example.com', '10.0.0.99');
+    expect(check.locked).toBe(false);
+  });
+
+  it('IP-only lockout DOES surface via checkLockout for requests from the same IP', async () => {
+    for (let i = 0; i < OTP_REQUEST_MAX; i++) {
+      await recordOtpRequest(prisma, '10.0.0.1');
+    }
+    // A verify-otp attempt from the SAME IP with any email should see
+    // the IP-axis lockout (the empty-string-email row still matches
+    // `email = ? OR ip = ?` on the IP axis).
+    const check = await checkLockout(prisma, 'user@example.com', '10.0.0.1');
+    expect(check.locked).toBe(true);
   });
 });

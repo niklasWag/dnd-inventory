@@ -3860,13 +3860,19 @@ Server-side hardening: auth-flow sweeps, rate limits, operator observability, sm
 
 #### R8.1 — Auth hardening
 
-- [ ] **`EmailAuthAttempt` cron sweep** —Periodically delete rows with `lockedUntil < now() - 24h`. The `@@index([lockedUntil])` makes this cheap. Not blocking — the table is bounded by the `(email, ip)` UNIQUE and rows hold no PII beyond email + IP. Inline pointer: `apps/server/src/auth/email/rate-limit.ts:18`. (Source: R3.3 Notes.)
-- [ ] **`PendingDiscordLink` cron sweep** —R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
-- [ ] **Per-IP rate limit on `POST /auth/email/request-otp`** —Verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
+- [x] **`EmailAuthAttempt` cron sweep** —Periodically delete rows with `lockedUntil < now() - 24h`. The `@@index([lockedUntil])` makes this cheap. Not blocking — the table is bounded by the `(email, ip)` UNIQUE and rows hold no PII beyond email + IP. Inline pointer: `apps/server/src/auth/email/rate-limit.ts:18`. (Source: R3.3 Notes.)
+- [x] **`PendingDiscordLink` cron sweep** —R3.5 deletes expired rows inline on every link initiation. A periodic sweep (e.g. nightly) would catch the case where a user starts a link flow then never returns. Cheap: `@@index([expires])` is in place. Inline pointer: `apps/server/src/auth/discord-link.ts`. (Source: R3.5 Notes.)
+- [x] **Per-IP rate limit on `POST /auth/email/request-otp`** —Verify-side is already rate-limited via the `EmailAuthAttempt` two-axis lockout; the request side is currently protected only by the constant-time pad. Add a per-IP throttle reusing the same keyspace. Inline pointer: `apps/server/src/auth/routes.ts:306`. (Source: R3.3 Notes.)
 
 #### R8.1 — Notes
 
-> -
+> **Shipped 2026-07-08 on `feat/r8-hardening`.** Three items landed in one commit.
+>
+> - **`attempt-sweep.ts`** — daily 03:23 cron; deletes `EmailAuthAttempt` rows with `lockedUntil < now - EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS` (default 24h). In-progress counters (`lockedUntil IS NULL`) preserved.
+> - **`pending-link-sweep.ts`** — daily 03:37 cron; deletes `PendingDiscordLink` rows with `expires < now`. Complements the drive-by cleanup in `discord-link.ts::initiate`.
+> - **`recordOtpRequest`** — IP-only axis via `email=''` sentinel row in `EmailAuthAttempt`; 10 requests/IP/hour → 15-min lockout picked up by `checkLockout` automatically. Wired at the top of `POST /auth/email/request-otp`.
+> - **Env flags** — `EMAIL_ATTEMPT_SWEEP_ENABLED` / `EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS` / `PENDING_LINK_SWEEP_ENABLED`; all default `true` in prod, tests pass `false`.
+> - **No schema change** per user directive — keyspace-reuse via empty-string-email sentinel keeps `EmailAuthAttempt` intact.
 
 #### R8.2 — Operator surface
 
