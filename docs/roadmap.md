@@ -3891,11 +3891,11 @@ Server-side hardening: auth-flow sweeps, rate limits, operator observability, sm
 
 #### R8.3 — Server-surface polish
 
-- [ ] **Reject `partyName` on the post-bootstrap `create-character` branch** —`createCharacterInExistingParty` currently ignores `partyName` silently if a client sends it (the party already exists; renaming is `rename-party`). A client could plausibly send `{ name: 'X', partyName: 'rename me' }` expecting both effects, and the partial silent ignore is a footgun. Preferred: (a) reject the action with `invalid_payload` when `partyName` is set on the post-bootstrap branch. Alternative: (b) treat it as an implicit `rename-party` and emit both log entries. (a) is the simpler / safer choice. (Source: R4.1.f.)
+- [x] **Reject `partyName` on the post-bootstrap `create-character` branch** —`createCharacterInExistingParty` currently ignores `partyName` silently if a client sends it (the party already exists; renaming is `rename-party`). A client could plausibly send `{ name: 'X', partyName: 'rename me' }` expecting both effects, and the partial silent ignore is a footgun. Preferred: (a) reject the action with `invalid_payload` when `partyName` is set on the post-bootstrap branch. Alternative: (b) treat it as an implicit `rename-party` and emit both log entries. (a) is the simpler / safer choice. (Source: R4.1.f.)
 
 #### R8.3 — Notes
 
-> -
+> **Shipped 2026-07-08 on `feat/r8-hardening`.** Option (a). Reject added at two layers: the shared `createCharacterGuard` (surfaces as `422 { rejected: { code: 'state_already_initialized', message } }` per the sync route's error map), and defense-in-depth in the reducer (throws with the same "use rename-party" pointer). Both layers reuse the existing `state_already_initialized` code — same taxonomy as the sibling `dmOnly: true` rejection on the post-bootstrap branch. Test totals: shared 331 → 332 (+1 guard test), web 1017 → 1018 (+1 reducer test), server 230 → 231 (+1 route integration test). No schema / migration / persistor changes.
 
 #### R8.4 — Test infrastructure
 

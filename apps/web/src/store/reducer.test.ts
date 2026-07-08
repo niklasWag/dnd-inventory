@@ -8414,6 +8414,36 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     ).toThrow();
   });
 
+  it('R8.3 — rejects partyName on the post-bootstrap branch (rename via rename-party instead)', () => {
+    localBootstrap();
+    // Wipe the actor's character so the post-bootstrap flow is entered.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: [],
+          stashes: s.appState.stashes.filter((st) => st.scope !== 'character'),
+          currencies: s.appState.currencies.filter(
+            (c) => s.appState!.stashes.find((st) => st.id === c.stashId)?.scope !== 'character',
+          ),
+          memberships: s.appState.memberships.map((m) =>
+            m.userId === s.appState!.user.id && m.role === 'player'
+              ? { ...m, characterId: null }
+              : m,
+          ),
+        },
+      };
+    });
+    expect(() =>
+      useStore.getState().dispatch({
+        type: 'create-character',
+        payload: { ...newCharacterPayload(), partyName: 'Renamed via footgun' },
+      }),
+    ).toThrow(/partyName.*bootstrap|rename-party/i);
+  });
+
   it('rejects when the actor is not an active member of the party', () => {
     localBootstrap();
     // Wipe the actor's memberships so they're not in the party.

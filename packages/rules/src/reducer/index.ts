@@ -312,6 +312,16 @@ function createCharacterInExistingParty(
     );
   }
 
+  // R8.3 — reject `partyName` on the post-bootstrap branch. The party
+  // already exists; the field is silently ignored on this path, which
+  // is a footgun for callers that expect it to double as an implicit
+  // rename. Renaming is a separate `rename-party` action.
+  if (payload.partyName !== undefined) {
+    throw new Error(
+      'create-character: partyName is only valid on the bootstrap (state === null) branch; use rename-party to rename an existing party',
+    );
+  }
+
   // RH1.2 — reducer-boundary id-shape assertions. The guard layer has
   // already validated these upstream; this is defense-in-depth.
   // (TS has already narrowed `payload` to the with-character branch via

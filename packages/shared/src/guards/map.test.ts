@@ -2100,6 +2100,19 @@ describe('createCharacterGuard — post-bootstrap (R4.1.f)', () => {
     expect(result).toMatchObject({ ok: false, code: 'state_already_initialized' });
   });
 
+  it('R8.3 — rejects partyName on the post-bootstrap branch', () => {
+    const state = makePostBootstrapState('u1', null);
+    const result = guards['create-character'](
+      state,
+      { ...newCharacterPayload(), partyName: 'Sneaky Rename' },
+      makeActor('u1', 'player'),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'state_already_initialized' });
+    if (!result.ok) {
+      expect(result.message).toMatch(/partyName.*bootstrap|rename-party/i);
+    }
+  });
+
   it('rejects when the actor is not an active member of the party', () => {
     const base = makeState({ ownerUserId: 'someone-else' });
     if (base === null) throw new Error('expected state');

@@ -495,6 +495,72 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
       await app.close();
     }
   });
+
+  it('R8.3 — rejects partyName on the post-bootstrap branch', async () => {
+    const app = await buildServer({ env, prisma });
+    try {
+      // User A bootstraps the party.
+      const userA = await seedUser({ displayName: 'A' });
+      const tokenA = await seedSession(userA.userId);
+      const { partyId, inviteCode } = await bootstrapParty(app, cookieHeader(env, tokenA));
+
+      // User B joins (member with characterId: null).
+      const userB = await seedUser({ displayName: 'B' });
+      const tokenB = await seedSession(userB.userId);
+      const joinRes = await app.inject({
+        method: 'POST',
+        url: '/parties/join',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: { inviteCode },
+      });
+      expect(joinRes.statusCode).toBe(200);
+
+      // User B tries to create their character AND smuggle in a partyName.
+      // The reducer throws on the partyName presence; the route surfaces as 422.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/actions',
+        headers: { cookie: cookieHeader(env, tokenB), 'content-type': 'application/json' },
+        payload: {
+          partyId,
+          actions: [
+            {
+              type: 'create-character',
+              payload: {
+                name: 'B-Char',
+                species: 'Elf',
+                size: 'medium',
+                class: 'Rogue',
+                level: 2,
+                str: 12,
+                partyName: 'Sneaky Rename',
+                ...createCharacterIds(),
+              },
+            },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = res.json<{
+        rejected: { index: number; code: string; message: string };
+      }>();
+      expect(body.rejected.code).toBe('state_already_initialized');
+      expect(body.rejected.message).toMatch(/partyName.*bootstrap|rename-party/i);
+
+      // Party name was NOT changed.
+      const party = await prisma.party.findUniqueOrThrow({ where: { id: partyId } });
+      expect(party.name).not.toBe('Sneaky Rename');
+
+      // No character was created for B.
+      const bMemberships = await prisma.partyMembership.findMany({
+        where: { userId: userB.userId, partyId, role: 'player' },
+      });
+      expect(bMemberships).toHaveLength(1);
+      expect(bMemberships[0]!.characterId).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 // -------------------------------------------------------------------- //
