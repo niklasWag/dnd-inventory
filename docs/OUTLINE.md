@@ -558,6 +558,7 @@ When the **DM** leaves:
 | **M5 — Live sync & history** | Websocket sync; per-item history; party log with session-tag filter; offline banner in party mode. |
 | **M6 — DM tools** | Loot distribution wizard (per-hoard mode), hoard generator, identification flow with hints, shop manager (static + modifiers). |
 | **M7 — Polish** | Light/dark theme, responsive player views (mobile), fuzzy multi-field search, accessibility pass. |
+| **M8 — Server infrastructure hardening** | Auth-flow sweeps + per-IP rate limits, operator observability (`/admin/health`, snapshot-age metric), server-surface polish, and test-infrastructure debt (server-integration seam coverage + a Docker-native Playwright E2E suite). No user-facing UI — user-facing account management is M10. See `roadmap.md` R8. |
 
 ---
 

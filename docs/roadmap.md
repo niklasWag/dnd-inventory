@@ -3856,7 +3856,7 @@ Server-side hardening: auth-flow sweeps, rate limits, operator observability, sm
 
 **Slicing.** Four independent sub-slices; each ships on its own.
 
-> **Kickoff prereq:** `docs/OUTLINE.md` §10 currently ends at M7. Amend §10 with M8/M9/M10 rows before R8, R9, or R10 ships (OUTLINE is the source of truth per CLAUDE.md; this roadmap is a tracker).
+> **Kickoff prereq:** ~~`docs/OUTLINE.md` §10 currently ends at M7. Amend §10 with M8/M9/M10 rows before R8, R9, or R10 ships~~ **M8 row added 2026-07-09 (R8.4).** OUTLINE §10 now carries the M8 — Server infrastructure hardening row. M9/M10 rows remain to be added before R9/R10 ship respectively (OUTLINE is the source of truth per CLAUDE.md; this roadmap is a tracker).
 
 #### R8.1 — Auth hardening
 

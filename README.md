@@ -380,6 +380,7 @@ packages/shared       Cross-cutting Zod schemas + types
 packages/rules        Pure rules engine (currency, capacity, search, …)
 packages/seeds        PHB / DMG content loader
 infra/docker          Compose + Caddy proxy profile
+e2e/                  Docker-native Playwright end-to-end suite
 docs/                 OUTLINE / MVP / TECH_STACK / SECURITY / roadmap
 ```
 
@@ -394,4 +395,5 @@ docs/                 OUTLINE / MVP / TECH_STACK / SECURITY / roadmap
 | [`docs/roadmap.md`](docs/roadmap.md)                                 | Slice-by-slice history + upcoming plans |
 | [`docs/BUGS.md`](docs/BUGS.md)                                       | Open + recently-fixed bugs              |
 | [`apps/server/README.md`](apps/server/README.md)                     | Server env vars + scripts               |
+| [`e2e/README.md`](e2e/README.md)                                     | End-to-end (Playwright) suite           |
 | [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml) | Compose reference                       |
