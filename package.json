@@ -15,10 +15,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "docker:dev": "cd infra/docker && docker compose --profile proxy --profile mail up -d --build",
+    "e2e": "docker compose -f e2e/docker-compose.yml up --build --abort-on-container-exit --exit-code-from playwright",
+    "e2e:down": "docker compose -f e2e/docker-compose.yml down -v",
+    "e2e:report": "playwright show-report e2e/playwright-report",
     "fullcheck": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "1.61.1",
     "@types/node": "^22.10.2",
     "eslint": "^9.18.0",
     "prettier": "^3.4.2",

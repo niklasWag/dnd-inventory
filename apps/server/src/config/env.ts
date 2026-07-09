@@ -105,6 +105,16 @@ const envSchema = z.object({
   EMAIL_ATTEMPT_SWEEP_ENABLED: z.coerce.boolean().default(true),
   EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
   PENDING_LINK_SWEEP_ENABLED: z.coerce.boolean().default(true),
+
+  // -------- R8.4.d — E2E test mode --------
+  //
+  // When true, mounts test-only helper routes (`POST /test/seed-user`,
+  // `POST /test/seed-session`) that let the Playwright rig authenticate
+  // without driving the full OTP flow on every spec. Defaults to false;
+  // the compose file at `e2e/docker-compose.yml` sets it to true. Never
+  // enable in production — the routes bypass the normal auth surface by
+  // design.
+  E2E_TEST_MODE: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof envSchema>;

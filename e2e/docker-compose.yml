@@ -1,0 +1,135 @@
+# R8.4.d.i — Fully self-contained E2E stack.
+#
+# Why a separate compose file (vs `extends:` from infra/docker/docker-
+# compose.yml)? The prod compose file has assumptions that don't hold in
+# the E2E environment: it exposes host ports (host collisions in CI),
+# persists a named `postgres-data` volume (E2E wants ephemeral state),
+# uses mailpit under a `mail` profile (E2E always needs it), and takes
+# many env vars from `.env` (E2E wants deterministic hard-coded values).
+# Rather than parameterize every difference via `env_file` / profile
+# stacking, we duplicate the shape here and keep the drift intentional.
+#
+# The Dockerfiles are reused from `infra/docker/` — this file only
+# overrides the RUNTIME configuration.
+#
+# See docs/roadmap.md R8.4 Notes for the pattern rationale.
+#
+# Run: `pnpm e2e`
+# Wipe: `pnpm e2e:down`
+
+name: dnd-inv-e2e
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: dnd_inv_e2e
+      POSTGRES_USER: dnd
+      POSTGRES_PASSWORD: dnd
+      # Same PGDATA subdir convention as the prod compose (Postgres 18+
+      # requires it).
+      PGDATA: /var/lib/postgresql/18/docker
+    # No volume — every `pnpm e2e` starts from a fresh DB. Deterministic
+    # by construction, and no cleanup drift between runs.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U dnd -d dnd_inv_e2e']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.server
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://dnd:dnd@postgres:5432/dnd_inv_e2e
+      WEB_ORIGIN: http://web:80
+      # AUTH_SECRET must be >= 32 chars — hardcoded here because this
+      # stack never leaves the compose network and is torn down between
+      # runs. Never reuse in any other environment.
+      AUTH_SECRET: e2e-not-a-real-secret-padding-to-32-chars-XXXX
+      # HTTP-only inside the compose network — Secure cookies would be
+      # dropped by browsers.
+      SESSION_COOKIE_INSECURE: 'true'
+      # Cron sweeps + snapshots off — E2E doesn't want background writes
+      # racing the specs.
+      SNAPSHOTS_ENABLED: 'false'
+      EMAIL_ATTEMPT_SWEEP_ENABLED: 'false'
+      PENDING_LINK_SWEEP_ENABLED: 'false'
+      LOG_LEVEL: warn
+      # R8.4.d — mounts /test/seed-user + /test/seed-session. Only ever
+      # true in this file; production compose leaves it default false.
+      E2E_TEST_MODE: 'true'
+      # SMTP → mailpit sink. `axllent/mailpit` listens on :1025 (SMTP)
+      # and :8025 (HTTP API).
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+      SMTP_USER: e2e
+      SMTP_PASS: e2e
+      SMTP_FROM: noreply@e2e.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ['sh', '-c', 'cd apps/server && pnpm exec prisma migrate deploy && node dist/index.js']
+    healthcheck:
+      # /healthz is the server's actual health route (see
+      # apps/server/src/routes/health.ts). Uses wget from busybox — the
+      # node:22-alpine base image has it. `127.0.0.1` (not `localhost`)
+      # because busybox wget resolves `localhost` to `::1` (IPv6) while
+      # Fastify listens on `0.0.0.0` (IPv4-only) — the ambiguity would
+      # deliver a `Connection refused` and mark the container unhealthy.
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/healthz >/dev/null 2>&1 || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        # Point the web bundle at the server via the compose network.
+        # Vite inlines this at build time.
+        VITE_SERVER_URL: http://server:3000
+    depends_on:
+      server:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:latest
+    # No published ports — the specs read messages via the internal
+    # compose-network URL `http://mailpit:8025`.
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8025/api/v1/info >/dev/null 2>&1 || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  playwright:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    environment:
+      E2E_BASE_URL: http://web:80
+      E2E_API_URL: http://server:3000
+      E2E_MAILPIT_URL: http://mailpit:8025
+    # Bind-mount the HTML report + test artifacts (traces / videos /
+    # screenshots) to the host so they survive `--rm` on the container.
+    # `playwright.config.ts` writes report → /e2e-report and artifacts →
+    # /e2e-results; the mounts land them under `e2e/playwright-report/`
+    # and `e2e/test-results/`. Open the report post-run via
+    # `pnpm e2e:report` (invokes `playwright show-report`).
+    volumes:
+      - ./playwright-report:/e2e-report
+      - ./test-results:/e2e-results
+    depends_on:
+      web:
+        condition: service_started
+      server:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
