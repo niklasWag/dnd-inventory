@@ -80,6 +80,45 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 
 ## Recently fixed
 
+### BUG-014 — Socket connects during `needsDisplayName`; server rejects it, reconnect loop throws an uncaught TypeError
+
+- **Filed:** 2026-07-09
+- **Fixed:** 2026-07-09 (branch: `feat/r8-hardening`; R8.4.d)
+- **Severity:** medium (uncaught client exception + an infinite failing-reconnect loop during first-time onboarding. Benign for slow human timing — the socket reconnects cleanly once onboarding finishes — but it derails any action fired in the same tick, and it trains users/devs to ignore console errors. A regression introduced by BUG-006's fix.)
+- **Status:** fixed
+- **Affected slice:** R5.1.b (client socket consumer). Introduced 2026-07-04 by **BUG-006's fix**, which auth-gated the socket connect but on a wrong assumption about the server contract (see below).
+
+**Symptom.** Server mode, first-time email-OTP login. During onboarding the browser console shows:
+
+```
+WebSocket connection to 'ws://.../socket.io/?...' failed: WebSocket is closed before the connection is established.
+[socket] connect_error: display_name_required
+TypeError: Cannot read properties of undefined (reading 'request')
+```
+
+The `connect_error: display_name_required` repeats (Socket.IO's `reconnectionAttempts: Infinity`), and the `authenticated` transition that follows onboarding throws the uncaught `TypeError`. No user-visible toast; the final state is usually fine because the socket eventually reconnects post-onboarding.
+
+**Reproduction.**
+
+1. Server mode, fresh email that has never signed in.
+2. `/login/email` → enter email → submit → enter OTP → verify. Session cookie is now set with `needsDisplayName: true`.
+3. The boot-time `useSession.subscribe` fires `syncSocketWithSession('needsDisplayName')`, which (pre-fix) built + connected the socket.
+4. Server's `io.use()` middleware rejects the upgrade with `display_name_required` (`apps/server/src/realtime/io.ts:132`).
+5. socket.io-client enters its infinite reconnect loop; each retry logs `connect_error`.
+6. User submits their display name → status flips to `authenticated` → `syncSocketWithSession('authenticated')` calls `.connect()` again, racing the in-flight reconnect machinery → uncaught `TypeError: Cannot read properties of undefined (reading 'request')` inside socket.io-client.
+
+**Root cause.** A **client/server contract mismatch**. The server's `io.use()` rejects BOTH unauthenticated AND `needsDisplayName` socket upgrades (`io.ts:17` + `io.ts:132`). But BUG-006's fix wired `syncSocketWithSession` to connect during `needsDisplayName`, with an inline comment asserting *"`needsDisplayName` still holds a valid session cookie that `io.use()` accepts"* — which is factually wrong. So the client opened a socket the server was always going to reject, then thrashed.
+
+**Fix.** `apps/web/src/sync/socket.ts::syncSocketWithSession` now connects ONLY when `status === 'authenticated'`. `needsDisplayName` is treated like `loading`/`anonymous` (tear down; do not connect). The socket connects the instant onboarding completes and the status flips to `authenticated`. This aligns the client with the server's `io.use()` contract and corrects the wrong comment BUG-006 introduced.
+
+**Tests.** `apps/web/src/sync/socket.test.ts` — flipped the `needsDisplayName` case from "builds + connects" to "does NOT build a socket" (encoding the correct contract). Suite stays at 14 tests, all passing.
+
+**How it was found.** The R8.4.d `party-lifecycle` E2E spec (create party → join → leave → rejoin → kick, driven through the real SPA). This is the exact BUG-001/BUG-002 profile TECH_STACK §3.3 cited for why E2E matters: a defect invisible to unit + server-integration tests, only reproduced by driving the full stack fast. The E2E spec is now the regression fence.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
+
 ### BUG-013 — Adding a no-cost catalog row to a shop with no price override silently succeeds, then throws at buy time
 
 - **Filed:** 2026-07-07
@@ -388,6 +427,8 @@ Once the user signs in, the socket connects cleanly (any subsequent broadcasts w
 
 - `'authenticated'` / `'needsDisplayName'` → build (once) + connect. `needsDisplayName` still holds a valid session cookie that `io.use()` accepts.
 - Any other status (`'loading'`, `'anonymous'`) → `resetSocket()` (tear down the module singleton so the next auth transition rebuilds cleanly).
+
+> **⚠️ Correction (2026-07-09, BUG-014).** The claim above — that `io.use()` ACCEPTS a `needsDisplayName` cookie — is **wrong**. The server rejects it (`io.ts:132`). Connecting during `needsDisplayName` caused a reconnect loop + uncaught TypeError. See BUG-014: the fix removes `needsDisplayName` from the connect path.
 
 `main.tsx` boots by calling `syncSocketWithSession(useSession.getState().status)` once and subscribing to `useSession` for transition-triggered re-syncs. On sign-in the session flips `anonymous` → `authenticated` and the helper connects; on sign-out it flips back and the helper tears down.
 
