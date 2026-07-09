@@ -1,19 +1,23 @@
 /**
- * R8.4.d.i — Playwright config for the Docker-native E2E rig.
+ * R8.4.d — Playwright config for the Docker-native E2E rig.
  *
  * The rig runs entirely inside compose (`e2e/docker-compose.yml`); the
- * playwright container's env supplies `E2E_BASE_URL` / `E2E_API_URL` /
+ * playwright container shares Caddy's network namespace, so the browser
+ * reaches the app at `http://localhost:8080` (a secure context — see the
+ * compose file for why that matters). Env supplies `E2E_BASE_URL` +
  * `E2E_MAILPIT_URL`. The `??` fallback below is only for `pnpm exec
- * playwright test` outside the container (developer convenience — spec
- * only when the standard host dev server is already up).
+ * playwright test` outside the container (developer convenience — valid
+ * only when a same-origin stack is already up on :8080).
  */
 import { defineConfig } from '@playwright/test';
 
+const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:8080';
+
 export default defineConfig({
   testDir: './tests',
-  // fullyParallel: false initially — parties tests will share DB state
-  // (single postgres container in the compose network). Turn on later
-  // once specs are namespaced by unique party names / seeded users.
+  // fullyParallel: false — the specs share one Postgres container, and
+  // the party-lifecycle spec seeds users via the real OTP flow. Turn on
+  // later once specs are fully isolated by unique emails / party names.
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   timeout: 30_000,
@@ -29,7 +33,7 @@ export default defineConfig({
   // `retain-on-failure` above means these only exist for failed specs.
   outputDir: '/e2e-results',
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5173',
+    baseURL: BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -37,7 +41,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { browserName: 'chromium' },
+      use: {
+        browserName: 'chromium',
+        launchOptions: {
+          // Chromium runs as root in the Playwright container.
+          args: ['--no-sandbox'],
+        },
+      },
     },
   ],
 });

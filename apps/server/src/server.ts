@@ -130,13 +130,6 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
   // pipeline internally so the TransactionLog stays canonical.
   registerPartyRoutes(app, opts.prisma);
 
-  // R8.4.d — test-only routes for the Playwright E2E rig. Only mount
-  // when E2E_TEST_MODE=true (defaults false). Do NOT enable in prod.
-  if (opts.env.E2E_TEST_MODE) {
-    const { registerTestModeRoutes } = await import('./test-mode/routes.js');
-    registerTestModeRoutes(app, { env: opts.env, prisma: opts.prisma });
-  }
-
   // R3.4.b — nightly snapshot cron (03:07 local; disabled when
   // SNAPSHOTS_ENABLED=false). Stops on Fastify close so SIGTERM
   // doesn't leave the timer dangling.

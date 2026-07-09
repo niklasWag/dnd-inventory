@@ -32,7 +32,6 @@ const env = {
   EMAIL_ATTEMPT_SWEEP_ENABLED: false,
   EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS: 24,
   PENDING_LINK_SWEEP_ENABLED: false,
-  E2E_TEST_MODE: false,
 };
 
 let prisma: PrismaClient;

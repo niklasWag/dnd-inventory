@@ -1,4 +1,4 @@
-# R8.4.d.i — Fully self-contained E2E stack.
+# R8.4.d — Fully self-contained E2E stack.
 #
 # Why a separate compose file (vs `extends:` from infra/docker/docker-
 # compose.yml)? The prod compose file has assumptions that don't hold in
@@ -9,8 +9,19 @@
 # Rather than parameterize every difference via `env_file` / profile
 # stacking, we duplicate the shape here and keep the drift intentional.
 #
-# The Dockerfiles are reused from `infra/docker/` — this file only
-# overrides the RUNTIME configuration.
+# Same-origin via Caddy. The SPA and the API MUST share one origin, or
+# the browser drops the `SameSite=Lax` session cookie on the SPA→API
+# fetch (it's treated as third-party). This mirrors the prod `proxy`
+# profile: Caddy (reusing `infra/docker/Caddyfile`) fronts both `web`
+# (SPA) and `server` (API) under one origin, so cookies stay
+# first-party. The browser reaches that origin as `http://localhost:8080`
+# (the `playwright` container shares Caddy's network namespace), which is
+# ALSO a secure context so `navigator.locks` works — see the `playwright`
+# service. The SPA bundle is built with `VITE_SERVER_URL=http://localhost:8080`
+# so its fetches hit the same origin it was loaded from.
+#
+# The Dockerfiles + Caddyfile are reused from `infra/docker/` — this file
+# only overrides the RUNTIME configuration.
 #
 # See docs/roadmap.md R8.4 Notes for the pattern rationale.
 #
@@ -46,13 +57,19 @@ services:
       PORT: '3000'
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://dnd:dnd@postgres:5432/dnd_inv_e2e
-      WEB_ORIGIN: http://web:80
+      # Everything is served under the Caddy origin — CORS allow-origin
+      # AND the Auth.js redirect whitelist key on this. The browser loads
+      # the SPA from `http://localhost:8080` (it shares Caddy's netns —
+      # see the `playwright` service), so this MUST be localhost too or
+      # the SPA's same-origin fetches are CORS-blocked.
+      WEB_ORIGIN: http://localhost:8080
       # AUTH_SECRET must be >= 32 chars — hardcoded here because this
       # stack never leaves the compose network and is torn down between
       # runs. Never reuse in any other environment.
       AUTH_SECRET: e2e-not-a-real-secret-padding-to-32-chars-XXXX
       # HTTP-only inside the compose network — Secure cookies would be
-      # dropped by browsers.
+      # dropped by browsers. The Caddy same-origin proxy keeps the
+      # SameSite=Lax cookie first-party so it rides SPA→API fetches.
       SESSION_COOKIE_INSECURE: 'true'
       # Cron sweeps + snapshots off — E2E doesn't want background writes
       # racing the specs.
@@ -60,9 +77,6 @@ services:
       EMAIL_ATTEMPT_SWEEP_ENABLED: 'false'
       PENDING_LINK_SWEEP_ENABLED: 'false'
       LOG_LEVEL: warn
-      # R8.4.d — mounts /test/seed-user + /test/seed-session. Only ever
-      # true in this file; production compose leaves it default false.
-      E2E_TEST_MODE: 'true'
       # SMTP → mailpit sink. `axllent/mailpit` listens on :1025 (SMTP)
       # and :8025 (HTTP API).
       SMTP_HOST: mailpit
@@ -92,12 +106,34 @@ services:
       context: ..
       dockerfile: infra/docker/Dockerfile.web
       args:
-        # Point the web bundle at the server via the compose network.
-        # Vite inlines this at build time.
-        VITE_SERVER_URL: http://server:3000
+        # The SPA fetches the API at the SAME origin it was loaded from.
+        # The browser loads from `http://localhost:8080` (Playwright
+        # shares Caddy's netns), so the bundle must target localhost too.
+        # Vite inlines this at build time; Caddy routes /auth/*, /sync/*,
+        # /parties*, /socket.io/* to `server:3000` and the rest to nginx.
+        VITE_SERVER_URL: http://localhost:8080
     depends_on:
       server:
         condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    # Reuse the prod Caddyfile verbatim — it already routes the
+    # server-owned paths (/auth, /sync, /parties, /healthz, /socket.io)
+    # to `server:3000` and everything else to `web:80`, listening on
+    # :8080. Mounting it read-only keeps the e2e stack from mutating it.
+    volumes:
+      - ../infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      web:
+        condition: service_started
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   mailpit:
     image: axllent/mailpit:latest
@@ -113,9 +149,24 @@ services:
     build:
       context: ..
       dockerfile: e2e/Dockerfile
+    # Share Caddy's network namespace so the browser reaches the app at
+    # `http://localhost:8080` — exactly what a real user does against the
+    # dev compose's published proxy port. `localhost` is a secure context
+    # in Chromium, so `navigator.locks` (Web Locks API, used by the sync
+    # queue at `apps/web/src/sync/queue.ts`) is available natively. The
+    # compose-internal hostname `caddy:8080` is NOT localhost and would
+    # leave the browser in an insecure context where `navigator.locks`
+    # is `undefined` and the queue flush throws. No unsafe Chromium flags
+    # needed with this approach.
+    #
+    # `network_mode: service:caddy` means this container has NO network of
+    # its own — it borrows Caddy's. Caddy is on the compose network and
+    # resolves sibling services by name, so `mailpit:8025` still works.
+    network_mode: service:caddy
     environment:
-      E2E_BASE_URL: http://web:80
-      E2E_API_URL: http://server:3000
+      # Caddy listens on :8080 inside the shared namespace → localhost.
+      E2E_BASE_URL: http://localhost:8080
+      # Mailpit's HTTP API, resolved via Caddy's compose-network DNS.
       E2E_MAILPIT_URL: http://mailpit:8025
     # Bind-mount the HTML report + test artifacts (traces / videos /
     # screenshots) to the host so they survive `--rm` on the container.
@@ -127,9 +178,7 @@ services:
       - ./playwright-report:/e2e-report
       - ./test-results:/e2e-results
     depends_on:
-      web:
-        condition: service_started
-      server:
+      caddy:
         condition: service_healthy
       mailpit:
         condition: service_healthy
