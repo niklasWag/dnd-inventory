@@ -419,6 +419,61 @@ describe('POST /sync/actions — post-bootstrap create-character (R4.1.f)', () =
       // B's entry was authored by B.
       const bLog = createLog.find((e) => e.actorUserId === userB.userId);
       expect(bLog).toBeDefined();
+
+      // R8.4.a — round-trip user B through `GET /sync/state?partyId=...`
+      // so the read side of the seam matches the write side asserted above.
+      // The persistor tests + state-loader tests both pass in isolation;
+      // this closes the gap where a post-bootstrap character could appear
+      // in the DB but not in the loaded state (mapper filter drift, etc.).
+      const stateRes = await app.inject({
+        method: 'GET',
+        url: `/sync/state?partyId=${partyId}`,
+        headers: { cookie: cookieHeader(env, tokenB) },
+      });
+      expect(stateRes.statusCode).toBe(200);
+      const { state } = stateRes.json<{
+        state: {
+          characters: {
+            id: string;
+            name: string;
+            ownerUserId: string;
+            inventoryStashId: string;
+          }[];
+          stashes: {
+            id: string;
+            scope: 'character' | 'party' | 'recovered-loot';
+            isCarried: boolean;
+            ownerCharacterId: string | null;
+          }[];
+          currencies: { stashId: string; cp: number }[];
+          log: { type: string; actorUserId: string }[];
+        };
+      }>();
+
+      // B's character appears with correct ownership.
+      const bStateChar = state.characters.find((c) => c.id === bChar!.id);
+      expect(bStateChar).toBeDefined();
+      expect(bStateChar!.ownerUserId).toBe(userB.userId);
+      expect(bStateChar!.name).toBe('B-Char');
+
+      // B's Inventory stash appears with correct isCarried + owner linkage.
+      const bStateInv = state.stashes.find((s) => s.id === bStateChar!.inventoryStashId);
+      expect(bStateInv).toBeDefined();
+      expect(bStateInv!.scope).toBe('character');
+      expect(bStateInv!.isCarried).toBe(true);
+      expect(bStateInv!.ownerCharacterId).toBe(bStateChar!.id);
+
+      // B's CurrencyHolding for the Inventory stash exists at cp=0.
+      const bStateHolding = state.currencies.find((h) => h.stashId === bStateInv!.id);
+      expect(bStateHolding).toBeDefined();
+      expect(bStateHolding!.cp).toBe(0);
+
+      // Both create-character log entries land in the state, one per actor.
+      const stateCreateLog = state.log.filter((e) => e.type === 'create-character');
+      expect(stateCreateLog).toHaveLength(2);
+      expect(stateCreateLog.map((e) => e.actorUserId).sort()).toEqual(
+        [userA.userId, userB.userId].sort(),
+      );
     } finally {
       await app.close();
     }
