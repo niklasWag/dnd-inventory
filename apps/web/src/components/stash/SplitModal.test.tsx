@@ -37,7 +37,7 @@ interface SetupResult {
 function setupWithStack(quantity: number, notes?: string): SetupResult {
   const { catalog, inventoryStashId } = bootstrap();
   const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: inventoryStashId,

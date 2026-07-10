@@ -75,14 +75,16 @@ describe('ShopDetail (R6.2)', () => {
   } {
     const shopId = newUuidV7();
     const stockEntryId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'Cauldron' } });
     if (opts.isOpen) {
-      useStore.getState().dispatch({ type: 'set-shop-open', payload: { shopId, isOpen: true } });
+      void useStore
+        .getState()
+        .dispatch({ type: 'set-shop-open', payload: { shopId, isOpen: true } });
     }
     if (opts.withStock === true) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'edit-shop-stock',
         payload: {
           shopId,
@@ -110,7 +112,7 @@ describe('ShopDetail (R6.2)', () => {
     const user = userEvent.setup();
     const b = bootstrap();
     // Give DM some gold to spend.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: b.inventoryStashId,
@@ -344,13 +346,13 @@ describe('ShopsList — player view (R6.2 follow-up)', () => {
     // then flip membership so the user reads as a player.
     const openId = newUuidV7();
     const closedId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: openId, name: 'Open Shop' } });
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'set-shop-open', payload: { shopId: openId, isOpen: true } });
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: closedId, name: 'Closed Shop' } });
     makeCurrentUserPlayer();
@@ -365,7 +367,7 @@ describe('ShopsList — player view (R6.2 follow-up)', () => {
   it('shows the player empty-state when no shops are open', () => {
     bootstrap();
     const closedId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: closedId, name: 'Closed Shop' } });
     makeCurrentUserPlayer();

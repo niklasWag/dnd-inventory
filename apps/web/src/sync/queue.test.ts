@@ -481,3 +481,116 @@ describe('R5.1.c — network-error retry + outbox persistence', () => {
     queue.resetQueue();
   });
 });
+
+// ------------------------------------------------------------------ //
+// R8.5 — mutation outcome authority. `enqueue` returns a `dispatchId`
+// correlation token; `registerOutcome(dispatchId)` yields the promise
+// the store hands back from `dispatch`. Every terminal flush path
+// (200 / 422 / auth / parked / reset) MUST resolve that promise so an
+// awaiting `useDispatch` caller never hangs. These tests assert the
+// resolved `MutationOutcome` shape on each path.
+// ------------------------------------------------------------------ //
+
+describe('R8.5 — outcome correlation', () => {
+  it('resolves { ok: true, applied } on 200 with the server applied[]', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
+    queue.configureQueue(deps);
+
+    const applied = [
+      {
+        id: 'log-1',
+        partyId: 'party-1',
+        sessionId: null,
+        timestamp: '2026-07-10T00:00:00.000Z',
+        actorUserId: 'u1',
+        actorRole: 'player',
+        type: 'acquire',
+        payload: {
+          stashId: 'inv-1',
+          itemInstanceId: 'client-minted-item-id',
+          definitionId: 'phb-2024:torch',
+          quantity: 1,
+          source: 'catalog-add',
+        },
+      },
+    ];
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json({ applied, serverTime: '2026-07-10T00:00:00.000Z' }),
+      ),
+    );
+
+    const dispatchId = queue.enqueue(
+      { type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'party-1',
+    );
+    expect(dispatchId).not.toBeNull();
+    const outcome = queue.registerOutcome(dispatchId!);
+    await queue.flush();
+
+    await expect(outcome).resolves.toMatchObject({ ok: true });
+    const resolved = await outcome;
+    expect(resolved.ok && resolved.applied).toHaveLength(1);
+    queue.resetQueue();
+  });
+
+  it('resolves { ok: false, code } on 422 rejection', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
+    queue.configureQueue(deps);
+
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json(
+          { rejected: { index: 0, code: 'dm_only', message: 'DM only.' } },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    queue.captureRollbackSnapshot();
+    const dispatchId = queue.enqueue(
+      { type: 'create-homebrew' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'party-1',
+    );
+    const outcome = queue.registerOutcome(dispatchId!);
+    await queue.flush();
+
+    await expect(outcome).resolves.toEqual({
+      ok: false,
+      code: 'dm_only',
+      message: 'DM only.',
+    });
+    queue.resetQueue();
+  });
+
+  it('resolves { ok: false, code: "queue_reset" } for dangling correlations on reset', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
+    queue.configureQueue(deps);
+
+    // Register an outcome but never flush — resetQueue must unwind it.
+    const dispatchId = queue.enqueue(
+      { type: 'acquire' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'party-1',
+    );
+    const outcome = queue.registerOutcome(dispatchId!);
+    queue.resetQueue();
+
+    await expect(outcome).resolves.toEqual({ ok: false, code: 'queue_reset' });
+  });
+
+  it('returns null dispatchId for seed-catalog (never hits the network)', async () => {
+    const queue = await loadQueue();
+    const { deps } = fakeDeps({ appState: { party: { id: 'party-1' } }, log: [] });
+    queue.configureQueue(deps);
+
+    const dispatchId = queue.enqueue(
+      { type: 'seed-catalog' } as unknown as Parameters<typeof queue.enqueue>[0],
+      'party-1',
+    );
+    expect(dispatchId).toBeNull();
+    queue.resetQueue();
+  });
+});

@@ -345,7 +345,7 @@ describe('HomebrewForm — magic-item fields (BUG-012)', () => {
     // stacking two modals in the DOM, which trips
     // testing-library pointer-events checks).
     const { partyId } = bootstrap();
-    dispatchMintingAction({
+    void dispatchMintingAction({
       type: 'create-homebrew',
       payload: {
         name: 'Cursed Blade',

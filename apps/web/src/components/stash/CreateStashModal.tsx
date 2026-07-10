@@ -65,18 +65,18 @@ export function CreateStashModal({
     }
   }, [open, reset]);
 
-  function onSubmit(values: FormOutput): void {
-    try {
-      setSubmitError(null);
-      dispatchMintingAction({
-        type: 'create-stash',
-        payload: { ownerCharacterId, name: values.name },
-      });
-      toast.success('Storage stash created');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
+  async function onSubmit(values: FormOutput): Promise<void> {
+    setSubmitError(null);
+    const outcome = await dispatchMintingAction({
+      type: 'create-stash',
+      payload: { ownerCharacterId, name: values.name },
+    });
+    if (!outcome.ok) {
+      setSubmitError(outcome.message ?? 'Unknown error');
+      return;
     }
+    toast.success('Storage stash created');
+    onOpenChange(false);
   }
 
   return (

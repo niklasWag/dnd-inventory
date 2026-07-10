@@ -75,7 +75,7 @@ describe('ItemDetail (M2.5)', () => {
 
   it('renders customName in the header when set, overriding the definition name', () => {
     const { itemInstanceId } = bootstrapWithTorch();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId, patch: { customName: 'Eternal Flame' } },
     });
@@ -190,7 +190,7 @@ describe('ItemDetail — R2.1 rarity + attunement display', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const def = catalog.find((d) => d.id === definitionId);
     if (def === undefined) throw new Error(`bootstrapWithDmgRow: ${definitionId} not in catalog`);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -253,7 +253,7 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
     const def = base.catalog.find((d) => d.id === definitionId);
     if (def === undefined)
       throw new Error(`bootstrapWithChargedRow: ${definitionId} not in catalog`);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -294,7 +294,7 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
       'dmg-2024:wand-of-magic-missiles',
     );
     // Move the wand to the Party Stash; currentCharges clears via cascade.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId,
@@ -425,7 +425,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
     const base = bootstrap();
     const cloak = base.catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection');
     if (cloak === undefined) throw new Error('cloak missing from catalog');
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -452,7 +452,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
 
   it('unidentified row renders "Unknown Magic Item" + Unidentified badge, hides rarity + attunement', () => {
     const { itemInstanceId } = bootstrapWithCloak();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'shimmers faintly' },
     });
@@ -490,7 +490,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
     const user = userEvent.setup();
     const { itemInstanceId } = bootstrapWithCloak();
     // Start unidentified so the hint is meaningful for the smoke flow.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false },
     });
@@ -508,7 +508,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
 
   it('Save hint button is disabled when the input matches the current hint (no-op guard)', () => {
     const { itemInstanceId } = bootstrapWithCloak();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'glows blue' },
     });
@@ -520,7 +520,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
   it('clearing the hint input enables a "Clear" button that dispatches identify with hint: undefined', async () => {
     const user = userEvent.setup();
     const { itemInstanceId } = bootstrapWithCloak();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'glows blue' },
     });
@@ -536,7 +536,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
   it('unidentified Inventory wand hides the charges row (spoiler protection)', () => {
     const base = bootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -547,7 +547,7 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
       },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: wandId, identified: false },
     });

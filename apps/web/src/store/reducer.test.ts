@@ -79,7 +79,7 @@ describe('store plumbing', () => {
 
 describe('reducer: create-character (M1)', () => {
   it('provisions user + party + 2 memberships + character + 3 stashes + 3 currencies', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -103,7 +103,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('character.inventoryStashId references the isCarried stash', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -117,7 +117,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('party.recoveredLootStashId references the recovered-loot scope stash', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -130,7 +130,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('player membership references the new character; dm membership has null characterId', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -145,7 +145,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('one CurrencyHolding row per stash with all denominations zero', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -160,7 +160,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('appends a typed create-character log entry with actorRole=dm', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -180,7 +180,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('produces an AppState that validates against the shared Zod schema', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -190,7 +190,7 @@ describe('reducer: create-character (M1)', () => {
 
   it('rejects a second create-character once one exists', () => {
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -203,7 +203,7 @@ describe('reducer: create-character (M1)', () => {
   });
 
   it('debounced persist round-trips the new state + log through Dexie', async () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -246,7 +246,7 @@ function localBootstrap(): ReturnType<typeof bootstrap> {
 
 describe('reducer: create-character (R4.1-followup)', () => {
   it('honors `partyName` override on the legacy (with-character) branch', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         ...validPayload,
@@ -264,7 +264,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
   });
 
   it('omits character + Inventory + player membership on dmOnly=true', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         dmOnly: true,
@@ -287,7 +287,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
   });
 
   it('emits a `create-character` log entry with dmOnly: true on the DM-only branch', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         dmOnly: true,
@@ -308,7 +308,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
   });
 
   it('persisted state with dmOnly bootstrap round-trips through the shared schema', async () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         dmOnly: true,
@@ -347,7 +347,7 @@ describe('reducer: create-character (R4.1-followup)', () => {
 
 describe('reducer: seed-catalog (M2)', () => {
   it('populates the catalog from an empty state and bumps seedVersion', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -356,7 +356,7 @@ describe('reducer: seed-catalog (M2)', () => {
     expect(before.seedVersion).toBe(0);
 
     const phb = loadPhbSeed();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'seed-catalog',
       payload: { seedVersion: SEED_VERSION, entries: phb },
     });
@@ -370,7 +370,7 @@ describe('reducer: seed-catalog (M2)', () => {
   it('is idempotent: re-applying the same seed yields the same catalog size', () => {
     localBootstrap();
     const sizeAfterFirst = useStore.getState().appState!.catalog.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'seed-catalog',
       payload: { seedVersion: SEED_VERSION, entries: loadPhbSeed() },
     });
@@ -403,7 +403,7 @@ describe('reducer: seed-catalog (M2)', () => {
     });
 
     // Re-seed: PHB entries get upserted, homebrew should survive untouched.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'seed-catalog',
       payload: { seedVersion: SEED_VERSION + 1, entries: loadPhbSeed() },
     });
@@ -416,13 +416,13 @@ describe('reducer: seed-catalog (M2)', () => {
   });
 
   it('logs a seed-catalog entry with the right add/update split', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
     const phb = loadPhbSeed();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'seed-catalog',
       payload: { seedVersion: SEED_VERSION, entries: phb },
     });
@@ -452,7 +452,7 @@ describe('reducer: acquire (M2)', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -475,7 +475,7 @@ describe('reducer: acquire (M2)', () => {
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
 
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -485,7 +485,7 @@ describe('reducer: acquire (M2)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -513,7 +513,7 @@ describe('reducer: acquire (M2)', () => {
     const dagger = catalog.find((d) => d.id === 'phb-2024:dagger')!;
     const { dispatch } = useStore.getState();
 
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -524,7 +524,7 @@ describe('reducer: acquire (M2)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -544,7 +544,7 @@ describe('reducer: acquire (M2)', () => {
   it('logs the acquire entry with actorRole=player', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -607,7 +607,7 @@ describe('reducer: acquire (M2)', () => {
   it('produces AppState that still validates against the shared schema', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -625,7 +625,7 @@ describe('reducer: consume (M2)', () => {
   function bootstrapWithStack(quantity: number): { itemInstanceId: string; stashId: string } {
     const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -641,7 +641,7 @@ describe('reducer: consume (M2)', () => {
 
   it('decrements quantity and keeps the row when consuming part of a stack', () => {
     const { itemInstanceId } = bootstrapWithStack(5);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'consume',
       payload: { itemInstanceId, quantity: 2 },
     });
@@ -657,7 +657,7 @@ describe('reducer: consume (M2)', () => {
 
   it('removes the row and logs removed=true when consuming the full quantity', () => {
     const { itemInstanceId } = bootstrapWithStack(3);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'consume',
       payload: { itemInstanceId, quantity: 3 },
     });
@@ -700,7 +700,7 @@ function bootstrapWithItem(initial: { customName?: string; notes?: string } = {}
 } {
   const { inventoryStashId, catalog } = localBootstrap();
   const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: inventoryStashId,
@@ -732,7 +732,7 @@ function bootstrapWithItem(initial: { customName?: string; notes?: string } = {}
 describe('reducer: edit-item-instance (M2.5)', () => {
   it('updates customName only and logs changedFields: [customName]', () => {
     const { itemInstanceId } = bootstrapWithItem();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId, patch: { customName: 'Glamdring' } },
     });
@@ -752,7 +752,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
 
   it('updates notes only and logs changedFields: [notes]', () => {
     const { itemInstanceId } = bootstrapWithItem({ notes: 'fragile' });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId, patch: { notes: 'broken' } },
     });
@@ -768,7 +768,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
 
   it('updates both fields in one dispatch and logs both in changedFields', () => {
     const { itemInstanceId } = bootstrapWithItem();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId, patch: { customName: 'Sting', notes: 'moonsilver' } },
     });
@@ -788,7 +788,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
 
   it('preserves empty-string notes as a distinct value (decision #4)', () => {
     const { itemInstanceId } = bootstrapWithItem({ notes: 'something' });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId, patch: { notes: '' } },
     });
@@ -872,7 +872,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -883,7 +883,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -899,7 +899,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
 
     // Edit row B's notes to 'A' — would collide with row A's auto-stack key.
     // M2.5 decision #5: rows stay separate (no silent merge, no throw).
-    dispatch({
+    void dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId: rowB.id, patch: { notes: 'A' } },
     });
@@ -914,7 +914,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
   it('logs exactly one entry with actorRole=player and the correct ids', () => {
     const { itemInstanceId } = bootstrapWithItem();
     const beforeLen = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId, patch: { customName: 'X' } },
     });
@@ -929,7 +929,7 @@ describe('reducer: edit-item-instance (M2.5)', () => {
 
   it('produces AppState that still validates against the shared schema', () => {
     const { itemInstanceId } = bootstrapWithItem();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-item-instance',
       payload: { itemInstanceId, patch: { customName: 'Sting', notes: 'moonsilver' } },
     });
@@ -993,7 +993,7 @@ describe('reducer: create-stash (M3)', () => {
     const { characterId } = localBootstrap();
     const beforeCount = useStore.getState().appState!.stashes.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -1019,7 +1019,7 @@ describe('reducer: create-stash (M3)', () => {
   it('appends a matching CurrencyHolding row (all zeros)', () => {
     const { characterId } = localBootstrap();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -1039,7 +1039,7 @@ describe('reducer: create-stash (M3)', () => {
   it('logs a single create-stash entry with the expected payload', () => {
     const { characterId } = localBootstrap();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -1066,7 +1066,7 @@ describe('reducer: create-stash (M3)', () => {
   it('trims leading/trailing whitespace from the name', () => {
     const { characterId } = localBootstrap();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -1136,7 +1136,7 @@ describe('reducer: create-stash (M3)', () => {
 
   it('produces AppState that still validates against the shared schema', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -1153,7 +1153,7 @@ describe('reducer: create-stash (M3)', () => {
     // and the reducer always constructs `isCarried: false`. We assert the
     // invariant after dispatch instead of trying to bypass the type system.
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -1183,7 +1183,7 @@ describe('reducer: rename-stash (M3)', () => {
     recoveredLootStashId: string;
   } {
     const base = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -1200,7 +1200,7 @@ describe('reducer: rename-stash (M3)', () => {
     const { storageStashId } = bootstrapWithStorage('Old name');
     const before = useStore.getState().appState!.stashes.find((st) => st.id === storageStashId)!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-stash',
       payload: { stashId: storageStashId, newName: 'Vault of Waterdeep' },
     });
@@ -1215,7 +1215,7 @@ describe('reducer: rename-stash (M3)', () => {
 
   it('logs a rename-stash entry with oldName + newName', () => {
     const { storageStashId } = bootstrapWithStorage('Before');
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-stash',
       payload: { stashId: storageStashId, newName: 'After' },
     });
@@ -1233,7 +1233,7 @@ describe('reducer: rename-stash (M3)', () => {
 
   it('trims leading/trailing whitespace from newName', () => {
     const { storageStashId } = bootstrapWithStorage();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-stash',
       payload: { stashId: storageStashId, newName: '  Tower  ' },
     });
@@ -1322,7 +1322,7 @@ describe('reducer: rename-stash (M3)', () => {
 
   it('produces AppState that still validates against the shared schema', () => {
     const { storageStashId } = bootstrapWithStorage();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-stash',
       payload: { stashId: storageStashId, newName: 'Renamed' },
     });
@@ -1344,7 +1344,7 @@ describe('reducer: delete-stash (M3)', () => {
     catalog: ReturnType<typeof localBootstrap>['catalog'];
   } {
     const base = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -1363,7 +1363,7 @@ describe('reducer: delete-stash (M3)', () => {
     const beforeCurrencies = useStore.getState().appState!.currencies.length;
     const beforeLog = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'delete-stash',
       payload: { stashId: storageStashId },
     });
@@ -1394,7 +1394,7 @@ describe('reducer: delete-stash (M3)', () => {
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1404,7 +1404,7 @@ describe('reducer: delete-stash (M3)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1419,7 +1419,7 @@ describe('reducer: delete-stash (M3)', () => {
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     const ropeId = useStore.getState().appState!.items.find((i) => i.definitionId === rope.id)!.id;
 
-    dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
 
     const s = useStore.getState().appState!;
     expect(s.items.find((i) => i.id === torchId)?.ownerId).toBe(recoveredLootStashId);
@@ -1433,7 +1433,7 @@ describe('reducer: delete-stash (M3)', () => {
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1443,7 +1443,7 @@ describe('reducer: delete-stash (M3)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1459,7 +1459,7 @@ describe('reducer: delete-stash (M3)', () => {
     const ropeId = useStore.getState().appState!.items.find((i) => i.definitionId === rope.id)!.id;
     const beforeLogLen = useStore.getState().log.length;
 
-    dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
 
     const log = useStore.getState().log;
     const newEntries = log.slice(beforeLogLen);
@@ -1486,7 +1486,7 @@ describe('reducer: delete-stash (M3)', () => {
   it('single transfer entry for a stacked item; itemCount = sum of quantities', () => {
     const { storageStashId, catalog } = bootstrapWithStorage();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1498,7 +1498,9 @@ describe('reducer: delete-stash (M3)', () => {
     });
     const beforeLogLen = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void useStore
+      .getState()
+      .dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
 
     const newEntries = useStore.getState().log.slice(beforeLogLen);
     const transferEntries = newEntries.filter((e) => e.type === 'transfer');
@@ -1519,7 +1521,7 @@ describe('reducer: delete-stash (M3)', () => {
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
     // Pre-seed: one Torch in Recovered Loot.
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: recoveredLootStashId,
@@ -1530,7 +1532,7 @@ describe('reducer: delete-stash (M3)', () => {
       },
     });
     // Now a Torch in the Storage stash (will be transferred on delete).
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1541,7 +1543,7 @@ describe('reducer: delete-stash (M3)', () => {
       },
     });
 
-    dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
 
     const torchesInRecovered = useStore
       .getState()
@@ -1588,7 +1590,9 @@ describe('reducer: delete-stash (M3)', () => {
   it('does NOT emit a currency-change entry when the deleted stash has zero currency', () => {
     const { storageStashId } = bootstrapWithStorage();
     const beforeLogLen = useStore.getState().log.length;
-    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void useStore
+      .getState()
+      .dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
     const newEntries = useStore.getState().log.slice(beforeLogLen);
     expect(newEntries.find((e) => e.type === 'currency-change')).toBeUndefined();
   });
@@ -1611,7 +1615,9 @@ describe('reducer: delete-stash (M3)', () => {
     });
     const beforeLogLen = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void useStore
+      .getState()
+      .dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
 
     const newEntries = useStore.getState().log.slice(beforeLogLen);
     const currencyEntries = newEntries.filter((e) => e.type === 'currency-change');
@@ -1645,7 +1651,7 @@ describe('reducer: delete-stash (M3)', () => {
   it('produces AppState that still validates against the shared schema after cascade', () => {
     const { storageStashId, catalog } = bootstrapWithStorage();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1655,14 +1661,16 @@ describe('reducer: delete-stash (M3)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void useStore
+      .getState()
+      .dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
     expect(() => appStateSchema.parse(useStore.getState().appState)).not.toThrow();
   });
 
   it('all entries in a cascade share actorUserId / actorRole / partyId', () => {
     const { storageStashId, catalog } = bootstrapWithStorage();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -1674,7 +1682,9 @@ describe('reducer: delete-stash (M3)', () => {
     });
     const beforeLogLen = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
+    void useStore
+      .getState()
+      .dispatch({ type: 'delete-stash', payload: { stashId: storageStashId } });
 
     const newEntries = useStore.getState().log.slice(beforeLogLen);
     const userId = useStore.getState().appState!.user.id;
@@ -1700,7 +1710,7 @@ describe('reducer: currency-change (M4)', () => {
 
   it('applies a positive delta and logs reason=deposit', () => {
     const { inventoryStashId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1724,7 +1734,7 @@ describe('reducer: currency-change (M4)', () => {
   it('applies a negative delta and logs reason=withdraw', () => {
     const { inventoryStashId } = localBootstrap();
     // Seed +1 gp first.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1733,7 +1743,7 @@ describe('reducer: currency-change (M4)', () => {
       },
     });
     // Now withdraw it back to zero.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1754,7 +1764,7 @@ describe('reducer: currency-change (M4)', () => {
   it('applies a mixed delta (convert path: 100 sp → 10 gp)', () => {
     const { inventoryStashId } = localBootstrap();
     // Seed 100 sp.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1763,7 +1773,7 @@ describe('reducer: currency-change (M4)', () => {
       },
     });
     // Convert: -100 sp + +10 gp.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1828,7 +1838,7 @@ describe('reducer: currency-change (M4)', () => {
   it('refuses a convert that would push the source negative', () => {
     const { inventoryStashId } = localBootstrap();
     // Seed only 50 gp.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1864,7 +1874,7 @@ describe('reducer: currency-change (M4)', () => {
 
   it('log entry carries actorRole=player, actorUserId=state.user.id, partyId=state.party.id', () => {
     const { inventoryStashId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1883,7 +1893,7 @@ describe('reducer: currency-change (M4)', () => {
 
   it('state validates against appStateSchema after a currency-change dispatch', () => {
     const { inventoryStashId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -1897,11 +1907,11 @@ describe('reducer: currency-change (M4)', () => {
   it('two consecutive +1 gp dispatches accumulate to 2 gp', () => {
     const { inventoryStashId } = localBootstrap();
     const delta = { cp: 0, sp: 0, ep: 0, gp: 1, pp: 0 } as const;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: { stashId: inventoryStashId, delta, reason: 'deposit' },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: { stashId: inventoryStashId, delta, reason: 'deposit' },
     });
@@ -1913,7 +1923,7 @@ describe('reducer: currency-change (M4)', () => {
 
   it('applies cleanly to Storage stash holdings (no special-casing by scope)', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -1923,7 +1933,7 @@ describe('reducer: currency-change (M4)', () => {
       },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: storageStashId,
@@ -1958,7 +1968,7 @@ describe('reducer: transfer (M5)', () => {
     catalog: ReturnType<typeof localBootstrap>['catalog'];
   } {
     const base = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -1974,7 +1984,7 @@ describe('reducer: transfer (M5)', () => {
   it('moves the whole stack to an empty destination (no auto-stack target)', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1986,7 +1996,7 @@ describe('reducer: transfer (M5)', () => {
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2007,7 +2017,7 @@ describe('reducer: transfer (M5)', () => {
   it('partial transfer: source decremented, new row in destination, both rows exist', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2019,7 +2029,7 @@ describe('reducer: transfer (M5)', () => {
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2044,7 +2054,7 @@ describe('reducer: transfer (M5)', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     // Seed destination with 1 torch (auto-stack target).
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -2056,7 +2066,7 @@ describe('reducer: transfer (M5)', () => {
     });
     const destId = useStore.getState().appState!.items[0]!.id;
     // Seed inventory with 3 torches.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2070,7 +2080,7 @@ describe('reducer: transfer (M5)', () => {
       .getState()
       .appState!.items.find((i) => i.ownerId === inventoryStashId)!.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2091,7 +2101,7 @@ describe('reducer: transfer (M5)', () => {
   it('auto-stacks onto matching destination (partial move)', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -2102,7 +2112,7 @@ describe('reducer: transfer (M5)', () => {
       },
     });
     const destId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2116,7 +2126,7 @@ describe('reducer: transfer (M5)', () => {
       .getState()
       .appState!.items.find((i) => i.ownerId === inventoryStashId)!.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2138,7 +2148,7 @@ describe('reducer: transfer (M5)', () => {
   it('respects notes in the auto-stack key (different notes => no merge)', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -2149,7 +2159,7 @@ describe('reducer: transfer (M5)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2162,7 +2172,7 @@ describe('reducer: transfer (M5)', () => {
     });
     const sourceId = useStore.getState().appState!.items.find((i) => i.notes === 'unlit')!.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2182,7 +2192,7 @@ describe('reducer: transfer (M5)', () => {
   it('emits one transfer log entry with the surviving destination row id', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -2193,7 +2203,7 @@ describe('reducer: transfer (M5)', () => {
       },
     });
     const destId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2208,7 +2218,7 @@ describe('reducer: transfer (M5)', () => {
       .appState!.items.find((i) => i.ownerId === inventoryStashId)!.id;
     const beforeLogLen = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2234,7 +2244,7 @@ describe('reducer: transfer (M5)', () => {
   it('rejects same-stash transfer (no-op)', () => {
     const { inventoryStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2278,7 +2288,7 @@ describe('reducer: transfer (M5)', () => {
   it('rejects unknown toStashId', () => {
     const { inventoryStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2306,7 +2316,7 @@ describe('reducer: transfer (M5)', () => {
   it('rejects over-quantity transfer', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2334,7 +2344,7 @@ describe('reducer: transfer (M5)', () => {
   it('rejects non-positive quantity', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2362,7 +2372,7 @@ describe('reducer: transfer (M5)', () => {
   it('produces an AppState that still validates against the shared schema', () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2373,7 +2383,7 @@ describe('reducer: transfer (M5)', () => {
       },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2389,7 +2399,7 @@ describe('reducer: transfer (M5)', () => {
   it('round-trips through Dexie persistence', async () => {
     const { inventoryStashId, storageStashId, catalog } = bootstrapTransfer();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2400,7 +2410,7 @@ describe('reducer: transfer (M5)', () => {
       },
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: sourceId,
@@ -2434,7 +2444,7 @@ describe('reducer: split (M5)', () => {
   function bootstrapWithStack(quantity: number): { itemInstanceId: string; stashId: string } {
     const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2450,7 +2460,7 @@ describe('reducer: split (M5)', () => {
 
   it('splits a stack into two rows, source decremented, new row created with the split qty', () => {
     const { itemInstanceId, stashId } = bootstrapWithStack(5);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split',
       payload: { itemInstanceId, quantity: 2, ...splitIds(), ...splitIds() },
     });
@@ -2469,7 +2479,7 @@ describe('reducer: split (M5)', () => {
   it('carries over `notes` to the new row', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -2482,7 +2492,7 @@ describe('reducer: split (M5)', () => {
     });
     const sourceId = useStore.getState().appState!.items[0]!.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split',
       payload: { itemInstanceId: sourceId, quantity: 1, ...splitIds(), ...splitIds() },
     });
@@ -2507,7 +2517,7 @@ describe('reducer: split (M5)', () => {
       };
     });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split',
       payload: { itemInstanceId, quantity: 1, ...splitIds(), ...splitIds() },
     });
@@ -2520,7 +2530,7 @@ describe('reducer: split (M5)', () => {
     const { itemInstanceId } = bootstrapWithStack(5);
     const beforeLogLen = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split',
       payload: { itemInstanceId, quantity: 2, ...splitIds(), ...splitIds() },
     });
@@ -2592,7 +2602,7 @@ describe('reducer: split (M5)', () => {
 
   it('produces an AppState that still validates against the shared schema', () => {
     const { itemInstanceId } = bootstrapWithStack(5);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split',
       payload: { itemInstanceId, quantity: 2, ...splitIds(), ...splitIds() },
     });
@@ -2647,7 +2657,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
 
   it('moves currency from source to destination atomically (Inventory → Storage)', () => {
     const base = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -2659,7 +2669,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     seedHolding(base.inventoryStashId, { gp: 10 });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-transfer',
       payload: {
         fromStashId: base.inventoryStashId,
@@ -2679,7 +2689,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
     const { inventoryStashId, partyStashId } = localBootstrap();
     seedHolding(inventoryStashId, { gp: 5 });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-transfer',
       payload: {
         fromStashId: inventoryStashId,
@@ -2699,7 +2709,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
     const { inventoryStashId, partyStashId } = localBootstrap();
     seedHolding(partyStashId, { gp: 10 });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-transfer',
       payload: {
         fromStashId: partyStashId,
@@ -2717,7 +2727,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
     const { inventoryStashId, partyStashId } = localBootstrap();
     seedHolding(inventoryStashId, { cp: 50, sp: 10, gp: 2 });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-transfer',
       payload: {
         fromStashId: inventoryStashId,
@@ -2738,7 +2748,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
     seedHolding(inventoryStashId, { gp: 5 });
     const beforeLogLen = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-transfer',
       payload: {
         fromStashId: inventoryStashId,
@@ -2853,7 +2863,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
   it('produces an AppState that still validates against the shared schema', () => {
     const { inventoryStashId, partyStashId } = localBootstrap();
     seedHolding(inventoryStashId, { gp: 5 });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-transfer',
       payload: {
         fromStashId: inventoryStashId,
@@ -2867,7 +2877,7 @@ describe('reducer: currency-transfer (M5.5)', () => {
   it('round-trips through Dexie persistence', async () => {
     const { inventoryStashId, partyStashId } = localBootstrap();
     seedHolding(inventoryStashId, { gp: 5 });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-transfer',
       payload: {
         fromStashId: inventoryStashId,
@@ -2894,7 +2904,7 @@ describe('reducer: create-homebrew (M6)', () => {
     const userId = useStore.getState().appState!.user.id;
     const partyId = useStore.getState().appState!.party.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: {
         name: 'Glowing Mushroom',
@@ -2927,7 +2937,7 @@ describe('reducer: create-homebrew (M6)', () => {
     localBootstrap();
     const beforeLog = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: { name: 'Foobar', category: 'gear', ...createHomebrewIds(), ...createHomebrewIds() },
     });
@@ -2947,7 +2957,7 @@ describe('reducer: create-homebrew (M6)', () => {
     const { catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: {
         name: 'Glowing Torch',
@@ -2990,7 +3000,7 @@ describe('reducer: create-homebrew (M6)', () => {
 
   it('trims name before storing', () => {
     localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: {
         name: '  Trimmed  ',
@@ -3004,7 +3014,7 @@ describe('reducer: create-homebrew (M6)', () => {
 
   it('persisted state validates against appStateSchema', () => {
     localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: { name: 'Foo', category: 'gear', ...createHomebrewIds(), ...createHomebrewIds() },
     });
@@ -3022,7 +3032,7 @@ describe('reducer: edit-homebrew (M6)', () => {
     catalog: ReturnType<typeof localBootstrap>['catalog'];
   } {
     const base = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: {
         name: 'Glowing Mushroom',
@@ -3037,7 +3047,7 @@ describe('reducer: edit-homebrew (M6)', () => {
 
   it('updates name on the catalog row', () => {
     const { homebrewDefId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-homebrew',
       payload: { definitionId: homebrewDefId, patch: { name: 'Bazqux' } },
     });
@@ -3048,7 +3058,7 @@ describe('reducer: edit-homebrew (M6)', () => {
   it('logs only the changed field names in changedFields', () => {
     const { homebrewDefId } = bootstrapWithLocalHomebrew();
     const beforeLog = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-homebrew',
       payload: { definitionId: homebrewDefId, patch: { name: 'New' } },
     });
@@ -3061,7 +3071,7 @@ describe('reducer: edit-homebrew (M6)', () => {
 
   it('logs multiple changed fields in one entry', () => {
     const { homebrewDefId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-homebrew',
       payload: {
         definitionId: homebrewDefId,
@@ -3120,7 +3130,7 @@ describe('reducer: edit-homebrew (M6)', () => {
 
   it('clearing optional cost via undefined removes the field', () => {
     localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: {
         name: 'X',
@@ -3130,7 +3140,7 @@ describe('reducer: edit-homebrew (M6)', () => {
       },
     });
     const defId = useStore.getState().appState!.catalog.at(-1)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-homebrew',
       payload: { definitionId: defId, patch: { cost: undefined } },
     });
@@ -3144,7 +3154,7 @@ describe('reducer: edit-homebrew (M6)', () => {
     // confirms the join surface (the catalog row name) updates and
     // the instance keeps the link.
     const { homebrewDefId, inventoryStashId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -3154,7 +3164,7 @@ describe('reducer: edit-homebrew (M6)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-homebrew',
       payload: { definitionId: homebrewDefId, patch: { name: 'Renamed' } },
     });
@@ -3175,7 +3185,7 @@ describe('reducer: delete-homebrew (M6)', () => {
     catalog: ReturnType<typeof localBootstrap>['catalog'];
   } {
     const base = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: {
         name: 'Glowing Mushroom',
@@ -3190,7 +3200,7 @@ describe('reducer: delete-homebrew (M6)', () => {
 
   it('removes the homebrew row when no instances reference it', () => {
     const { homebrewDefId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'delete-homebrew',
       payload: { definitionId: homebrewDefId },
     });
@@ -3200,7 +3210,7 @@ describe('reducer: delete-homebrew (M6)', () => {
 
   it('emits a delete-homebrew log entry with name snapshot', () => {
     const { homebrewDefId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'delete-homebrew',
       payload: { definitionId: homebrewDefId },
     });
@@ -3212,7 +3222,7 @@ describe('reducer: delete-homebrew (M6)', () => {
 
   it('rejects deletion when one or more ItemInstances reference it', () => {
     const { homebrewDefId, inventoryStashId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -3254,7 +3264,7 @@ describe('reducer: delete-homebrew (M6)', () => {
 
   it('persisted state validates against appStateSchema after delete', () => {
     const { homebrewDefId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'delete-homebrew',
       payload: { definitionId: homebrewDefId },
     });
@@ -3263,7 +3273,7 @@ describe('reducer: delete-homebrew (M6)', () => {
 
   it('log entry parses against transactionLogEntrySchema', () => {
     const { homebrewDefId } = bootstrapWithLocalHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'delete-homebrew',
       payload: { definitionId: homebrewDefId },
     });
@@ -3283,7 +3293,7 @@ describe('reducer: rename-character (M7)', () => {
     const { characterId } = localBootstrap();
     const before = useStore.getState().appState!.characters.find((c) => c.id === characterId)!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-character',
       payload: { characterId, newName: 'Thorin Stonefist' },
     });
@@ -3304,7 +3314,7 @@ describe('reducer: rename-character (M7)', () => {
       .getState()
       .appState!.characters.find((c) => c.id === characterId)!.name;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-character',
       payload: { characterId, newName: 'Bara of Waterdeep' },
     });
@@ -3323,7 +3333,7 @@ describe('reducer: rename-character (M7)', () => {
 
   it('trims leading/trailing whitespace from newName', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-character',
       payload: { characterId, newName: '  Aldric  ' },
     });
@@ -3385,7 +3395,7 @@ describe('reducer: rename-character (M7)', () => {
 
   it('produces AppState that still validates against the shared schema', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-character',
       payload: { characterId, newName: 'Renamed Hero' },
     });
@@ -3394,7 +3404,7 @@ describe('reducer: rename-character (M7)', () => {
 
   it('log entry parses against transactionLogEntrySchema', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-character',
       payload: { characterId, newName: 'Logged' },
     });
@@ -3414,7 +3424,7 @@ describe('reducer: rename-party (M7)', () => {
     localBootstrap();
     const before = useStore.getState().appState!.party;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId: before.id, newName: 'The Misfits' },
     });
@@ -3433,7 +3443,7 @@ describe('reducer: rename-party (M7)', () => {
     const partyId = useStore.getState().appState!.party.id;
     const oldName = useStore.getState().appState!.party.name;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId, newName: 'New Campaign' },
     });
@@ -3453,7 +3463,7 @@ describe('reducer: rename-party (M7)', () => {
   it('trims leading/trailing whitespace from newName', () => {
     localBootstrap();
     const partyId = useStore.getState().appState!.party.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId, newName: '  Heroes United  ' },
     });
@@ -3516,7 +3526,7 @@ describe('reducer: rename-party (M7)', () => {
   it('produces AppState that still validates against the shared schema', () => {
     localBootstrap();
     const partyId = useStore.getState().appState!.party.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId, newName: 'Validated' },
     });
@@ -3526,7 +3536,7 @@ describe('reducer: rename-party (M7)', () => {
   it('log entry parses against transactionLogEntrySchema', () => {
     localBootstrap();
     const partyId = useStore.getState().appState!.party.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId, newName: 'Schema OK' },
     });
@@ -3551,7 +3561,7 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
     expect(before.encumbranceRule).toBe('off');
     expect(before.enforceEncumbrance).toBe(false);
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: false },
     });
@@ -3567,19 +3577,19 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
 
   it('flips through off → phb → variant → off', () => {
     const { partyId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'phb', enforce: false },
     });
     expect(useStore.getState().appState!.party.encumbranceRule).toBe('phb');
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: false },
     });
     expect(useStore.getState().appState!.party.encumbranceRule).toBe('variant');
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'off', enforce: false },
     });
@@ -3589,12 +3599,12 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
   it('flips enforce independently of rule', () => {
     const { partyId } = localBootstrap();
     // First set the rule so enforce flipping makes sense.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: false },
     });
     // Now flip ONLY enforce.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: true },
     });
@@ -3606,7 +3616,7 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
   it('logs a set-encumbrance entry with old/new for both fields', () => {
     const { partyId } = localBootstrap();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: true },
     });
@@ -3638,7 +3648,7 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
   it('does NOT throw when only enforce changes (rule stays)', () => {
     const { partyId } = localBootstrap();
     // off → variant first (so the no-op flip below isn't bookending an off-with-enforce state which is meaningless).
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: false },
     });
@@ -3671,7 +3681,7 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
 
   it('produces AppState that still validates against the shared schema', () => {
     const { partyId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: true },
     });
@@ -3680,7 +3690,7 @@ describe('reducer: set-encumbrance (R1.1; party-scoped since BUG-011)', () => {
 
   it('log entry parses against transactionLogEntrySchema', () => {
     const { partyId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'phb', enforce: false },
     });
@@ -3703,7 +3713,7 @@ describe('reducer: update-party-economy (R6.1)', () => {
 
   it('updates both fields atomically', () => {
     const { partyId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
     });
@@ -3724,7 +3734,7 @@ describe('reducer: update-party-economy (R6.1)', () => {
 
   it('accepts a one-field-changed write (priceModifier only)', () => {
     const { partyId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId, priceModifier: 2.0, baseCurrency: 'gp' },
     });
@@ -3733,7 +3743,7 @@ describe('reducer: update-party-economy (R6.1)', () => {
 
   it('logs an update-party-economy entry with old/new for both fields', () => {
     const { partyId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId, priceModifier: 0.5, baseCurrency: 'ep' },
     });
@@ -3752,7 +3762,7 @@ describe('reducer: update-party-economy (R6.1)', () => {
 
   it('log entry parses against transactionLogEntrySchema (update-party-economy)', () => {
     const { partyId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
     });
@@ -3774,7 +3784,7 @@ describe('reducer: create-shop (R6.2)', () => {
   it('adds a shop with default modifiers + empty stock + closed', () => {
     localBootstrap();
     const newShopId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId, name: 'General Store' } });
     const shops = useStore.getState().appState!.shops;
@@ -3792,7 +3802,7 @@ describe('reducer: create-shop (R6.2)', () => {
   it('rejects duplicate shopId', () => {
     localBootstrap();
     const newShopId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
     expect(() =>
       useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'B' } }),
     ).toThrow(/already exists/);
@@ -3803,8 +3813,8 @@ describe('reducer: edit-shop (R6.2)', () => {
   it('updates name + priceModifier atomically', () => {
     localBootstrap();
     const newShopId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({
       type: 'edit-shop',
       payload: { shopId: newShopId, patch: { name: 'B', priceModifier: 1.2 } },
     });
@@ -3816,7 +3826,7 @@ describe('reducer: edit-shop (R6.2)', () => {
   it('rejects a no-op edit', () => {
     localBootstrap();
     const newShopId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
     expect(() =>
       useStore.getState().dispatch({
         type: 'edit-shop',
@@ -3830,8 +3840,8 @@ describe('reducer: delete-shop (R6.2)', () => {
   it('removes the shop and logs its name', () => {
     localBootstrap();
     const newShopId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
-    useStore.getState().dispatch({ type: 'delete-shop', payload: { shopId: newShopId } });
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({ type: 'delete-shop', payload: { shopId: newShopId } });
     expect(useStore.getState().appState!.shops).toEqual([]);
     const last = useStore.getState().log.at(-1)!;
     expect(last.type).toBe('delete-shop');
@@ -3842,8 +3852,8 @@ describe('reducer: set-shop-open (R6.2)', () => {
   it('flips isOpen', () => {
     localBootstrap();
     const newShopId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
-    useStore
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore
       .getState()
       .dispatch({ type: 'set-shop-open', payload: { shopId: newShopId, isOpen: true } });
     expect(useStore.getState().appState!.shops[0]!.isOpen).toBe(true);
@@ -3852,7 +3862,7 @@ describe('reducer: set-shop-open (R6.2)', () => {
   it('rejects a no-op flip (same value)', () => {
     localBootstrap();
     const newShopId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
     expect(() =>
       useStore
         .getState()
@@ -3866,8 +3876,8 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
     localBootstrap();
     const newShopId = newUuidV7();
     const newStockEntryId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId: newShopId,
@@ -3892,8 +3902,8 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
     localBootstrap();
     const newShopId = newUuidV7();
     const stockId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId: newShopId,
@@ -3905,7 +3915,7 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
         },
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId: newShopId,
@@ -3919,8 +3929,8 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
     localBootstrap();
     const newShopId = newUuidV7();
     const stockId = newUuidV7();
-    useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({ type: 'create-shop', payload: { newShopId, name: 'A' } });
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId: newShopId,
@@ -3932,7 +3942,7 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
         },
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId: newShopId,
@@ -3948,7 +3958,7 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
   it('rejects add when the def has no catalog cost and no priceOverride', () => {
     localBootstrap();
     const shopId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
     expect(() =>
@@ -3971,10 +3981,10 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
     localBootstrap();
     const shopId = newUuidV7();
     const stockEntryId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId,
@@ -3999,10 +4009,10 @@ describe('reducer: edit-shop-stock (R6.2)', () => {
     localBootstrap();
     const shopId = newUuidV7();
     const stockEntryId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId,
@@ -4041,10 +4051,10 @@ describe('reducer: purchase (R6.2)', () => {
     const b = localBootstrap();
     const shopId = newUuidV7();
     const stockEntryId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId,
@@ -4056,7 +4066,7 @@ describe('reducer: purchase (R6.2)', () => {
         },
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: b.inventoryStashId,
@@ -4074,7 +4084,7 @@ describe('reducer: purchase (R6.2)', () => {
 
   it('debits buyer + creates ItemInstance + decrements stock', () => {
     const { shopId, stockEntryId, inventoryStashId } = bootstrapShopWithRope(5);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'purchase',
       payload: {
         shopId,
@@ -4093,7 +4103,7 @@ describe('reducer: purchase (R6.2)', () => {
 
   it('unlimited stock is not decremented', () => {
     const { shopId, stockEntryId, inventoryStashId } = bootstrapShopWithRope(-1);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'purchase',
       payload: {
         shopId,
@@ -4126,10 +4136,10 @@ describe('reducer: purchase (R6.2)', () => {
     const b = localBootstrap();
     const shopId = newUuidV7();
     const stockEntryId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId,
@@ -4159,10 +4169,10 @@ describe('reducer: purchase (R6.2)', () => {
     const b = localBootstrap();
     const shopId = newUuidV7();
     const stockEntryId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId,
@@ -4175,7 +4185,7 @@ describe('reducer: purchase (R6.2)', () => {
         },
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: b.inventoryStashId,
@@ -4184,11 +4194,11 @@ describe('reducer: purchase (R6.2)', () => {
       },
     });
     // Even under silver-standard the override should NOT scale.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId: b.partyId, priceModifier: 0.1, baseCurrency: 'sp' },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'purchase',
       payload: {
         shopId,
@@ -4207,7 +4217,7 @@ describe('reducer: purchase (R6.2)', () => {
 
   it('auto-stacks into existing inventory row', () => {
     const { shopId, stockEntryId, inventoryStashId } = bootstrapShopWithRope(10);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'purchase',
       payload: {
         shopId,
@@ -4217,7 +4227,7 @@ describe('reducer: purchase (R6.2)', () => {
         newItemInstanceId: newUuidV7(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'purchase',
       payload: {
         shopId,
@@ -4237,10 +4247,10 @@ describe('reducer: sale (R6.2)', () => {
   it('consumes item + credits seller + inserts new stock row', () => {
     const b = localBootstrap();
     const shopId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: b.inventoryStashId,
@@ -4252,7 +4262,7 @@ describe('reducer: sale (R6.2)', () => {
     });
     const itemId = useStore.getState().appState!.items[0]!.id;
     const newStockEntryId = newUuidV7();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'sale',
       payload: { shopId, itemInstanceId: itemId, quantity: 2, newStockEntryId },
     });
@@ -4270,10 +4280,10 @@ describe('reducer: sale (R6.2)', () => {
     const b = localBootstrap();
     const shopId = newUuidV7();
     const existingStockId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-shop-stock',
       payload: {
         shopId,
@@ -4285,7 +4295,7 @@ describe('reducer: sale (R6.2)', () => {
         },
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: b.inventoryStashId,
@@ -4296,7 +4306,7 @@ describe('reducer: sale (R6.2)', () => {
       },
     });
     const itemId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'sale',
       payload: {
         shopId,
@@ -4313,10 +4323,10 @@ describe('reducer: sale (R6.2)', () => {
   it('drops the item row when quantity reaches zero', () => {
     const b = localBootstrap();
     const shopId = newUuidV7();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'create-shop', payload: { newShopId: shopId, name: 'A' } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: b.inventoryStashId,
@@ -4327,7 +4337,7 @@ describe('reducer: sale (R6.2)', () => {
       },
     });
     const itemId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'sale',
       payload: {
         shopId,
@@ -4357,7 +4367,7 @@ describe('reducer: equip / unequip (R1.2)', () => {
   } {
     const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -4373,7 +4383,7 @@ describe('reducer: equip / unequip (R1.2)', () => {
 
   it('flips equipped=false → true on an Inventory row', () => {
     const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'equip',
       payload: { characterId, itemInstanceId },
     });
@@ -4383,8 +4393,8 @@ describe('reducer: equip / unequip (R1.2)', () => {
 
   it('flips equipped=true → false via unequip', () => {
     const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
-    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    void useStore.getState().dispatch({
       type: 'unequip',
       payload: { characterId, itemInstanceId },
     });
@@ -4394,7 +4404,7 @@ describe('reducer: equip / unequip (R1.2)', () => {
 
   it('appends a typed equip log entry with the characterId payload', () => {
     const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
-    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    void useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
     const last = useStore.getState().log.at(-1)!;
     expect(last.type).toBe('equip');
     expect(() => transactionLogEntrySchema.parse(last)).not.toThrow();
@@ -4407,7 +4417,7 @@ describe('reducer: equip / unequip (R1.2)', () => {
   it('rejects equip of a row that lives in the Party Stash (Inventory-only invariant)', () => {
     const { characterId, partyStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: partyStashId,
@@ -4430,7 +4440,7 @@ describe('reducer: equip / unequip (R1.2)', () => {
 
   it('rejects no-op equip (already equipped)', () => {
     const { characterId, itemInstanceId } = bootstrapWithTorchInInventory();
-    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    void useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
     expect(() =>
       useStore.getState().dispatch({
         type: 'equip',
@@ -4478,7 +4488,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
     // magic-item gate (covered in its own describe block below).
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     for (let i = 0; i < count; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -4499,7 +4509,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
 
   it('flips attuned=false → true', () => {
     const { characterId, ids } = bootstrapWithAttunables(1);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: ids[0]! },
     });
@@ -4510,7 +4520,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
   it('respects the slot cap — 4th attune rejects when maxAttunement = 3 (default)', () => {
     const { characterId, ids } = bootstrapWithAttunables(4);
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'attune',
         payload: { characterId, itemInstanceId: ids[i]! },
       });
@@ -4527,16 +4537,16 @@ describe('reducer: attune / unattune (R1.2)', () => {
   it('un-attuning frees a slot for the next attune', () => {
     const { characterId, ids } = bootstrapWithAttunables(4);
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'attune',
         payload: { characterId, itemInstanceId: ids[i]! },
       });
     }
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'unattune',
       payload: { characterId, itemInstanceId: ids[0]! },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: ids[3]! },
     });
@@ -4546,7 +4556,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
   it('rejects attune of a row in Party Stash (Inventory-only invariant)', () => {
     const { characterId, partyStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: partyStashId,
@@ -4567,7 +4577,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
 
   it('rejects no-op attune / unattune', () => {
     const { characterId, ids } = bootstrapWithAttunables(1);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: ids[0]! },
     });
@@ -4577,7 +4587,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
         payload: { characterId, itemInstanceId: ids[0]! },
       }),
     ).toThrow(/already attuned=true/);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'unattune',
       payload: { characterId, itemInstanceId: ids[0]! },
     });
@@ -4591,7 +4601,7 @@ describe('reducer: attune / unattune (R1.2)', () => {
 
   it('logs typed attune entries that round-trip through the schema', () => {
     const { characterId, ids } = bootstrapWithAttunables(1);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: ids[0]! },
     });
@@ -4620,7 +4630,7 @@ describe('reducer: attune cap-override (R4.3.d)', () => {
     const { characterId, inventoryStashId, catalog } = localBootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     for (let i = 0; i < count; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -4643,14 +4653,14 @@ describe('reducer: attune cap-override (R4.3.d)', () => {
     const { characterId, ids } = bootstrapWithAttunables(4);
     // Fill 3 slots normally.
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'attune',
         payload: { characterId, itemInstanceId: ids[i]! },
       });
     }
     // 4th normally would fail (default cap 3).
     // With overrideCap: true, it succeeds.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: ids[3]!, overrideCap: true },
     });
@@ -4660,7 +4670,7 @@ describe('reducer: attune cap-override (R4.3.d)', () => {
   it('attune without overrideCap still respects the slot cap', () => {
     const { characterId, ids } = bootstrapWithAttunables(4);
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'attune',
         payload: { characterId, itemInstanceId: ids[i]! },
       });
@@ -4677,7 +4687,7 @@ describe('reducer: attune cap-override (R4.3.d)', () => {
   it('attune with overrideCap: false still respects the slot cap', () => {
     const { characterId, ids } = bootstrapWithAttunables(4);
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'attune',
         payload: { characterId, itemInstanceId: ids[i]! },
       });
@@ -4694,12 +4704,12 @@ describe('reducer: attune cap-override (R4.3.d)', () => {
   it('overrideCap: true is preserved on the log entry (audit trail)', () => {
     const { characterId, ids } = bootstrapWithAttunables(4);
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'attune',
         payload: { characterId, itemInstanceId: ids[i]! },
       });
     }
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: ids[3]!, overrideCap: true },
     });
@@ -4723,7 +4733,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
   it('rejects attune on a mundane PHB row (Torch); state unchanged, no log entry', () => {
     const { characterId, inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -4751,7 +4761,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
   it('accepts attune on a DMG row with requiresAttunement:true', () => {
     const { characterId, inventoryStashId, catalog } = localBootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -4778,7 +4788,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
     // reducer must let users clean it up via `unattune`.
     const { characterId, inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -4819,7 +4829,7 @@ describe('reducer: attune magic-item gate (R2.1)', () => {
     // magic-item one.
     const { characterId, partyStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: partyStashId,
@@ -4878,7 +4888,7 @@ describe('reducer: edit-character (R1.2)', () => {
    */
   it('updates species and class in one dispatch; log records both fields', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-character',
       payload: { characterId, patch: { species: 'Elf', class: 'Wizard' } },
     });
@@ -4894,7 +4904,7 @@ describe('reducer: edit-character (R1.2)', () => {
 
   it('updates str (stored on abilityScores.STR) and logs as str', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-character',
       payload: { characterId, patch: { str: 18 } },
     });
@@ -4908,7 +4918,7 @@ describe('reducer: edit-character (R1.2)', () => {
 
   it('updates maxAttunement (the DM-editable field per §8.1)', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-character',
       payload: { characterId, patch: { maxAttunement: 5 } },
     });
@@ -4947,7 +4957,7 @@ describe('reducer: edit-character (R1.2)', () => {
 
   it('logs an edit-character entry that round-trips through the schema', () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'edit-character',
       payload: { characterId, patch: { level: 4 } },
     });
@@ -4977,7 +4987,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
   } {
     const { characterId, inventoryStashId, partyStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -4988,7 +4998,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
       },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    void useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
     return { characterId, inventoryStashId, partyStashId, itemInstanceId };
   }
 
@@ -4996,7 +5006,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     const { partyStashId, itemInstanceId } = setupEquippedTorch();
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId,
@@ -5031,7 +5041,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     // R2.1 — use a DMG magic item so `attune` doesn't reject under the
     // mundane-item gate. Cascade behaviour is orthogonal to the gate.
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5042,9 +5052,9 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
       },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId } });
+    void useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId } });
     // Create a Storage stash to transfer into.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -5057,7 +5067,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
       .getState()
       .appState!.stashes.find((st) => st.name === 'Vault')!.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId,
@@ -5072,7 +5082,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     expect(moved!.attuned).toBe(false);
 
     // Slot is free again — attuning a fresh row succeeds without rejection.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5097,7 +5107,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     // is a no-op when the source is already at the placeholder values.
     const { inventoryStashId, partyStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5110,7 +5120,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId,
@@ -5133,7 +5143,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     // equip there) — so this is the cascade-doesn't-fire case.
     const { partyStashId, recoveredLootStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: partyStashId,
@@ -5146,7 +5156,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId,
@@ -5167,7 +5177,7 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
     // category in R1.2 (the property-based slot conflict rule is advisory
     // only) so a wand is fine for the equip leg too.
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5178,11 +5188,11 @@ describe('reducer: transfer cascade — leave-Inventory clears equipped/attuned 
       },
     });
     const itemInstanceId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
-    useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId } });
+    void useStore.getState().dispatch({ type: 'equip', payload: { characterId, itemInstanceId } });
+    void useStore.getState().dispatch({ type: 'attune', payload: { characterId, itemInstanceId } });
 
     const logLenBefore = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId,
@@ -5232,7 +5242,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
     if (backpack === undefined || rations === undefined) {
       throw new Error('PHB seed missing backpack or rations definition');
     }
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5249,7 +5259,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
     // each child independently. Distinct `notes` keeps them as 3 rows.
     const rationIds: string[] = [];
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -5279,7 +5289,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
   it('moves child rows when the parent container is transferred', () => {
     const { partyStashId, backpackId } = bootstrapWithBackpackAndRations();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: backpackId,
@@ -5305,7 +5315,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
     const { partyStashId, backpackId } = bootstrapWithBackpackAndRations();
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: backpackId,
@@ -5333,7 +5343,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
       return;
     }
     // Add a loose rope row to Inventory (not a child of the backpack).
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5344,7 +5354,7 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
       },
     });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: backpackId,
@@ -5367,12 +5377,12 @@ describe('reducer: transfer cascade — container contents follow (R1.3)', () =>
     // trip the cascade themselves.
     const { partyStashId, backpackId } = bootstrapWithBackpackAndRations();
     const characterId = useStore.getState().appState!.characters[0]!.id;
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'equip', payload: { characterId, itemInstanceId: backpackId } });
 
     const logLenBefore = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: backpackId,
@@ -5410,7 +5420,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
    */
 
   function enableEnforce(partyId: string, rule: 'phb' | 'variant'): void {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule, enforce: true },
     });
@@ -5422,7 +5432,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     enableEnforce(partyId, 'variant');
 
     // Pre-load to 160 lb (16 × 10) — exactly at cap, no reject.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5438,7 +5448,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
 
     // Adding one more pushes to 170 lb > 160 — must reject.
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -5461,7 +5471,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     enableEnforce(partyId, 'phb');
 
     // Stage 240 lb worth (24 × 10) in the Party Stash; Inventory empty.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: partyStashId,
@@ -5472,7 +5482,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
       },
     });
     // Pre-load Inventory to 230 lb so any incoming over 10 lb rejects.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5495,7 +5505,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
 
     // Post-write would be 230 + 20 = 250 > 240 phb ceiling → reject.
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'transfer',
         payload: {
           itemInstanceId: partyRow.id,
@@ -5530,7 +5540,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
 
     // Push way over any threshold — must succeed under rule = off.
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -5547,13 +5557,13 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     const { inventoryStashId, catalog, partyId } = localBootstrap();
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
     // Rule on, enforce off — CapacityBar will paint red but reducer allows.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule: 'variant', enforce: false },
     });
 
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -5582,7 +5592,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     enableEnforce(partyId, 'phb');
 
     // 7 greatclubs = 70 lb → under, OK.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5594,7 +5604,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     });
     // 8th greatclub = 80 lb > 75 ceiling → reject.
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -5615,7 +5625,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
     const greatclub = catalog.find((d) => d.id === 'phb-2024:greatclub')!;
     // First load Inventory to 230 lb with enforce OFF (so the load itself
     // doesn't trip the guard), then flip enforce on.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5631,7 +5641,7 @@ describe('reducer: hard-mode enforcement (R1.4) — acquire / transfer reject wh
 
     const row = useStore.getState().appState!.items[0]!;
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'transfer',
         payload: {
           itemInstanceId: row.id,
@@ -5666,7 +5676,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
 
   function acquireRow(stashId: string, definitionId: string, quantity = 1, notes?: string): string {
     const before = new Set(useStore.getState().appState!.items.map((i) => i.id));
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId,
@@ -5682,7 +5692,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
   }
 
   function enableEnforce(partyId: string, rule: 'phb' | 'variant'): void {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'set-encumbrance',
       payload: { partyId, rule, enforce: true },
     });
@@ -5695,7 +5705,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const backpackId = acquireRow(inventoryStashId, backpack.id);
     const torchId = acquireRow(inventoryStashId, torch.id);
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -5728,7 +5738,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     });
 
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'transfer',
         payload: {
           itemInstanceId: torchId,
@@ -5747,7 +5757,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const backpackId = acquireRow(inventoryStashId, backpack.id);
 
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'transfer',
         payload: {
           itemInstanceId: backpackId,
@@ -5769,7 +5779,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const torchId = acquireRow(inventoryStashId, torch.id);
 
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'transfer',
         payload: {
           itemInstanceId: torchId,
@@ -5788,7 +5798,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const torchId = acquireRow(inventoryStashId, torch.id);
 
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'transfer',
         payload: {
           itemInstanceId: torchId,
@@ -5808,7 +5818,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const backpackId = acquireRow(inventoryStashId, backpack.id);
     const torchId = acquireRow(inventoryStashId, torch.id);
     // Pack first.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -5819,7 +5829,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
       },
     });
     // Take out.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -5843,7 +5853,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     // R1.5 — DMG seed lands in R2.1; for now we exercise the reducer rule
     // against a manually-flagged row).
     const bigSackName = 'Big Sack of Plenty';
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-homebrew',
       payload: {
         name: bigSackName,
@@ -5865,7 +5875,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const sackId = acquireRow(inventoryStashId, sackDef.id);
     // Pre-load Inventory near the PHB cap (16 × 15 = 240 lb).
     // 23 greatclubs × 10 lb = 230 lb + 5 lb sack = 235 lb total (under 240).
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5883,7 +5893,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     // Packing the 230 lb greatclub stack into the flat-weight sack should
     // LOWER effective weight (sack still contributes 5 lb, contents free).
     expect(() => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'transfer',
         payload: {
           itemInstanceId: greatclubRow.id,
@@ -5900,7 +5910,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5910,7 +5920,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5938,7 +5948,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5959,7 +5969,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const def = backpack.id;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5970,7 +5980,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -5985,12 +5995,12 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const row1 = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === def && i.notes === '#1')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'consume',
       payload: { itemInstanceId: row1.id, quantity: 1 },
     });
     // Next acquire must synth '#3', not recycle '#1'.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -6011,7 +6021,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const { inventoryStashId, partyStashId, catalog } = localBootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -6021,7 +6031,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: partyStashId,
@@ -6048,7 +6058,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const { inventoryStashId, catalog } = localBootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -6058,7 +6068,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -6097,7 +6107,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     const torchId = acquireRow(inventoryStashId, torch.id);
 
     // Pack torch into backpack.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -6112,7 +6122,7 @@ describe('reducer: transfer — pack & take out (R1.5)', () => {
     ).toBe(backpackId);
 
     // Now move JUST the torch cross-stash. The backpack stays in Inventory.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -6148,7 +6158,7 @@ describe('reducer: use-charge (R2.2)', () => {
     const base = localBootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles');
     if (wand === undefined) throw new Error('setupWandInInventory: wand not in catalog');
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6179,7 +6189,7 @@ describe('reducer: use-charge (R2.2)', () => {
     const base = localBootstrap();
     const potion = base.catalog.find((d) => d.id === 'dmg-2024:potion-of-healing');
     if (potion === undefined) throw new Error('setupPotionInInventory: potion not in catalog');
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6208,7 +6218,7 @@ describe('reducer: use-charge (R2.2)', () => {
 
   it('decrements currentCharges by 1 on dispatch with default amount', () => {
     const { characterId, itemInstanceId, wand } = setupWandInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId },
     });
@@ -6218,7 +6228,7 @@ describe('reducer: use-charge (R2.2)', () => {
 
   it('decrements by the provided amount', () => {
     const { characterId, itemInstanceId, wand } = setupWandInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId, amount: 3 },
     });
@@ -6229,7 +6239,7 @@ describe('reducer: use-charge (R2.2)', () => {
   it('emits one use-charge log entry with amount captured', () => {
     const { characterId, itemInstanceId } = setupWandInInventory();
     const logLenBefore = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId, amount: 2 },
     });
@@ -6243,7 +6253,7 @@ describe('reducer: use-charge (R2.2)', () => {
 
   it('log entry round-trips through the schema', () => {
     const { characterId, itemInstanceId } = setupWandInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId },
     });
@@ -6255,7 +6265,7 @@ describe('reducer: use-charge (R2.2)', () => {
     const { characterId, partyStashId, wand } = setupWandInInventory();
     // Move the wand out of Inventory into Party Stash.
     const wandRow = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: wandRow.id,
@@ -6277,7 +6287,7 @@ describe('reducer: use-charge (R2.2)', () => {
   it("rejects when the row's definition has no charges block (Torch)", () => {
     const base = localBootstrap();
     const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6322,7 +6332,7 @@ describe('reducer: use-charge (R2.2)', () => {
 
   it('non-single-use: spending last charge leaves currentCharges 0, row intact', () => {
     const { characterId, itemInstanceId, wand } = setupWandInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId, amount: wand.charges!.max },
     });
@@ -6335,7 +6345,7 @@ describe('reducer: use-charge (R2.2)', () => {
     const { characterId, itemInstanceId } = setupPotionInInventory(1);
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId },
     });
@@ -6358,7 +6368,7 @@ describe('reducer: use-charge (R2.2)', () => {
     const { characterId, itemInstanceId, potion } = setupPotionInInventory(5);
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId },
     });
@@ -6385,7 +6395,7 @@ describe('reducer: use-charge (R2.2)', () => {
     if (necklace === undefined) {
       throw new Error('test: necklace not in catalog');
     }
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6400,7 +6410,7 @@ describe('reducer: use-charge (R2.2)', () => {
       .appState!.items.find((i) => i.definitionId === necklace.id)!.id;
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId, characterId: base.characterId },
     });
@@ -6422,7 +6432,7 @@ describe('reducer: recharge (R2.2)', () => {
   } {
     const base = localBootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6437,7 +6447,7 @@ describe('reducer: recharge (R2.2)', () => {
       .appState!.items.find((i) => i.definitionId === wand.id)!.id;
     const spend = wand.charges!.max - targetCharges;
     if (spend > 0) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'use-charge',
         payload: { itemInstanceId, characterId: base.characterId, amount: spend },
       });
@@ -6449,7 +6459,7 @@ describe('reducer: recharge (R2.2)', () => {
     const { characterId, itemInstanceId, wand } = setupWandSpentTo(2);
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'single', itemInstanceId, characterId },
     });
@@ -6473,7 +6483,7 @@ describe('reducer: recharge (R2.2)', () => {
   it('mode=manual: behaves identically to mode=single', () => {
     const { characterId, itemInstanceId, wand } = setupWandSpentTo(0);
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'manual', itemInstanceId, characterId },
     });
@@ -6498,7 +6508,7 @@ describe('reducer: recharge (R2.2)', () => {
   it('mode=single rejects rows whose definition has no charges block', () => {
     const base = localBootstrap();
     const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6522,7 +6532,7 @@ describe('reducer: recharge (R2.2)', () => {
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
     const pearl = base.catalog.find((d) => d.id === 'dmg-2024:pearl-of-power')!;
     // Acquire both into Inventory.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6532,7 +6542,7 @@ describe('reducer: recharge (R2.2)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6547,18 +6557,18 @@ describe('reducer: recharge (R2.2)', () => {
       .getState()
       .appState!.items.find((i) => i.definitionId === pearl.id)!.id;
     // Spend a charge on each.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: wandId, characterId: base.characterId },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: pearlId, characterId: base.characterId },
     });
     const logLenBefore = useStore.getState().log.length;
 
     // Trigger dawn batch.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'batch', characterId: base.characterId, trigger: 'dawn' },
     });
@@ -6578,7 +6588,7 @@ describe('reducer: recharge (R2.2)', () => {
   it('mode=batch long-rest: recharges only long-rest-rule items', () => {
     const base = localBootstrap();
     const pearl = base.catalog.find((d) => d.id === 'dmg-2024:pearl-of-power')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6591,12 +6601,12 @@ describe('reducer: recharge (R2.2)', () => {
     const pearlId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === pearl.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: pearlId, characterId: base.characterId },
     });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'batch', characterId: base.characterId, trigger: 'long-rest' },
     });
@@ -6622,7 +6632,7 @@ describe('reducer: recharge (R2.2)', () => {
   it('mode=batch silently skips rows already at full charges (no-op rows)', () => {
     const base = localBootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6635,7 +6645,7 @@ describe('reducer: recharge (R2.2)', () => {
     // Wand acquired = full charges immediately. No spend.
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'batch', characterId: base.characterId, trigger: 'dawn' },
     });
@@ -6645,7 +6655,7 @@ describe('reducer: recharge (R2.2)', () => {
 
   it('mode=batch recharge log entry round-trips through the schema', () => {
     const { characterId, itemInstanceId } = setupWandSpentTo(0);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'batch', characterId, trigger: 'dawn' },
     });
@@ -6661,7 +6671,7 @@ describe('reducer: recharge (R2.2)', () => {
 
   it('mode=single with amount: applies partial recharge clamped at max', () => {
     const { characterId, itemInstanceId } = setupWandSpentTo(2);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'single', itemInstanceId, characterId, amount: 3 },
     });
@@ -6675,7 +6685,7 @@ describe('reducer: recharge (R2.2)', () => {
 
   it('mode=single with amount: clamps when amount overshoots max', () => {
     const { characterId, itemInstanceId, wand } = setupWandSpentTo(5);
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: { mode: 'single', itemInstanceId, characterId, amount: 99 },
     });
@@ -6696,7 +6706,7 @@ describe('reducer: recharge (R2.2)', () => {
   it('mode=batch with amounts: applies per-item partial recharge for formula-bearing items', () => {
     const base = localBootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6708,12 +6718,12 @@ describe('reducer: recharge (R2.2)', () => {
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     // Spend down to 0.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: wandId, characterId: base.characterId, amount: 7 },
     });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: {
         mode: 'batch',
@@ -6731,7 +6741,7 @@ describe('reducer: recharge (R2.2)', () => {
     const base = localBootstrap();
     // Decanter of Endless Water: rechargeRule dawn, NO rechargeAmount.
     const decanter = base.catalog.find((d) => d.id === 'dmg-2024:decanter-of-endless-water')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6744,7 +6754,7 @@ describe('reducer: recharge (R2.2)', () => {
     const decanterId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === decanter.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: {
         itemInstanceId: decanterId,
@@ -6753,7 +6763,7 @@ describe('reducer: recharge (R2.2)', () => {
       },
     });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'recharge',
       payload: {
         mode: 'batch',
@@ -6786,7 +6796,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
   it('Inventory → Storage: preserves currentCharges (no longer cleared to null per R2.3)', () => {
     const base = localBootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6802,7 +6812,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
       wand.charges!.max,
     );
     // Spend one charge so the post-move value is observably non-default.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: wandId, characterId: base.characterId },
     });
@@ -6811,7 +6821,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     );
 
     // Create a Storage stash.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -6825,7 +6835,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
       .appState!.stashes.find((st) => st.name === 'Vault')!.id;
 
     const logLenBefore = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: wandId,
@@ -6852,7 +6862,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     const base = localBootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
     // Acquire DIRECTLY into Storage (not Inventory) so currentCharges starts null.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -6864,7 +6874,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     const storageStashId = useStore
       .getState()
       .appState!.stashes.find((st) => st.name === 'Vault')!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -6881,7 +6891,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
 
     // Move into Inventory — currentCharges should initialise to def.max
     // (first time the row is meaningfully tracked).
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: wandId,
@@ -6901,7 +6911,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
   it('R2.3 — round-trip Inventory → Storage → Inventory preserves the spent count (no free recharge exploit)', () => {
     const base = localBootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6914,7 +6924,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
     // Spend 4 charges → 3/7 left.
     for (let i = 0; i < 4; i++) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'use-charge',
         payload: { itemInstanceId: wandId, characterId: base.characterId },
       });
@@ -6924,7 +6934,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     );
 
     // Move to Storage.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -6936,7 +6946,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     const storageStashId = useStore
       .getState()
       .appState!.stashes.find((st) => st.name === 'Vault')!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: wandId,
@@ -6951,7 +6961,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     );
 
     // Move back to Inventory — charges still 3/7, not refilled.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: wandId,
@@ -6969,7 +6979,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
   it('non-charged item (Torch) Inventory → Storage: cascade leaves currentCharges null both sides', () => {
     const base = localBootstrap();
     const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -6982,7 +6992,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
     const torchId = useStore.getState().appState!.items[0]!.id;
     expect(useStore.getState().appState!.items[0]!.currentCharges).toBeNull(); // torch has no charges
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: base.characterId,
@@ -6996,7 +7006,7 @@ describe('reducer: transfer cascade currentCharges clear / init (R2.2 unblock + 
       .appState!.stashes.find((st) => st.name === 'Vault')!.id;
 
     const logLenBefore = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -7030,7 +7040,7 @@ describe('reducer: identify (R2.3)', () => {
     const base = localBootstrap();
     const cloak = base.catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection');
     if (cloak === undefined) throw new Error('setupCloakInInventory: cloak not in catalog');
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -7057,7 +7067,7 @@ describe('reducer: identify (R2.3)', () => {
     expect(before.identified).toBe(true);
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false },
     });
@@ -7080,13 +7090,13 @@ describe('reducer: identify (R2.3)', () => {
   it('flips identified: false → true (re-identify) and logs the reverse transition', () => {
     const { itemInstanceId } = setupCloakInInventory();
     // First mark unidentified with a hint.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'shimmers faintly' },
     });
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: true, hint: 'shimmers faintly' },
     });
@@ -7106,13 +7116,13 @@ describe('reducer: identify (R2.3)', () => {
 
   it('writes a new hint without changing identified', () => {
     const { itemInstanceId } = setupCloakInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false },
     });
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'radiates evil' },
     });
@@ -7129,13 +7139,13 @@ describe('reducer: identify (R2.3)', () => {
 
   it('clears the hint when payload.hint is explicit undefined', () => {
     const { itemInstanceId } = setupCloakInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'whispers in elvish' },
     });
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: undefined },
     });
@@ -7153,7 +7163,7 @@ describe('reducer: identify (R2.3)', () => {
   it('succeeds on a non-Inventory row (Party Stash) — identify has no location restriction', () => {
     const { itemInstanceId, inventoryStashId, partyStashId } = setupCloakInInventory();
     // Move the cloak to the Party Stash.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId,
@@ -7167,7 +7177,7 @@ describe('reducer: identify (R2.3)', () => {
       partyStashId,
     );
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'feels heavy' },
     });
@@ -7230,14 +7240,14 @@ describe('reducer: identify (R2.3)', () => {
 
   it('does not throw on no-op when hint key is omitted but identified differs (hint untouched)', () => {
     const { itemInstanceId } = setupCloakInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'shimmers' },
     });
     const logLenBefore = useStore.getState().log.length;
 
     // Flip identified back without supplying hint key — hint stays untouched.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: true },
     });
@@ -7254,14 +7264,14 @@ describe('reducer: identify (R2.3)', () => {
 
   it('hint-only change (identified unchanged) is a valid dispatch', () => {
     const { itemInstanceId } = setupCloakInInventory();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'glows blue' },
     });
     const logLenBefore = useStore.getState().log.length;
 
     // Same identified state, different hint.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false, hint: 'glows red' },
     });
@@ -7280,7 +7290,7 @@ describe('reducer: identify (R2.3)', () => {
   it('routes the log entry through actorRole=dm per OUTLINE §8.1', () => {
     const { itemInstanceId } = setupCloakInInventory();
     const logLenBefore = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId, identified: false },
     });
@@ -7305,7 +7315,7 @@ describe('reducer: identify-batch (R6.4)', () => {
     if (cloak === undefined) throw new Error('Cloak of Protection not in DMG seed');
     const created: string[] = [];
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: base.inventoryStashId,
@@ -7328,7 +7338,7 @@ describe('reducer: identify-batch (R6.4)', () => {
     }
     // Flip all three to unidentified.
     for (const id of created) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'identify',
         payload: { itemInstanceId: id, identified: false },
       });
@@ -7344,7 +7354,7 @@ describe('reducer: identify-batch (R6.4)', () => {
     const { definitionId, instanceIds } = seedThreeUnidentifiedCloaks();
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify-batch',
       payload: { definitionId, identified: true },
     });
@@ -7364,7 +7374,7 @@ describe('reducer: identify-batch (R6.4)', () => {
   it('applies a shared hint to every affected instance when hint is present', () => {
     const { definitionId, instanceIds } = seedThreeUnidentifiedCloaks();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify-batch',
       payload: { definitionId, identified: true, hint: 'radiates protection' },
     });
@@ -7381,13 +7391,13 @@ describe('reducer: identify-batch (R6.4)', () => {
     // Set distinct per-instance hints before batch-identify.
     const hints = ['a', 'b', 'c'];
     instanceIds.forEach((id, i) => {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'identify',
         payload: { itemInstanceId: id, identified: false, hint: hints[i]! },
       });
     });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify-batch',
       payload: { definitionId, identified: true },
     });
@@ -7402,7 +7412,7 @@ describe('reducer: identify-batch (R6.4)', () => {
   it('rejects when no instances match the target identified state (no-op)', () => {
     const { definitionId } = seedThreeUnidentifiedCloaks();
     // First batch flips all to identified.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify-batch',
       payload: { definitionId, identified: true },
     });
@@ -7428,7 +7438,7 @@ describe('reducer: identify-batch (R6.4)', () => {
   it('routes every batch log entry through actorRole=dm', () => {
     const { definitionId } = seedThreeUnidentifiedCloaks();
     const logLenBefore = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify-batch',
       payload: { definitionId, identified: true },
     });
@@ -7449,7 +7459,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const ownerUserId = useStore.getState().appState!.user.id;
     expect(useStore.getState().appState!.characters).toHaveLength(1);
 
-    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    void useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
 
     const s = useStore.getState().appState!;
     expect(s.characters).toHaveLength(0);
@@ -7467,7 +7477,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
   it("drops the character's Inventory + Storage stashes and their CurrencyHolding rows", () => {
     const { characterId } = localBootstrap();
     // Provision a second Storage stash so the cascade has to find both.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -7479,7 +7489,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const before = useStore.getState().appState!;
     expect(before.stashes.filter((st) => st.ownerCharacterId === characterId)).toHaveLength(2);
 
-    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    void useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
 
     const s = useStore.getState().appState!;
     // No character-scope stashes survive. Party Stash + Recovered Loot remain.
@@ -7494,7 +7504,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const { characterId, inventoryStashId, recoveredLootStashId, catalog } = localBootstrap();
     const { dispatch } = useStore.getState();
     // Provision a Storage stash with items + items in Inventory.
-    dispatch({
+    void dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -7506,7 +7516,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -7516,7 +7526,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -7531,7 +7541,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     const ropeId = useStore.getState().appState!.items.find((i) => i.definitionId === rope.id)!.id;
 
-    dispatch({ type: 'delete-character', payload: { characterId } });
+    void dispatch({ type: 'delete-character', payload: { characterId } });
 
     const s = useStore.getState().appState!;
     expect(s.items.find((i) => i.id === torchId)?.ownerId).toBe(recoveredLootStashId);
@@ -7544,7 +7554,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const { characterId, inventoryStashId, catalog } = localBootstrap();
     const { dispatch } = useStore.getState();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -7558,10 +7568,10 @@ describe('reducer: delete-character (R4.1.b)', () => {
       .getState()
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     // Equip it before deletion so the cascade has to clear the flag.
-    dispatch({ type: 'equip', payload: { itemInstanceId: torchId, characterId } });
+    void dispatch({ type: 'equip', payload: { itemInstanceId: torchId, characterId } });
     expect(useStore.getState().appState!.items.find((i) => i.id === torchId)!.equipped).toBe(true);
 
-    dispatch({ type: 'delete-character', payload: { characterId } });
+    void dispatch({ type: 'delete-character', payload: { characterId } });
 
     const moved = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
     expect(moved.equipped).toBe(false);
@@ -7573,7 +7583,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const { characterId, inventoryStashId, recoveredLootStashId } = localBootstrap();
     const { dispatch } = useStore.getState();
     // Add a Storage stash and fund both.
-    dispatch({
+    void dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -7583,7 +7593,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
       },
     });
     const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
-    dispatch({
+    void dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -7591,7 +7601,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         reason: 'deposit',
       },
     });
-    dispatch({
+    void dispatch({
       type: 'currency-change',
       payload: {
         stashId: storageStashId,
@@ -7604,7 +7614,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
       .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp;
     const logLenBefore = useStore.getState().log.length;
 
-    dispatch({ type: 'delete-character', payload: { characterId } });
+    void dispatch({ type: 'delete-character', payload: { characterId } });
 
     const lootCurrency = useStore
       .getState()
@@ -7627,7 +7637,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const { characterId } = localBootstrap();
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    void useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     expect(cascade.find((e) => e.type === 'currency-change')).toBeUndefined();
@@ -7638,7 +7648,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     const { dispatch } = useStore.getState();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -7648,7 +7658,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -7658,7 +7668,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -7668,7 +7678,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
     });
     const logLenBefore = useStore.getState().log.length;
 
-    dispatch({ type: 'delete-character', payload: { characterId } });
+    void dispatch({ type: 'delete-character', payload: { characterId } });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     // 2 transfers + 1 currency-change + 1 delete-character = 4 entries
@@ -7698,7 +7708,7 @@ describe('reducer: delete-character (R4.1.b)', () => {
 
   it('persisted state round-trips through the shared schema', async () => {
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    void useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
     await flushPendingPersist();
     const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
@@ -7780,7 +7790,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
     expect(beforeRows).toHaveLength(2);
     expect(beforeRows.every((m) => m.leftAt === null)).toBe(true);
 
-    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'leave-party', payload: {} });
 
     const after = useStore.getState().appState!;
     const actorRows = after.memberships.filter((m) => m.userId === beforeUserId);
@@ -7803,7 +7813,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
     const catalog = useStore.getState().appState!.catalog;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -7813,7 +7823,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -7825,7 +7835,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
       .getState()
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
 
-    dispatch({ type: 'leave-party', payload: {} });
+    void dispatch({ type: 'leave-party', payload: {} });
 
     const s = useStore.getState().appState!;
     // Character + their stashes are gone.
@@ -7844,7 +7854,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
     const inventoryStashId = useStore.getState().appState!.characters[0]!.inventoryStashId;
     const catalog = useStore.getState().appState!.catalog;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -7856,7 +7866,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
     });
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'leave-party', payload: {} });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     const types = cascade.map((e) => e.type);
@@ -7874,7 +7884,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
     // second member so the sole-DM guard doesn't reject. Order matters: drop
     // the player character, then graft the second DM, then leave.
     const { characterId } = localBootstrap();
-    useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
+    void useStore.getState().dispatch({ type: 'delete-character', payload: { characterId } });
     // After delete-character, actor's player row has characterId: null (alive).
     // Add a second DM so the sole-DM check passes when actor leaves.
     useStore.setState((s) => {
@@ -7899,7 +7909,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
     });
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'leave-party', payload: {} });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     // Only the terminal leave-party slice — no character to cascade.
@@ -7914,7 +7924,7 @@ describe('reducer: leave-party (R4.1.c)', () => {
 
   it('persisted state round-trips through the shared schema', async () => {
     bootstrapWithSecondMember('dm');
-    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'leave-party', payload: {} });
     await flushPendingPersist();
     const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
@@ -8066,7 +8076,7 @@ describe('reducer: kick-player (R4.1.d)', () => {
   it("soft-deletes the kicked user's membership and drops their character", () => {
     const { kickedUserId, kickedCharacterId } = bootstrapWithKickTarget();
 
-    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+    void useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
 
     const s = useStore.getState().appState!;
     // Membership soft-deleted.
@@ -8118,7 +8128,7 @@ describe('reducer: kick-player (R4.1.d)', () => {
       .getState()
       .appState!.currencies.find((c) => c.stashId === recoveredLootStashId)!.gp;
 
-    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+    void useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
 
     const s = useStore.getState().appState!;
     // Item moved to Recovered Loot with quantity preserved.
@@ -8135,7 +8145,7 @@ describe('reducer: kick-player (R4.1.d)', () => {
     const { kickedUserId } = bootstrapWithKickTarget();
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+    void useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     const terminal = cascade.at(-1)!;
@@ -8146,7 +8156,7 @@ describe('reducer: kick-player (R4.1.d)', () => {
 
   it('persisted state round-trips through the shared schema', async () => {
     const { kickedUserId } = bootstrapWithKickTarget();
-    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
+    void useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId } });
     await flushPendingPersist();
     const persisted = (await loadAppState(useStore.getState().appState!.party.id)) as {
       appState: unknown;
@@ -8188,7 +8198,7 @@ describe('reducer: join-party (R4.1.e)', () => {
     });
     const before = useStore.getState().appState!.memberships.length;
 
-    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'join-party', payload: {} });
 
     const after = useStore.getState().appState!;
     expect(after.memberships.length).toBe(before + 1);
@@ -8213,7 +8223,7 @@ describe('reducer: join-party (R4.1.e)', () => {
     const logLenBefore = useStore.getState().log.length;
     const partyId = useStore.getState().appState!.party.id;
 
-    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'join-party', payload: {} });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     expect(cascade.length).toBe(1);
@@ -8281,7 +8291,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
       };
     });
 
-    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
+    void useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
 
     const s = useStore.getState().appState!;
     expect(s.characters).toHaveLength(1);
@@ -8342,7 +8352,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     });
     const logLenBefore = useStore.getState().log.length;
 
-    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
+    void useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
 
     const cascade = useStore.getState().log.slice(logLenBefore);
     expect(cascade.length).toBe(1);
@@ -8363,7 +8373,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
 
   it('DM-only DM (no player row) — appends a fresh player membership pointing at the new character', () => {
     // Bootstrap via dmOnly so there's a DM membership only, no player row.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         dmOnly: true,
@@ -8376,7 +8386,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
     expect(before.memberships.filter((m) => m.role === 'player')).toHaveLength(0);
     expect(before.characters).toHaveLength(0);
 
-    useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
+    void useStore.getState().dispatch({ type: 'create-character', payload: newCharacterPayload() });
 
     const s = useStore.getState().appState!;
     expect(s.characters).toHaveLength(1);
@@ -8466,7 +8476,7 @@ describe('reducer: create-character post-bootstrap (R4.1.f)', () => {
   it('bootstrap path (state === null) still mints the full party with a character', () => {
     // Regression check: the existing legacy bootstrap behavior is unchanged.
     expect(useStore.getState().appState).toBeNull();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { ...validPayload, ...createCharacterIds(), ...createCharacterIds() },
     });
@@ -8539,7 +8549,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
 
   it('DM can appoint an active player as Banker', () => {
     const { otherPlayerUserId } = bootstrapWithSecondPlayer();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
 
@@ -8605,7 +8615,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
 
   it('rejects when a Banker is already set (reassign must revoke first)', () => {
     const { otherPlayerUserId } = bootstrapWithSecondPlayer();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
 
@@ -8644,12 +8654,12 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
 
   it('DM can revoke an appointed Banker with reason="manual"', () => {
     const { otherPlayerUserId } = bootstrapWithSecondPlayer();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
     expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
 
-    useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } });
+    void useStore.getState().dispatch({ type: 'revoke-banker', payload: { reason: 'manual' } });
 
     const s = useStore.getState().appState!;
     expect(s.party.bankerUserId).toBeNull();
@@ -8670,7 +8680,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
 
   it('rejects when actor is a player (only DM may revoke)', () => {
     const { otherPlayerUserId } = bootstrapWithSecondPlayer();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
     // Demote actor to player only.
@@ -8696,7 +8706,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
   it('kick-player auto-clears Banker and emits revoke-banker { reason: "kicked" }', () => {
     // Set up: bootstrap + second player; appoint the second player as Banker.
     const { otherPlayerUserId } = bootstrapWithSecondPlayer();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
     expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
@@ -8704,7 +8714,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
     // Snapshot log length so we only inspect the entries emitted by the kick.
     const beforeLogLength = useStore.getState().log.length;
 
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'kick-player', payload: { kickedUserId: otherPlayerUserId } });
 
@@ -8747,12 +8757,14 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
         },
       };
     });
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
 
     const beforeLogLength = useStore.getState().log.length;
-    useStore.getState().dispatch({ type: 'kick-player', payload: { kickedUserId: 'player-c' } });
+    void useStore
+      .getState()
+      .dispatch({ type: 'kick-player', payload: { kickedUserId: 'player-c' } });
 
     const s = useStore.getState().appState!;
     // Banker untouched.
@@ -8798,7 +8810,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
     });
 
     const beforeLogLength = useStore.getState().log.length;
-    useStore.getState().dispatch({ type: 'leave-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'leave-party', payload: {} });
 
     const s = useStore.getState().appState!;
     expect(s.party.bankerUserId).toBeNull();
@@ -8872,7 +8884,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
     });
 
     // DM appoints the Banker.
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
 
@@ -8887,7 +8899,7 @@ describe('reducer: appoint-banker / revoke-banker (R4.2.a)', () => {
     });
 
     // Banker does any allowed action — e.g. currency-change on own inv.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: bankerInvStashId,
@@ -8960,7 +8972,7 @@ describe('reducer: dm-transfer (R4.3.a)', () => {
     const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
     const partyId = useStore.getState().appState!.party.id;
 
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
 
@@ -9050,7 +9062,7 @@ describe('reducer: dm-transfer (R4.3.a)', () => {
     const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
 
     // Appoint player-b as Banker first.
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
     expect(useStore.getState().appState!.party.bankerUserId).toBe(otherPlayerUserId);
@@ -9059,7 +9071,7 @@ describe('reducer: dm-transfer (R4.3.a)', () => {
     const logBefore = useStore.getState().log.length;
 
     // Transfer DM to the current Banker.
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
 
@@ -9112,12 +9124,12 @@ describe('reducer: dm-transfer (R4.3.a)', () => {
         },
       };
     });
-    useStore.getState().dispatch({ type: 'appoint-banker', payload: { bankerUserId } });
+    void useStore.getState().dispatch({ type: 'appoint-banker', payload: { bankerUserId } });
     expect(useStore.getState().appState!.party.bankerUserId).toBe(bankerUserId);
 
     const logBefore = useStore.getState().log.length;
 
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
 
@@ -9150,7 +9162,7 @@ describe('reducer: dm-transfer (R4.3.a)', () => {
       };
     });
 
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
 
@@ -9223,10 +9235,10 @@ describe('reducer: dm-transfer (R4.3.a)', () => {
     const { otherPlayerUserId } = bootstrapWithSecondPlayer();
 
     // Banker is the incoming DM → cleared (§4 invariant enforced).
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'appoint-banker', payload: { bankerUserId: otherPlayerUserId } });
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
     const s = useStore.getState().appState!;
@@ -9240,7 +9252,7 @@ describe('reducer: dm-transfer (R4.3.a)', () => {
 
   it('appends the schema-validated dm-transfer entry to the log', () => {
     const { dmUserId, otherPlayerUserId } = bootstrapWithSecondPlayer();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'dm-transfer', payload: { newDmUserId: otherPlayerUserId } });
 
@@ -9403,7 +9415,7 @@ describe('reducer: split-evenly (R4.2.d)', () => {
       bankerInventoryStashId,
       partyStashId,
     } = bootstrapForSplit({ gp: 100 });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split-evenly',
       payload: {
         fromStashId: partyStashId,
@@ -9493,7 +9505,7 @@ describe('reducer: split-evenly (R4.2.d)', () => {
       };
     });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split-evenly',
       payload: {
         fromStashId: partyStashId,
@@ -9531,7 +9543,7 @@ describe('reducer: split-evenly (R4.2.d)', () => {
       partyStashId,
     } = bootstrapForSplit({ gp: 100 });
     const beforeLog = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split-evenly',
       payload: {
         fromStashId: partyStashId,
@@ -9578,7 +9590,7 @@ describe('reducer: split-evenly (R4.2.d)', () => {
   it('empty pool: emits only the terminal entry (share is all zeros, no transfers)', () => {
     const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({});
     const beforeLog = useStore.getState().log.length;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split-evenly',
       payload: {
         fromStashId: partyStashId,
@@ -9592,7 +9604,7 @@ describe('reducer: split-evenly (R4.2.d)', () => {
 
   it('terminal entry always includes remainderInPool even when zero', () => {
     const { dmCharacterId, bankerCharacterId, partyStashId } = bootstrapForSplit({ gp: 100 });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'split-evenly',
       payload: {
         fromStashId: partyStashId,
@@ -9658,7 +9670,7 @@ describe('reducer: join-party (BUG-002 regression — soft-deleted rejoin)', () 
       ).length;
     expect(beforeCount).toBe(1);
 
-    useStore.getState().dispatch({ type: 'join-party', payload: {} });
+    void useStore.getState().dispatch({ type: 'join-party', payload: {} });
 
     const after = useStore.getState().appState!;
     const playerRows = after.memberships.filter(
@@ -9761,7 +9773,7 @@ describe('reducer RH1.2: rejects malformed or missing new<EntityName>Id', () => 
     const { inventoryStashId, catalog } = localBootstrap();
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -9851,7 +9863,7 @@ describe('reducer RH1.2: rejects malformed or missing new<EntityName>Id', () => 
     const { inventoryStashId, partyStashId, catalog } = localBootstrap();
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -9897,7 +9909,7 @@ describe('reducer RH1.2: id-shape check runs on every minting arm', () => {
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
     // First acquire: creates the row.
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,

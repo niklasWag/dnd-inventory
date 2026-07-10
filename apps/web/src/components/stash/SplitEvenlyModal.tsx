@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import { currency } from '@app/rules';
 
 interface SplitEvenlyModalProps {
@@ -58,7 +59,7 @@ export function SplitEvenlyModal({
   open,
   onOpenChange,
 }: SplitEvenlyModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
 
   // Pool balance drives the preview + the Total line. Uses `useShallow`
   // so the modal doesn't rerender for every unrelated store mutation.
@@ -141,20 +142,23 @@ export function SplitEvenlyModal({
     const recipientCharacterIds = eligible
       .map((e) => e.characterId)
       .filter((id) => selected.has(id));
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'split-evenly',
         payload: { fromStashId: stashId, recipientCharacterIds },
-      });
-      toast.success(
-        preview.n === 0
-          ? 'Split logged (pool was empty).'
-          : `Split across ${preview.n} recipient${preview.n === 1 ? '' : 's'}.`,
-      );
-      onOpenChange(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not split currency.');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            preview.n === 0
+              ? 'Split logged (pool was empty).'
+              : `Split across ${preview.n} recipient${preview.n === 1 ? '' : 's'}.`,
+          );
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => toast.error(message ?? 'Could not split currency.'),
+      },
+    );
   }
 
   const poolIsEmpty = DENOMS.every((d) => pool[d] === 0);

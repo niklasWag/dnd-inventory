@@ -9,6 +9,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
+import { useDispatch } from '@/lib/useDispatch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ItemHistory } from '@/components/item/ItemHistory';
@@ -74,7 +75,7 @@ export function ItemDetail(): ReactElement {
     }),
   );
 
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
   // R2.2.1 — inline roll input for charged items with a `rechargeAmount`
   // formula. Toggling Recharge opens the input; submitting dispatches a
@@ -141,13 +142,14 @@ export function ItemDetail(): ReactElement {
     }
     if (Object.keys(patch).length === 0) return; // belt-and-braces no-op guard
 
-    try {
-      setSubmitError(null);
-      dispatch({ type: 'edit-item-instance', payload: { itemInstanceId: row.id, patch } });
-      toast.success('Item updated');
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+    setSubmitError(null);
+    void dispatch(
+      { type: 'edit-item-instance', payload: { itemInstanceId: row.id, patch } },
+      {
+        onSuccess: () => toast.success('Item updated'),
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   const displayName = computeDisplayName(row, def ?? undefined);
@@ -182,15 +184,16 @@ export function ItemDetail(): ReactElement {
 
   function onUseCharge(): void {
     if (row === null || characterId === null) return;
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'use-charge',
         payload: { itemInstanceId: row.id, characterId, amount: 1 },
-      });
-      toast.success('Charge used');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to use charge');
-    }
+      },
+      {
+        onSuccess: () => toast.success('Charge used'),
+        onRejection: (_code, message) => toast.error(message ?? 'Failed to use charge'),
+      },
+    );
   }
 
   function onRecharge(): void {
@@ -205,15 +208,16 @@ export function ItemDetail(): ReactElement {
       setRollError(null);
       return;
     }
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'recharge',
         payload: { mode: 'manual', itemInstanceId: row.id, characterId },
-      });
-      toast.success('Item recharged');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to recharge');
-    }
+      },
+      {
+        onSuccess: () => toast.success('Item recharged'),
+        onRejection: (_code, message) => toast.error(message ?? 'Failed to recharge'),
+      },
+    );
   }
 
   function onRollSubmit(): void {
@@ -228,18 +232,21 @@ export function ItemDetail(): ReactElement {
       setRollError(`Cannot exceed deficit (${deficit})`);
       return;
     }
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'recharge',
         payload: { mode: 'manual', itemInstanceId: row.id, characterId, amount: n },
-      });
-      toast.success(`Recharged ${n} ${n === 1 ? 'charge' : 'charges'}`);
-      setRollOpen(false);
-      setRollValue('');
-      setRollError(null);
-    } catch (err) {
-      setRollError(err instanceof Error ? err.message : 'Failed to recharge');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Recharged ${n} ${n === 1 ? 'charge' : 'charges'}`);
+          setRollOpen(false);
+          setRollValue('');
+          setRollError(null);
+        },
+        onRejection: (_code, message) => setRollError(message ?? 'Failed to recharge'),
+      },
+    );
   }
 
   function onRollCancel(): void {
@@ -254,20 +261,22 @@ export function ItemDetail(): ReactElement {
   function onToggleIdentified(): void {
     if (row === null) return;
     const nextIdentified = !row.identified;
-    try {
-      // Preserve the hint across the toggle so a flip-back keeps the
-      // context the DM established earlier. The reducer's no-op gate is
-      // satisfied because `identified` is changing.
-      const payload: { itemInstanceId: string; identified: boolean; hint?: string } = {
-        itemInstanceId: row.id,
-        identified: nextIdentified,
-      };
-      if (row.hint !== undefined) payload.hint = row.hint;
-      dispatch({ type: 'identify', payload });
-      toast.success(nextIdentified ? 'Item identified' : 'Item marked unidentified');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update identification');
-    }
+    // Preserve the hint across the toggle so a flip-back keeps the
+    // context the DM established earlier. The reducer's no-op gate is
+    // satisfied because `identified` is changing.
+    const payload: { itemInstanceId: string; identified: boolean; hint?: string } = {
+      itemInstanceId: row.id,
+      identified: nextIdentified,
+    };
+    if (row.hint !== undefined) payload.hint = row.hint;
+    void dispatch(
+      { type: 'identify', payload },
+      {
+        onSuccess: () =>
+          toast.success(nextIdentified ? 'Item identified' : 'Item marked unidentified'),
+        onRejection: (_code, message) => toast.error(message ?? 'Failed to update identification'),
+      },
+    );
   }
 
   function onSaveHint(): void {
@@ -278,15 +287,16 @@ export function ItemDetail(): ReactElement {
     // reducer also rejects. (Reducer throws on exact no-op, which would
     // surface as an unwanted error toast otherwise.)
     if ((row.hint ?? undefined) === next) return;
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'identify',
         payload: { itemInstanceId: row.id, identified: row.identified, hint: next },
-      });
-      toast.success(next === undefined ? 'Hint cleared' : 'Hint updated');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update hint');
-    }
+      },
+      {
+        onSuccess: () => toast.success(next === undefined ? 'Hint cleared' : 'Hint updated'),
+        onRejection: (_code, message) => toast.error(message ?? 'Failed to update hint'),
+      },
+    );
   }
 
   const hintTrimmed = hintInput.trim();

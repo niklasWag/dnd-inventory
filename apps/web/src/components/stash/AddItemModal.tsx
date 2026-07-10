@@ -66,7 +66,7 @@ export function AddItemModal({
     // encumbrance would be tripped; surface as a toast so the homebrew
     // creation still survives but the add doesn't silently fail.
     try {
-      dispatchMintingAction({
+      void dispatchMintingAction({
         type: 'acquire',
         payload: {
           stashId,

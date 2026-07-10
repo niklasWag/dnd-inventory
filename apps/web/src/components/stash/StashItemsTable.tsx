@@ -260,7 +260,7 @@ export function StashItemsTable({
    */
   function dispatchOrToast(action: Action, fallback: string): void {
     try {
-      dispatch(action);
+      void dispatch(action);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : fallback);
     }
@@ -277,7 +277,7 @@ export function StashItemsTable({
     fallback: string,
   ): void {
     try {
-      dispatchMintingAction(action);
+      void dispatchMintingAction(action);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : fallback);
     }
@@ -382,7 +382,7 @@ export function StashItemsTable({
                       variant="outline"
                       aria-label={`Decrease ${displayName}`}
                       onClick={() => {
-                        dispatch({
+                        void dispatch({
                           type: 'consume',
                           payload: { itemInstanceId: row.id, quantity: 1 },
                         });
@@ -610,7 +610,7 @@ export function StashItemsTable({
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        dispatch({
+                        void dispatch({
                           type: 'consume',
                           payload: { itemInstanceId: row.id, quantity: row.quantity },
                         });

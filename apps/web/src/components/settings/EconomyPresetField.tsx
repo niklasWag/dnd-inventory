@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import type { CurrencyDenomination } from '@app/shared';
 
 /**
@@ -62,7 +62,7 @@ export function EconomyPresetField({
   currentPriceModifier,
   currentBaseCurrency,
 }: EconomyPresetFieldProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [draftPreset, setDraftPreset] = useState<PresetName>(() =>
     matchPreset(currentPriceModifier, currentBaseCurrency),
   );
@@ -107,16 +107,18 @@ export function EconomyPresetField({
       return;
     }
     if (isNoOp) return;
-    try {
-      setSubmitError(null);
-      dispatch({
+    setSubmitError(null);
+    void dispatch(
+      {
         type: 'update-party-economy',
         payload: { partyId, ...draft },
-      });
-      toast.success(`Economy: ${String(draft.priceModifier)}\u00d7 / ${draft.baseCurrency}`);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () =>
+          toast.success(`Economy: ${String(draft.priceModifier)}\u00d7 / ${draft.baseCurrency}`),
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   return (

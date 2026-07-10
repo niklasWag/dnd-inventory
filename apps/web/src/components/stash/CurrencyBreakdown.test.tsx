@@ -27,7 +27,7 @@ describe('CurrencyBreakdown (M4)', () => {
 
   it('reflects non-zero holdings live', () => {
     const { inventoryStashId } = bootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,

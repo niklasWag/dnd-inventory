@@ -1,13 +1,13 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { toast } from 'sonner';
 
 import { newUuidV7, currentGameSessionId, deriveActorRoleForSlice } from '@app/shared';
 
 import { createDebouncedSaver } from '@/db/save';
 import { isServerMode } from '@/lib/serverMode';
-import { enqueue, captureRollbackSnapshot } from '@/sync/queue';
+import { enqueue, captureRollbackSnapshot, registerOutcome } from '@/sync/queue';
 import { generateInviteCode, reduce, type LogEntrySlice, type ReducerContext } from './reducer';
+import type { MutationOutcome } from './outcome';
 import type { Action, AppState, TransactionLogEntry } from './types';
 
 /**
@@ -47,7 +47,7 @@ export interface StoreState {
    * write-block purposes (see `canDispatch()`).
    */
   online: boolean;
-  dispatch: (action: Action) => void;
+  dispatch: (action: Action) => Promise<MutationOutcome>;
   hydrate: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
   restoreSnapshot: (snapshot: { appState: AppState; log: TransactionLogEntry[] }) => void;
   /**
@@ -211,10 +211,14 @@ export const useStore = create<StoreState>()(
       // R5.1.d — write-block guard. In server mode, when the browser is
       // offline AND the party has 2+ active members, OUTLINE §9 says
       // writes are forbidden (they'd desync from other members). We
-      // short-circuit here + surface a toast so any consumer that
-      // programmatically dispatches (not just Save buttons) is caught.
-      // UI-level `useCanDispatch()` disables the primary Save buttons
-      // for user affordance; this guard is the correctness backstop.
+      // short-circuit here so any consumer that programmatically
+      // dispatches (not just Save buttons) is caught. UI-level
+      // `useCanDispatch()` disables the primary Save buttons for user
+      // affordance; this guard is the correctness backstop.
+      //
+      // R8.5 — resolve `{ ok: false, code: 'offline_write_blocked' }`
+      // instead of firing a toast here; `useDispatch`'s default
+      // rejection consumer owns the toast now (single toast authority).
       //
       // `seed-catalog` is a local-only bootstrap seed (see queue.ts
       // rationale) — it's allowed regardless.
@@ -223,8 +227,7 @@ export const useStore = create<StoreState>()(
         action.type !== 'seed-catalog' &&
         !canDispatchFor(isServerMode, state.online, activeMemberCount(state.appState))
       ) {
-        toast.error('Offline — changes are disabled until you reconnect.');
-        return;
+        return Promise.resolve({ ok: false, code: 'offline_write_blocked' });
       }
       // BUG-003 — capture the pre-mutation snapshot NOW so the sync
       // queue can roll back to it on 422 rejection. Must run before
@@ -237,6 +240,15 @@ export const useStore = create<StoreState>()(
       // Reduce against the pre-mutation snapshot (Immer's draft would
       // re-trigger our pure reducer with a proxy, which we deliberately
       // avoid — the reducer is meant to be plain-value pure).
+      //
+      // R8.5 — a reducer throw stays a SYNCHRONOUS throw at the raw
+      // `dispatch` boundary (reducer-invariant violations are a local,
+      // deterministic signal — unrelated to the BUG-005 async-rejection
+      // class). `useDispatch` wraps the call and converts a throw into a
+      // `{ ok: false, code: 'reducer_error' }` outcome for its unified
+      // rejection consumer, so screens still get uniform handling while
+      // the reducer-invariant test surface (`reduce` throws → `dispatch`
+      // throws) is preserved.
       const prev = get();
       const result = reduce(prev.appState, action, webReducerCtx);
       // RH2.6 — mode-aware log-authority split. In LOCAL mode the client
@@ -282,6 +294,12 @@ export const useStore = create<StoreState>()(
       // dispatch to find an empty queue and the bootstrap pull to
       // never run — surfacing as `/sync/state` 404s on the next
       // screen.
+      //
+      // R8.5 — server mode returns the queue-produced `MutationOutcome`
+      // promise (the SINGLE authority for the terminal outcome). Local
+      // mode resolves synchronously: the local apply IS the terminal
+      // outcome (no server round-trip), so `{ ok: true, applied }` with
+      // the client-built entries.
       if (isServerMode) {
         // RH4.2 — thread partyId explicitly to the queue (retires the
         // Dexie `meta.currentPartyId` round-trip on the flush path).
@@ -292,9 +310,17 @@ export const useStore = create<StoreState>()(
         // above and is now in state.
         const partyId = snapshot.appState?.party.id;
         if (partyId !== undefined) {
-          enqueue(action, partyId);
+          const dispatchId = enqueue(action, partyId);
+          if (dispatchId !== null) {
+            return registerOutcome(dispatchId);
+          }
         }
+        // `seed-catalog` (dispatchId === null) or a null partyId (no
+        // party yet) — nothing hits the network; treat as an immediate
+        // no-op success so awaiters settle.
+        return Promise.resolve({ ok: true, applied: [] });
       }
+      return Promise.resolve({ ok: true, applied: entries });
     },
     hydrate: (snapshot) => {
       set((draft) => {
@@ -381,15 +407,17 @@ export async function flushPendingPersist(): Promise<void> {
  * mapping.
  *
  * The function takes an action whose payload lacks the `new*Id` fields
- * (`Action` narrowed with those keys omitted) and returns after minting.
+ * (`Action` narrowed with those keys omitted) and returns the
+ * `Promise<MutationOutcome>` from `dispatch` (R8.5). Callers that don't
+ * need the outcome can fire-and-forget it.
  * TypeScript ergonomics: callers pass the action they'd otherwise
  * dispatch; TS accepts it because omitting a keyed prop is structurally
  * assignable to the un-widened original type.
  */
 export function dispatchMintingAction(
   action: MintingActionInput | Exclude<Action, MintingActionInput>,
-): void {
-  useStore.getState().dispatch(injectMintedIds(action));
+): Promise<MutationOutcome> {
+  return useStore.getState().dispatch(injectMintedIds(action));
 }
 
 /**

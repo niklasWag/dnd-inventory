@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import type { HomebrewDefinitionInput, HomebrewDefinitionPatch } from '@/store/types';
 import type { ItemCategory, ItemDefinition, Rarity } from '@app/shared';
 
@@ -282,7 +283,7 @@ export function HomebrewForm({
   definition,
   onCreated,
 }: HomebrewFormProps): ReactElement | null {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -313,41 +314,49 @@ export function HomebrewForm({
     }
   }, [open, variant, definition, reset]);
 
-  function onSubmit(values: FormOutput): void {
-    try {
-      setSubmitError(null);
+  async function onSubmit(values: FormOutput): Promise<void> {
+    setSubmitError(null);
 
-      if (mode === 'edit') {
-        if (definition === undefined) {
-          throw new Error('HomebrewForm: edit mode requires a definition prop');
-        }
-        const patch = formOutputToEditPatch(values);
-        dispatch({
-          type: 'edit-homebrew',
-          payload: { definitionId: definition.id, patch },
-        });
-        toast.success('Homebrew updated');
-        onOpenChange(false);
+    if (mode === 'edit') {
+      if (definition === undefined) {
+        setSubmitError('HomebrewForm: edit mode requires a definition prop');
         return;
       }
-
-      // create OR duplicate
-      const input = formOutputToCreateInput(values);
-      const duplicatedFromId = mode === 'duplicate' ? definition?.id : undefined;
-      dispatchMintingAction({
-        type: 'create-homebrew',
-        payload: {
-          ...input,
-          ...(duplicatedFromId !== undefined ? { duplicatedFromId } : {}),
+      const patch = formOutputToEditPatch(values);
+      void dispatch(
+        {
+          type: 'edit-homebrew',
+          payload: { definitionId: definition.id, patch },
         },
-      });
-      const newDefId = useStore.getState().appState!.catalog.at(-1)!.id;
-      toast.success(mode === 'duplicate' ? 'Homebrew duplicated' : 'Homebrew created');
-      onOpenChange(false);
-      onCreated?.(newDefId);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
+        {
+          onSuccess: () => {
+            toast.success('Homebrew updated');
+            onOpenChange(false);
+          },
+          onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+        },
+      );
+      return;
     }
+
+    // create OR duplicate
+    const input = formOutputToCreateInput(values);
+    const duplicatedFromId = mode === 'duplicate' ? definition?.id : undefined;
+    const outcome = await dispatchMintingAction({
+      type: 'create-homebrew',
+      payload: {
+        ...input,
+        ...(duplicatedFromId !== undefined ? { duplicatedFromId } : {}),
+      },
+    });
+    if (!outcome.ok) {
+      setSubmitError(outcome.message ?? 'Unknown error');
+      return;
+    }
+    const newDefId = useStore.getState().appState!.catalog.at(-1)!.id;
+    toast.success(mode === 'duplicate' ? 'Homebrew duplicated' : 'Homebrew created');
+    onOpenChange(false);
+    onCreated?.(newDefId);
   }
 
   const title =

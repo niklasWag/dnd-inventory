@@ -27,7 +27,7 @@ function bootstrapWithTorches(count: number): { characterId: string; rowIds: str
   const { characterId, inventoryStashId, catalog } = bootstrap();
   const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
   for (let i = 0; i < count; i += 1) {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -55,7 +55,7 @@ function bootstrapWithMagicItems(count: number): { characterId: string; rowIds: 
   const { characterId, inventoryStashId, catalog } = bootstrap();
   const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
   for (let i = 0; i < count; i += 1) {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -86,7 +86,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
 
   it('lists equipped items by name', () => {
     const { characterId, rowIds } = bootstrapWithTorches(1);
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'equip', payload: { characterId, itemInstanceId: rowIds[0]! } });
     render(<EquippedSlotsPanel characterId={characterId} />);
@@ -96,7 +96,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
   it('counts attuned items against the cap (X/max)', () => {
     const { characterId, rowIds } = bootstrapWithMagicItems(3);
     for (const id of rowIds) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: id } });
     }
@@ -106,7 +106,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
 
   it('reflects DM-raised maxAttunement via edit-character', () => {
     const { characterId } = bootstrap();
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'edit-character', payload: { characterId, patch: { maxAttunement: 5 } } });
     render(<EquippedSlotsPanel characterId={characterId} />);
@@ -116,7 +116,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
   it('R2.3 — equipped unidentified magic item renders as "Unknown Magic Item", not its real name', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -129,11 +129,11 @@ describe('EquippedSlotsPanel (R1.2)', () => {
     const cloakId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === cloak.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'equip',
       payload: { characterId, itemInstanceId: cloakId },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: cloakId, identified: false },
     });
@@ -145,7 +145,7 @@ describe('EquippedSlotsPanel (R1.2)', () => {
   it('R2.3 — attuned unidentified magic item renders as "Unknown Magic Item" in the Attuned list', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -158,11 +158,11 @@ describe('EquippedSlotsPanel (R1.2)', () => {
     const cloakId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === cloak.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'attune',
       payload: { characterId, itemInstanceId: cloakId },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: cloakId, identified: false, hint: 'shimmers faintly' },
     });

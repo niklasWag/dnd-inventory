@@ -153,26 +153,26 @@ export function MoveItemModal({
       ? `Quantity must not exceed the stack size (${String(sourceQty)})`
       : null;
 
-  function onSubmit(values: FormOutput): void {
+  async function onSubmit(values: FormOutput): Promise<void> {
     if (values.quantity > sourceQty) {
       setSubmitError(`Quantity exceeds stack size (${String(sourceQty)})`);
       return;
     }
-    try {
-      setSubmitError(null);
-      dispatchMintingAction({
-        type: 'transfer',
-        payload: {
-          itemInstanceId,
-          toStashId: values.toStashId,
-          quantity: values.quantity,
-        },
-      });
-      toast.success('Item moved');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
+    setSubmitError(null);
+    const outcome = await dispatchMintingAction({
+      type: 'transfer',
+      payload: {
+        itemInstanceId,
+        toStashId: values.toStashId,
+        quantity: values.quantity,
+      },
+    });
+    if (!outcome.ok) {
+      setSubmitError(outcome.message ?? 'Unknown error');
+      return;
     }
+    toast.success('Item moved');
+    onOpenChange(false);
   }
 
   const canSubmit =

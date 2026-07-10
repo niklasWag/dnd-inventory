@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 
 interface DrainCurrencyModalProps {
   /** Shared-pool stash id (Party Stash or Recovered Loot). */
@@ -56,7 +57,7 @@ export function DrainCurrencyModal({
   open,
   onOpenChange,
 }: DrainCurrencyModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const holding = useStore(
     useShallow((s) => {
       const c = s.appState?.currencies.find((row) => row.stashId === stashId);
@@ -95,16 +96,19 @@ export function DrainCurrencyModal({
       gp: -amounts.gp || 0,
       pp: -amounts.pp || 0,
     };
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'currency-change',
         payload: { stashId, delta, reason: 'gameplay-drain' },
-      });
-      toast.success('Drained.');
-      onOpenChange(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not drain currency.');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success('Drained.');
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => toast.error(message ?? 'Could not drain currency.'),
+      },
+    );
   }
 
   return (

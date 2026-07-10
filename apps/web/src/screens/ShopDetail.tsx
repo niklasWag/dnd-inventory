@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ItemPicker } from '@/components/catalog/ItemPicker';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 
@@ -42,7 +43,7 @@ export function ShopDetail(): ReactElement {
   const partyId = useCurrentPartyId();
   const navigate = useNavigate();
   const { shopId } = useParams<{ shopId: string }>();
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const isDmOrSolo = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
 
   const view = useStore(
@@ -139,25 +140,27 @@ export function ShopDetail(): ReactElement {
   }
 
   function toggleOpen(): void {
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'set-shop-open',
         payload: { shopId: shop.id, isOpen: !shop.isOpen },
-      });
-      toast.success(shop.isOpen ? 'Shop closed' : 'Shop opened');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => toast.success(shop.isOpen ? 'Shop closed' : 'Shop opened'),
+      },
+    );
   }
 
   function onDelete(): void {
-    try {
-      dispatch({ type: 'delete-shop', payload: { shopId: shop.id } });
-      toast.success('Shop deleted');
-      void navigate(`/party/${partyId}/shops`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+    void dispatch(
+      { type: 'delete-shop', payload: { shopId: shop.id } },
+      {
+        onSuccess: () => {
+          toast.success('Shop deleted');
+          void navigate(`/party/${partyId}/shops`);
+        },
+      },
+    );
   }
 
   function onAddStock(): void {
@@ -183,8 +186,8 @@ export function ShopDetail(): ReactElement {
       toast.error('This item has no catalog price — set a price override');
       return;
     }
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'edit-shop-stock',
         payload: {
           shopId: shop.id,
@@ -196,29 +199,31 @@ export function ShopDetail(): ReactElement {
             ...(override !== undefined ? { priceOverride: override } : {}),
           },
         },
-      });
-      toast.success('Stock added');
-      setPickedDef(null);
-      setAddStockQty('1');
-      setAddStockOverride('');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success('Stock added');
+          setPickedDef(null);
+          setAddStockQty('1');
+          setAddStockOverride('');
+        },
+      },
+    );
   }
 
   function onRemoveStock(stockEntryId: string): void {
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'edit-shop-stock',
         payload: {
           shopId: shop.id,
           operation: { kind: 'remove', stockEntryId },
         },
-      });
-      toast.success('Stock removed');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => toast.success('Stock removed'),
+      },
+    );
   }
 
   function onBuy(stockEntryId: string): void {
@@ -226,8 +231,8 @@ export function ShopDetail(): ReactElement {
       toast.error('No inventory to buy into');
       return;
     }
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'purchase',
         payload: {
           shopId: shop.id,
@@ -236,11 +241,11 @@ export function ShopDetail(): ReactElement {
           quantity: 1,
           newItemInstanceId: newUuidV7(),
         },
-      });
-      toast.success('Bought 1');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => toast.success('Bought 1'),
+      },
+    );
   }
 
   // Items in the current user's Inventory that have a catalog cost
@@ -258,8 +263,8 @@ export function ShopDetail(): ReactElement {
       toast.error('Item is required');
       return;
     }
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'sale',
         payload: {
           shopId: shop.id,
@@ -267,13 +272,15 @@ export function ShopDetail(): ReactElement {
           quantity: qty,
           newStockEntryId: newUuidV7(),
         },
-      });
-      toast.success(`Sold ${String(qty)}`);
-      setSellItemId('');
-      setSellQty('1');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Sold ${String(qty)}`);
+          setSellItemId('');
+          setSellQty('1');
+        },
+      },
+    );
   }
 
   return (

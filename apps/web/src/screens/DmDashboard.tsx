@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { useCanDispatch } from '@/lib/useCanDispatch';
+import { useDispatch } from '@/lib/useDispatch';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 
 /** Stable empty-array references for the Zustand selector fallback when
@@ -242,7 +243,7 @@ function formatGp(gp: number): string {
  * reducer + server guard).
  */
 function SessionsSection({ sessions }: { sessions: readonly GameSession[] }): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const canDispatch = useCanDispatch();
   const [endDialogOpen, setEndDialogOpen] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -254,27 +255,31 @@ function SessionsSection({ sessions }: { sessions: readonly GameSession[] }): Re
   );
 
   function startSession(): void {
-    try {
-      setStartError(null);
-      dispatch({
+    setStartError(null);
+    void dispatch(
+      {
         type: 'start-game-session',
         payload: { newGameSessionId: newUuidV7() },
-      });
-      toast.success('Session started');
-    } catch (err) {
-      setStartError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => toast.success('Session started'),
+        onRejection: (_code, message) => setStartError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   function endSession(): void {
     if (current === null) return;
-    try {
-      dispatch({ type: 'end-game-session', payload: {} });
-      toast.success(`Session ${current.number} ended`);
-      setEndDialogOpen(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to end session');
-    }
+    void dispatch(
+      { type: 'end-game-session', payload: {} },
+      {
+        onSuccess: () => {
+          toast.success(`Session ${current.number} ended`);
+          setEndDialogOpen(false);
+        },
+        onRejection: (_code, message) => toast.error(message ?? 'Failed to end session'),
+      },
+    );
   }
 
   return (
@@ -363,7 +368,7 @@ function SessionsSection({ sessions }: { sessions: readonly GameSession[] }): Re
  * `notes unchanged` reject), toast + error surface on submit.
  */
 function SessionRow({ session }: { session: GameSession }): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const canDispatch = useCanDispatch();
   const initialNotes = session.notes ?? '';
   const [draft, setDraft] = useState(initialNotes);
@@ -382,16 +387,17 @@ function SessionRow({ session }: { session: GameSession }): ReactElement {
 
   function saveNotes(): void {
     if (isNoOp) return;
-    try {
-      setSubmitError(null);
-      dispatch({
+    setSubmitError(null);
+    void dispatch(
+      {
         type: 'edit-game-session-notes',
         payload: { gameSessionId: session.id, notes: draft },
-      });
-      toast.success('Session notes saved');
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => toast.success('Session notes saved'),
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   return (

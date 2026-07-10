@@ -14,9 +14,12 @@ import { configureQueue, resetQueue } from '@/sync/queue';
  * multi-member-offline condition holds. This is the store-level
  * short-circuit.
  *
- * The tests here mock `sonner` so we can assert the toast fires
- * without actually rendering a toaster. `configureQueue` is called
- * with a no-op stub so the successful-dispatch paths don't throw at
+ * The tests here assert the block via the resolved `MutationOutcome`
+ * (R8.5): a blocked dispatch resolves `{ ok: false, code:
+ * 'offline_write_blocked' }` and leaves state untouched. The toast is
+ * no longer fired here — `useDispatch`'s default rejection consumer
+ * owns it (single toast authority). `configureQueue` is called with a
+ * no-op stub so the successful-dispatch paths don't throw at
  * `queue.enqueue`.
  */
 
@@ -97,13 +100,13 @@ afterEach(() => {
 });
 
 describe('R5.1.d — store.dispatch write-block backstop', () => {
-  it('blocks dispatch + toasts when server-mode + offline + multi-member', () => {
+  it('blocks dispatch + resolves offline_write_blocked when server-mode + offline + multi-member', async () => {
     useStore.setState({ appState: makeAppState(3), online: false });
     const preLogLen = useStore.getState().log.length;
     const preAppState = useStore.getState().appState;
 
     // Any mutation — even a `rename-party` which normally succeeds.
-    useStore.getState().dispatch({
+    const outcome = await useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId: 'p1', newName: 'Renamed' },
     });
@@ -111,7 +114,9 @@ describe('R5.1.d — store.dispatch write-block backstop', () => {
     // State + log unchanged (block was in effect).
     expect(useStore.getState().appState).toBe(preAppState);
     expect(useStore.getState().log).toHaveLength(preLogLen);
-    expect(toast.error).toHaveBeenCalledWith('Offline — changes are disabled until you reconnect.');
+    // R8.5 — the block surfaces as an outcome, not an inline toast.
+    expect(outcome).toEqual({ ok: false, code: 'offline_write_blocked' });
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it('allows dispatch when the party is solo (memberCount === 1) even while offline', () => {
@@ -119,45 +124,37 @@ describe('R5.1.d — store.dispatch write-block backstop', () => {
 
     // `rename-party` reducer requires the payload's partyId to match
     // state.party.id; matches for this fixture.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId: 'p1', newName: 'Renamed-Solo' },
     });
 
-    // Dispatch went through — state's party name flipped, log grew.
+    // Dispatch went through — state's party name flipped.
     expect(useStore.getState().appState!.party.name).toBe('Renamed-Solo');
-    expect(toast.error).not.toHaveBeenCalledWith(
-      'Offline — changes are disabled until you reconnect.',
-    );
   });
 
   it('allows dispatch when online in a multi-member party', () => {
     useStore.setState({ appState: makeAppState(3), online: true });
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'rename-party',
       payload: { partyId: 'p1', newName: 'Renamed-Online' },
     });
 
     expect(useStore.getState().appState!.party.name).toBe('Renamed-Online');
-    expect(toast.error).not.toHaveBeenCalledWith(
-      'Offline — changes are disabled until you reconnect.',
-    );
   });
 
-  it('allows `seed-catalog` even while blocked (it is a local-only bootstrap seed)', () => {
+  it('allows `seed-catalog` even while blocked (it is a local-only bootstrap seed)', async () => {
     useStore.setState({ appState: makeAppState(3), online: false });
 
     // seed-catalog is a system action, not user-initiated. It populates
     // the local catalog mirror and never hits the server.
-    useStore.getState().dispatch({
+    const outcome = await useStore.getState().dispatch({
       type: 'seed-catalog',
       payload: { seedVersion: 1, entries: [] },
     });
 
-    // No block toast fired.
-    expect(toast.error).not.toHaveBeenCalledWith(
-      'Offline — changes are disabled until you reconnect.',
-    );
+    // Not blocked — resolves an ok outcome.
+    expect(outcome.ok).toBe(true);
   });
 });

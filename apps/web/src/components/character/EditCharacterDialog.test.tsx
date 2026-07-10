@@ -235,7 +235,7 @@ describe('EditCharacterDialog (R6.0)', () => {
     // Acquire + attune 3 magic items so the current attuned count is 3.
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -252,7 +252,7 @@ describe('EditCharacterDialog (R6.0)', () => {
       .appState!.items.filter((i) => i.ownerId === inventoryStashId)
       .map((i) => i.id);
     for (const id of itemIds) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: id } });
     }
@@ -289,7 +289,7 @@ describe('EditCharacterDialog (R6.0)', () => {
     // Attune 2 items; then attempt to lower max 3→2. That's not
     // strictly below attunedCount (2 == 2) so no confirm.
     for (let i = 0; i < 2; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -306,7 +306,7 @@ describe('EditCharacterDialog (R6.0)', () => {
       .appState!.items.filter((i) => i.ownerId === inventoryStashId)
       .map((i) => i.id);
     for (const id of itemIds) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: id } });
     }
@@ -329,7 +329,7 @@ describe('EditCharacterDialog (R6.0)', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     for (let i = 0; i < 3; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -346,7 +346,7 @@ describe('EditCharacterDialog (R6.0)', () => {
       .appState!.items.filter((i) => i.ownerId === inventoryStashId)
       .map((i) => i.id);
     for (const id of itemIds) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: id } });
     }
@@ -377,7 +377,7 @@ describe('EditCharacterDialog (R6.0)', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     for (let i = 0; i < 4; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -395,7 +395,7 @@ describe('EditCharacterDialog (R6.0)', () => {
       .map((i) => i.id);
     // Fill the default 3-slot cap.
     for (let i = 0; i < 3; i += 1) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: itemIds[i]! } });
     }
@@ -413,7 +413,7 @@ describe('EditCharacterDialog (R6.0)', () => {
 
     // A fresh attune on the 4th item now fits within the raised cap.
     // If cap were still 3, this would throw "no free attunement slot".
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: itemIds[3]! } });
     const fourthRow = useStore.getState().appState!.items.find((i) => i.id === itemIds[3])!;

@@ -76,7 +76,7 @@ function renderAt(path: string): void {
 
 describe('CharacterSheet (M1)', () => {
   it('renders the character header after create-character', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         name: 'Thorin',
@@ -98,7 +98,7 @@ describe('CharacterSheet (M1)', () => {
   });
 
   it('renders all four tabs', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         name: 'A',
@@ -139,7 +139,7 @@ describe('CharacterSheet (M2)', () => {
   it('shows an acquired item row with the correct name and qty', () => {
     const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -161,7 +161,7 @@ describe('CharacterSheet (M2)', () => {
     const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
     const { dispatch } = useStore.getState();
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -171,7 +171,7 @@ describe('CharacterSheet (M2)', () => {
         ...acquireIds(),
       },
     });
-    dispatch({
+    void dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -194,7 +194,7 @@ describe('CharacterSheet (M2)', () => {
     const user = userEvent.setup();
     const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -227,7 +227,7 @@ describe('CharacterSheet (M2)', () => {
   it('Storage tab lists a Storage stash card after one is created (M3)', async () => {
     const user = userEvent.setup();
     const { characterId: id } = bootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: id,
@@ -248,7 +248,7 @@ describe('CharacterSheet (M2)', () => {
     const user = userEvent.setup();
     const { characterId: id, inventoryStashId } = bootstrap();
     const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -271,7 +271,7 @@ describe('CharacterSheet (M2)', () => {
 
 describe('CharacterSheet (M4)', () => {
   it('renders a CurrencyRow on the Inventory tab', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         name: 'A',
@@ -294,7 +294,7 @@ describe('CharacterSheet (M4)', () => {
 
   it('clicking + on a denomination dispatches a currency-change with reason=deposit', async () => {
     const user = userEvent.setup();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         name: 'A',
@@ -360,7 +360,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
   function setupCharacterWithWand(): { characterId: string } {
     const base = bootstrap();
     const wand = base.catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -399,7 +399,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     const { characterId } = setupCharacterWithWand();
     // Spend a charge so the wand is eligible for recharge (not at max).
     const wandId = useStore.getState().appState!.items[0]!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: wandId, characterId },
     });
@@ -446,7 +446,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     const base = bootstrap();
     // Decanter of Endless Water: dawn rule, NO rechargeAmount.
     const decanter = base.catalog.find((d) => d.id === 'dmg-2024:decanter-of-endless-water')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -459,7 +459,7 @@ describe('CharacterSheet — R2.2 Rest dropdown', () => {
     const decanterId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === decanter.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'use-charge',
       payload: { itemInstanceId: decanterId, characterId: base.characterId },
     });

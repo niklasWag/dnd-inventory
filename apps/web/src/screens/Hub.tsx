@@ -305,7 +305,7 @@ export function Hub(): ReactElement {
     }
 
     try {
-      dispatchMintingAction({
+      void dispatchMintingAction({
         type: 'create-character',
         payload: partyName !== undefined ? { ...values, partyName } : values,
       });
@@ -360,7 +360,7 @@ export function Hub(): ReactElement {
     }
 
     try {
-      dispatchMintingAction({
+      void dispatchMintingAction({
         type: 'create-character',
         payload: { dmOnly: true, partyName },
       });

@@ -107,7 +107,7 @@ describe('round-trip identity (MVP DoD)', () => {
     // Build a non-trivial state: bootstrap + homebrew + an acquire to
     // confirm the log contains diverse TxTypes.
     const { homebrewDefId, inventoryStashId } = bootstrapWithHomebrew();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -117,7 +117,7 @@ describe('round-trip identity (MVP DoD)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,

@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 
 /**
  * R6.4 — Identification Panel (`/party/:partyId/identify`).
@@ -50,7 +51,7 @@ export function IdentificationPanel(): ReactElement {
   const items = useStore(useShallow((s) => s.appState?.items ?? []));
   const catalog = useStore(useShallow((s) => s.appState?.catalog ?? []));
   const stashes = useStore(useShallow((s) => s.appState?.stashes ?? []));
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
 
   const [showIdentified, setShowIdentified] = useState(false);
   const [batchTarget, setBatchTarget] = useState<Group | null>(null);
@@ -93,25 +94,25 @@ export function IdentificationPanel(): ReactElement {
   }
 
   function onIdentifyOne(instance: ItemInstance, identified: boolean): void {
-    try {
-      const payload: { itemInstanceId: string; identified: boolean; hint?: string } = {
-        itemInstanceId: instance.id,
-        identified,
-      };
-      if (instance.hint !== undefined) payload.hint = instance.hint;
-      dispatch({ type: 'identify', payload });
-      toast.success(identified ? 'Identified' : 'Revoked identification');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+    const payload: { itemInstanceId: string; identified: boolean; hint?: string } = {
+      itemInstanceId: instance.id,
+      identified,
+    };
+    if (instance.hint !== undefined) payload.hint = instance.hint;
+    void dispatch(
+      { type: 'identify', payload },
+      {
+        onSuccess: () => toast.success(identified ? 'Identified' : 'Revoked identification'),
+      },
+    );
   }
 
   function onSaveHint(instance: ItemInstance, nextHint: string): void {
     const trimmed = nextHint.trim();
     const nextHintValue = trimmed === '' ? undefined : trimmed;
     if (nextHintValue === instance.hint) return;
-    try {
-      dispatch({
+    void dispatch(
+      {
         type: 'identify',
         payload: {
           itemInstanceId: instance.id,
@@ -119,11 +120,11 @@ export function IdentificationPanel(): ReactElement {
           // `hint: undefined` is treated as "clear" by the reducer per R2.3.
           ...(nextHintValue === undefined ? { hint: undefined } : { hint: nextHintValue }),
         },
-      });
-      toast.success('Hint saved');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => toast.success('Hint saved'),
+      },
+    );
   }
 
   return (
@@ -214,22 +215,24 @@ export function IdentificationPanel(): ReactElement {
           group={batchTarget}
           onCancel={() => setBatchTarget(null)}
           onConfirm={(hint) => {
-            try {
-              const payload: { definitionId: string; identified: boolean; hint?: string } = {
-                definitionId: batchTarget.definitionId,
-                identified: true,
-              };
-              if (hint !== undefined) payload.hint = hint;
-              dispatch({ type: 'identify-batch', payload });
-              toast.success(
-                `Identified ${String(batchTarget.instances.length)} copies of ${
-                  batchTarget.def?.name ?? 'item'
-                }`,
-              );
-              setBatchTarget(null);
-            } catch (err) {
-              toast.error(err instanceof Error ? err.message : 'Unknown error');
-            }
+            const payload: { definitionId: string; identified: boolean; hint?: string } = {
+              definitionId: batchTarget.definitionId,
+              identified: true,
+            };
+            if (hint !== undefined) payload.hint = hint;
+            void dispatch(
+              { type: 'identify-batch', payload },
+              {
+                onSuccess: () => {
+                  toast.success(
+                    `Identified ${String(batchTarget.instances.length)} copies of ${
+                      batchTarget.def?.name ?? 'item'
+                    }`,
+                  );
+                  setBatchTarget(null);
+                },
+              },
+            );
           }}
         />
       )}

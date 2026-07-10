@@ -111,25 +111,25 @@ export function PackItemModal({
     }
   }, [open, defaultTargetId]);
 
-  function onSubmit(e: React.FormEvent<HTMLFormElement>): void {
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
     if (source === null || selected === '') return;
-    try {
-      setSubmitError(null);
-      dispatchMintingAction({
-        type: 'transfer',
-        payload: {
-          itemInstanceId,
-          toStashId: source.ownerId,
-          quantity: source.quantity,
-          toContainerInstanceId: selected,
-        },
-      });
-      toast.success('Item packed');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
+    setSubmitError(null);
+    const outcome = await dispatchMintingAction({
+      type: 'transfer',
+      payload: {
+        itemInstanceId,
+        toStashId: source.ownerId,
+        quantity: source.quantity,
+        toContainerInstanceId: selected,
+      },
+    });
+    if (!outcome.ok) {
+      setSubmitError(outcome.message ?? 'Unknown error');
+      return;
     }
+    toast.success('Item packed');
+    onOpenChange(false);
   }
 
   const canSubmit = source !== null && selected !== '';
@@ -145,7 +145,13 @@ export function PackItemModal({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={onSubmit} className="space-y-4" noValidate>
+        <form
+          onSubmit={(e) => {
+            void onSubmit(e);
+          }}
+          className="space-y-4"
+          noValidate
+        >
           <div className="space-y-1.5">
             <Label htmlFor="pack-target">Target container</Label>
             <select

@@ -88,8 +88,8 @@ export function bootstrap(
     newRecoveredLootCurrencyId: newUuidV7(),
   };
   const { dispatch } = useStore.getState();
-  dispatch({ type: 'create-character', payload: { ...payload, ...ids } });
-  dispatch({
+  void dispatch({ type: 'create-character', payload: { ...payload, ...ids } });
+  void dispatch({
     type: 'seed-catalog',
     payload: { seedVersion: SEED_VERSION, entries: [...loadPhbSeed(), ...loadDmgSeed()] },
   });
@@ -129,7 +129,7 @@ export function bootstrapWithItem(
   const torch = base.catalog.find((d) => d.id === 'phb-2024:torch');
   if (torch === undefined) throw new Error('bootstrapWithItem: torch not found in catalog');
 
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: base.inventoryStashId,
@@ -180,7 +180,7 @@ export function bootstrapWithHomebrew(
     ...overrides,
     newDefinitionId: newUuidV7(),
   };
-  useStore.getState().dispatch({ type: 'create-homebrew', payload });
+  void useStore.getState().dispatch({ type: 'create-homebrew', payload });
   const homebrewDefId = useStore.getState().appState!.catalog.at(-1)!.id;
   return { ...base, homebrewDefId };
 }

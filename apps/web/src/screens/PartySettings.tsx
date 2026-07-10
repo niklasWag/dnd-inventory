@@ -6,6 +6,7 @@ import { Copy, RefreshCw, UserMinus, LogOut, Coins, Crown, ArrowLeft } from 'luc
 
 import { Button } from '@/components/ui/button';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
+import { useDispatch } from '@/lib/useDispatch';
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,7 @@ import type { PartyMemberItem } from '@app/shared';
 export function PartySettings(): ReactElement {
   const navigate = useNavigate();
   const urlPartyId = useCurrentPartyId();
+  const dispatch = useDispatch();
   const partyId = useStore(useShallow((s) => (s.appState !== null ? s.appState.party.id : null)));
   const partyName = useStore(
     useShallow((s) => (s.appState !== null ? s.appState.party.name : null)),
@@ -216,17 +218,18 @@ export function PartySettings(): ReactElement {
    */
   function handleAppointBanker(targetUserId: string): void {
     setBusy(`banker-${targetUserId}`);
-    try {
-      useStore.getState().dispatch({
+    void dispatch(
+      {
         type: 'appoint-banker',
         payload: { bankerUserId: targetUserId },
-      });
-      toast.success('Banker appointed.');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not appoint Banker.');
-    } finally {
+      },
+      {
+        onSuccess: () => toast.success('Banker appointed.'),
+        onRejection: (_code, message) => toast.error(message ?? 'Could not appoint Banker.'),
+      },
+    ).finally(() => {
       setBusy(null);
-    }
+    });
   }
 
   /**
@@ -237,17 +240,18 @@ export function PartySettings(): ReactElement {
    */
   function handleRevokeBanker(): void {
     setBusy('banker-revoke');
-    try {
-      useStore.getState().dispatch({
+    void dispatch(
+      {
         type: 'revoke-banker',
         payload: { reason: 'manual' },
-      });
-      toast.success('Banker revoked.');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not revoke Banker.');
-    } finally {
+      },
+      {
+        onSuccess: () => toast.success('Banker revoked.'),
+        onRejection: (_code, message) => toast.error(message ?? 'Could not revoke Banker.'),
+      },
+    ).finally(() => {
       setBusy(null);
-    }
+    });
   }
 
   /**
@@ -262,10 +266,14 @@ export function PartySettings(): ReactElement {
     if (partyId === null) return;
     setBusy(`transfer-dm-${target.userId}`);
     try {
-      useStore.getState().dispatch({
+      const outcome = await dispatch({
         type: 'dm-transfer',
         payload: { newDmUserId: target.userId },
       });
+      if (!outcome.ok) {
+        toast.error(outcome.message ?? 'Could not transfer DM role.');
+        return;
+      }
       // Refresh the member list from the server so role badges + DM
       // affordances update after the swap. In local-mode the store's
       // reactive read is enough; in server-mode we re-fetch to align
@@ -280,8 +288,6 @@ export function PartySettings(): ReactElement {
         }
       }
       toast.success(`DM role transferred to ${target.displayName}.`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not transfer DM role.');
     } finally {
       setBusy(null);
       setConfirmTransferDm(null);
@@ -310,17 +316,23 @@ export function PartySettings(): ReactElement {
    * optimistic id), navigate.
    */
   async function handleCreateCharacterSubmit(values: CharacterFormOutput): Promise<void> {
-    try {
-      dispatchMintingAction({ type: 'create-character', payload: values });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not create character');
-      return;
-    }
-    setCreateCharacterOpen(false);
+    // R8.5 — capture the outcome promise but DO NOT await it before the
+    // flush: in server mode the outcome only resolves once the sync
+    // queue POSTs, and `flushSyncQueue()` is what drives that POST.
+    // Awaiting first would gate the flush on an outcome that needs the
+    // flush. Fire the dispatch (enqueues), flush to land the POST, THEN
+    // read the settled outcome to branch success/rejection.
+    const outcomePromise = dispatchMintingAction({ type: 'create-character', payload: values });
     await flushPendingPersist();
     if (isServerMode) {
       await flushSyncQueue();
     }
+    const outcome = await outcomePromise;
+    if (!outcome.ok) {
+      toast.error(outcome.message ?? 'Could not create character');
+      return;
+    }
+    setCreateCharacterOpen(false);
     const canonical = useStore.getState().appState;
     const id = getOwnCharacter(canonical)?.id;
     if (id !== undefined) {

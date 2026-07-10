@@ -21,11 +21,18 @@ Open + recently-closed bugs in the project. Each entry has a stable id (`BUG-<n>
 
 ## Open
 
+None — all filed bugs are fixed. New bugs get appended here (see Process above).
+
+---
+
+## Recently fixed
+
 ### BUG-005 — Optimistic success toast flashes before the server rejection toast on guarded actions
 
 - **Filed:** 2026-07-01
+- **Fixed:** 2026-07-10 (branch: `feat/r8-hardening`; R8.5)
 - **Severity:** medium (cosmetic + UX-confusing — no data corruption; the final state is correct because the queue rolls back via BUG-003's snapshot pattern, and the rejection toast is the last one shown. But a user who blinks may think their action succeeded before seeing the rejection.)
-- **Status:** open
+- **Status:** fixed
 - **Affected slice:** cross-cutting — surfaced during R4.4 manual testing. Underlying defect predates R4 (present since R3.5 when the sync queue landed).
 
 **Symptom.** Server mode, multi-member party. A player attempts a DM-only action they don't have permission for (e.g. clicks "New homebrew" in the Catalog Browser, or drags an item out of Party Stash while a Banker is active). Two toasts flash in quick succession:
@@ -76,9 +83,10 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 - SECURITY §2.1 — server-authoritative rejection is the invariant; the fix must not soften it, only front-load the client-side check for display purposes.
 - `apps/web/src/sync/queue.ts:247` — where the current red rejection toast fires.
 
+**Closing summary (2026-07-10, R8.5 — mutation outcome authority).** Fixed via **Option A**, generalized into an addressable outcome rather than per-screen callback threading. The store's `dispatch` now returns `Promise<MutationOutcome>` (`{ ok: true; applied } | { ok: false; code; message? }`); in server mode the sync queue is the sole authority that resolves it — once `POST /sync/actions` reaches a terminal state (200 / 422 / auth / parked) it drains a per-dispatch correlation map (`registerOutcome(dispatchId)` ↔ `enqueue`). In local mode the outcome resolves synchronously (the local apply IS the terminal outcome). A new `useDispatch` hook (`apps/web/src/lib/useDispatch.ts`) is the single UI seam: `dispatch(action, { onSuccess, onRejection, queuedToast })` runs `onSuccess` ONLY on a genuinely-terminal `{ ok: true }`, so the green toast can no longer precede a server rejection. The queue's inline `toast.error` on 422 is retired — the rejection rides the outcome and `useDispatch`'s default consumer renders it via the shared `apps/web/src/sync/rejectionToast.ts` map (also reused by the reconnect-drain path, which has no live awaiter). Reducer-invariant throws stay a SYNCHRONOUS throw at the raw `dispatch` boundary (preserving the `reduce`-throws → `dispatch`-throws reducer test surface); `useDispatch` catches them and normalizes to `{ ok: false, code: 'reducer_error' }`. ~25 mutation callsites migrated off the `dispatch(); toast.success()` shape. A custom ESLint rule `local/no-sync-toast-success-after-dispatch` (`apps/web/eslint-rules/`) now fails the build on the naive pattern so the class cannot regress. See `docs/SECURITY.md` §2.1 for the optimistic-UI clarification (the terminal success signal waits for server ack, or the local-mode shim). No security-posture change — the server stays authoritative; this only governs what the client is allowed to *show*.
+
 ---
 
-## Recently fixed
 
 ### BUG-014 — Socket connects during `needsDisplayName`; server rejects it, reconnect loop throws an uncaught TypeError
 

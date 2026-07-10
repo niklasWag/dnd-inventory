@@ -88,7 +88,7 @@ describe('RH2.6 — mode-aware log-authority split', () => {
     // A second dispatch (acquire) also produces no log entry.
     const preLogLen = store.useStore.getState().log.length;
     const preItemsLen = appState!.items.length;
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -119,7 +119,7 @@ describe('RH2.6 — mode-aware log-authority split', () => {
     expect(Number.isFinite(Date.parse(createCharEntry!.timestamp))).toBe(true);
 
     const preLogLen = store.useStore.getState().log.length;
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -182,7 +182,7 @@ describe('RH2.6 — mode-aware log-authority split', () => {
       }),
     );
 
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -281,7 +281,7 @@ describe('RH3.1 — sessionId stamping', () => {
     const { inventoryStashId } = fixtures.bootstrap();
 
     const gameSessionId = newUuidV7();
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'start-game-session',
       payload: { newGameSessionId: gameSessionId },
     });
@@ -298,7 +298,7 @@ describe('RH3.1 — sessionId stamping', () => {
     }
 
     // A subsequent acquire inherits the current session id.
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -318,7 +318,7 @@ describe('RH3.1 — sessionId stamping', () => {
     const { inventoryStashId } = fixtures.bootstrap();
 
     // No start-game-session dispatched — every entry stamps null.
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -338,13 +338,13 @@ describe('RH3.1 — sessionId stamping', () => {
     const { inventoryStashId } = fixtures.bootstrap();
 
     const gameSessionId = newUuidV7();
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'start-game-session',
       payload: { newGameSessionId: gameSessionId },
     });
-    store.useStore.getState().dispatch({ type: 'end-game-session', payload: {} });
+    void store.useStore.getState().dispatch({ type: 'end-game-session', payload: {} });
 
-    store.useStore.getState().dispatch({
+    void store.useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,

@@ -32,7 +32,7 @@ function setup(
   onDeleted: ReturnType<typeof vi.fn>;
 } {
   const { characterId } = bootstrap();
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'create-stash',
     payload: {
       ownerCharacterId: characterId,

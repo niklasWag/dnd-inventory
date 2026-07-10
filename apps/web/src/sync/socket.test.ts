@@ -218,7 +218,7 @@ describe('BUG-007 — applyBroadcast self-echo short-circuit', () => {
     // Step 1: simulate the optimistic dispatch — the reducer already
     // ran and put quantity 1 into inventory.
     const newItemInstanceId = newUuidV7();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: stashInInventory,
@@ -383,7 +383,7 @@ describe('BUG-007 — applyBroadcast self-echo short-circuit', () => {
     if (torchDef === undefined) return;
 
     const newItemInstanceId = newUuidV7();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: stashInInventory,

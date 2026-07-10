@@ -12,6 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ItemPicker, RARITY_LABELS } from '@/components/catalog/ItemPicker';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
+import type { MutationOutcome } from '@/store/outcome';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import type { HoardGeneratorRouteState } from './HoardGenerator';
 
@@ -83,7 +85,7 @@ export function LootDistributionWizard(): ReactElement {
   const partyId = useCurrentPartyId();
   const navigate = useNavigate();
   const location = useLocation();
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
 
   const partyStashId = useStore(
     useShallow((s) => s.appState?.stashes.find((st) => st.scope === 'party')?.id ?? null),
@@ -192,7 +194,7 @@ export function LootDistributionWizard(): ReactElement {
     setAddRowKind(null);
   }
 
-  function distribute(): void {
+  async function distribute(): Promise<void> {
     // Guard: every item row must have a definition assigned.
     const unfilledItem = rows.find(
       (r) => r.kind === 'item' && (r.itemDefinitionId === '' || r.itemDefinitionId === undefined),
@@ -201,45 +203,65 @@ export function LootDistributionWizard(): ReactElement {
       toast.error('Every item row needs a catalog item picked.');
       return;
     }
-    let ok = 0;
-    let failed = 0;
+    // R8.5 — dispatch every row fire-and-forget FIRST so they ride the
+    // sync queue's 200ms debounce as ONE batched POST, then await all
+    // the outcome promises together. Awaiting each outcome inside the
+    // loop would serialize the rows into N sequential round-trips and
+    // defeat the queue's batching. Per-row `onRejection: () => {}`
+    // suppresses the hook's default toast — this loop owns the labelled
+    // per-row error toast below.
+    const pending: { label: string; outcome: Promise<MutationOutcome> }[] = [];
     for (const row of rows) {
-      try {
-        if (row.kind === 'coin') {
-          if (row.amount <= 0) continue; // skip empty coin rows silently
-          const delta: Record<Denom, number> = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
-          delta[row.denom] = row.amount;
-          dispatch({
-            type: 'currency-change',
-            payload: {
-              stashId: row.targetStashId,
-              delta,
-              reason: 'deposit',
+      if (row.kind === 'coin') {
+        if (row.amount <= 0) continue; // skip empty coin rows silently
+        const delta: Record<Denom, number> = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
+        delta[row.denom] = row.amount;
+        pending.push({
+          label: 'Coins',
+          outcome: dispatch(
+            {
+              type: 'currency-change',
+              payload: {
+                stashId: row.targetStashId,
+                delta,
+                reason: 'deposit',
+              },
             },
-          });
-        } else {
-          if (row.quantity <= 0) continue;
-          dispatch({
-            type: 'acquire',
-            payload: {
-              stashId: row.targetStashId,
-              definitionId: row.itemDefinitionId,
-              quantity: row.quantity,
-              source: 'hoard',
-              newItemInstanceId: newUuidV7(),
+            { onRejection: () => {} },
+          ),
+        });
+      } else {
+        if (row.quantity <= 0) continue;
+        pending.push({
+          label: row.itemLabel,
+          outcome: dispatch(
+            {
+              type: 'acquire',
+              payload: {
+                stashId: row.targetStashId,
+                definitionId: row.itemDefinitionId,
+                quantity: row.quantity,
+                source: 'hoard',
+                newItemInstanceId: newUuidV7(),
+              },
             },
-          });
-        }
-        ok += 1;
-      } catch (err) {
-        failed += 1;
-        toast.error(
-          `${row.kind === 'coin' ? 'Coins' : row.itemLabel}: ${
-            err instanceof Error ? err.message : 'Unknown error'
-          }`,
-        );
+            { onRejection: () => {} },
+          ),
+        });
       }
     }
+
+    let ok = 0;
+    let failed = 0;
+    const settled = await Promise.all(pending.map((p) => p.outcome));
+    settled.forEach((outcome, i) => {
+      if (outcome.ok) {
+        ok += 1;
+      } else {
+        failed += 1;
+        toast.error(`${pending[i]!.label}: ${outcome.message ?? 'Unknown error'}`);
+      }
+    });
     if (ok > 0) {
       toast.success(`Distributed ${String(ok)} row${ok === 1 ? '' : 's'}`);
     }
@@ -402,7 +424,13 @@ export function LootDistributionWizard(): ReactElement {
           Add item row
         </Button>
         <div className="ml-auto">
-          <Button type="button" onClick={distribute} disabled={rows.length === 0}>
+          <Button
+            type="button"
+            onClick={() => {
+              void distribute();
+            }}
+            disabled={rows.length === 0}
+          >
             Distribute
           </Button>
         </div>

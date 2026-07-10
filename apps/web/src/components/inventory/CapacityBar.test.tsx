@@ -49,7 +49,7 @@ function loadInventoryWith(weightLbsEach: number, quantity: number): string {
     category: 'gear',
     weight: weightLbsEach,
   });
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: inventoryStashId,
@@ -94,7 +94,7 @@ describe('CapacityBar (R1.1)', () => {
   describe('phb rule', () => {
     it('renders "0 / 150 lb" for an empty inventory under STR 10', () => {
       const { characterId, partyId } = bootstrapStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'phb', enforce: false },
       });
@@ -110,7 +110,7 @@ describe('CapacityBar (R1.1)', () => {
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
       setStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'phb', enforce: false },
       });
@@ -126,7 +126,7 @@ describe('CapacityBar (R1.1)', () => {
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
       setStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'phb', enforce: false },
       });
@@ -141,7 +141,7 @@ describe('CapacityBar (R1.1)', () => {
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
       setStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'phb', enforce: false },
       });
@@ -158,7 +158,7 @@ describe('CapacityBar (R1.1)', () => {
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
       setStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'variant', enforce: false },
       });
@@ -175,7 +175,7 @@ describe('CapacityBar (R1.1)', () => {
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
       setStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'variant', enforce: false },
       });
@@ -190,7 +190,7 @@ describe('CapacityBar (R1.1)', () => {
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
       setStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'variant', enforce: false },
       });
@@ -204,7 +204,7 @@ describe('CapacityBar (R1.1)', () => {
   describe('enforce flag', () => {
     it('shows " · enforced" badge when enforceEncumbrance is true', () => {
       const { characterId, partyId } = bootstrapStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'variant', enforce: true },
       });
@@ -216,7 +216,7 @@ describe('CapacityBar (R1.1)', () => {
 
     it('omits the badge when enforce is false', () => {
       const { characterId, partyId } = bootstrapStr10();
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'variant', enforce: false },
       });
@@ -240,7 +240,7 @@ describe('CapacityBar (R1.1)', () => {
       });
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'phb', enforce: false },
       });
@@ -262,7 +262,7 @@ describe('CapacityBar (R1.1)', () => {
       });
       const characterId = useStore.getState().appState!.characters[0]!.id;
       const partyId = useStore.getState().appState!.party.id;
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'set-encumbrance',
         payload: { partyId, rule: 'variant', enforce: false },
       });

@@ -42,7 +42,7 @@ interface SetupResult {
  */
 function setupWithStacks(quantity: number): SetupResult {
   const base = bootstrap();
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'create-stash',
     payload: {
       ownerCharacterId: base.characterId,
@@ -53,7 +53,7 @@ function setupWithStacks(quantity: number): SetupResult {
   });
   const storageStashId = useStore.getState().appState!.stashes.at(-1)!.id;
   const torch = base.catalog.find((d) => d.id === 'phb-2024:torch')!;
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: base.inventoryStashId,
@@ -216,7 +216,7 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
       const setup = setupWithStacks(1);
       // Source row is in Inventory; equip it before opening the modal.
       const charId = useStore.getState().appState!.characters[0]!.id;
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'equip',
         payload: { characterId: charId, itemInstanceId: setup.itemInstanceId },
       });
@@ -236,7 +236,7 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
     const charId = useStore.getState().appState!.characters[0]!.id;
     const catalog = useStore.getState().appState!.catalog;
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: setup.inventoryStashId,
@@ -249,10 +249,10 @@ describe('MoveItemModal — R1.3 leave-Inventory warning', () => {
     const magicItemId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === magic.id)!.id;
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'equip', payload: { characterId: charId, itemInstanceId: magicItemId } });
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'attune', payload: { characterId: charId, itemInstanceId: magicItemId } });
 

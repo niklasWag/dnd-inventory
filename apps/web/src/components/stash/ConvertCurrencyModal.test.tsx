@@ -18,7 +18,7 @@ beforeEach(async () => {
  * from. Uses the live dispatch path (M4 verified).
  */
 function seedGp(stashId: string, amount: number): void {
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'currency-change',
     payload: {
       stashId,
@@ -84,7 +84,7 @@ describe('ConvertCurrencyModal (M4)', () => {
   it('disables submit on a lossy conversion (1 sp → gp)', async () => {
     const user = userEvent.setup();
     const { inventoryStashId } = bootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,

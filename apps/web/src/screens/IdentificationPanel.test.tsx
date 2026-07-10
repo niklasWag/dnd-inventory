@@ -46,7 +46,7 @@ function seedUnidentifiedCloaks(n: number): { definitionId: string; ids: string[
   if (cloak === undefined) throw new Error('Cloak of Protection not in DMG seed');
   const created: string[] = [];
   for (let i = 0; i < n; i += 1) {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: base.inventoryStashId,
@@ -67,7 +67,7 @@ function seedUnidentifiedCloaks(n: number): { definitionId: string; ids: string[
   }
   // Flip all to unidentified so the panel shows them.
   for (const id of created) {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: id, identified: false },
     });
@@ -162,7 +162,7 @@ describe('IdentificationPanel (R6.4)', () => {
     const user = userEvent.setup();
     const { ids } = seedUnidentifiedCloaks(1);
     // Identify the one copy first so it lands in the identified section.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: ids[0]!, identified: true },
     });

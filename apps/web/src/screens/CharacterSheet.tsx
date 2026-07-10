@@ -23,6 +23,7 @@ import { StashItemsTable } from '@/components/stash/StashItemsTable';
 import { StashSearchInput } from '@/components/stash/StashSearchInput';
 import { StorageStashList } from '@/components/stash/StorageStashList';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import { BATCH_TRIGGER_ORDER, batchTriggerLabel, type BatchRechargeTrigger } from '@/lib/charges';
 
 type Tab = 'inventory' | 'storage' | 'party' | 'recovered-loot';
@@ -313,7 +314,7 @@ function stashForTab(
  * bearing eligible items dispatch immediately as in R2.2.
  */
 function RestMenu({ characterId }: { characterId: string }): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   // R2.2.1 — when truthy, opens RestRollModal for the chosen trigger.
   // The modal handles its own dispatch + toast on Apply.
   const [pendingRoll, setPendingRoll] = useState<BatchRechargeTrigger | null>(null);
@@ -361,16 +362,19 @@ function RestMenu({ characterId }: { characterId: string }): ReactElement {
       return;
     }
     // No formula-bearing items: dispatch immediately (R2.2 behavior).
-    try {
-      dispatch({ type: 'recharge', payload: { mode: 'batch', characterId, trigger } });
-      if (total === 0) {
-        toast.info('No items needed recharging');
-      } else {
-        toast.success(`${total} item${total === 1 ? '' : 's'} recharged`);
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to recharge');
-    }
+    void dispatch(
+      { type: 'recharge', payload: { mode: 'batch', characterId, trigger } },
+      {
+        onSuccess: () => {
+          if (total === 0) {
+            toast.info('No items needed recharging');
+          } else {
+            toast.success(`${total} item${total === 1 ? '' : 's'} recharged`);
+          }
+        },
+        onRejection: (_code, message) => toast.error(message ?? 'Failed to recharge'),
+      },
+    );
   }
 
   return (
