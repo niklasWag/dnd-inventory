@@ -32,6 +32,9 @@ const baseEnv: Env = {
   SNAPSHOTS_ENABLED: false,
   SNAPSHOT_DIR: './snapshots',
   SNAPSHOT_RETENTION_DAYS: 30,
+  EMAIL_ATTEMPT_SWEEP_ENABLED: false,
+  EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS: 24,
+  PENDING_LINK_SWEEP_ENABLED: false,
 };
 
 const envWithSmtp: Env = {
@@ -170,6 +173,51 @@ describe('POST /auth/email/request-otp (R3.3)', () => {
       // Both branches send mail — request-otp is willing to send to brand
       // new addresses because email-only signup is a thing in R3.3.
       expect(mailer.sent).toHaveLength(2);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('POST /auth/email/request-otp — R8.1 per-IP rate limit', () => {
+  it('returns 429 with retry-after after OTP_REQUEST_MAX rapid requests from the same IP', async () => {
+    const { OTP_REQUEST_MAX } = await import('./email/rate-limit.js');
+    const mailer = setupMailerMock();
+    const app = await buildServer({ env: envWithSmtp, prisma, mailService: mailer.service });
+    try {
+      // OTP_REQUEST_MAX hits from the same IP should all succeed (or land on
+      // the same email-lockout branch, but we use unique emails to keep the
+      // per-(email,ip) lockout at zero — only the IP axis should trip).
+      for (let i = 0; i < OTP_REQUEST_MAX - 1; i++) {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/auth/email/request-otp',
+          payload: { email: `user${i}@example.com` },
+        });
+        expect(res.statusCode).toBe(200);
+      }
+      // The Nth hit trips the IP-only lockout.
+      const tripped = await app.inject({
+        method: 'POST',
+        url: '/auth/email/request-otp',
+        payload: { email: 'user-last@example.com' },
+      });
+      expect(tripped.statusCode).toBe(429);
+      expect(tripped.headers['retry-after']).toBeDefined();
+      const body = tripped.json<{ error: string; retryAfter: string }>();
+      expect(body.error).toBe('rate_limited');
+      expect(new Date(body.retryAfter).getTime()).toBeGreaterThan(Date.now());
+
+      // Subsequent requests from the same IP stay 429 without sending mail.
+      const followup = await app.inject({
+        method: 'POST',
+        url: '/auth/email/request-otp',
+        payload: { email: 'user-followup@example.com' },
+      });
+      expect(followup.statusCode).toBe(429);
+      // Only the first (OTP_REQUEST_MAX - 1) hits sent mail; the tripping
+      // one and the followup both short-circuited.
+      expect(mailer.sent.length).toBe(OTP_REQUEST_MAX - 1);
     } finally {
       await app.close();
     }

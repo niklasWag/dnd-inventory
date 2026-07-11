@@ -29,6 +29,7 @@ import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { useCanDispatch } from '@/lib/useCanDispatch';
+import { useDispatch, type DispatchFn } from '@/lib/useDispatch';
 
 /**
  * R6.0 — Edit-character dialog. Single form covering all five
@@ -96,7 +97,7 @@ export function EditCharacterDialog({
   );
   const isDmOrSolo = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
   const canDispatch = useCanDispatch();
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
 
   if (view === null) return null;
   const { character, isOwner, attunedCount } = view;
@@ -137,7 +138,7 @@ interface InnerProps {
   canEditOwnerFields: boolean;
   canEditMaxAttunement: boolean;
   canDispatch: boolean;
-  dispatch: ReturnType<typeof useStore.getState>['dispatch'];
+  dispatch: DispatchFn;
 }
 
 /**
@@ -206,17 +207,20 @@ function EditCharacterDialogInner({
   }
 
   function commit(patch: ReturnType<typeof buildPatch>): void {
-    try {
-      setSubmitError(null);
-      dispatch({
+    setSubmitError(null);
+    void dispatch(
+      {
         type: 'edit-character',
         payload: { characterId: character.id, patch },
-      });
-      toast.success('Character updated');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success('Character updated');
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   function onSubmit(values: FormOutput): void {

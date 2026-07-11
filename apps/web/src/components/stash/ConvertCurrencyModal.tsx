@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import { currency } from '@app/rules';
 
 interface ConvertCurrencyModalProps {
@@ -70,7 +71,7 @@ export function ConvertCurrencyModal({
   open,
   onOpenChange,
 }: ConvertCurrencyModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const holding = useStore(
@@ -135,18 +136,21 @@ export function ConvertCurrencyModal({
   const canSubmit = previewLine !== null;
 
   function onSubmit(values: FormOutput): void {
-    try {
-      setSubmitError(null);
-      const delta = currency.convert(values.source, values.qty, values.target);
-      dispatch({
+    setSubmitError(null);
+    const delta = currency.convert(values.source, values.qty, values.target);
+    void dispatch(
+      {
         type: 'currency-change',
         payload: { stashId, delta, reason: 'convert' },
-      });
-      toast.success('Currency converted');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success('Currency converted');
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   return (

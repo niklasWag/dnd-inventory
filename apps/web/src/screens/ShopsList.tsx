@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { newUuidV7 } from '@app/shared';
@@ -37,7 +38,7 @@ export function ShopsList(): ReactElement {
   const partyId = useCurrentPartyId();
   const shops = useStore(useShallow((s) => s.appState?.shops ?? []));
   const isDmOrSolo = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [creatingOpen, setCreatingOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -49,20 +50,23 @@ export function ShopsList(): ReactElement {
       setSubmitError('Name is required');
       return;
     }
-    try {
-      setSubmitError(null);
-      const newShopId = newUuidV7();
-      dispatch({
+    setSubmitError(null);
+    const newShopId = newUuidV7();
+    void dispatch(
+      {
         type: 'create-shop',
         payload: { newShopId, name: newName.trim() },
-      });
-      toast.success('Shop created');
-      setCreatingOpen(false);
-      setNewName('');
-      void navigate(`/party/${partyId}/shops/${newShopId}`);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success('Shop created');
+          setCreatingOpen(false);
+          setNewName('');
+          void navigate(`/party/${partyId}/shops/${newShopId}`);
+        },
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   return (

@@ -100,26 +100,31 @@ The test strategy uses **layered coverage**: each layer catches a class of defec
 - RTL for component tests — query by accessible role/label, not test IDs.
 - Server-integration tests use Fastify's `inject()` against a real Postgres in the `dnd-inv-pg-test` Docker container (port 5434). The container persists across test runs; migrations are applied with `prisma migrate deploy`.
 
-### 3.3 E2E (Playwright) — deferred, re-evaluate at M5
+### 3.3 E2E (Playwright) — shipped R8.4.d
 
-**Decision:** still deferred per the original §3.3 stance.
+**Decision:** shipped. Docker-native Playwright rig at `./e2e/` (R8.4.d, 2026-07-09). See `e2e/README.md` for how to run it (`pnpm e2e`) and the architecture.
 
-**Motivating evidence accumulated since (do NOT dismiss at M5 re-eval):**
-- **BUG-001** (`Character_inventoryStashId_fkey` RESTRICT violation on kick/leave) — every unit + Vitest server-integration test against `fastify.inject()` passed. The Prisma `$transaction` wrapper, the persistor logic, the guards — all green. The bug only surfaced when the **real** HTTP route hit the **real** Postgres FK constraint with the cascade in the wrong order. Was found in production by a human clicking kick.
-- **BUG-002** (P2002 unique-constraint violation on rejoin) — same story. The route's `already_member` check (Vitest-tested) said clean; `persistJoinParty`'s `create()` (Vitest-tested in isolation) raised P2002 only when a soft-deleted row already existed. Was found in production by a human leaving and rejoining.
+**Why it landed (motivating evidence — the class of defect it exists to catch):**
+- **BUG-001** (`Character_inventoryStashId_fkey` RESTRICT violation on kick/leave) — every unit + Vitest server-integration test against `fastify.inject()` passed. The bug only surfaced when the **real** HTTP route hit the **real** Postgres FK constraint with the cascade in the wrong order. Found in production by a human clicking kick.
+- **BUG-002** (P2002 unique-constraint violation on rejoin) — same story. The route's `already_member` check (Vitest-tested) said clean; `persistJoinParty`'s `create()` raised P2002 only when a soft-deleted row already existed. Found in production by a human leaving and rejoining.
+- **BUG-014** (socket connects during `needsDisplayName` → reconnect loop + uncaught TypeError) — **found by the R8.4.d rig itself** during bring-up. A client/server socket-auth contract mismatch invisible to every unit + server-integration test; only reproduced by driving the full stack fast. Proof the layer pays for itself.
 
-Both share a profile: **defects that only manifest in the full server-DB-client stack under specific state shapes**. Vitest can simulate "soft-deleted row exists" or "FK cascade ordering matters" only when the test author already knows to look. Playwright would catch the class by driving the actual flow.
+All three share a profile: **defects that only manifest in the full server-DB-client stack under specific state shapes.** Vitest can simulate them only when the author already knows to look; Playwright catches the class by driving the actual flow.
 
-**Re-evaluation trigger** (per the original §3.3 note): M5 (live sync) lands. Two additional factors now in scope:
-- Multi-user concurrency surface (R5 websocket) — a class of bugs Vitest can't see at all.
-- The accumulating R4.x feature surface (party CRUD + Banker + DM-transfer + cross-character flows) — each new surface is a candidate "human clicks the flow, server returns 500" event.
+**What shipped (R8.4.d scope):**
+- Self-contained `e2e/docker-compose.yml` — own Postgres + server + web + Caddy + mailpit, reusing the **production** Dockerfiles + Caddyfile so E2E tests what ships.
+- 3-layer structure: `pages/` (locators) → `steps/` (user actions, `test.step()`-wrapped) → `tests/` (prose specs).
+- Specs: `harness` (smoke), `auth-otp-login` (real email-OTP via mailpit), `party-lifecycle` (create → join → leave → rejoin → kick across two browser contexts).
+- Secure context via shared Caddy netns (`http://localhost:8080`) so `navigator.locks` works with no unsafe flags — mirrors the dev compose's published proxy port.
 
-**Scope when picked up:** one happy-path Playwright spec per R4 sub-slice (R4.1.a–f, R4.2.a–e, R4.3, R4.4, R4.5) plus a regression spec per landed BUG-* entry. Tracked in `docs/roadmap.md` → Operational followups → Test infrastructure.
+**Follow-ups (not yet built — extend the rig incrementally when the need arises):**
+- Happy-path specs for the remaining R4 sub-slices + a regression spec per new BUG-* entry, per the layer-selection rule below (climb to Playwright only when a lower-cost layer can't catch the defect).
+- Not wired into CI yet — runs locally / on-demand via `pnpm e2e` (CI is static-checks-only; see `docs/roadmap.md`).
 
 ### 3.4 Coverage targets
 - Rules engine modules: aim for high branch coverage (these are deterministic and easy to test).
 - UI components: prioritize critical flows (create character, move item, JSON import/export round-trip) over coverage percent.
-- Server-integration: every new mutation route gets at least one happy-path + one guard-rejection test against real Postgres. This is the layer that would have caught BUG-001 and BUG-002 if the right state shapes had been tested; it's the **highest-ROI layer to expand** before E2E lands.
+- Server-integration: every new mutation route gets at least one happy-path + one guard-rejection test against real Postgres. This is the layer that would have caught BUG-001 and BUG-002 if the right state shapes had been tested; it remains the **highest-ROI layer to expand** — reach for E2E (§3.3) only when a defect genuinely needs the full browser+server+DB stack.
 
 ### 3.5 Test layer selection — which layer for a new test?
 
@@ -134,9 +139,10 @@ When adding a test, pick the **lowest-cost layer that can catch the defect categ
 | Permission gate (`dm_only`, etc.) | Server integration (real route + real auth context) |
 | FK / unique-constraint violation | Server integration (real Postgres) |
 | Migration drift | DB invariants |
-| Multi-user race / cross-client UI sync | Playwright (M5+) |
+| Multi-user race / cross-client UI sync | Playwright E2E (`e2e/`, R8.4.d) |
+| Full-stack flow only reproducible in a real browser + server + DB | Playwright E2E (`e2e/`) |
 
-Climbing the table is a one-way ratchet: if a server-integration test would suffice, **don't** write a Playwright spec for the same defect; the Vitest run is faster, more focused, and runs in CI today without browser orchestration.
+Climbing the table is a one-way ratchet: if a server-integration test would suffice, **don't** write a Playwright spec for the same defect; the Vitest run is faster, more focused, and runs in CI today without browser orchestration. E2E (`pnpm e2e`) runs locally / on-demand — it's the top rung, reserved for defects the lower layers structurally cannot catch (see §3.3's BUG-001/002/014 profile).
 
 ---
 

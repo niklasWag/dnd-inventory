@@ -33,7 +33,7 @@ function setupTorchAndBackpack(): Fixture {
   const { inventoryStashId, catalog } = bootstrap();
   const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
   const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: inventoryStashId,
@@ -43,7 +43,7 @@ function setupTorchAndBackpack(): Fixture {
       ...acquireIds(),
     },
   });
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: inventoryStashId,
@@ -82,7 +82,7 @@ describe('PackItemModal', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     // Two backpacks — one will be the "source", the other a candidate.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -92,7 +92,7 @@ describe('PackItemModal', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -126,7 +126,7 @@ describe('PackItemModal', () => {
   it('renders an empty-state hint when no containers exist', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,

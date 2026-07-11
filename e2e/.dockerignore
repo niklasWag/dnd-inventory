@@ -1,0 +1,21 @@
+# e2e Playwright runner build context excludes.
+#
+# The build context is the repo ROOT (`context: ..` in compose), so this
+# ignore list is what NOT to ship into the playwright image build. We
+# only need the repo-root pnpm files + the e2e/ directory itself; the
+# server + web images are built separately and reachable over the
+# compose network at runtime.
+apps
+packages
+infra
+docs
+plans
+node_modules
+.git
+dist
+build
+coverage
+.turbo
+.next
+*.log
+.DS_Store

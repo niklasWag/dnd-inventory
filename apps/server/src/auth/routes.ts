@@ -47,7 +47,12 @@ import {
   OTP_LENGTH,
   OTP_LIFETIME_MS,
 } from './email/otp.js';
-import { checkLockout, recordFailedAttempt, resetAttempts } from './email/rate-limit.js';
+import {
+  checkLockout,
+  recordFailedAttempt,
+  recordOtpRequest,
+  resetAttempts,
+} from './email/rate-limit.js';
 import type { MailService } from './email/smtp.js';
 import { createSessionForUser } from './session.js';
 
@@ -382,15 +387,12 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
    * round-trip + the SMTP STARTTLS dance) — Postmark/SES p50 sit in the
    * 100-400ms band.
    *
-   * Followup: the constant-time pad defangs the trivial timing-leak
-   * case but isn't a defense against a sophisticated attacker with
-   * millions of requests. Add a per-IP rate limit on
-   * `POST /auth/email/request-otp` itself (reusing the
-   * `EmailAuthAttempt` keyspace from rate-limit.ts) when per-IP request
-   * volume becomes relevant — currently only `verify-otp` is
-   * rate-limited. Tracked in `docs/roadmap.md` → **Operational
-   * followups (unscheduled)** → "Per-IP rate limit on
-   * POST /auth/email/request-otp".
+   * The constant-time pad defangs the trivial timing-leak case but
+   * isn't a defense against request-flood abuse. R8.1 landed a per-IP
+   * rate limit (`recordOtpRequest` at the top of the request-otp
+   * handler; reuses the `EmailAuthAttempt` keyspace via the empty-string-
+   * email sentinel) to cap request volume at OTP_REQUEST_MAX per IP
+   * per OTP_REQUEST_WINDOW_MS.
    */
   async function constantTimePad(): Promise<void> {
     const ms = 150 + Math.random() * 200;
@@ -407,6 +409,17 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
     }
     const { email } = parsed.data;
     const ip = req.ip;
+
+    // R8.1 — per-IP request-side rate limit. Runs BEFORE the per-(email,ip)
+    // lockout check because a request-flooding attacker rotates emails
+    // per hit; only the IP axis is stable across their attempts.
+    const ipLock = await recordOtpRequest(prisma, ip);
+    if (ipLock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((ipLock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: ipLock.until.toISOString() });
+    }
 
     // Lockout check on the request side too — an attacker who burns a
     // code via the verify route shouldn't be able to immediately request

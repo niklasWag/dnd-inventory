@@ -174,6 +174,20 @@ const createCharacterGuard: Guard<Extract<Action, { type: 'create-character' }>>
     };
   }
 
+  // R8.3 — reject `partyName` on the post-bootstrap branch. The party
+  // already exists; the field would be silently ignored by
+  // `createCharacterInExistingParty` (which never reads it), which is a
+  // footgun for callers that might expect it to also rename the party.
+  // Renaming is a separate `rename-party` action.
+  if (payload.partyName !== undefined) {
+    return {
+      ok: false,
+      code: 'state_already_initialized',
+      message:
+        'create-character: partyName is bootstrap-only; use rename-party to rename an existing party.',
+    };
+  }
+
   const activeMembership = state.memberships.find(
     (m) => m.userId === actor.userId && m.leftAt === null,
   );

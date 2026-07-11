@@ -116,7 +116,7 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
                   // Surface as a toast so the user sees why the add didn't
                   // land instead of an uncaught console error.
                   try {
-                    dispatchMintingAction({
+                    void dispatchMintingAction({
                       type: 'acquire',
                       payload: {
                         stashId,

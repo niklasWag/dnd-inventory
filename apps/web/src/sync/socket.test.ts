@@ -218,7 +218,7 @@ describe('BUG-007 — applyBroadcast self-echo short-circuit', () => {
     // Step 1: simulate the optimistic dispatch — the reducer already
     // ran and put quantity 1 into inventory.
     const newItemInstanceId = newUuidV7();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: stashInInventory,
@@ -383,7 +383,7 @@ describe('BUG-007 — applyBroadcast self-echo short-circuit', () => {
     if (torchDef === undefined) return;
 
     const newItemInstanceId = newUuidV7();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: stashInInventory,
@@ -462,9 +462,15 @@ describe('R5.2.a — syncSocketWithSession (auth-gated connect)', () => {
     expect(s!.active).toBe(true);
   });
 
-  it('builds + connects the socket when status is needsDisplayName (valid session cookie)', () => {
+  it('does NOT build a socket when status is needsDisplayName (server rejects it — BUG-013)', () => {
+    // BUG-013 (R8.4.d): the server's io.use() middleware rejects
+    // needsDisplayName socket upgrades with `display_name_required`.
+    // Connecting during onboarding put socket.io-client into an
+    // infinite failing-reconnect loop that later threw an uncaught
+    // TypeError when the session flipped to authenticated. The client
+    // must NOT connect until onboarding finishes.
     syncSocketWithSession('needsDisplayName');
-    expect(getSocket()).not.toBeNull();
+    expect(getSocket()).toBeNull();
   });
 
   it('tears down the socket on transition authenticated → anonymous (sign out)', () => {

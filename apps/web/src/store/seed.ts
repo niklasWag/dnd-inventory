@@ -36,7 +36,7 @@ export function seedCatalogIfNeeded(): void {
   if (appState === null) return;
   if (appState.seedVersion >= SEED_VERSION) return;
 
-  dispatch({
+  void dispatch({
     type: 'seed-catalog',
     payload: {
       seedVersion: SEED_VERSION,

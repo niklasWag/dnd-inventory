@@ -64,7 +64,7 @@ describe('CatalogBrowser', () => {
   });
 
   it('renders the full PHB list when the catalog is seeded', () => {
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: {
         name: 'A',
@@ -76,7 +76,7 @@ describe('CatalogBrowser', () => {
         ...createCharacterIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'seed-catalog',
       payload: { seedVersion: SEED_VERSION, entries: loadPhbSeed() },
     });
@@ -149,7 +149,7 @@ describe('CatalogBrowser', () => {
   it('Delete dialog shows reference count when item is held in stashes (M6)', async () => {
     const user = userEvent.setup();
     const { homebrewDefId, inventoryStashId } = bootstrapWithHomebrew({ name: 'Mushroom' });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -257,7 +257,7 @@ describe('CatalogBrowser', () => {
     // Rapier becomes 25 gp * 0.1 = 2.5 gp = 250 cp → "25 sp".
     const user = userEvent.setup();
     const { partyId } = bootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
     });
@@ -279,7 +279,7 @@ describe('CatalogBrowser', () => {
       category: 'gear',
       cost: { amount: 10, currency: 'gp' },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
     });
@@ -303,7 +303,7 @@ describe('CatalogBrowser', () => {
     await user.type(screen.getByLabelText(/^search$/i), 'rapier');
     expect(screen.getByText(/^25 gp$/)).toBeInTheDocument();
 
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'update-party-economy',
       payload: { partyId, priceModifier: 0.1, baseCurrency: 'sp' },
     });

@@ -87,6 +87,24 @@ const envSchema = z.object({
   SNAPSHOTS_ENABLED: z.coerce.boolean().default(true),
   SNAPSHOT_DIR: z.string().min(1).default('./snapshots'),
   SNAPSHOT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+
+  // -------- R8.1 — Auth hardening (cron sweeps) --------
+  //
+  // Two daily sweeps + the built-in request-otp rate limit close out
+  // the auth-side operational followups from R3.3 + R3.5:
+  //   - `EmailAuthAttempt` rows whose `lockedUntil` is older than
+  //     EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS get deleted daily. Defense-
+  //     in-depth against unbounded row growth from attack traffic.
+  //   - `PendingDiscordLink` rows whose `expires` is in the past get
+  //     deleted daily. Complements the drive-by cleanup in
+  //     `discord-link.ts::initiate` for users who never return after
+  //     starting a link flow.
+  //
+  // Both default to `true` in production; test env passes `false` so
+  // the crons don't schedule and the tick fn is driven directly.
+  EMAIL_ATTEMPT_SWEEP_ENABLED: z.coerce.boolean().default(true),
+  EMAIL_ATTEMPT_SWEEP_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
+  PENDING_LINK_SWEEP_ENABLED: z.coerce.boolean().default(true),
 });
 
 export type Env = z.infer<typeof envSchema>;

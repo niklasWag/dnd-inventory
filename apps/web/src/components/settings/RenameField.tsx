@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 
 /**
  * M7 inline rename form for Character and Party (Settings §7 screen 9).
@@ -49,7 +49,7 @@ export function RenameField({
   currentName,
   label,
 }: RenameFieldProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -80,23 +80,29 @@ export function RenameField({
       // RenameStashModal's `onSubmit` guard.
       return;
     }
-    try {
-      setSubmitError(null);
-      if (target === 'character') {
-        dispatch({
+    setSubmitError(null);
+    if (target === 'character') {
+      void dispatch(
+        {
           type: 'rename-character',
           payload: { characterId: entityId, newName: values.name },
-        });
-        toast.success('Character renamed');
-      } else {
-        dispatch({
+        },
+        {
+          onSuccess: () => toast.success('Character renamed'),
+          onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+        },
+      );
+    } else {
+      void dispatch(
+        {
           type: 'rename-party',
           payload: { partyId: entityId, newName: values.name },
-        });
-        toast.success('Party renamed');
-      }
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
+        },
+        {
+          onSuccess: () => toast.success('Party renamed'),
+          onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+        },
+      );
     }
   }
 

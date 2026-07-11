@@ -89,23 +89,23 @@ export function SplitModal({ open, onOpenChange, itemInstanceId }: SplitModalPro
       ? `Quantity must be less than the stack size (${String(sourceQty)})`
       : null;
 
-  function onSubmit(values: FormOutput): void {
+  async function onSubmit(values: FormOutput): Promise<void> {
     if (values.quantity > max) {
       // Belt-and-braces; the Split button is also disabled in this state.
       setSubmitError(`Quantity must be less than ${String(sourceQty)}`);
       return;
     }
-    try {
-      setSubmitError(null);
-      dispatchMintingAction({
-        type: 'split',
-        payload: { itemInstanceId, quantity: values.quantity },
-      });
-      toast.success('Stack split');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
+    setSubmitError(null);
+    const outcome = await dispatchMintingAction({
+      type: 'split',
+      payload: { itemInstanceId, quantity: values.quantity },
+    });
+    if (!outcome.ok) {
+      setSubmitError(outcome.message ?? 'Unknown error');
+      return;
     }
+    toast.success('Stack split');
+    onOpenChange(false);
   }
 
   const canSubmit = max >= 1 && previewSplitQty !== null;

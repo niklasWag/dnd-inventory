@@ -92,31 +92,38 @@ export function getSocket(): Socket | null {
 }
 
 /**
- * R5.2.a — Gate the socket connect on session status. The server's
- * `io.use()` middleware rejects unauthenticated upgrades, producing
- * a noisy `connect_error: unauthenticated` on every login-screen
- * visit if we auto-connect before hydration settles.
+ * R5.2.a — Gate the socket connect on session status.
+ * BUG-013 (R8.4.d) — connect ONLY when fully `authenticated`.
+ *
+ * The server's `io.use()` middleware (`apps/server/src/realtime/io.ts`)
+ * rejects BOTH unauthenticated AND `needsDisplayName` socket upgrades
+ * (the latter with `connect_error: display_name_required`). An earlier
+ * version of this helper connected during `needsDisplayName` on the
+ * assumption the cookie was accepted — it is NOT. That mismatch made
+ * the client open a socket mid-onboarding, get rejected, and enter an
+ * infinite failing-reconnect loop; the subsequent `authenticated`
+ * transition then raced socket.io-client's reconnect teardown and threw
+ * an uncaught `TypeError: Cannot read properties of undefined (reading
+ * 'request')`. Surfaced by the R8.4.d party-lifecycle E2E spec.
  *
  * This helper is idempotent: safe to call from a `useSession.subscribe`
  * callback that fires on every status transition.
  *
- *   - `authenticated` / `needsDisplayName` → build (once) + connect
- *     (once). `needsDisplayName` still holds a valid session cookie
- *     that `io.use()` accepts; the `GET /sync/*` gate on displayName
- *     is a per-route concern, not a socket-level one.
- *   - Any other status (`loading`, `anonymous`) → disconnect + tear
- *     down the module singleton so the next authenticated transition
- *     starts fresh (avoids stale listeners after signOut → signIn).
+ *   - `authenticated` → build (once) + connect (once).
+ *   - Any other status (`loading`, `anonymous`, `needsDisplayName`) →
+ *     disconnect + tear down the module singleton so the next
+ *     `authenticated` transition starts fresh. `needsDisplayName` is
+ *     treated as "not yet connectable" because the server rejects it;
+ *     the socket connects the moment the user finishes onboarding and
+ *     the status flips to `authenticated`.
  */
 export function syncSocketWithSession(
   status: 'loading' | 'anonymous' | 'authenticated' | 'needsDisplayName',
 ): void {
-  const authenticated = status === 'authenticated' || status === 'needsDisplayName';
-  if (authenticated) {
+  if (status === 'authenticated') {
     // First authenticated transition: build the client, then connect.
-    // Subsequent authenticated re-emits (e.g. displayName patch) are
-    // idempotent: socket.io-client's `.connect()` on an already-open
-    // socket is a no-op.
+    // Subsequent authenticated re-emits are idempotent: socket.io-
+    // client's `.connect()` on an already-open socket is a no-op.
     if (socket === null) {
       const built = connectSocket();
       built?.connect();
@@ -125,7 +132,8 @@ export function syncSocketWithSession(
     }
     return;
   }
-  // Anonymous / loading — tear down so the next auth transition
-  // rebuilds cleanly.
+  // Anonymous / loading / needsDisplayName — tear down so the next
+  // `authenticated` transition rebuilds cleanly. The server won't
+  // accept a socket in any of these states.
   resetSocket();
 }

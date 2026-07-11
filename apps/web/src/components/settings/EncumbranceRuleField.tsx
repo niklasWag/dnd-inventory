@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import type { EncumbranceRule } from '@app/shared';
 
 interface EncumbranceRuleFieldProps {
@@ -39,7 +39,7 @@ export function EncumbranceRuleField({
   currentRule,
   currentEnforce,
 }: EncumbranceRuleFieldProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [draftRule, setDraftRule] = useState<EncumbranceRule>(currentRule);
   const [draftEnforce, setDraftEnforce] = useState<boolean>(currentEnforce);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -61,16 +61,18 @@ export function EncumbranceRuleField({
   function onSubmit(e: React.FormEvent<HTMLFormElement>): void {
     e.preventDefault();
     if (isNoOp) return;
-    try {
-      setSubmitError(null);
-      dispatch({
+    setSubmitError(null);
+    void dispatch(
+      {
         type: 'set-encumbrance',
         payload: { partyId, rule: draftRule, enforce: effectiveEnforce },
-      });
-      toast.success(`Encumbrance: ${draftRule}${effectiveEnforce ? ' (enforced)' : ''}`);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () =>
+          toast.success(`Encumbrance: ${draftRule}${effectiveEnforce ? ' (enforced)' : ''}`),
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   return (

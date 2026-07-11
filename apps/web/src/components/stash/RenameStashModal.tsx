@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 
 interface RenameStashModalProps {
   open: boolean;
@@ -44,7 +44,7 @@ export function RenameStashModal({
   stashId,
   currentName,
 }: RenameStashModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -73,17 +73,20 @@ export function RenameStashModal({
       onOpenChange(false);
       return;
     }
-    try {
-      setSubmitError(null);
-      dispatch({
+    setSubmitError(null);
+    void dispatch(
+      {
         type: 'rename-stash',
         payload: { stashId, newName: values.name },
-      });
-      toast.success('Storage stash renamed');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success('Storage stash renamed');
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   return (

@@ -37,7 +37,7 @@ interface SetupResult {
  */
 function setupWith(): SetupResult {
   const base = bootstrap();
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'create-stash',
     payload: {
       ownerCharacterId: base.characterId,

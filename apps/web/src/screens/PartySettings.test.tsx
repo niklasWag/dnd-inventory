@@ -124,7 +124,7 @@ describe('PartySettings — Character & Party rename (R4.1-followup)', () => {
 
   it('character rename field is absent on a DM-only party (no character to rename)', () => {
     // DM-only bootstrap: dispatch directly so we end with a party + no character.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() },
     });
@@ -146,7 +146,7 @@ describe('PartySettings — Create your character CTA (R4.1.f)', () => {
   it('renders the CTA button when the actor is in a party but has no character, and the form is hidden until clicked', async () => {
     const user = userEvent.setup();
     // DM-only bootstrap leaves the actor in a party without a character.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() },
     });
@@ -174,7 +174,7 @@ describe('PartySettings — Create your character CTA (R4.1.f)', () => {
 
   it('submitting the CTA dialog dispatches create-character and adds the character to the existing party', async () => {
     const user = userEvent.setup();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-character',
       payload: { dmOnly: true, partyName: 'DM Sandbox', ...createCharacterDmOnlyIds() },
     });

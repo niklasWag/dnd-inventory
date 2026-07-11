@@ -33,13 +33,17 @@
  */
 import { toast } from 'sonner';
 
+import { newUuidV7 } from '@app/shared';
+
 import { ApiError } from '@/lib/api';
 import { computeBackoff, MAX_ATTEMPTS } from '@/lib/backoff';
 import { useSession } from '@/store/session';
+import type { MutationOutcome } from '@/store/outcome';
 import type { Action, AppState, TransactionLogEntry } from '@/store/types';
 
 import { BatchRejectedError, pushActions } from './client';
 import { enqueueToOutbox, removeOutbox, updateOutboxAttempt } from './outbox';
+import { rejectionToastArgs } from './rejectionToast';
 
 const DEBOUNCE_MS = 200;
 const MAX_BATCH = 100;
@@ -55,7 +59,18 @@ export interface QueueDeps {
   appendServerLogEntries?: (applied: readonly TransactionLogEntry[]) => void;
 }
 
-let queue: { action: Action; partyId: string }[] = [];
+/**
+ * R8.5 — a queued action carries a `dispatchId` correlation token so
+ * the flush path can resolve the exact `MutationOutcome` promise the
+ * store handed back to the calling component. Minted per-`enqueue`.
+ */
+interface QueueItem {
+  action: Action;
+  partyId: string;
+  dispatchId: string;
+}
+
+let queue: QueueItem[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 /**
@@ -68,6 +83,38 @@ let cancelled = false;
 let inflight: Promise<void> | null = null;
 let preBatchSnapshot: PendingFlushSnapshot | null = null;
 let deps: QueueDeps | null = null;
+
+/**
+ * R8.5 — per-dispatch outcome resolvers. `registerOutcome(dispatchId)`
+ * (called by the store immediately after `enqueue`) inserts a resolver
+ * here; the flush path drains it once the batch reaches a terminal
+ * outcome. Every terminal path — 200, 422, auth failure, parked-after-
+ * retries, `resetQueue` — MUST resolve the correlations for the actions
+ * it handled so an awaiting `useDispatch` caller never hangs.
+ */
+const pending = new Map<string, (o: MutationOutcome) => void>();
+
+/**
+ * R8.5 — register a resolver for a freshly-enqueued dispatch. Returns
+ * the promise the store hands back from `dispatch`. Paired 1:1 with an
+ * `enqueue` call sharing the same `dispatchId`.
+ */
+export function registerOutcome(dispatchId: string): Promise<MutationOutcome> {
+  return new Promise<MutationOutcome>((resolve) => {
+    pending.set(dispatchId, resolve);
+  });
+}
+
+/** Resolve + clear the resolvers for a set of dispatch ids. */
+function resolveOutcomes(dispatchIds: readonly string[], outcome: MutationOutcome): void {
+  for (const id of dispatchIds) {
+    const resolve = pending.get(id);
+    if (resolve !== undefined) {
+      resolve(outcome);
+      pending.delete(id);
+    }
+  }
+}
 
 export function configureQueue(d: QueueDeps): void {
   deps = d;
@@ -91,6 +138,14 @@ export function resetQueue(): void {
   }
   inflight = null;
   preBatchSnapshot = null;
+  // R8.5 — unwind any dangling outcome awaiters so callers don't hang
+  // across a reset (test teardown, mode swap). The buffered write may
+  // still exist in the outbox; from the UI's perspective the dispatch
+  // is simply no longer pending.
+  for (const [id, resolve] of pending) {
+    resolve({ ok: false, code: 'queue_reset' });
+    pending.delete(id);
+  }
 }
 
 /**
@@ -109,20 +164,28 @@ export function captureRollbackSnapshot(): void {
  * Append an action to the pending batch. RH4.2 — `partyId` is passed
  * explicitly (URL-authoritative). See the store's `dispatch` for the
  * source.
+ *
+ * R8.5 — returns a `dispatchId` correlation token. The store calls
+ * `registerOutcome(dispatchId)` to obtain the `MutationOutcome` promise
+ * it hands back from `dispatch`. `seed-catalog` short-circuits (never
+ * hits the network) and returns `null` — the store resolves that case
+ * itself.
  */
-export function enqueue(action: Action, partyId: string): void {
+export function enqueue(action: Action, partyId: string): string | null {
   if (deps === null) {
     throw new Error('queue.enqueue: configureQueue was never called');
   }
   // `seed-catalog` is a local-only optimistic seed — the server already
   // has the canonical PHB+DMG catalog. See the R3.5 rationale (retained
   // from pre-R5.1.c code).
-  if (action.type === 'seed-catalog') return;
+  if (action.type === 'seed-catalog') return null;
   if (queue.length === 0 && preBatchSnapshot === null) {
     preBatchSnapshot = deps.getSnapshot();
   }
-  queue.push({ action, partyId });
+  const dispatchId = newUuidV7();
+  queue.push({ action, partyId, dispatchId });
   scheduleFlush();
+  return dispatchId;
 }
 
 function scheduleFlush(): void {
@@ -155,17 +218,19 @@ export async function flush(): Promise<void> {
   const sameParty = batch.filter((b) => b.partyId === partyId);
   const otherParty = batch.filter((b) => b.partyId !== partyId);
   if (otherParty.length > 0) {
-    // Requeue at the head; the next flush handles them.
+    // Requeue at the head; the next flush handles them (carrying their
+    // dispatchId correlations forward).
     queue.unshift(...otherParty);
   }
   const actions = sameParty.map((b) => b.action);
+  const dispatchIds = sameParty.map((b) => b.dispatchId);
 
   inflight = navigator.locks.request<void>(
     'sync-queue-flush',
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     async () => {
       try {
-        await flushBatchWithRetry(d, partyId, actions, snapshot, undefined, 0);
+        await flushBatchWithRetry(d, partyId, actions, dispatchIds, snapshot, undefined, 0);
       } finally {
         inflight = null;
         // Drain leftovers that arrived during our flight.
@@ -195,11 +260,20 @@ export async function flush(): Promise<void> {
  *
  * `snapshot`: pre-batch state for rollback on 422. Not consulted on
  * network errors — the batch is presumed retryable, not rejected.
+ *
+ * R8.5 — `dispatchIds`: the correlation tokens for the actions in this
+ * batch. Every terminal outcome (200 success, 422 rejection, auth
+ * failure, parked-after-retries) resolves them via `resolveOutcomes`
+ * so awaiting `useDispatch` callers settle. The inline `toast.error`
+ * calls that used to fire here are RETIRED — the outcome carries the
+ * rejection code and `useDispatch`'s default consumer renders the
+ * toast, eliminating the BUG-005 green-then-red flash.
  */
 async function flushBatchWithRetry(
   d: QueueDeps,
   partyId: string,
   actions: readonly Action[],
+  dispatchIds: readonly string[],
   snapshot: PendingFlushSnapshot | null,
   outboxId: number | undefined,
   attempt: number,
@@ -213,17 +287,21 @@ async function flushBatchWithRetry(
     if (d.appendServerLogEntries !== undefined) {
       d.appendServerLogEntries(response.applied);
     }
+    resolveOutcomes(dispatchIds, { ok: true, applied: response.applied });
     return;
   } catch (err) {
     if (err instanceof BatchRejectedError) {
       // 422 — server permanently rejected. Roll back optimistic state
-      // + drop the outbox row (no point re-sending). Surface a toast.
+      // + drop the outbox row (no point re-sending). The outcome
+      // carries the rejection; no inline toast (BUG-005 fix).
       if (snapshot !== null) d.restoreSnapshot(snapshot);
       if (outboxId !== undefined) {
         await removeOutbox(outboxId);
       }
-      toast.error(`Action rejected: ${err.rejectedCode}`, {
-        description: err.rejectedMessage,
+      resolveOutcomes(dispatchIds, {
+        ok: false,
+        code: err.rejectedCode,
+        message: err.rejectedMessage,
       });
       return;
     }
@@ -231,6 +309,7 @@ async function flushBatchWithRetry(
       if (err.code === 'unauthenticated') {
         if (snapshot !== null) d.restoreSnapshot(snapshot);
         // KEEP the outbox row — post-login drain will replay it.
+        resolveOutcomes(dispatchIds, { ok: false, code: err.code });
         await useSession.getState().signOut();
         return;
       }
@@ -240,12 +319,13 @@ async function flushBatchWithRetry(
         if (user !== null) {
           useSession.getState().setUserPatch({ ...user, needsDisplayName: true });
         }
+        resolveOutcomes(dispatchIds, { ok: false, code: err.code });
         return;
       }
       // Other 4xx / 5xx: treat as transient. Don't rollback (user can
       // retry the action manually). Don't retry auto-magically either
       // — a 500 on the server side is a signal to stop hammering.
-      toast.error(`Sync error: ${err.code}`);
+      resolveOutcomes(dispatchIds, { ok: false, code: err.code });
       return;
     }
     // Network error (fetch throw, offline, DNS fail, etc.). Persist
@@ -262,11 +342,13 @@ async function flushBatchWithRetry(
       // Give up auto-retrying. Row stays in the outbox for reconnect
       // drain. Do NOT roll back — solo parties + offline sessions
       // depend on optimistic state persisting across the disconnect.
+      // R8.5 — resolve the outcome as `sync_paused` so awaiters settle;
+      // the buffered write still persists locally + drains on reconnect.
       console.warn('[queue] max retry attempts reached, parking in outbox', {
         partyId,
         attempts: nextAttempt,
       });
-      toast.error('Sync paused — will retry on reconnect.');
+      resolveOutcomes(dispatchIds, { ok: false, code: 'sync_paused' });
       return;
     }
 
@@ -282,7 +364,15 @@ async function flushBatchWithRetry(
     if (cancelled) return; // resetQueue was called mid-retry
     // Recursive tail call — the outer `try` block's error paths
     // handle all subsequent outcomes.
-    await flushBatchWithRetry(d, partyId, actions, snapshot, currentOutboxId, nextAttempt);
+    await flushBatchWithRetry(
+      d,
+      partyId,
+      actions,
+      dispatchIds,
+      snapshot,
+      currentOutboxId,
+      nextAttempt,
+    );
   }
 }
 
@@ -316,10 +406,17 @@ export async function replayOutboxRow(
       // and toast. Don't roll back — the local state may have been
       // hydrated from server after the disconnect, so there's nothing to
       // roll back TO. This matches the R3.5 "422 error surface" contract.
+      //
+      // R8.5 — the reconnect drain has NO live `useDispatch` awaiter
+      // (the dispatching component unmounted at disconnect time), so
+      // this path toasts directly. It routes through the shared
+      // `rejectionToastArgs` so the copy matches the primary path.
       await removeOutbox(outboxId);
-      toast.error(`Action rejected: ${err.rejectedCode}`, {
-        description: err.rejectedMessage,
-      });
+      const args = rejectionToastArgs(err.rejectedCode, err.rejectedMessage);
+      toast.error(
+        args.title,
+        args.description !== undefined ? { description: args.description } : undefined,
+      );
       return false;
     }
     // Network / 5xx / auth errors → leave row in outbox for next drain.

@@ -52,6 +52,6 @@
 
 	# Everything else is the SPA.
 	handle {
-		reverse_proxy web:5173
+		reverse_proxy web:80
 	}
 }

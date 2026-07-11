@@ -31,7 +31,7 @@ beforeEach(async () => {
 function setupWith(quantity: number): { stashId: string; itemInstanceId: string } {
   const { catalog, inventoryStashId } = bootstrap();
   const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'acquire',
     payload: {
       stashId: inventoryStashId,
@@ -127,7 +127,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     for (let i = 0; i < count; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -149,7 +149,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     for (let i = 0; i < count; i += 1) {
-      useStore.getState().dispatch({
+      void useStore.getState().dispatch({
         type: 'acquire',
         payload: {
           stashId: inventoryStashId,
@@ -194,7 +194,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
       .appState!.items.filter((i) => i.ownerId === inventoryStashId)
       .map((i) => i.id);
     for (let i = 0; i < 3; i += 1) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
     }
@@ -260,7 +260,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     renderInventory(inventoryStashId, characterId);
 
     // Drop cap to 0 — re-render disables the Attune button.
-    useStore
+    void useStore
       .getState()
       .dispatch({ type: 'edit-character', payload: { characterId, patch: { maxAttunement: 0 } } });
 
@@ -293,7 +293,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
       .appState!.items.filter((i) => i.ownerId === inventoryStashId)
       .map((i) => i.id);
     for (let i = 0; i < 3; i += 1) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
     }
@@ -337,7 +337,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
       .appState!.items.filter((i) => i.ownerId === inventoryStashId)
       .map((i) => i.id);
     for (let i = 0; i < 3; i += 1) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
     }
@@ -361,7 +361,7 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
       .appState!.items.filter((i) => i.ownerId === inventoryStashId)
       .map((i) => i.id);
     for (let i = 0; i < 3; i += 1) {
-      useStore
+      void useStore
         .getState()
         .dispatch({ type: 'attune', payload: { characterId, itemInstanceId: ids[i]! } });
     }
@@ -407,7 +407,7 @@ describe('StashItemsTable — R1.3 container view', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const rations = catalog.find((d) => d.id === 'phb-2024:rations-1day')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -420,7 +420,7 @@ describe('StashItemsTable — R1.3 container view', () => {
     const backpackId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === backpack.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -492,7 +492,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -502,7 +502,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -523,7 +523,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     // the container row itself shouldn't get a Pack button (avoids the
     // illegal "pack backpack into backpack" combo even though the
     // reducer would reject it).
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -533,7 +533,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -552,7 +552,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -562,7 +562,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -596,7 +596,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -606,7 +606,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -623,7 +623,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       .getState()
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     // Pack via reducer so the UI test starts in "torch inside backpack" state.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -667,7 +667,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -677,7 +677,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -693,7 +693,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const torchId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'transfer',
       payload: {
         itemInstanceId: torchId,
@@ -738,7 +738,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const { characterId, inventoryStashId, partyStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -748,7 +748,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: partyStashId,
@@ -839,7 +839,7 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
   it('hides the Attune button on a mundane PHB row (Torch) but shows Equip', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -860,7 +860,7 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
   it('shows both Equip and Attune on a DMG row with requiresAttunement:true', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -882,7 +882,7 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
   it('renders the rarity dot prefix on a DMG row (Uncommon class)', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -932,7 +932,7 @@ describe('StashItemsTable — R2.2 charges indicator', () => {
   it('shows the (N/M) charges indicator on a Wand row in Inventory', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -949,7 +949,7 @@ describe('StashItemsTable — R2.2 charges indicator', () => {
   it('does NOT show a charges indicator on a mundane Torch row', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -996,7 +996,7 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
   it('renders an identified magic-item row with the real name + rarity dot', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1017,7 +1017,7 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
   it('renders an unidentified magic-item row as "Unknown Magic Item" with the ? glyph', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const cloak = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1028,7 +1028,7 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
       },
     });
     const itemId = useStore.getState().appState!.items.find((i) => i.definitionId === cloak.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: itemId, identified: false, hint: 'shimmers faintly' },
     });
@@ -1045,7 +1045,7 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
   it('hides the charges indicator on an unidentified Inventory wand', () => {
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1056,7 +1056,7 @@ describe('StashItemsTable — R2.3 unidentified display gate', () => {
       },
     });
     const wandId = useStore.getState().appState!.items.find((i) => i.definitionId === wand.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: wandId, identified: false },
     });
@@ -1101,7 +1101,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1111,7 +1111,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1130,7 +1130,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1140,7 +1140,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1158,7 +1158,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
   it('shows the empty-state hint when the filter drops every row', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1175,7 +1175,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
   it('respects OUTLINE §8: unidentified row is NOT findable by its real name', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1189,7 +1189,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
       .getState()
       .appState!.items.find((i) => i.definitionId === wand.id)!.id;
     // Mark unidentified with a DM hint.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: wandRowId, identified: false, hint: 'smells of ozone' },
     });
@@ -1203,7 +1203,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
   it('unidentified row IS findable by the hint text', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const wand = catalog.find((d) => d.id === 'dmg-2024:wand-of-magic-missiles')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -1216,7 +1216,7 @@ describe('StashItemsTable — fuzzy filter (R7.5)', () => {
     const wandRowId = useStore
       .getState()
       .appState!.items.find((i) => i.definitionId === wand.id)!.id;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'identify',
       payload: { itemInstanceId: wandRowId, identified: false, hint: 'smells of ozone' },
     });

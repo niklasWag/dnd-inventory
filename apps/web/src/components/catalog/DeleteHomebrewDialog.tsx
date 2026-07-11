@@ -11,7 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 
 interface DeleteHomebrewDialogProps {
   open: boolean;
@@ -37,18 +37,21 @@ export function DeleteHomebrewDialog({
   definitionName,
   referenceStashCount,
 }: DeleteHomebrewDialogProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   function confirm(): void {
-    try {
-      setSubmitError(null);
-      dispatch({ type: 'delete-homebrew', payload: { definitionId } });
-      toast.success('Homebrew deleted');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+    setSubmitError(null);
+    void dispatch(
+      { type: 'delete-homebrew', payload: { definitionId } },
+      {
+        onSuccess: () => {
+          toast.success('Homebrew deleted');
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   const inUse = referenceStashCount > 0;

@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import { batchTriggerLabel, type BatchRechargeTrigger } from '@/lib/charges';
 
 interface RestRollModalProps {
@@ -62,7 +63,7 @@ export function RestRollModal({
   characterId,
   trigger,
 }: RestRollModalProps): ReactElement | null {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
 
   // Snapshot of eligible items at modal-open time. Captured once via
   // `useMemo` keyed on `open` so the inputs don't shift if state
@@ -162,17 +163,20 @@ export function RestRollModal({
       return;
     }
 
-    try {
-      dispatch({
+    const total = formulaRows.length + nonFormulaRows.length;
+    void dispatch(
+      {
         type: 'recharge',
         payload: { mode: 'batch', characterId, trigger, amounts },
-      });
-      const total = formulaRows.length + nonFormulaRows.length;
-      toast.success(`${total} item${total === 1 ? '' : 's'} recharged`);
-      onOpenChange(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to recharge');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success(`${total} item${total === 1 ? '' : 's'} recharged`);
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => toast.error(message ?? 'Failed to recharge'),
+      },
+    );
   }
 
   return (

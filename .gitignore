@@ -36,3 +36,10 @@ packages/seeds/data/dmg-*.json
 # from schema.prisma; never hand-edited. Migration files in
 # apps/server/prisma/migrations/ ARE committed.
 apps/server/prisma/generated/
+
+# R8.4.d — Playwright bind-mount outputs. Every `pnpm e2e` run writes
+# the HTML report to `e2e/playwright-report/` and per-test artifacts
+# (traces, videos, screenshots for failed specs) to `e2e/test-results/`.
+# Neither belongs in git.
+e2e/playwright-report/
+e2e/test-results/

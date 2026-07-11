@@ -26,7 +26,7 @@ beforeEach(async () => {
 
 function setup(initialName: string): { stashId: string; rerender: () => void } {
   const { characterId } = bootstrap();
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'create-stash',
     payload: {
       ownerCharacterId: characterId,

@@ -98,7 +98,7 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
   const adjust = (denom: Denom, sign: 1 | -1): void => {
     const delta = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
     delta[denom] = sign;
-    dispatch({
+    void dispatch({
       type: 'currency-change',
       payload: {
         stashId,
@@ -120,7 +120,7 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
   ): void => {
     const delta = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
     delta[denom] = deltaValue;
-    dispatch({
+    void dispatch({
       type: 'currency-change',
       payload: { stashId, delta, reason },
     });

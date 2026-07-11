@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 import { currency } from '@app/rules';
 import { buildStashLabels } from '@/lib/stashLabels';
 
@@ -72,7 +73,7 @@ export function CurrencyTransferModal({
   open,
   onOpenChange,
 }: CurrencyTransferModalProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Source's current holding — drives per-denom max bounds + the "insufficient"
@@ -160,21 +161,24 @@ export function CurrencyTransferModal({
       );
       return;
     }
-    try {
-      setSubmitError(null);
-      dispatch({
+    setSubmitError(null);
+    void dispatch(
+      {
         type: 'currency-transfer',
         payload: {
           fromStashId: stashId,
           toStashId: values.toStashId,
           delta,
         },
-      });
-      toast.success('Currency transferred');
-      onOpenChange(false);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+      },
+      {
+        onSuccess: () => {
+          toast.success('Currency transferred');
+          onOpenChange(false);
+        },
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   const totalGpEquivalent = currency.toGpEquivalent(parsed);

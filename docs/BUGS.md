@@ -21,11 +21,18 @@ Open + recently-closed bugs in the project. Each entry has a stable id (`BUG-<n>
 
 ## Open
 
+None — all filed bugs are fixed. New bugs get appended here (see Process above).
+
+---
+
+## Recently fixed
+
 ### BUG-005 — Optimistic success toast flashes before the server rejection toast on guarded actions
 
 - **Filed:** 2026-07-01
+- **Fixed:** 2026-07-10 (branch: `feat/r8-hardening`; R8.5)
 - **Severity:** medium (cosmetic + UX-confusing — no data corruption; the final state is correct because the queue rolls back via BUG-003's snapshot pattern, and the rejection toast is the last one shown. But a user who blinks may think their action succeeded before seeing the rejection.)
-- **Status:** open
+- **Status:** fixed
 - **Affected slice:** cross-cutting — surfaced during R4.4 manual testing. Underlying defect predates R4 (present since R3.5 when the sync queue landed).
 
 **Symptom.** Server mode, multi-member party. A player attempts a DM-only action they don't have permission for (e.g. clicks "New homebrew" in the Catalog Browser, or drags an item out of Party Stash while a Banker is active). Two toasts flash in quick succession:
@@ -76,9 +83,49 @@ Option B is the cheapest per-screen and structurally symmetric (client already r
 - SECURITY §2.1 — server-authoritative rejection is the invariant; the fix must not soften it, only front-load the client-side check for display purposes.
 - `apps/web/src/sync/queue.ts:247` — where the current red rejection toast fires.
 
+**Closing summary (2026-07-10, R8.5 — mutation outcome authority).** Fixed via **Option A**, generalized into an addressable outcome rather than per-screen callback threading. The store's `dispatch` now returns `Promise<MutationOutcome>` (`{ ok: true; applied } | { ok: false; code; message? }`); in server mode the sync queue is the sole authority that resolves it — once `POST /sync/actions` reaches a terminal state (200 / 422 / auth / parked) it drains a per-dispatch correlation map (`registerOutcome(dispatchId)` ↔ `enqueue`). In local mode the outcome resolves synchronously (the local apply IS the terminal outcome). A new `useDispatch` hook (`apps/web/src/lib/useDispatch.ts`) is the single UI seam: `dispatch(action, { onSuccess, onRejection, queuedToast })` runs `onSuccess` ONLY on a genuinely-terminal `{ ok: true }`, so the green toast can no longer precede a server rejection. The queue's inline `toast.error` on 422 is retired — the rejection rides the outcome and `useDispatch`'s default consumer renders it via the shared `apps/web/src/sync/rejectionToast.ts` map (also reused by the reconnect-drain path, which has no live awaiter). Reducer-invariant throws stay a SYNCHRONOUS throw at the raw `dispatch` boundary (preserving the `reduce`-throws → `dispatch`-throws reducer test surface); `useDispatch` catches them and normalizes to `{ ok: false, code: 'reducer_error' }`. ~25 mutation callsites migrated off the `dispatch(); toast.success()` shape. A custom ESLint rule `local/no-sync-toast-success-after-dispatch` (`apps/web/eslint-rules/`) now fails the build on the naive pattern so the class cannot regress. See `docs/SECURITY.md` §2.1 for the optimistic-UI clarification (the terminal success signal waits for server ack, or the local-mode shim). No security-posture change — the server stays authoritative; this only governs what the client is allowed to *show*.
+
 ---
 
-## Recently fixed
+
+### BUG-014 — Socket connects during `needsDisplayName`; server rejects it, reconnect loop throws an uncaught TypeError
+
+- **Filed:** 2026-07-09
+- **Fixed:** 2026-07-09 (branch: `feat/r8-hardening`; R8.4.d)
+- **Severity:** medium (uncaught client exception + an infinite failing-reconnect loop during first-time onboarding. Benign for slow human timing — the socket reconnects cleanly once onboarding finishes — but it derails any action fired in the same tick, and it trains users/devs to ignore console errors. A regression introduced by BUG-006's fix.)
+- **Status:** fixed
+- **Affected slice:** R5.1.b (client socket consumer). Introduced 2026-07-04 by **BUG-006's fix**, which auth-gated the socket connect but on a wrong assumption about the server contract (see below).
+
+**Symptom.** Server mode, first-time email-OTP login. During onboarding the browser console shows:
+
+```
+WebSocket connection to 'ws://.../socket.io/?...' failed: WebSocket is closed before the connection is established.
+[socket] connect_error: display_name_required
+TypeError: Cannot read properties of undefined (reading 'request')
+```
+
+The `connect_error: display_name_required` repeats (Socket.IO's `reconnectionAttempts: Infinity`), and the `authenticated` transition that follows onboarding throws the uncaught `TypeError`. No user-visible toast; the final state is usually fine because the socket eventually reconnects post-onboarding.
+
+**Reproduction.**
+
+1. Server mode, fresh email that has never signed in.
+2. `/login/email` → enter email → submit → enter OTP → verify. Session cookie is now set with `needsDisplayName: true`.
+3. The boot-time `useSession.subscribe` fires `syncSocketWithSession('needsDisplayName')`, which (pre-fix) built + connected the socket.
+4. Server's `io.use()` middleware rejects the upgrade with `display_name_required` (`apps/server/src/realtime/io.ts:132`).
+5. socket.io-client enters its infinite reconnect loop; each retry logs `connect_error`.
+6. User submits their display name → status flips to `authenticated` → `syncSocketWithSession('authenticated')` calls `.connect()` again, racing the in-flight reconnect machinery → uncaught `TypeError: Cannot read properties of undefined (reading 'request')` inside socket.io-client.
+
+**Root cause.** A **client/server contract mismatch**. The server's `io.use()` rejects BOTH unauthenticated AND `needsDisplayName` socket upgrades (`io.ts:17` + `io.ts:132`). But BUG-006's fix wired `syncSocketWithSession` to connect during `needsDisplayName`, with an inline comment asserting *"`needsDisplayName` still holds a valid session cookie that `io.use()` accepts"* — which is factually wrong. So the client opened a socket the server was always going to reject, then thrashed.
+
+**Fix.** `apps/web/src/sync/socket.ts::syncSocketWithSession` now connects ONLY when `status === 'authenticated'`. `needsDisplayName` is treated like `loading`/`anonymous` (tear down; do not connect). The socket connects the instant onboarding completes and the status flips to `authenticated`. This aligns the client with the server's `io.use()` contract and corrects the wrong comment BUG-006 introduced.
+
+**Tests.** `apps/web/src/sync/socket.test.ts` — flipped the `needsDisplayName` case from "builds + connects" to "does NOT build a socket" (encoding the correct contract). Suite stays at 14 tests, all passing.
+
+**How it was found.** The R8.4.d `party-lifecycle` E2E spec (create party → join → leave → rejoin → kick, driven through the real SPA). This is the exact BUG-001/BUG-002 profile TECH_STACK §3.3 cited for why E2E matters: a defect invisible to unit + server-integration tests, only reproduced by driving the full stack fast. The E2E spec is now the regression fence.
+
+**Fix commit.** [pending — same commit as this entry].
+
+---
 
 ### BUG-013 — Adding a no-cost catalog row to a shop with no price override silently succeeds, then throws at buy time
 
@@ -388,6 +435,8 @@ Once the user signs in, the socket connects cleanly (any subsequent broadcasts w
 
 - `'authenticated'` / `'needsDisplayName'` → build (once) + connect. `needsDisplayName` still holds a valid session cookie that `io.use()` accepts.
 - Any other status (`'loading'`, `'anonymous'`) → `resetSocket()` (tear down the module singleton so the next auth transition rebuilds cleanly).
+
+> **⚠️ Correction (2026-07-09, BUG-014).** The claim above — that `io.use()` ACCEPTS a `needsDisplayName` cookie — is **wrong**. The server rejects it (`io.ts:132`). Connecting during `needsDisplayName` caused a reconnect loop + uncaught TypeError. See BUG-014: the fix removes `needsDisplayName` from the connect path.
 
 `main.tsx` boots by calling `syncSocketWithSession(useSession.getState().status)` once and subscribing to `useSession` for transition-triggered re-syncs. On sign-in the session flips `anonymous` → `authenticated` and the helper connects; on sign-out it flips back and the helper tears down.
 

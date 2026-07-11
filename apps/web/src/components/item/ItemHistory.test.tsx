@@ -176,7 +176,7 @@ describe('ItemHistory', () => {
     const { characterId, recoveredLootStashId } = bootstrap();
     // Create a Storage stash via the dispatch so it carries the canonical
     // ownerCharacterId.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,
@@ -496,7 +496,7 @@ describe('ItemHistory', () => {
     // (and identical for every pack/take-out, see GitHub user report).
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -532,7 +532,7 @@ describe('ItemHistory', () => {
   it('R1.5 — summarizes a take-out as "Took ×N out of container in {stash}"', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,
@@ -568,7 +568,7 @@ describe('ItemHistory', () => {
     // suffix made the line too long to fit on one row in the log
     // timeline, and the source/destination labels already tell the story.
     const { characterId, recoveredLootStashId } = bootstrap();
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'create-stash',
       payload: {
         ownerCharacterId: characterId,

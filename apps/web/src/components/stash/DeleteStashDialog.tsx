@@ -11,7 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useStore } from '@/store';
+import { useDispatch } from '@/lib/useDispatch';
 
 interface DeleteStashDialogProps {
   open: boolean;
@@ -40,19 +40,22 @@ export function DeleteStashDialog({
   itemCount,
   onDeleted,
 }: DeleteStashDialogProps): ReactElement {
-  const dispatch = useStore((s) => s.dispatch);
+  const dispatch = useDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   function confirm(): void {
-    try {
-      setSubmitError(null);
-      dispatch({ type: 'delete-stash', payload: { stashId } });
-      toast.success('Stash deleted');
-      onOpenChange(false);
-      onDeleted();
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Unknown error');
-    }
+    setSubmitError(null);
+    void dispatch(
+      { type: 'delete-stash', payload: { stashId } },
+      {
+        onSuccess: () => {
+          toast.success('Stash deleted');
+          onOpenChange(false);
+          onDeleted();
+        },
+        onRejection: (_code, message) => setSubmitError(message ?? 'Unknown error'),
+      },
+    );
   }
 
   const itemsCopy =

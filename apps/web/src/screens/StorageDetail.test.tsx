@@ -79,7 +79,7 @@ function bootstrapWithStorage(name = 'Chest at home'): {
   recoveredLootStashId: string;
 } {
   const base = bootstrap();
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'create-stash',
     payload: { ownerCharacterId: base.characterId, name, ...createStashIds(), ...createStashIds() },
   });
@@ -156,7 +156,7 @@ describe('StorageDetail (M3)', () => {
       catalog: useStore.getState().appState!.catalog,
     };
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: storageStashId,
@@ -221,7 +221,7 @@ describe('StorageDetail (M3)', () => {
 describe('StorageDetail (M4)', () => {
   it('renders a CurrencyBreakdown in the header and a CurrencyRow above the items table', () => {
     const { storageStashId } = bootstrapWithStorage('Treasury');
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: storageStashId,

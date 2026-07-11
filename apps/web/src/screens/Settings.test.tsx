@@ -121,7 +121,7 @@ describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
     const { homebrewDefId, inventoryStashId } = (
       await import('@/test/fixtures')
     ).bootstrapWithHomebrew({ name: 'Glow Mushroom', category: 'consumable' });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId: inventoryStashId,

@@ -61,7 +61,7 @@ describe('CurrencyRow (M4)', () => {
     const user = userEvent.setup();
     const { inventoryStashId } = bootstrap();
     // Seed +1 gp directly via dispatch so the row has something to subtract.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,
@@ -256,7 +256,7 @@ describe('CurrencyRow — bulk edit (R7.4)', () => {
     const user = userEvent.setup();
     const { inventoryStashId } = bootstrap();
     // Seed the sp cell to 30 first.
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId: inventoryStashId,

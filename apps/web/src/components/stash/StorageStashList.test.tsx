@@ -50,7 +50,7 @@ function renderWith(characterId: string): void {
 }
 
 function createOne(characterId: string, name: string): string {
-  useStore.getState().dispatch({
+  void useStore.getState().dispatch({
     type: 'create-stash',
     payload: { ownerCharacterId: characterId, name, ...createStashIds(), ...createStashIds() },
   });
@@ -100,7 +100,7 @@ describe('StorageStashList (M3)', () => {
     const stashId = createOne(characterId, 'Treasury');
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     const rope = catalog.find((d) => d.id === 'phb-2024:rope-hempen-50ft')!;
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId,
@@ -111,7 +111,7 @@ describe('StorageStashList (M3)', () => {
         ...acquireIds(),
       },
     });
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'acquire',
       payload: {
         stashId,
@@ -141,7 +141,7 @@ describe('StorageStashList (M3)', () => {
   it('reflects non-zero currency live on the card', () => {
     const { characterId } = bootstrap();
     const stashId = createOne(characterId, 'Treasury');
-    useStore.getState().dispatch({
+    void useStore.getState().dispatch({
       type: 'currency-change',
       payload: {
         stashId,
