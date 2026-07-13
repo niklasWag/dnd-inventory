@@ -15,6 +15,8 @@
     "@app/rules": "workspace:*",
     "@app/seeds": "workspace:*",
     "@app/shared": "workspace:*",
+    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource/cinzel": "^5.2.8",
     "@hookform/resolvers": "^5.4.0",
     "@radix-ui/react-alert-dialog": "^1.1.18",
     "@radix-ui/react-dialog": "^1.1.18",
