@@ -367,9 +367,11 @@ No HP, spells, AC, proficiencies in v1.
 
 ## 5. UI / Screens
 
+**Navigation (R9):** sidebar + task-grouped IA — a collapsible icon rail on desktop; mobile bottom-bar + drawer. Party-scoped screens mount under `/party/:partyId/*`.
+
 ### Entry / Identity
 1. **Login** — single "Sign in with Discord" button.
-2. **Hub (post-login)** — three cards: *Create party*, *Join party (paste code)*, *Create solo (party-of-one)*. Below: list of the user's existing parties (solo parties marked with a small "solo" badge).
+2. **Hub (post-login)** — three cards: *Create party*, *Join party (paste code)*, *Create solo (party-of-one)*. Below: list of the user's existing parties (solo parties marked with a small "solo" badge). Hub **layout is user-selectable** (Hero/Continue default · List+Detail alternative) via the Settings Appearance cluster (§5.17).
 
 ### Player-facing
 3. **Character Sheet** — header with character details (name, species, class, level, STR). Tabs:
@@ -392,12 +394,12 @@ No HP, spells, AC, proficiencies in v1.
 
 ### Shared
 16. **Item Catalog** — global search & filter; "Add to…" picker.
-17. **Settings** — theme (light/dark toggle, system default), variant rules, export/import, account/logout.
+17. **Settings** — an **Appearance** cluster (theme: light / dark / system · **brand accent**: default cyan-teal + selectable options · **"accent follows character class"** toggle: inside a party the accent follows the current character's class, reverting to the user's default accent outside a party · **Hub layout**: Hero / List+Detail), variant rules, export/import, account/logout.
 
 ### Form factor
 - **Desktop-first** (the primary device, especially for DM).
 - **Player views responsive on mobile** — the character sheet, party stash, recovered loot, transfer modal, item detail are all mobile-usable.
-- DM tools (dashboard, loot wizard, shop manager) are **desktop-only** in v1.
+- DM tools (dashboard, loot wizard, hoard generator, shop manager, party settings) are **desktop-priority**; their mobile posture (responsive reflow vs. a min-width "use a larger screen" banner) is **deferred to R9 implementation**, decided with real device testing.
 
 ---
 

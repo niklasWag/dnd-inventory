@@ -3967,7 +3967,7 @@ Full app UI overhaul per the 2026-07-07 design audit. Charter, sub-slices, and d
 #### R9 — Notes
 
 > - **Kickoff prereq:** preserve the 2026-07-07 design audit as `docs/UI_AUDIT_2026-07-07.md` — it currently exists only in the session that produced it.
-> - **Kickoff prereq:** amend `docs/OUTLINE.md` §5 form factor to reflect whatever mobile posture R9 decides.
+> - **Kickoff prereq:** amend `docs/OUTLINE.md` §5 form factor to reflect whatever mobile posture R9 decides. **DONE 2026-07-13** — §5 amended: sidebar+grouped-IA nav note, DM-tools desktop-priority (mobile reflow-vs-banner deferred to implementation), Settings Appearance cluster (theme/accent/follow-class/Hub-layout), user-selectable Hub layout. Design decisions live in `docs/r9-redesign/` (CHARTER + DESIGN_SYSTEM + SCREENS + HUB_FINALISTS).
 
 ---
 
