@@ -43,3 +43,12 @@ apps/server/prisma/generated/
 # Neither belongs in git.
 e2e/playwright-report/
 e2e/test-results/
+
+# R9 — design lab. A standalone, throwaway Vite app for prototyping the
+# UI redesign with mock data (see docs/r9-redesign/CHARTER.md). Fully
+# git-excluded: experimental scaffolding, not shipped code. Delete freely.
+design-lab/
+
+# R9 — design-doc screenshots. Excluded for now (large binaries); the
+# design docs in docs/r9-redesign/*.md are the durable record.
+docs/r9-redesign/drawings/
