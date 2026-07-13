@@ -3951,23 +3951,38 @@ Retires the "green success toast flashes before red rejection toast" class (BUG-
 
 ---
 
-### R9 — UI redesign (stub — charter deferred)
+### R9 — UI redesign (planned — design complete)
 
-Full app UI overhaul per the 2026-07-07 design audit. Charter, sub-slices, and design system are deferred until R9 is picked up for planning; the whole slice should be planned + designed before code, not shipped as a series of small commits. Bullets below are inputs for that chartering pass.
+Full app UI overhaul. **Charter, design system, and per-screen designs are DONE** (2026-07-13) — see `docs/r9-redesign/`: `CHARTER.md` (decisions + feature-parity/cuts), `DESIGN_SYSTEM.md` (tokens), `SCREENS.md` + `HUB_FINALISTS.md` (chosen screen specs). Prototyped in the git-excluded `design-lab/`. This is a **visual + consistency overhaul with capability parity** — every one of the shipped app's 46 reducer actions keeps a UI home; only two intentional cuts (see below). Build as ordered sub-slices, not a stream of ad-hoc commits.
 
-- [ ] **Full UI audit follow-through** — modernize visual hierarchy, spacing rhythm, typography scale, component consistency. Baseline the design language (tokens, spacing scale, elevation, iconography) before touching screens. Source: 2026-07-07 design audit (preserve as `docs/UI_AUDIT_2026-07-07.md` at R9 kickoff).
-- [ ] **Player views mobile-responsive** — Character Sheet, Party Stash, Recovered Loot, Transfer Modal, Item Detail.
-- [ ] **DM tools mobile behavior** — OUTLINE §5 currently says desktop-only for DM tools; revisit that clause and either keep the stance (add "min-width" warning banner) or reflow via a shared card/table primitive.
-- [ ] **Accessibility pass** — keyboard navigation across all interactive elements; ARIA labels on all icon-only buttons; color-contrast pass against WCAG AA; screen-reader audit on Character Sheet + Party Stash flows.
-- [ ] **Bulk multi-select on stash tables** — checkbox column, bulk action bar for move / delete on stash tables (§3.4). Bulk-move test: select N items, pick target stash, all transfer with one log entry each (or a single grouped entry — decide and document). Bulk-delete test: select N items, confirm once, all removed.
-- [ ] **UI-component consistency audit** — walk every screen + form + dialog + row-action surface. (a) Are we using the shadcn/ui primitives from `src/components/ui/` where one exists, or did we hand-roll a native element? (b) Are the shadcn primitives being used *consistently* — same size prop, same variant vocabulary, same spacing scale across dialogs / cards / tables / empty-states? (c) Are there pieces of UI that grew organically outside the shadcn palette and should either be lifted into `src/components/ui/` or replaced? Deliverable: a spreadsheet/table of every screen + component + inconsistency, then a set of small refactor PRs. Scope guard: no visual redesign — this is a *consistency* pass.
-- [ ] **`delete-character` UI entry point** — R4.1.b shipped the reducer action + cascade to Recovered Loot, but no UI surface dispatches it. Recommendation: small "Delete character" button on the Character Sheet header behind a confirm dialog showing the snapshot (item count + currency total cp moved to Recovered Loot), mirroring the existing `delete-stash` confirmation pattern. (Source: R4.1.b carryforward, surfaced by R4.1.f.)
-- [ ] **Wire `useCanDispatch()` on primary Save buttons** — R5.1.d shipped the store-level write-block backstop + reactive hook. Consume it on every mutation control so buttons visibly disable (correctness already met; this is UX polish). Touch-list: `AddItemModal`, `CharacterSheet` (rename / inline edits), `ItemDetail` (currency / move), `StorageDetail` (move / split / currency), `PartySettings` (rename / member management), `HomebrewForm`. (Source: R5.1.d.)
+**Foundations locked:** sidebar + task-grouped IA nav · Neutral-gray light / Cool-blue-slate dark base · cyan-teal brand accent (+ amber/emerald options + opt-in per-class follow) · Cinzel display + Inter body · elevation e1/e2/e3 · 12px radius. shadcn reaffirmed (vendor the missing primitives).
+
+**Intentional cuts (parity exceptions):** homebrew creation → Catalog only (drop AddItemModal "Custom" tab); custom rest removed for now.
+
+#### R9 sub-slices (proposed order)
+
+- [ ] **R9.0 — Token foundation.** Implement `DESIGN_SYSTEM.md` in `apps/web`: CSS-var tokens (neutrals base, cyan-teal accent, semantic, rarity, elevation, radii) in the global stylesheet + Tailwind config; self-host Cinzel + Inter (ship OFL license files); wire the accent model (default + explicit user pick + opt-in per-class follow with the 12 class colors) and the persistence for the Appearance prefs. No screen changes yet — just the token layer + a smoke test.
+- [ ] **R9.1 — Primitive vendoring.** `shadcn add` the missing primitives — `card, table, tabs, badge, tooltip, skeleton, sheet` — and apply the R9 tokens to them. These + the existing 10 become the single source for all screen work.
+- [ ] **R9.2 — Character Sheet (Combined).** The chosen baseline layout (main + right-rail, prominent currency panel). Establishes the shared **item-table + currency-display** components that Storage/Party Stash/Recovered Loot reuse. Preserve: ±1 currency + bulk (`+N`/`=N`) edits, ±1 item buttons, equip/attune (+ DM cap-override dialog), split, Pack/Take-out (distinct from Move), CapacityBar, EquippedSlotsPanel, per-tab search. Add the **`delete-character` UI entry** (header button + confirm dialog showing the Recovered-Loot cascade — R4.1.b carryforward).
+- [ ] **R9.3 — Item Detail (Two-column).** Separate `/item/:id` page. Description/charges (Use/Recharge)/notes left; state toggles + edit + per-item history right. Identify invariant + hint editor.
+- [ ] **R9.4 — Stash-family screens.** Storage overview (card grid), StorageDetail, Party Stash, Recovered Loot — all reusing the R9.2 shared table + currency display with scope-specific affordances (Banker claim controls, drain, split-evenly) layered on. Transfer modals (Currency + Item move).
+- [ ] **R9.5 — Catalog + Custom Item + shared ItemPicker.** Catalog Table; Custom Item Editor (single-column, magic-only reveal) as the sole homebrew entry; the shared `ItemPicker` (`layout="list"` default + `layout="rail"` for DM).
+- [ ] **R9.6 — Shop (Storefront + DM manage).** Both surfaces; ItemPicker rail for add-stock.
+- [ ] **R9.7 — History (Table).** Filterable audit log; permission-gated rows.
+- [ ] **R9.8 — DM tools.** DM Dashboard (Command Center + session lifecycle), Hoard Generator (stepper), Loot Distribution Wizard, Identification Panel.
+- [ ] **R9.9 — Party Settings (Sections).** Members-first; invite/rotate, Banker, kick, DM-transfer, house rules, economy, danger zone; solo-state hiding.
+- [ ] **R9.10 — Hub + Settings.** Hub Hero (no-gear-pip medallion) as default + List+Detail as the user-selectable alternative; Settings with the **Appearance cluster** (theme / accent / follow-class / Hub-layout).
+- [ ] **R9.11 — Cross-cutting polish.** Wire `useCanDispatch()` on all primary Save buttons (R5.1.d carryforward); accessibility pass (keyboard nav, ARIA on icon-only buttons, WCAG AA contrast, screen-reader on Character Sheet + Party Stash); optional bulk multi-select on stash tables; empty/loading/error states.
+
+#### R9 — Deferred / open during build
+
+- [ ] **DM-tools mobile posture** — OUTLINE §5 now says desktop-priority with the reflow-vs-min-width-banner decision **deferred to implementation**; decide per DM screen with real device testing, then amend OUTLINE §5 with the final stance.
 
 #### R9 — Notes
 
-> - **Kickoff prereq:** preserve the 2026-07-07 design audit as `docs/UI_AUDIT_2026-07-07.md` — it currently exists only in the session that produced it.
-> - **Kickoff prereq:** amend `docs/OUTLINE.md` §5 form factor to reflect whatever mobile posture R9 decides. **DONE 2026-07-13** — §5 amended: sidebar+grouped-IA nav note, DM-tools desktop-priority (mobile reflow-vs-banner deferred to implementation), Settings Appearance cluster (theme/accent/follow-class/Hub-layout), user-selectable Hub layout. Design decisions live in `docs/r9-redesign/` (CHARTER + DESIGN_SYSTEM + SCREENS + HUB_FINALISTS).
+> - **Kickoff prereq:** preserve the 2026-07-07 design audit as `docs/UI_AUDIT_2026-07-07.md` — **DONE** (exists in `docs/r9-redesign/`).
+> - **Kickoff prereq:** amend `docs/OUTLINE.md` §5 form factor. **DONE 2026-07-13** — §5 amended: sidebar+grouped-IA nav note, DM-tools desktop-priority (mobile reflow-vs-banner deferred to implementation), Settings Appearance cluster (theme/accent/follow-class/Hub-layout), user-selectable Hub layout.
+> - **Design source of truth:** `docs/r9-redesign/` (CHARTER decision log + feature-parity section, DESIGN_SYSTEM tokens, SCREENS + HUB_FINALISTS rebuild specs). The `design-lab/` prototype is git-excluded/throwaway — screenshot into `drawings/` (also git-excluded) before deleting if a durable visual is wanted.
 
 ---
 
