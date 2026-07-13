@@ -59,6 +59,20 @@ const DENOM_LABEL: Record<Denom, string> = { cp: 'CP', sp: 'SP', ep: 'EP', gp: '
 const ZERO_HOLDING = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 } as const;
 
 /**
+ * R9.3 — per-denomination coin-color dots (from `CharacterCombined.tsx`
+ * mockup): copper / silver / electrum / gold / platinum. Literal hex is
+ * intentional — these are physical coin metals, not theme tokens, so they
+ * stay constant across light/dark + accent changes.
+ */
+const DENOM_DOT: Record<Denom, string> = {
+  cp: 'bg-[#b06a3b]',
+  sp: 'bg-[#a8adb4]',
+  ep: 'bg-[#cdd6a0]',
+  gp: 'bg-[#e2b23c]',
+  pp: 'bg-[#cfd6dc]',
+};
+
+/**
  * R9.2 — Prominent currency panel (Combined design baseline). Sits
  * full-width above the item table in every stash view (Inventory,
  * Storage detail, Party Stash, Recovered Loot). Evolved from the M4
@@ -102,6 +116,12 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
   const dispatch = useStore((s) => s.dispatch);
 
   const totalGp = useMemo(() => currency.toGpEquivalent(holding), [holding]);
+  // Mockup formats the gp-equivalent to at most 2 decimals (e.g. 172.21),
+  // trimming trailing zeros so whole-gp totals read "150" not "150.00".
+  const totalGpLabel = useMemo(
+    () => totalGp.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    [totalGp],
+  );
 
   const adjust = (denom: Denom, sign: 1 | -1): void => {
     const delta = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
@@ -149,21 +169,22 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
   const showDrainButton = bankerContext !== undefined && bankerContext.userIsDmWithBankerActive;
 
   return (
-    <section className="space-y-4 rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-surface p-4 shadow-e2">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+    <section className="overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-surface shadow-e2">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-2.5">
           <span
             aria-hidden="true"
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/15 text-primary"
+            className="grid h-9 w-9 place-items-center rounded-full bg-primary/15 text-primary"
           >
-            <Coins className="h-5 w-5" />
+            <Coins className="h-[18px] w-[18px]" />
           </span>
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="text-[10px] font-semibold uppercase tracking-widest text-primary">
               Currency
             </h3>
-            <p className="font-display text-2xl font-bold tabular-nums leading-tight">
-              {totalGp} gp
+            <p className="font-display text-xl font-bold leading-none tabular-nums">
+              {totalGpLabel}
+              <span className="ml-1 text-sm font-semibold text-muted-foreground">gp</span>
             </p>
           </div>
         </div>
@@ -205,55 +226,61 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
         </div>
       </div>
 
-      <ul className="grid grid-cols-5 divide-x divide-border/60 rounded-lg border border-border/60 bg-surface/60">
+      <ul className="grid grid-cols-5 divide-x divide-border border-t border-border bg-surface/60">
         {DENOMS.map((d) => (
-          <li key={d} className="flex flex-col items-center gap-1 px-1 py-2">
-            <div className="flex items-center gap-1">
-              {showWithdrawInline ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  disabled={holding[d] === 0}
-                  aria-label={`Decrement ${DENOM_LABEL[d]}`}
-                  onClick={() => {
-                    adjust(d, -1);
-                  }}
-                >
-                  −
-                </Button>
-              ) : null}
-              <CurrencyValueCell
-                denom={d}
-                label={DENOM_LABEL[d]}
-                value={holding[d]}
-                editable={showWithdrawInline && showDepositInline}
-                onCommit={(deltaValue, reason) => {
-                  dispatchBulkEdit(d, deltaValue, reason);
-                }}
+          <li key={d} className="flex flex-col items-center gap-1.5 px-1 py-2.5">
+            <div className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className={`h-2.5 w-2.5 rounded-full ring-1 ring-inset ring-black/15 ${DENOM_DOT[d]}`}
               />
-              {showDepositInline ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`Increment ${DENOM_LABEL[d]}`}
-                  onClick={() => {
-                    adjust(d, 1);
-                  }}
-                >
-                  +
-                </Button>
-              ) : null}
+              <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                {DENOM_LABEL[d]}
+              </span>
             </div>
-            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {DENOM_LABEL[d]}
-            </span>
+            <CurrencyValueCell
+              denom={d}
+              label={DENOM_LABEL[d]}
+              value={holding[d]}
+              editable={showWithdrawInline && showDepositInline}
+              onCommit={(deltaValue, reason) => {
+                dispatchBulkEdit(d, deltaValue, reason);
+              }}
+            />
+            {showWithdrawInline || showDepositInline ? (
+              <div className="inline-flex overflow-hidden rounded-md border border-border">
+                {showWithdrawInline ? (
+                  <button
+                    type="button"
+                    disabled={holding[d] === 0}
+                    aria-label={`Decrement ${DENOM_LABEL[d]}`}
+                    onClick={() => {
+                      adjust(d, -1);
+                    }}
+                    className="grid h-6 w-7 place-items-center text-muted-foreground transition hover:bg-surface-2 disabled:opacity-40"
+                  >
+                    −
+                  </button>
+                ) : null}
+                {showDepositInline ? (
+                  <button
+                    type="button"
+                    aria-label={`Increment ${DENOM_LABEL[d]}`}
+                    onClick={() => {
+                      adjust(d, 1);
+                    }}
+                    className="grid h-6 w-7 place-items-center border-l border-border text-muted-foreground transition hover:bg-surface-2"
+                  >
+                    +
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         ))}
       </ul>
 
-      <p className="sr-only tabular-nums">Total: {totalGp} gp</p>
+      <p className="sr-only tabular-nums">Total: {totalGpLabel} gp</p>
 
       <ConvertCurrencyModal stashId={stashId} open={convertOpen} onOpenChange={setConvertOpen} />
       <CurrencyTransferModal stashId={stashId} open={transferOpen} onOpenChange={setTransferOpen} />
@@ -327,7 +354,10 @@ function CurrencyValueCell({
 
   if (!editable) {
     return (
-      <span aria-label={label} className="min-w-[2ch] text-center tabular-nums text-sm">
+      <span
+        aria-label={label}
+        className="min-w-[2ch] text-center font-display text-lg font-bold tabular-nums leading-none"
+      >
         {value}
       </span>
     );
@@ -364,7 +394,7 @@ function CurrencyValueCell({
         type="button"
         aria-label={label}
         title={`Edit ${label} — accepts +N, -N, =N, or an absolute value`}
-        className="min-w-[2ch] rounded px-1 text-center tabular-nums text-sm hover:bg-muted"
+        className="min-w-[2ch] rounded px-1 text-center font-display text-lg font-bold tabular-nums leading-none hover:bg-muted"
         onClick={() => {
           setEditing(true);
         }}

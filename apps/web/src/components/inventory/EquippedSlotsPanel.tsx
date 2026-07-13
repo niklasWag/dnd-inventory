@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo } from 'react';
+import { Sparkles, Sword } from 'lucide-react';
 
 import { useStore } from '@/store';
 import { attunement } from '@app/rules';
@@ -55,37 +56,68 @@ export function EquippedSlotsPanel({ characterId }: EquippedSlotsPanelProps): Re
 
   return (
     <section
-      className="grid gap-3 rounded-lg border border-border bg-card p-3 sm:grid-cols-2"
+      className="overflow-hidden rounded-xl border border-border bg-surface shadow-e1"
       aria-label="Equipped and attuned items"
     >
-      <div>
-        <div className="text-sm font-semibold">Equipped</div>
-        {equipped.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Nothing equipped.</p>
-        ) : (
-          <ul className="mt-1 list-disc pl-5 text-sm">
-            {equipped.map((row) => (
-              <li key={row.id}>{row.label}</li>
-            ))}
-          </ul>
-        )}
+      <div className="border-b border-border px-4 py-3">
+        <h2 className="font-display text-sm font-semibold uppercase tracking-wide">Loadout</h2>
       </div>
-      <div>
-        <div className="flex items-baseline justify-between">
-          <span className="text-sm font-semibold">Attuned</span>
-          <span className={`text-xs tabular-nums ${counterClass}`} aria-label="Attunement slots">
-            {attuned.length} / {maxAttunement}
-          </span>
+      <div className="space-y-4 px-4 py-3">
+        <div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Equipped
+          </div>
+          {equipped.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Nothing equipped.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {equipped.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex items-center gap-2.5 rounded-md border border-border bg-surface-2/60 px-2.5 py-1.5"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"
+                  >
+                    <Sword className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="truncate text-sm font-medium">{row.label}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        {attuned.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Nothing attuned.</p>
-        ) : (
-          <ul className="mt-1 list-disc pl-5 text-sm">
-            {attuned.map((row) => (
-              <li key={row.id}>{row.label}</li>
-            ))}
-          </ul>
-        )}
+        <div>
+          <div className="mb-1 flex items-baseline justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Attuned
+            </span>
+            <span className={`text-xs tabular-nums ${counterClass}`} aria-label="Attunement slots">
+              {attuned.length} / {maxAttunement}
+            </span>
+          </div>
+          {attuned.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Nothing attuned.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {attuned.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex items-center gap-2.5 rounded-md border border-border bg-surface-2/60 px-2.5 py-1.5"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="truncate text-sm font-medium">{row.label}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </section>
   );

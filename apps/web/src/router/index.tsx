@@ -21,6 +21,7 @@ import { PartySettings } from '@/screens/PartySettings';
 import { Settings } from '@/screens/Settings';
 import { ShopDetail } from '@/screens/ShopDetail';
 import { ShopsList } from '@/screens/ShopsList';
+import { StashPlaceholder } from '@/screens/StashPlaceholder';
 import { StorageDetail } from '@/screens/StorageDetail';
 
 /**
@@ -107,6 +108,18 @@ export const router = createBrowserRouter([
                 children: [
                   { path: 'settings', Component: PartySettings },
                   { path: 'character/:id', Component: CharacterSheet },
+                  // R9.3 — per-character Stashes (Storage overview) + the
+                  // party-wide Party Stash / Recovered Loot are now their own
+                  // sidebar destinations (the old 4-tab Character Sheet is
+                  // gone). The real screens land in R9.5; until then these
+                  // routes render a shared placeholder so the nav has no dead
+                  // links.
+                  {
+                    path: 'character/:id/stashes',
+                    element: <StashPlaceholder title="Stashes" />,
+                  },
+                  { path: 'party-stash', element: <StashPlaceholder title="Party Stash" /> },
+                  { path: 'recovered-loot', element: <StashPlaceholder title="Recovered Loot" /> },
                   { path: 'catalog', Component: CatalogBrowser },
                   { path: 'history', Component: HistoryScreen },
                   { path: 'item/:itemInstanceId', Component: ItemDetail },

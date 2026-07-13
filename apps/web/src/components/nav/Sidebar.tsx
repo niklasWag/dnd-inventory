@@ -84,13 +84,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }): ReactEleme
   // the "create your character" CTA (mirrors Hub's post-delete routing).
   const characterHref =
     view.characterId !== null ? `${base}/character/${view.characterId}` : `${base}/settings`;
+  // Stashes (Storage overview) is per-character — nest under the character.
+  // Falls back to settings (create-character CTA) when the actor has none.
+  const stashesHref =
+    view.characterId !== null
+      ? `${base}/character/${view.characterId}/stashes`
+      : `${base}/settings`;
 
   const groups: NavGroup[] = [
     {
       heading: 'My Character',
       items: [
         { label: 'Character Sheet', icon: PanelsTopLeft, to: characterHref },
-        { label: 'Stashes', icon: Boxes, to: `${base}/stashes` },
+        { label: 'Stashes', icon: Boxes, to: stashesHref },
       ],
     },
     {
