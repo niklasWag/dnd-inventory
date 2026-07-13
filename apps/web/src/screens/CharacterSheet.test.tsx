@@ -93,7 +93,9 @@ describe('CharacterSheet (M1)', () => {
     renderAt(`/character/${id}`);
 
     expect(screen.getByRole('heading', { name: 'Thorin' })).toBeInTheDocument();
-    expect(screen.getByText(/Level 3 Dwarf Fighter/)).toBeInTheDocument();
+    expect(screen.getByText('Level 3')).toBeInTheDocument();
+    expect(screen.getByText('Dwarf')).toBeInTheDocument();
+    expect(screen.getByText('Fighter')).toBeInTheDocument();
     expect(screen.getByText(/STR 16/)).toBeInTheDocument();
   });
 
@@ -704,5 +706,111 @@ describe('CharacterSheet — R6.0 Edit character button', () => {
     });
     renderAt(`/character/${base.characterId}`);
     expect(screen.getByRole('button', { name: /edit character/i })).toBeInTheDocument();
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R9.2 — Combined layout + delete-character entry
+// -------------------------------------------------------------------- //
+
+describe('CharacterSheet — R9.2 Combined layout', () => {
+  it('renders the prominent currency panel with a big gp total', () => {
+    const { characterId, inventoryStashId } = bootstrap();
+    // Give the character 5 gp so the total is a non-zero, distinctive value.
+    void useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    renderAt(`/character/${characterId}`);
+
+    // The Currency heading + the big total both surface.
+    expect(screen.getByRole('heading', { name: /^currency$/i })).toBeInTheDocument();
+    expect(screen.getByText(/^5 gp$/)).toBeInTheDocument();
+  });
+
+  it('shows an Equipped chip in the State column for an equipped item', async () => {
+    const user = userEvent.setup();
+    const { characterId, inventoryStashId } = bootstrap();
+    const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    void useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    renderAt(`/character/${characterId}`);
+
+    await user.click(screen.getByRole('button', { name: /^equip torch$/i }));
+
+    // Scope to the table row (the equipped-slots rail also lists "Torch").
+    const row = screen.getByRole('button', { name: /open details for torch/i }).closest('tr');
+    expect(within(row!).getByText('Equipped')).toBeInTheDocument();
+  });
+
+  it('renders the encumbrance/equipped rail on the Inventory tab', () => {
+    const { characterId } = bootstrap();
+    // PHB encumbrance so the CapacityBar renders (off = hidden).
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: { ...state, party: { ...state.party, encumbranceRule: 'phb' } },
+    });
+    renderAt(`/character/${characterId}`);
+
+    expect(screen.getByLabelText(/encumbrance/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/equipped and attuned items/i)).toBeInTheDocument();
+  });
+});
+
+describe('CharacterSheet — R9.2 delete-character entry', () => {
+  it('solo actor sees the Delete character button', () => {
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.getByRole('button', { name: /delete character/i })).toBeInTheDocument();
+  });
+
+  it('opens the delete confirm dialog naming the character', async () => {
+    const user = userEvent.setup();
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+
+    await user.click(screen.getByRole('button', { name: /delete character/i }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText(/delete thorin/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/recovered loot/i)).toBeInTheDocument();
+  });
+
+  it("non-DM viewer of another player's character does NOT see the Delete button", () => {
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: state.memberships.filter((m) => m.role !== 'dm'),
+        characters: [{ ...state.characters[0]!, ownerUserId: 'stranger' }],
+      },
+    });
+    const s2 = useStore.getState().appState!;
+    const strangerMembership: PartyMembership = {
+      userId: 'stranger',
+      partyId: s2.party.id,
+      role: 'player',
+      characterId: s2.characters[0]!.id,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    useStore.setState({
+      appState: { ...s2, memberships: [...s2.memberships, strangerMembership] },
+    });
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.queryByRole('button', { name: /delete character/i })).toBeNull();
   });
 });

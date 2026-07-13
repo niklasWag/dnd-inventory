@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { Coins } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store';
@@ -58,24 +59,31 @@ const DENOM_LABEL: Record<Denom, string> = { cp: 'CP', sp: 'SP', ep: 'EP', gp: '
 const ZERO_HOLDING = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 } as const;
 
 /**
- * Inline 5-coin editor row (MVP §5.2, M4). Sits above the StashItemsTable
- * in every stash view (Inventory, Storage detail, Party Stash, Recovered
- * Loot).
+ * R9.2 — Prominent currency panel (Combined design baseline). Sits
+ * full-width above the item table in every stash view (Inventory,
+ * Storage detail, Party Stash, Recovered Loot). Evolved from the M4
+ * inline 5-coin row: a gradient hero panel with a Coins medallion + big
+ * `font-display` gp total on the left, the manage actions
+ * (Convert/Transfer/Split/Drain per role) on the right, and below a
+ * divided 5-cell **cp · sp · ep · gp · pp** row of per-denomination
+ * managers.
  *
  * Each denomination cell shows a `−`/value/`+` triplet. `−` is disabled
  * when the denomination is 0 (defense in depth — the reducer also
- * refuses to push any denomination negative). A "Convert" button opens
- * the ConvertCurrencyModal for source-denom × qty → target-denom moves.
+ * refuses to push any denomination negative). The value is click-to-edit
+ * for bulk entry (`+N` / `-N` / `=N` / absolute).
  *
  * Each click is one dispatch is one log entry. Reason is auto-derived:
  * positive delta → 'deposit'; negative delta → 'withdraw'. Convert
- * dispatches its own entry with reason: 'convert'. Debouncing is an M4
- * follow-up if the log gets noisy in practice.
+ * dispatches its own entry with reason: 'convert'.
  *
  * R4.2.e — when `bankerContext` is supplied (Party Stash / Recovered
- * Loot), the row conditionally hides withdrawal controls for
+ * Loot), the panel conditionally hides withdrawal controls for
  * non-Banker users and swaps in Banker / DM-drain affordances per the
  * §8.1 permission matrix + R4.2.d design notes.
+ *
+ * (Export name kept as `CurrencyRow` — the M4 filename + every import
+ * site — so the R9.2 restyle stays a pure presentation change.)
  */
 export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): ReactElement {
   const [convertOpen, setConvertOpen] = useState(false);
@@ -141,11 +149,24 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
   const showDrainButton = bankerContext !== undefined && bankerContext.userIsDmWithBankerActive;
 
   return (
-    <section className="space-y-2 rounded-lg border border-border bg-card p-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Currency
-        </h3>
+    <section className="space-y-4 rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-surface p-4 shadow-e2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden="true"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/15 text-primary"
+          >
+            <Coins className="h-5 w-5" />
+          </span>
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Currency
+            </h3>
+            <p className="font-display text-2xl font-bold tabular-nums leading-tight">
+              {totalGp} gp
+            </p>
+          </div>
+        </div>
         <div className="flex items-center gap-1">
           {showSplitButton ? (
             <Button type="button" size="sm" variant="outline" onClick={() => setSplitOpen(true)}>
@@ -184,10 +205,9 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
         </div>
       </div>
 
-      <ul className="grid grid-cols-5 gap-2">
+      <ul className="grid grid-cols-5 divide-x divide-border/60 rounded-lg border border-border/60 bg-surface/60">
         {DENOMS.map((d) => (
-          <li key={d} className="flex flex-col items-center gap-1">
-            <span className="text-xs font-medium text-muted-foreground">{DENOM_LABEL[d]}</span>
+          <li key={d} className="flex flex-col items-center gap-1 px-1 py-2">
             <div className="flex items-center gap-1">
               {showWithdrawInline ? (
                 <Button
@@ -226,11 +246,14 @@ export function CurrencyRow({ stashId, bankerContext }: CurrencyRowProps): React
                 </Button>
               ) : null}
             </div>
+            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {DENOM_LABEL[d]}
+            </span>
           </li>
         ))}
       </ul>
 
-      <p className="text-xs text-muted-foreground tabular-nums">Total: {totalGp} gp</p>
+      <p className="sr-only tabular-nums">Total: {totalGp} gp</p>
 
       <ConvertCurrencyModal stashId={stashId} open={convertOpen} onOpenChange={setConvertOpen} />
       <CurrencyTransferModal stashId={stashId} open={transferOpen} onOpenChange={setTransferOpen} />

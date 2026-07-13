@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,7 +21,7 @@ import { useStore, dispatchMintingAction } from '@/store';
 import type { Action } from '@/store/types';
 import type { ItemDefinition } from '@app/shared';
 import { attunement, searchCatalog } from '@app/rules';
-import { rarityDotClass, rarityLabel } from '@/lib/rarity';
+import { rarityPillClass, rarityLabel } from '@/lib/rarity';
 import { formatChargesShort } from '@/lib/charges';
 import { displayName as computeDisplayName } from '@/lib/identify';
 import { stashRowSearchable } from '@/lib/stashSearch';
@@ -286,15 +287,16 @@ export function StashItemsTable({
   return (
     <>
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-border text-xs uppercase text-muted-foreground">
+        <thead className="bg-surface-2 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
-            <th className="py-2 pr-2 font-medium">Name</th>
-            <th className="py-2 pr-2 font-medium">Category</th>
-            <th className="py-2 pr-2 text-right font-medium">Qty</th>
-            <th className="py-2 text-right font-medium">Actions</th>
+            <th className="px-3 py-2 font-medium">Name</th>
+            <th className="px-3 py-2 font-medium">Category</th>
+            <th className="px-3 py-2 font-medium">State</th>
+            <th className="px-3 py-2 text-right font-medium">Qty</th>
+            <th className="px-3 py-2 text-right font-medium">Actions</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-border">
           {displayRows.map(({ row, depth }) => {
             const def = catalogById.get(row.definitionId);
             const isIdentified = row.identified;
@@ -325,8 +327,8 @@ export function StashItemsTable({
             // either (the user can take out first, or use Move).
             const canPack = hasTopLevelContainer && !isContainer && !isContained;
             return (
-              <tr key={row.id} className="border-b border-border/50 last:border-0">
-                <td className={`py-2 pr-2${depth === 1 ? ' pl-6' : ''}`}>
+              <tr key={row.id} className="transition-colors hover:bg-surface-2/60">
+                <td className={`px-3 py-2${depth === 1 ? ' pl-8' : ''}`}>
                   {depth === 1 ? (
                     <span aria-hidden="true" className="mr-2 text-muted-foreground">
                       ↳
@@ -340,13 +342,6 @@ export function StashItemsTable({
                     className="text-left underline-offset-2 hover:underline focus:outline-none focus-visible:underline"
                     aria-label={`Open details for ${displayName}`}
                   >
-                    {isIdentified && def?.rarity != null ? (
-                      <span
-                        aria-label={`Rarity: ${rarityLabel(def.rarity)}`}
-                        title={rarityLabel(def.rarity)}
-                        className={`mr-2 inline-block h-2 w-2 rounded-full align-middle ${rarityDotClass(def.rarity)}`}
-                      />
-                    ) : null}
                     {!isIdentified ? (
                       <span
                         aria-label="Unidentified"
@@ -358,13 +353,15 @@ export function StashItemsTable({
                     ) : null}
                     {displayName}
                   </button>
-                  {isIdentified && def?.charges !== undefined && row.currentCharges !== null ? (
-                    <span
-                      aria-label={`Charges: ${formatChargesShort(row.currentCharges, def.charges.max)}`}
-                      className="ml-2 text-xs tabular-nums text-muted-foreground"
+                  {isIdentified && def?.rarity != null && def.rarity !== 'common' ? (
+                    <Badge
+                      variant="outline"
+                      aria-label={`Rarity: ${rarityLabel(def.rarity)}`}
+                      title={rarityLabel(def.rarity)}
+                      className={`ml-2 align-middle ${rarityPillClass(def.rarity)}`}
                     >
-                      ({formatChargesShort(row.currentCharges, def.charges.max)})
-                    </span>
+                      {rarityLabel(def.rarity)}
+                    </Badge>
                   ) : null}
                   {isContainer && childCount > 0 ? (
                     <span className="ml-2 text-xs text-muted-foreground">
@@ -372,9 +369,32 @@ export function StashItemsTable({
                     </span>
                   ) : null}
                 </td>
-                <td className="py-2 pr-2 text-muted-foreground">{def?.category ?? '—'}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{row.quantity}</td>
-                <td className="py-2 text-right">
+                <td className="px-3 py-2 text-muted-foreground">{def?.category ?? '—'}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {row.equipped ? (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Equipped
+                      </Badge>
+                    ) : null}
+                    {row.attuned ? (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Attuned
+                      </Badge>
+                    ) : null}
+                    {isIdentified && def?.charges !== undefined && row.currentCharges !== null ? (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] tabular-nums"
+                        aria-label={`Charges: ${formatChargesShort(row.currentCharges, def.charges.max)}`}
+                      >
+                        {formatChargesShort(row.currentCharges, def.charges.max)}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">{row.quantity}</td>
+                <td className="px-3 py-2 text-right">
                   <div className="flex justify-end gap-1">
                     <Button
                       type="button"
