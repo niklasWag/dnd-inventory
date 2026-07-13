@@ -1,68 +1,67 @@
 import { Outlet, useNavigate } from 'react-router-dom';
-import type { ReactElement } from 'react';
-import {
-  BookOpen,
-  Dices,
-  Eye,
-  History,
-  LayoutDashboard,
-  LogOut,
-  Play,
-  Settings as SettingsIcon,
-  Store,
-  Users,
-} from 'lucide-react';
+import { useState, type ReactElement } from 'react';
+import { LogOut, Menu, Play } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Sidebar } from '@/components/nav/Sidebar';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { isServerMode } from '@/lib/serverMode';
-import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { useCurrentPartyIdOrNull } from '@/lib/useCurrentPartyId';
 import { useSession } from '@/store/session';
 import { useStore } from '@/store';
 
 /**
- * Root layout shared by every route. The header is route-aware enough to
- * highlight the Settings link but otherwise stays dumb — child routes
- * render through `<Outlet />`.
+ * R9.2 — Root layout. Two shapes:
  *
- * R3.5 — header gains a session-aware right side in server mode only:
- *   - displayName + avatar (left of the nav)
- *   - Logout button (right)
+ *   - **Inside a party** (`/party/:partyId/*` AND an AppState is loaded):
+ *     the grouped nav `Sidebar` frames the content. Desktop = a fixed
+ *     left rail; mobile (`< lg`) = a top bar with a hamburger that opens
+ *     the sidebar in a `Sheet` drawer ("the drawer IS the sidebar" —
+ *     CHARTER). The current-session badge + server-mode logout live in
+ *     the mobile top bar / rail footer area.
+ *   - **Outside a party** (auth `/login/*`, `/hub`, app `/settings`):
+ *     a chrome-light shell — no sidebar (CHARTER: auth routes stay
+ *     unscoped) — just the offline banner + the routed screen.
  *
- * Local mode renders the original chrome unchanged.
+ * Child routes render through `<Outlet />`.
  */
 export function RootLayout(): ReactElement {
+  const partyId = useCurrentPartyIdOrNull();
+  const hasParty = useStore(useShallow((s) => s.appState !== null));
+  const inParty = partyId !== null && hasParty;
+
+  if (!inParty) {
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <OfflineBanner />
+        <Outlet />
+      </div>
+    );
+  }
+
+  return <PartyShell />;
+}
+
+/**
+ * The party-scoped shell: sidebar + content. Split into its own component
+ * so the session/logout selectors only subscribe when we're actually
+ * inside a party (the chrome-light branch above stays cheap).
+ */
+function PartyShell(): ReactElement {
   const navigate = useNavigate();
   const session = useSession((s) => s);
-  // RH4.1 — URL-scoped `partyId` for party-scoped nav items. Null when
-  // the current route is not inside `/party/:partyId/*` (i.e. `/hub`,
-  // `/settings`, `/login/*`).
-  const partyId = useCurrentPartyIdOrNull();
-  // R4.1-followup — show the Party nav button whenever an AppState is
-  // loaded (i.e. the user is "inside" a party). Subscribe via
-  // `useShallow` on a boolean so the header doesn't re-render on every
-  // reducer mutation.
-  const hasParty = useStore(useShallow((s) => s.appState !== null));
-  const canSeeDmDashboard = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
-  // R5.2 — surface the current GameSession as a badge whenever we're
-  // inside a party AND a session is `isCurrent`. Reads via `useShallow`
-  // on `(number, date)` to avoid re-rendering on unrelated GameSession
-  // mutations (notes edits, etc. — for the CURRENT session, notes
-  // changes DON'T need to re-render the badge because the badge doesn't
-  // display notes).
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // R5.2 — current-session badge (surfaces on every party screen when a
+  // GameSession is `isCurrent`). Shallow-selected scalars so the shell
+  // doesn't re-render on unrelated session mutations.
   const currentSession = useStore(
     useShallow((s) => {
       const current = s.appState?.gameSessions.find((gs) => gs.isCurrent);
       return current === undefined ? null : { number: current.number, date: current.date };
     }),
-  );
-  // R6.2 follow-up — count of shops currently open, used to gate the
-  // player-visible Shops button and render the badge. Shallow-selected
-  // scalar so the header doesn't re-render on unrelated shop mutations.
-  const openShopCount = useStore(
-    useShallow((s) => s.appState?.shops.filter((sh) => sh.isOpen).length ?? 0),
   );
 
   async function handleLogout(): Promise<void> {
@@ -70,167 +69,82 @@ export function RootLayout(): ReactElement {
     void navigate('/login', { replace: true });
   }
 
+  const sessionBadge =
+    currentSession !== null ? (
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+        aria-label={`Session ${currentSession.number} in progress, started ${currentSession.date}`}
+        title={`Started ${currentSession.date}`}
+      >
+        <Play className="h-3 w-3" aria-hidden="true" />
+        Session {currentSession.number}
+      </span>
+    ) : null;
+
+  const logoutButton =
+    isServerMode && session.status === 'authenticated' && session.user !== null ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          void handleLogout();
+        }}
+        aria-label="Logout"
+      >
+        <LogOut className="h-4 w-4" />
+        <span className="sr-only sm:not-sr-only">Logout</span>
+      </Button>
+    ) : null;
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border">
-        <div className="container flex h-14 items-center justify-between">
-          <button
-            type="button"
-            onClick={() => {
-              void navigate('/');
-            }}
-            className="text-base font-semibold tracking-tight hover:opacity-80"
-          >
-            D&amp;D Inventory Manager
-          </button>
-          <nav className="flex items-center gap-2">
-            {partyId !== null ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigate(`/party/${partyId}/catalog`);
-                }}
-                aria-label="Catalog"
-              >
-                <BookOpen className="h-4 w-4" />
-                <span className="sr-only sm:not-sr-only">Catalog</span>
-              </Button>
-            ) : null}
-            {hasParty && partyId !== null ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigate(`/party/${partyId}/settings`);
-                }}
-                aria-label="Party settings"
-              >
-                <Users className="h-4 w-4" />
-                <span className="sr-only sm:not-sr-only">Party</span>
-              </Button>
-            ) : null}
-            {hasParty && partyId !== null ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigate(`/party/${partyId}/history`);
-                }}
-                aria-label="History"
-              >
-                <History className="h-4 w-4" />
-                <span className="sr-only sm:not-sr-only">History</span>
-              </Button>
-            ) : null}
-            {canSeeDmDashboard && partyId !== null ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigate(`/party/${partyId}/dm`);
-                }}
-                aria-label="DM Dashboard"
-              >
-                <LayoutDashboard className="h-4 w-4" />
-                <span className="sr-only sm:not-sr-only">DM</span>
-              </Button>
-            ) : null}
-            {partyId !== null && (canSeeDmDashboard || openShopCount > 0) ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigate(`/party/${partyId}/shops`);
-                }}
-                aria-label={openShopCount > 0 ? `Shops (${String(openShopCount)} open)` : 'Shops'}
-              >
-                <span className="relative inline-flex">
-                  <Store className="h-4 w-4" />
-                  {openShopCount > 0 ? (
-                    <span
-                      className="absolute -right-2 -top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/15 px-1 text-[10px] font-medium leading-none text-emerald-700 dark:text-emerald-300"
-                      aria-hidden="true"
-                    >
-                      {openShopCount}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="sr-only sm:not-sr-only">Shops</span>
-              </Button>
-            ) : null}
-            {canSeeDmDashboard && partyId !== null ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigate(`/party/${partyId}/loot/generate`);
-                }}
-                aria-label="Loot generator"
-              >
-                <Dices className="h-4 w-4" />
-                <span className="sr-only sm:not-sr-only">Loot</span>
-              </Button>
-            ) : null}
-            {canSeeDmDashboard && partyId !== null ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigate(`/party/${partyId}/identify`);
-                }}
-                aria-label="Identification panel"
-              >
-                <Eye className="h-4 w-4" />
-                <span className="sr-only sm:not-sr-only">Identify</span>
-              </Button>
-            ) : null}
-            {partyId !== null && currentSession !== null ? (
-              <span
-                className="ml-1 inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
-                aria-label={`Session ${currentSession.number} in progress, started ${currentSession.date}`}
-                title={`Started ${currentSession.date}`}
-              >
-                <Play className="h-3 w-3" aria-hidden="true" />
-                Session {currentSession.number}
-              </span>
-            ) : null}
+      <div className="flex min-h-screen">
+        {/* Desktop rail */}
+        <div className="hidden lg:block">
+          <div className="sticky top-0 h-screen">
+            <Sidebar />
+          </div>
+        </div>
+
+        {/* Mobile drawer — the sidebar rendered inside a Sheet */}
+        <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+          <SheetContent side="left" className="w-60 p-0">
+            <Sidebar onNavigate={() => setDrawerOpen(false)} />
+          </SheetContent>
+        </Sheet>
+
+        {/* Content column */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Mobile top bar (hamburger + session badge + logout) */}
+          <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2 lg:hidden">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
-                void navigate('/settings');
-              }}
-              aria-label="Settings"
+              aria-label="Open navigation"
+              onClick={() => setDrawerOpen(true)}
             >
-              <SettingsIcon className="h-4 w-4" />
-              <span className="sr-only sm:not-sr-only">Settings</span>
+              <Menu className="h-5 w-5" />
             </Button>
-            {isServerMode && session.status === 'authenticated' && session.user !== null ? (
-              <>
-                <span className="ml-2 hidden text-sm text-muted-foreground sm:inline">
-                  {session.user.displayName}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    void handleLogout();
-                  }}
-                  aria-label="Logout"
-                >
-                  <LogOut className="h-4 w-4" />
-                  <span className="sr-only sm:not-sr-only">Logout</span>
-                </Button>
-              </>
-            ) : null}
-          </nav>
+            <div className="flex items-center gap-2">
+              {sessionBadge}
+              {logoutButton}
+            </div>
+          </div>
+
+          {/* Desktop session badge + logout strip (only when there's something to show) */}
+          {sessionBadge !== null || logoutButton !== null ? (
+            <div className="hidden items-center justify-end gap-2 px-6 pt-4 lg:flex">
+              {sessionBadge}
+              {logoutButton}
+            </div>
+          ) : null}
+
+          <OfflineBanner />
+          <main className="flex-1">
+            <Outlet />
+          </main>
         </div>
-      </header>
-      <OfflineBanner />
-      <main className="container py-8">
-        <Outlet />
-      </main>
+      </div>
     </div>
   );
 }

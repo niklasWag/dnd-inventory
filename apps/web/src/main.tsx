@@ -19,6 +19,7 @@ import { hydrateFromDexie } from '@/store/hydrate';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { attachThemeSideEffects, useThemeStore } from '@/store/theme';
 import { attachAccentSideEffects, useAccentStore } from '@/store/accent';
+import { useSidebarStore } from '@/store/sidebar';
 import { attachUnloadFlush, configureQueue } from '@/sync/queue';
 import { syncSocketWithSession } from '@/sync/socket';
 import '@/index.css';
@@ -51,7 +52,15 @@ async function boot(): Promise<void> {
   // (avoids a default-accent flash). Its side-effect is attached AFTER
   // the store is hydrated (below), since it reads the active character's
   // class for the follow-class model.
-  await Promise.all([useThemeStore.getState().hydrate(), useAccentStore.getState().hydrate()]);
+  //
+  // R9.2 — resolve the sidebar collapse preference in the same window so
+  // the nav rail renders at its persisted width on first paint (no
+  // expand→collapse flash).
+  await Promise.all([
+    useThemeStore.getState().hydrate(),
+    useAccentStore.getState().hydrate(),
+    useSidebarStore.getState().hydrate(),
+  ]);
   attachThemeSideEffects();
 
   await useSession.getState().hydrate();
