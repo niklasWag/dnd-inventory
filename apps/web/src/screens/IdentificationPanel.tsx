@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { rarityPillClass, rarityLabel } from '@/lib/rarity';
 
 /**
  * R6.4 — Identification Panel (`/party/:partyId/identify`).
@@ -128,9 +129,10 @@ export function IdentificationPanel(): ReactElement {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
       <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">Identification</h1>
+        <p className="text-sm text-muted-foreground">DM tools · Identification</p>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Identification</h1>
         <p className="text-sm text-muted-foreground">
           Reveal magic items across the whole party. Group buttons batch-identify every copy of the
           same catalog item at once; per-instance controls let you set custom hints or flip a single
@@ -138,19 +140,21 @@ export function IdentificationPanel(): ReactElement {
         </p>
       </header>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Unidentified items</h2>
-          <span className="text-sm text-muted-foreground">
+      <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <h2 className="font-display text-sm font-semibold uppercase tracking-wide">
+            Unidentified items
+          </h2>
+          <span className="text-xs text-muted-foreground">
             {unidentifiedGroups.length} group{unidentifiedGroups.length === 1 ? '' : 's'}
           </span>
         </div>
         {unidentifiedGroups.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          <p className="p-6 text-center text-sm text-muted-foreground">
             Nothing to identify — every magic item in the party is already revealed.
           </p>
         ) : (
-          <div className="space-y-3">
+          <div className="divide-y divide-border">
             {unidentifiedGroups.map((g) => (
               <GroupCard
                 key={g.definitionId}
@@ -169,7 +173,7 @@ export function IdentificationPanel(): ReactElement {
       </section>
 
       <section className="space-y-4">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             variant="ghost"
@@ -190,21 +194,25 @@ export function IdentificationPanel(): ReactElement {
         </div>
         {showIdentified ? (
           identifiedMagicGroups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No identified magic items in the party.</p>
+            <p className="rounded-lg border border-dashed border-border bg-surface-2/40 p-6 text-center text-sm text-muted-foreground">
+              No identified magic items in the party.
+            </p>
           ) : (
-            <div className="space-y-3">
-              {identifiedMagicGroups.map((g) => (
-                <GroupCard
-                  key={g.definitionId}
-                  group={g}
-                  expanded={expandedDefIds.has(g.definitionId)}
-                  onToggleExpand={() => toggleExpanded(g.definitionId)}
-                  stashNameOf={stashNameOf}
-                  mode="identified"
-                  onIdentifyOne={(row) => onIdentifyOne(row, false)}
-                  onSaveHint={onSaveHint}
-                />
-              ))}
+            <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
+              <div className="divide-y divide-border">
+                {identifiedMagicGroups.map((g) => (
+                  <GroupCard
+                    key={g.definitionId}
+                    group={g}
+                    expanded={expandedDefIds.has(g.definitionId)}
+                    onToggleExpand={() => toggleExpanded(g.definitionId)}
+                    stashNameOf={stashNameOf}
+                    mode="identified"
+                    onIdentifyOne={(row) => onIdentifyOne(row, false)}
+                    onSaveHint={onSaveHint}
+                  />
+                ))}
+              </div>
             </div>
           )
         ) : null}
@@ -285,8 +293,8 @@ function GroupCard({
   const rarity = group.def?.rarity ?? null;
 
   return (
-    <div className="rounded-lg border border-border">
-      <div className="flex items-center justify-between gap-3 p-3">
+    <div className="transition hover:bg-surface-2/50">
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
@@ -294,11 +302,14 @@ function GroupCard({
             className="min-w-0 flex-1 text-left"
             aria-expanded={expanded}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium">{label}</span>
-              {rarity !== null ? (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-xs uppercase text-muted-foreground">
-                  {rarity}
+              {rarity != null ? (
+                <span
+                  className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${rarityPillClass(rarity)}`}
+                  aria-label={`Rarity: ${rarityLabel(rarity)}`}
+                >
+                  {rarityLabel(rarity)}
                 </span>
               ) : null}
               <span className="text-xs text-muted-foreground">
@@ -309,7 +320,7 @@ function GroupCard({
         </div>
         <div className="flex items-center gap-2">
           {mode === 'unidentified' && onBatchIdentify !== undefined ? (
-            <Button type="button" size="sm" onClick={onBatchIdentify}>
+            <Button type="button" size="sm" className="shadow-e1" onClick={onBatchIdentify}>
               Identify all {count}
             </Button>
           ) : null}
@@ -319,12 +330,16 @@ function GroupCard({
         </div>
       </div>
       {expanded ? (
-        <ul className="divide-y divide-border border-t border-border" role="list">
+        <ul className="divide-y divide-border border-t border-border bg-surface-2/30" role="list">
           {group.instances.map((row) => (
-            <li key={row.id} className="grid gap-2 p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+            <li
+              key={row.id}
+              className="grid gap-2 px-4 py-3 sm:grid-cols-[1fr_auto] sm:items-center"
+            >
               <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">
-                  <span className="font-medium">Location:</span> {stashNameOf(row.ownerId)}
+                  <span className="font-medium text-foreground">Location:</span>{' '}
+                  {stashNameOf(row.ownerId)}
                 </div>
                 <HintEditor
                   key={row.hint ?? ''}
