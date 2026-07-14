@@ -1,8 +1,8 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import { Copy, RefreshCw, UserMinus, LogOut, Coins, Crown, ArrowLeft } from 'lucide-react';
+import { Coins, Copy, Crown, LogOut, RefreshCw, Shield, UserMinus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
@@ -297,7 +297,6 @@ export function PartySettings(): ReactElement {
   if (loadError !== null) {
     return (
       <div className="mx-auto max-w-3xl space-y-4 py-10">
-        <BackButton onBack={() => void navigate(-1)} />
         <p className="text-sm text-destructive">{loadError}</p>
       </div>
     );
@@ -346,142 +345,29 @@ export function PartySettings(): ReactElement {
   const serverDataLoading = isServerMode && (members === null || inviteCode === null);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 py-10">
-      <BackButton onBack={() => void navigate(-1)} />
-      <header>
-        <h1 className="text-3xl font-bold tracking-tight">Party settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <div className="mx-auto max-w-3xl space-y-4 py-10">
+      <header className="space-y-1">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Shield className="h-3.5 w-3.5" aria-hidden="true" /> Party settings
+        </div>
+        <h1 className="font-display text-2xl font-bold tracking-tight">{partyName}</h1>
+        <p className="text-sm text-muted-foreground">
           {isServerMode
-            ? 'Names, members, invite code, and leave-party controls.'
-            : 'Rename your party and character.'}
+            ? 'Members, invite code, house rules, and leave-party controls.'
+            : 'Rename your party and character; set house rules & economy.'}
         </p>
       </header>
 
-      {/* Always-on rename block (R4.1-followup — moved from global
-          Settings). Character rename hidden when there's no character
-          (DM-only bootstrap). */}
-      <section aria-label="Names" className="space-y-4 rounded-lg border border-border p-4">
-        <div>
-          <h2 className="font-semibold">Names</h2>
-          <p className="text-sm text-muted-foreground">
-            Rename your party{character !== null ? ' or character' : ''}. Changes are logged.
-          </p>
-        </div>
-        <RenameField target="party" entityId={partyId} currentName={partyName} label="Party name" />
-        {character !== null ? (
-          <RenameField
-            target="character"
-            entityId={character.id}
-            currentName={character.name}
-            label="Character name"
-          />
-        ) : null}
-      </section>
-
-      {/* BUG-011 (2026-07-06) — Party-wide encumbrance house rule
-          (OUTLINE §3.3 + §3.6). Moved here from global /settings.
-          DM edits; non-DMs see a read-only summary. Applies to every
-          character's CapacityBar in the party. */}
-      {encumbranceRule !== null && enforceEncumbrance !== null ? (
-        <section aria-label="Encumbrance" className="space-y-4 rounded-lg border border-border p-4">
-          <div>
-            <h2 className="font-semibold">Encumbrance</h2>
-            <p className="text-sm text-muted-foreground">
-              Pick how every Inventory tab in this party handles carrying capacity.
-            </p>
-          </div>
-          {iAmDmFromLocalMemberships ? (
-            <EncumbranceRuleField
-              partyId={partyId}
-              currentRule={encumbranceRule}
-              currentEnforce={enforceEncumbrance}
-            />
-          ) : (
-            <p className="text-sm">
-              Current rule:{' '}
-              <span className="font-medium">
-                {encumbranceRule === 'off'
-                  ? 'Off (no capacity limits)'
-                  : encumbranceRule === 'phb'
-                    ? 'PHB default'
-                    : 'Variant'}
-              </span>
-              {encumbranceRule !== 'off' && enforceEncumbrance ? (
-                <span className="text-muted-foreground"> · enforced</span>
-              ) : null}
-              . The DM sets this for the whole party.
-            </p>
-          )}
-        </section>
-      ) : null}
-
-      {/* R6.1 — Per-party economy controls (OUTLINE §3.5). DM edits;
-          non-DMs see a read-only summary. Applies to Catalog Browser
-          prices (via `pricing.ts`) and — post R6.2 — purchase/sale. */}
-      {priceModifier !== null && baseCurrency !== null ? (
-        <section aria-label="Economy" className="space-y-4 rounded-lg border border-border p-4">
-          <div>
-            <h2 className="font-semibold">Economy</h2>
-            <p className="text-sm text-muted-foreground">
-              Set the campaign's currency standard. Scales PHB / DMG prices; homebrew items keep
-              their typed cost.
-            </p>
-          </div>
-          {iAmDmFromLocalMemberships ? (
-            <EconomyPresetField
-              partyId={partyId}
-              currentPriceModifier={priceModifier}
-              currentBaseCurrency={baseCurrency}
-            />
-          ) : (
-            <p className="text-sm">
-              Current economy:{' '}
-              <span className="font-medium">
-                {String(priceModifier)}× / {baseCurrency}
-              </span>
-              . The DM sets this for the whole party.
-            </p>
-          )}
-        </section>
-      ) : null}
-
-      {/* R4.1.f — "Create your character" CTA. Visible whenever the
-          actor is in a party but has no character yet. Three use cases
-          land here:
-            - Joiner who just used POST /parties/join (membership row
-              exists with characterId: null).
-            - DM-only DM who bootstrapped without a character.
-            - User recreating after `delete-character`.
-          All three dispatch the same `create-character` action against
-          the existing state; the reducer's R4.1.f post-bootstrap branch
-          picks the right path. The form lives in a modal dialog so the
-          CTA stays compact on the settings page. */}
-      {character === null && partyId !== null ? (
-        <section
-          aria-label="Create your character"
-          className="flex items-center justify-between gap-4 rounded-lg border border-border p-4"
-        >
-          <div>
-            <h2 className="font-semibold">Create your character</h2>
-            <p className="text-sm text-muted-foreground">
-              You&apos;re in this party but haven&apos;t created your character yet.
-            </p>
-          </div>
-          <Button onClick={() => setCreateCharacterOpen(true)}>Create character</Button>
-        </section>
-      ) : null}
-
-      {/* Server-only sections below. Local mode has no member list,
-          no invite code, and no leave-party flow. */}
-      {!isServerMode ? null : serverDataLoading ? (
-        <p className="text-sm text-muted-foreground">Loading party members…</p>
-      ) : (
+      {/* Server-only Members + Invite sections, rendered FIRST (members-
+          first IA per CHARTER). Local mode has no member list / invite. */}
+      {isServerMode && !serverDataLoading ? (
         <>
-          <section aria-label="Members" className="space-y-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Members ({new Set(members!.map((m) => m.userId)).size})
-            </h2>
-            <ul className="space-y-2">
+          <Section
+            title={`Members (${new Set(members!.map((m) => m.userId)).size})`}
+            ariaLabel="Members"
+            desc="Appoint a Banker, remove a player, or transfer the DM role."
+          >
+            <ul className="-my-1 divide-y divide-border">
               {members!.map((m) => {
                 const isMe = m.userId === myUserId;
                 const isKickable = iAmDm && !isMe && m.role !== 'dm';
@@ -505,29 +391,39 @@ export function PartySettings(): ReactElement {
                 const canBeTransferredTo = iAmDm && !isSolo && !isMe && m.role === 'player';
                 const transferDmBusy = busy === `transfer-dm-${m.userId}`;
                 return (
-                  <li
-                    key={`${m.userId}-${m.role}`}
-                    className="flex items-center justify-between rounded-md border bg-card px-4 py-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="font-medium">{m.displayName}</span>
-                      <RoleBadge role={m.role} />
-                      {isThisRowBanker && m.role === 'player' ? <RoleBadge role="banker" /> : null}
-                      {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
-                      {m.characterName !== null && m.characterId !== null ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void navigate(`/party/${urlPartyId}/character/${m.characterId!}`)
-                          }
-                          className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:underline"
-                          aria-label={`Open ${m.characterName}'s character sheet`}
-                        >
-                          — {m.characterName}
-                        </button>
-                      ) : null}
+                  <li key={`${m.userId}-${m.role}`} className="flex items-center gap-3 py-2.5">
+                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                      {m.displayName.charAt(0)}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        {m.displayName}
+                        {isMe ? (
+                          <span className="text-[11px] font-normal text-muted-foreground">
+                            (you)
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <RoleBadge role={m.role} />
+                        {isThisRowBanker && m.role === 'player' ? (
+                          <RoleBadge role="banker" />
+                        ) : null}
+                        {m.characterName !== null && m.characterId !== null ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void navigate(`/party/${urlPartyId}/character/${m.characterId!}`)
+                            }
+                            className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:underline"
+                            aria-label={`Open ${m.characterName}'s character sheet`}
+                          >
+                            — {m.characterName}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
                       {canBeAppointed ? (
                         <Button
                           variant="outline"
@@ -577,14 +473,21 @@ export function PartySettings(): ReactElement {
                 );
               })}
             </ul>
-          </section>
+            {new Set(members!.map((m) => m.userId)).size >= 2 ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                The DM cannot be appointed Banker. Removing a player moves their items and currency
+                to Recovered Loot.
+              </p>
+            ) : null}
+          </Section>
 
-          <section aria-label="Invite code" className="space-y-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Invite code
-            </h2>
+          <Section
+            title="Invite code"
+            ariaLabel="Invite code"
+            desc="Share to let players join. Rotating invalidates the old code."
+          >
             <div className="flex items-center gap-2">
-              <code className="flex-1 rounded-md border bg-muted px-3 py-2 font-mono text-sm">
+              <code className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-sm tracking-wider">
                 {inviteCode}
               </code>
               <Button variant="outline" size="sm" onClick={() => void copyInvite()}>
@@ -603,32 +506,141 @@ export function PartySettings(): ReactElement {
                 </Button>
               ) : null}
             </div>
-            <p className="text-xs text-muted-foreground">
-              Share this code with someone you want to invite. Rotating invalidates the old code
-              immediately.
-            </p>
-          </section>
-
-          <section aria-label="Leave party" className="space-y-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Leave party
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              Your character&apos;s items and currency will be moved to Recovered Loot. If
-              you&apos;re the last member, the party will be archived.
-            </p>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={busy === 'leave'}
-              onClick={() => setConfirmLeave(true)}
-            >
-              <LogOut className="mr-1 h-4 w-4" />
-              Leave party
-            </Button>
-          </section>
+          </Section>
         </>
-      )}
+      ) : null}
+
+      {/* Always-on rename block (R4.1-followup — moved from global
+          Settings). Character rename hidden when there's no character
+          (DM-only bootstrap). */}
+      <Section
+        title="Names"
+        ariaLabel="Names"
+        desc={`Rename your party${character !== null ? ' or character' : ''}. Changes are logged.`}
+      >
+        <div className="space-y-4">
+          <RenameField
+            target="party"
+            entityId={partyId}
+            currentName={partyName}
+            label="Party name"
+          />
+          {character !== null ? (
+            <RenameField
+              target="character"
+              entityId={character.id}
+              currentName={character.name}
+              label="Character name"
+            />
+          ) : null}
+        </div>
+      </Section>
+
+      {/* BUG-011 (2026-07-06) — Party-wide encumbrance house rule
+          (OUTLINE §3.3 + §3.6). Moved here from global /settings.
+          DM edits; non-DMs see a read-only summary. Applies to every
+          character's CapacityBar in the party. */}
+      {encumbranceRule !== null && enforceEncumbrance !== null ? (
+        <Section
+          title="House rules"
+          ariaLabel="Encumbrance"
+          desc="Pick how every Inventory in this party handles carrying capacity."
+        >
+          {iAmDmFromLocalMemberships ? (
+            <EncumbranceRuleField
+              partyId={partyId}
+              currentRule={encumbranceRule}
+              currentEnforce={enforceEncumbrance}
+            />
+          ) : (
+            <p className="text-sm">
+              Current rule:{' '}
+              <span className="font-medium">
+                {encumbranceRule === 'off'
+                  ? 'Off (no capacity limits)'
+                  : encumbranceRule === 'phb'
+                    ? 'PHB default'
+                    : 'Variant'}
+              </span>
+              {encumbranceRule !== 'off' && enforceEncumbrance ? (
+                <span className="text-muted-foreground"> · enforced</span>
+              ) : null}
+              . The DM sets this for the whole party.
+            </p>
+          )}
+        </Section>
+      ) : null}
+
+      {/* R6.1 — Per-party economy controls (OUTLINE §3.5). DM edits;
+          non-DMs see a read-only summary. Applies to Catalog Browser
+          prices (via `pricing.ts`) and — post R6.2 — purchase/sale. */}
+      {priceModifier !== null && baseCurrency !== null ? (
+        <Section
+          title="Economy"
+          ariaLabel="Economy"
+          desc="Set the campaign's currency standard. Scales PHB / DMG prices; homebrew keeps its typed cost."
+        >
+          {iAmDmFromLocalMemberships ? (
+            <EconomyPresetField
+              partyId={partyId}
+              currentPriceModifier={priceModifier}
+              currentBaseCurrency={baseCurrency}
+            />
+          ) : (
+            <p className="text-sm">
+              Current economy:{' '}
+              <span className="font-medium">
+                {String(priceModifier)}× / {baseCurrency}
+              </span>
+              . The DM sets this for the whole party.
+            </p>
+          )}
+        </Section>
+      ) : null}
+
+      {/* R4.1.f — "Create your character" CTA. Visible whenever the
+          actor is in a party but has no character yet. Three use cases
+          land here:
+            - Joiner who just used POST /parties/join (membership row
+              exists with characterId: null).
+            - DM-only DM who bootstrapped without a character.
+            - User recreating after `delete-character`.
+          All three dispatch the same `create-character` action against
+          the existing state; the reducer's R4.1.f post-bootstrap branch
+          picks the right path. The form lives in a modal dialog so the
+          CTA stays compact on the settings page. */}
+      {character === null && partyId !== null ? (
+        <Section
+          title="Create your character"
+          ariaLabel="Create your character"
+          desc="You're in this party but haven't created your character yet."
+        >
+          <Button onClick={() => setCreateCharacterOpen(true)}>Create character</Button>
+        </Section>
+      ) : null}
+
+      {/* Server-only loading + Danger zone (Leave party). Local mode has
+          no leave-party flow. */}
+      {isServerMode && serverDataLoading ? (
+        <p className="text-sm text-muted-foreground">Loading party members…</p>
+      ) : isServerMode ? (
+        <Section
+          title="Danger zone"
+          ariaLabel="Leave party"
+          desc="Your character's items and currency move to Recovered Loot; if you're the last member, the party is archived."
+          danger
+        >
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={busy === 'leave'}
+            onClick={() => setConfirmLeave(true)}
+          >
+            <LogOut className="mr-1 h-4 w-4" />
+            Leave party
+          </Button>
+        </Section>
+      ) : null}
 
       <Dialog open={createCharacterOpen} onOpenChange={(o) => setCreateCharacterOpen(o)}>
         <DialogContent>
@@ -732,24 +744,43 @@ export function PartySettings(): ReactElement {
 }
 
 /**
- * R4.3.e.1 — small helper for the Back button at the top of the
- * Party Settings screen. Mirrors the ItemDetail / StorageDetail
- * pattern (ghost button + ArrowLeft + short label). Uses
- * `navigate(-1)` for browser-back semantics so the user returns to
- * whichever screen linked them here (Hub / character sheet / etc.),
- * matching the M2.5 UX principle: detail routes own their own Back;
- * `RootLayout` stays minimal.
+ * R9.10 — framed settings "Section" card (ports the design-lab
+ * `settings/kit` Section: a titled header + body, `danger` variant for
+ * the destructive zone). The title renders as `<h2>` + carries the
+ * section's `aria-label` on the `<section>` so the existing
+ * heading/region queries keep resolving.
  */
-function BackButton({ onBack }: { onBack: () => void }): ReactElement {
+function Section({
+  title,
+  desc,
+  ariaLabel,
+  danger = false,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  ariaLabel?: string;
+  danger?: boolean;
+  children: ReactNode;
+}): ReactElement {
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={onBack}
-      className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+    <section
+      aria-label={ariaLabel ?? title}
+      className={`overflow-hidden rounded-lg border bg-surface shadow-e1 ${
+        danger ? 'border-destructive/40' : 'border-border'
+      }`}
     >
-      <ArrowLeft className="h-4 w-4" />
-      Back
-    </Button>
+      <div className="border-b border-border px-4 py-3">
+        <h2
+          className={`font-display text-sm font-semibold uppercase tracking-wide ${
+            danger ? 'text-destructive' : ''
+          }`}
+        >
+          {title}
+        </h2>
+        {desc !== undefined ? <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p> : null}
+      </div>
+      <div className="px-4 py-4">{children}</div>
+    </section>
   );
 }
