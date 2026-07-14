@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { batchTriggerLabel, type BatchRechargeTrigger } from '@/lib/charges';
 
 interface RestRollModalProps {
@@ -64,6 +65,7 @@ export function RestRollModal({
   trigger,
 }: RestRollModalProps): ReactElement | null {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
 
   // Snapshot of eligible items at modal-open time. Captured once via
   // `useMemo` keyed on `open` so the inputs don't shift if state
@@ -249,7 +251,11 @@ export function RestRollModal({
           >
             Cancel
           </Button>
-          <Button type="button" onClick={onApply} disabled={formulaRows.length === 0}>
+          <Button
+            type="button"
+            onClick={onApply}
+            disabled={formulaRows.length === 0 || !canDispatch}
+          >
             Apply
           </Button>
         </DialogFooter>

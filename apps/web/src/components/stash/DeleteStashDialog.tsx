@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 
 interface DeleteStashDialogProps {
   open: boolean;
@@ -41,6 +42,7 @@ export function DeleteStashDialog({
   onDeleted,
 }: DeleteStashDialogProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   function confirm(): void {
@@ -80,7 +82,9 @@ export function DeleteStashDialog({
 
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={confirm}>Delete</AlertDialogAction>
+          <AlertDialogAction onClick={confirm} disabled={!canDispatch}>
+            Delete
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

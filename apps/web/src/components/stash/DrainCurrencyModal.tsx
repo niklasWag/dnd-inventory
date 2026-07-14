@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 
 interface DrainCurrencyModalProps {
   /** Shared-pool stash id (Party Stash or Recovered Loot). */
@@ -58,6 +59,7 @@ export function DrainCurrencyModal({
   onOpenChange,
 }: DrainCurrencyModalProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const holding = useStore(
     useShallow((s) => {
       const c = s.appState?.currencies.find((row) => row.stashId === stashId);
@@ -153,7 +155,7 @@ export function DrainCurrencyModal({
           </Button>
           <Button
             variant="destructive"
-            disabled={!someNonZero || overspending}
+            disabled={!someNonZero || overspending || !canDispatch}
             onClick={handleConfirm}
           >
             Drain

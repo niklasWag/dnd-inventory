@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { rarityPillClass, rarityLabel } from '@/lib/rarity';
 
 /**
@@ -405,6 +406,7 @@ function BatchIdentifyDialog({
   onConfirm,
 }: BatchIdentifyDialogProps): ReactElement {
   const [hint, setHint] = useState('');
+  const canDispatch = useCanDispatch();
   const label = group.def?.name ?? group.definitionId;
   const count = group.instances.length;
 
@@ -434,6 +436,7 @@ function BatchIdentifyDialog({
             Cancel
           </Button>
           <Button
+            disabled={!canDispatch}
             onClick={() => {
               const trimmed = hint.trim();
               onConfirm(trimmed === '' ? undefined : trimmed);

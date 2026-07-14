@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { newUuidV7 } from '@app/shared';
@@ -40,6 +41,7 @@ export function ShopsList(): ReactElement {
   const shops = useStore(useShallow((s) => s.appState?.shops ?? []));
   const isDmOrSolo = useStore(useShallow((s) => isCurrentUserDmOrSolo(s.appState)));
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [creatingOpen, setCreatingOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -205,7 +207,9 @@ export function ShopsList(): ReactElement {
             <Button variant="outline" onClick={() => setCreatingOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={onCreate}>Create</Button>
+            <Button onClick={onCreate} disabled={!canDispatch}>
+              Create
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

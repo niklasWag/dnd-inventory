@@ -36,6 +36,7 @@ import { Label } from '@/components/ui/label';
 import { ItemPicker } from '@/components/catalog/ItemPicker';
 import { useStore } from '@/store';
 import { useDispatch, type DispatchFn } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { rarityPillClass, rarityLabel } from '@/lib/rarity';
@@ -282,7 +283,8 @@ function StockCard({
   const unlimited = entry.quantity === -1;
   const max = unlimited ? Infinity : entry.quantity;
   const inStock = unlimited || entry.quantity >= 1;
-  const buyable = canBuy && priceCp !== null && inStock;
+  const canDispatch = useCanDispatch();
+  const buyable = canBuy && priceCp !== null && inStock && canDispatch;
 
   function onBuy(): void {
     if (view.myInventoryStashId === null) {
@@ -407,6 +409,7 @@ function SellModal({
 }): ReactElement {
   const [query, setQuery] = useState('');
   const [qtyById, setQtyById] = useState<Record<string, number>>({});
+  const canDispatch = useCanDispatch();
 
   // Items in the current user's Inventory that have a catalog cost — `sale`
   // throws on a missing cost, so filter them out here.
@@ -523,6 +526,7 @@ function SellModal({
                       size="sm"
                       variant="outline"
                       onClick={() => onSell(it)}
+                      disabled={!canDispatch}
                       aria-label={`Sell ${defNameOf(view, it.definitionId)}`}
                     >
                       <Tag className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
@@ -555,6 +559,7 @@ function ShopManage({
   const navigate = useNavigate();
   const { shop, baseCurrency } = view;
 
+  const canDispatch = useCanDispatch();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedDef, setPickedDef] = useState<ItemDefinition | null>(null);
@@ -908,7 +913,7 @@ function ShopManage({
                 />
               </td>
               <td className="px-4 py-2 text-right">
-                <Button type="button" size="sm" onClick={onAddStock}>
+                <Button type="button" size="sm" onClick={onAddStock} disabled={!canDispatch}>
                   <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                   Add
                 </Button>
@@ -967,7 +972,9 @@ function ShopManage({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
+            <AlertDialogAction onClick={onDelete} disabled={!canDispatch}>
+              Delete
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { dispatchMintingAction } from '@/store';
 
 interface CreateStashModalProps {
@@ -44,6 +45,7 @@ export function CreateStashModal({
   ownerCharacterId,
 }: CreateStashModalProps): ReactElement {
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const canDispatch = useCanDispatch();
 
   const {
     register,
@@ -122,7 +124,7 @@ export function CreateStashModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" disabled={isSubmitting || !canDispatch}>
               {isSubmitting ? 'Creating…' : 'Create'}
             </Button>
           </DialogFooter>

@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { currency } from '@app/rules';
 
 interface SplitEvenlyModalProps {
@@ -60,6 +61,7 @@ export function SplitEvenlyModal({
   onOpenChange,
 }: SplitEvenlyModalProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
 
   // Pool balance drives the preview + the Total line. Uses `useShallow`
   // so the modal doesn't rerender for every unrelated store mutation.
@@ -236,7 +238,7 @@ export function SplitEvenlyModal({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={selected.size === 0} onClick={handleConfirm}>
+          <Button disabled={selected.size === 0 || !canDispatch} onClick={handleConfirm}>
             Split evenly
           </Button>
         </DialogFooter>

@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { currency } from '@app/rules';
 
 interface ConvertCurrencyModalProps {
@@ -72,6 +73,7 @@ export function ConvertCurrencyModal({
   onOpenChange,
 }: ConvertCurrencyModalProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const holding = useStore(
@@ -226,7 +228,7 @@ export function ConvertCurrencyModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+            <Button type="submit" disabled={!canSubmit || isSubmitting || !canDispatch}>
               {isSubmitting ? 'Converting…' : 'Convert'}
             </Button>
           </DialogFooter>

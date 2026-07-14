@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import type { HomebrewDefinitionInput, HomebrewDefinitionPatch } from '@/store/types';
 import type { ItemCategory, ItemDefinition, Rarity } from '@app/shared';
 
@@ -285,6 +286,7 @@ export function HomebrewForm({
   onCreated,
 }: HomebrewFormProps): ReactElement | null {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -590,7 +592,7 @@ export function HomebrewForm({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || !canDispatch}>
             {submitLabel}
           </Button>
         </DialogFooter>
@@ -605,7 +607,7 @@ export function HomebrewForm({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || !canDispatch}>
             {submitLabel}
           </Button>
         </div>

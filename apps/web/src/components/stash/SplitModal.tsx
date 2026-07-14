@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 
 interface SplitModalProps {
   open: boolean;
@@ -47,6 +48,7 @@ type FormOutput = z.output<typeof formSchema>;
 
 export function SplitModal({ open, onOpenChange, itemInstanceId }: SplitModalProps): ReactElement {
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const canDispatch = useCanDispatch();
 
   const source = useStore(
     useShallow((s) => {
@@ -172,7 +174,7 @@ export function SplitModal({ open, onOpenChange, itemInstanceId }: SplitModalPro
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+            <Button type="submit" disabled={!canSubmit || isSubmitting || !canDispatch}>
               {isSubmitting ? 'Splitting…' : 'Split'}
             </Button>
           </DialogFooter>

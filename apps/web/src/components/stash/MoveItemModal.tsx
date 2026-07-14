@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { buildStashLabels } from '@/lib/stashLabels';
 import { displayName as computeDisplayName } from '@/lib/identify';
 
@@ -80,6 +81,7 @@ export function MoveItemModal({
   itemInstanceId,
 }: MoveItemModalProps): ReactElement {
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const canDispatch = useCanDispatch();
 
   // Source row snapshot.
   const source = useStore(
@@ -312,7 +314,7 @@ export function MoveItemModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+            <Button type="submit" disabled={!canSubmit || isSubmitting || !canDispatch}>
               {isSubmitting ? 'Moving…' : 'Move'}
             </Button>
           </DialogFooter>
