@@ -208,7 +208,7 @@ export function CatalogBrowser(): ReactElement {
               : 'No items match your search.'}
           </p>
         ) : (
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm" aria-label="Catalog items">
             <thead className="border-b border-border bg-surface-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-4 py-2.5 font-semibold">Name</th>

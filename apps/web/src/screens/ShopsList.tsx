@@ -109,7 +109,7 @@ export function ShopsList(): ReactElement {
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm" aria-label="Shops">
             <thead className="border-b border-border bg-surface-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-4 py-2.5 font-semibold">Name</th>
@@ -124,18 +124,19 @@ export function ShopsList(): ReactElement {
             </thead>
             <tbody className="divide-y divide-border">
               {visibleShops.map((shop) => (
-                <tr
-                  key={shop.id}
-                  className="group cursor-pointer transition hover:bg-surface-2/60"
-                  onClick={() => {
-                    void navigate(`/party/${partyId}/shops/${shop.id}`);
-                  }}
-                >
+                <tr key={shop.id} className="group transition hover:bg-surface-2/60">
                   <td className="px-4 py-2.5">
-                    <span className="inline-flex items-center gap-2 font-medium">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigate(`/party/${partyId}/shops/${shop.id}`);
+                      }}
+                      aria-label={`Open ${shop.name}`}
+                      className="inline-flex items-center gap-2 font-medium underline-offset-2 hover:underline focus:outline-none focus-visible:underline"
+                    >
                       <Store className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
                       {shop.name}
-                    </span>
+                    </button>
                   </td>
                   <td className="px-4 py-2.5">
                     <span

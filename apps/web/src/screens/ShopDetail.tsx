@@ -799,7 +799,7 @@ function ShopManage({
             {shop.stock.length} {shop.stock.length === 1 ? 'item' : 'items'}
           </span>
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" aria-label="Shop stock">
           <thead>
             <tr className="border-b border-border bg-surface-2/50 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <th className="px-4 py-2 font-medium">Item</th>
