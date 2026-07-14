@@ -1,6 +1,13 @@
-import { useEffect, useRef, useState, type ChangeEvent, type ReactElement } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Download, LogOut, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Download, LogOut, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -16,6 +23,11 @@ import {
 import { LinkedAccounts } from '@/components/auth/LinkedAccounts';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
 import { ThemeField } from '@/components/settings/ThemeField';
+import {
+  AccentField,
+  FollowClassField,
+  HubLayoutField,
+} from '@/components/settings/AppearanceFields';
 import { loadAppState } from '@/db/load';
 import { clearCurrentPartyId, getCurrentPartyId } from '@/db/meta';
 import { deleteAppStateForParty } from '@/db/save';
@@ -189,88 +201,104 @@ export function Settings(): ReactElement {
   const seedVersion = appState?.seedVersion ?? 0;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-8">
-      <header>
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          App version {APP_VERSION} · seed version {seedVersion}
-        </p>
-      </header>
+    <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => void navigate(-1)}
+        className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back
+      </Button>
 
-      {/* R3.5: Account + Linked accounts + Logout — server mode only. */}
+      {/* R9.11 — Profile hero (server mode; account identity banner). Local
+          mode has no account, so it falls back to a plain title. */}
+      {isServerMode && session.user !== null ? (
+        <div className="overflow-hidden rounded-xl border border-border bg-gradient-to-br from-primary/10 to-surface p-6 shadow-e2">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="grid h-20 w-20 shrink-0 place-items-center rounded-full border-2 border-primary/40 bg-surface-2 font-display text-3xl font-bold text-primary ring-2 ring-surface">
+              {session.user.displayName.charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="font-display text-2xl font-bold tracking-tight">
+                {session.user.displayName}
+              </h1>
+              {session.user.email !== undefined && session.user.email !== null ? (
+                <p className="truncate text-sm text-muted-foreground">{session.user.email}</p>
+              ) : null}
+              <p className="mt-1 text-xs text-muted-foreground">
+                App version {APP_VERSION} · seed version {seedVersion}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <header>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Settings</h1>
+          <p className="text-sm text-muted-foreground">
+            App version {APP_VERSION} · seed version {seedVersion}
+          </p>
+        </header>
+      )}
+
+      {/* R3.5 — Account + Linked accounts + Session (Logout) — server mode only. */}
       {isServerMode && session.user !== null ? (
         <>
-          <section className="space-y-3 rounded-lg border border-border p-4">
-            <div>
-              <h2 className="font-semibold">Account</h2>
-              <p className="text-sm text-muted-foreground">
-                Your sign-in identity for this server.
-              </p>
-            </div>
-            <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm">
-              <dt className="text-muted-foreground">Display name</dt>
-              <dd className="font-medium">{session.user.displayName}</dd>
+          <Section title="Account" desc="Your sign-in identity for this server.">
+            <div className="-my-1 divide-y divide-border">
+              <Row label="Display name" value={session.user.displayName} />
               {session.user.email !== undefined && session.user.email !== null ? (
-                <>
-                  <dt className="text-muted-foreground">Email</dt>
-                  <dd className="font-medium">{session.user.email}</dd>
-                </>
+                <Row label="Email" value={session.user.email} />
               ) : null}
               {session.user.discordId !== undefined && session.user.discordId !== null ? (
-                <>
-                  <dt className="text-muted-foreground">Discord</dt>
-                  <dd className="font-medium">id {session.user.discordId}</dd>
-                </>
+                <Row label="Discord" value={`id ${session.user.discordId}`} />
               ) : null}
-            </dl>
-          </section>
-
-          <section className="space-y-3 rounded-lg border border-border p-4">
-            <div>
-              <h2 className="font-semibold">Linked accounts</h2>
-              <p className="text-sm text-muted-foreground">
-                Connect Discord and email so you can sign in either way.
-              </p>
             </div>
+          </Section>
+
+          <Section
+            title="Login methods"
+            desc="Connect Discord and email so you can sign in either way."
+          >
             <LinkedAccounts />
-          </section>
-
-          <section className="space-y-3 rounded-lg border border-border p-4">
-            <div>
-              <h2 className="font-semibold">Session</h2>
-              <p className="text-sm text-muted-foreground">Sign out on this device.</p>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => {
-                void handleLogout();
-              }}
-            >
-              <LogOut className="h-4 w-4" />
-              Logout
-            </Button>
-          </section>
+          </Section>
         </>
       ) : null}
 
-      {/* R7.1.a — Appearance (theme preference). Global / account-scoped. */}
-      <section className="space-y-3 rounded-lg border border-border p-4">
-        <div>
-          <h2 className="font-semibold">Appearance</h2>
-          <p className="text-sm text-muted-foreground">Choose how the app looks on this device.</p>
+      {/* R7.1.a + R9.11 — Appearance cluster (theme, accent, follow-class,
+          Hub layout). Global / account-scoped device prefs. */}
+      <Section title="Appearance" desc="Choose how the app looks on this device.">
+        <div className="space-y-4">
+          <ThemeField />
+          <AccentField />
+          <FollowClassField />
+          <HubLayoutField />
         </div>
-        <ThemeField />
-      </section>
+      </Section>
+
+      {/* R3.5 — Sessions (Logout). Below Appearance per the mockup order.
+          Server mode only (local mode has no account session). */}
+      {isServerMode && session.user !== null ? (
+        <Section title="Sessions" desc="Sign out on this device.">
+          <Button
+            variant="outline"
+            onClick={() => {
+              void handleLogout();
+            }}
+          >
+            <LogOut className="h-4 w-4" />
+            Logout
+          </Button>
+        </Section>
+      ) : null}
 
       {/* M7: Backup section */}
-      <section className="space-y-3 rounded-lg border border-border p-4">
-        <div>
-          <h2 className="font-semibold">Backup</h2>
-          <p className="text-sm text-muted-foreground">
-            Export your local data to a JSON file, or restore from a previous export. Import will
-            replace all current data — you'll get a confirm dialog first.
-          </p>
-        </div>
+      <Section
+        title="Backup"
+        desc="Export your local data to a JSON file, or restore from a previous export. Import replaces all current data — you'll get a confirm dialog first."
+      >
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleExport}>
             <Download className="h-4 w-4" />
@@ -291,7 +319,7 @@ export function Settings(): ReactElement {
             aria-label="Import backup file"
           />
         </div>
-      </section>
+      </Section>
 
       {/* M7: Character & Party rename — moved to /party/settings in
           R4.1-followup. The screen lives next to members + invite code
@@ -308,40 +336,34 @@ export function Settings(): ReactElement {
           the blob canonical-from-server; in local mode the party is
           effectively lost (JSON backup import is the recovery path). */}
       {corruptedPartyId !== null ? (
-        <section className="space-y-3 rounded-lg border border-destructive/60 bg-destructive/5 p-4">
-          <div>
-            <h2 className="flex items-center gap-2 font-semibold">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-              Corrupted party data
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              The local blob for this party failed to load. Wipe it to reset — in server mode a
-              fresh copy will be pulled on next visit.
-            </p>
-          </div>
+        <Section
+          title="Corrupted party data"
+          desc="The local blob for this party failed to load. Wipe it to reset — in server mode a fresh copy will be pulled on next visit."
+          danger
+        >
           <Button
             variant="destructive"
             onClick={() => setCorruptionRecoveryOpen(true)}
             data-testid="wipe-corrupted-party-btn"
           >
-            <Trash2 className="h-4 w-4" />
+            <AlertTriangle className="h-4 w-4" />
             Wipe corrupted party data
           </Button>
-        </section>
+        </Section>
       ) : null}
 
-      <section className="space-y-3 rounded-lg border border-border p-4">
-        <div>
-          <h2 className="font-semibold">Wipe data</h2>
-          <p className="text-sm text-muted-foreground">
-            Erase all locally stored data. This cannot be undone.
-          </p>
-        </div>
+      {/* Danger zone — local data reset (wipe). Account deletion is not a
+          feature; this is the app-data reset. */}
+      <Section
+        title="Danger zone"
+        desc="Erase all locally stored data. This cannot be undone."
+        danger
+      >
         <Button variant="destructive" onClick={() => setWipeOpen(true)}>
           <Trash2 className="h-4 w-4" />
           Wipe all data
         </Button>
-      </section>
+      </Section>
 
       <Dialog open={wipeOpen} onOpenChange={setWipeOpen}>
         <DialogContent>
@@ -404,6 +426,71 @@ export function Settings(): ReactElement {
         onOpenChange={setImportDialogOpen}
         result={importResult}
       />
+    </div>
+  );
+}
+
+/**
+ * R9.11 — framed settings "Section" card (ports the design-lab
+ * `settings/kit` Section: titled header + body, `danger` variant for the
+ * destructive zone). Mirrors the PartySettings `Section` helper.
+ */
+function Section({
+  title,
+  desc,
+  danger = false,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  danger?: boolean;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <section
+      className={`overflow-hidden rounded-lg border bg-surface shadow-e1 ${
+        danger ? 'border-destructive/40' : 'border-border'
+      }`}
+    >
+      <div className="border-b border-border px-4 py-3">
+        <h2
+          className={`font-display text-sm font-semibold uppercase tracking-wide ${
+            danger ? 'text-destructive' : ''
+          }`}
+        >
+          {title}
+        </h2>
+        {desc !== undefined ? <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p> : null}
+      </div>
+      <div className="px-4 py-4">{children}</div>
+    </section>
+  );
+}
+
+/** A label(+sub) → value → action row inside a Section. */
+function Row({
+  label,
+  sub,
+  value,
+  action,
+}: {
+  label: ReactNode;
+  sub?: ReactNode;
+  value?: ReactNode;
+  action?: ReactNode;
+}): ReactElement {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2.5">
+      <div className="min-w-0">
+        <div className="text-sm font-medium">{label}</div>
+        {sub !== undefined ? <div className="text-xs text-muted-foreground">{sub}</div> : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
+        {value !== undefined ? (
+          <span className="text-sm text-muted-foreground">{value}</span>
+        ) : null}
+        {action}
+      </div>
     </div>
   );
 }

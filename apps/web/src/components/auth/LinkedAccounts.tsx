@@ -45,18 +45,25 @@ export function LinkedAccounts(): ReactElement {
   );
 }
 
+/** R9.11 — green "Connected" badge (matches the Settings `LinkPill` mockup). */
+function ConnectedBadge(): ReactElement {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+      Connected
+    </span>
+  );
+}
+
 function DiscordRow({ discordId }: { discordId: string | null }): ReactElement {
   return (
-    <div className="flex items-center justify-between rounded-md border bg-card p-4">
+    <div className="flex items-center justify-between rounded-md border border-border p-4">
       <div className="flex items-center gap-3">
         <LinkIcon className="h-5 w-5 text-muted-foreground" aria-hidden />
         <div>
           <p className="text-sm font-medium">Discord</p>
-          {discordId === null ? (
-            <p className="text-xs text-muted-foreground">Not connected.</p>
-          ) : (
-            <p className="text-xs text-muted-foreground">Connected (id {discordId}).</p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {discordId === null ? 'Not connected.' : `id ${discordId}`}
+          </p>
         </div>
       </div>
       {discordId === null ? (
@@ -68,7 +75,9 @@ function DiscordRow({ discordId }: { discordId: string | null }): ReactElement {
             Connect
           </a>
         </Button>
-      ) : null}
+      ) : (
+        <ConnectedBadge />
+      )}
     </div>
   );
 }
@@ -84,7 +93,7 @@ function EmailRow({ email }: { email: string | null }): ReactElement {
 
   if (email !== null) {
     return (
-      <div className="flex items-center justify-between rounded-md border bg-card p-4">
+      <div className="flex items-center justify-between rounded-md border border-border p-4">
         <div className="flex items-center gap-3">
           <Mail className="h-5 w-5 text-muted-foreground" aria-hidden />
           <div>
@@ -92,6 +101,7 @@ function EmailRow({ email }: { email: string | null }): ReactElement {
             <p className="text-xs text-muted-foreground">{email}</p>
           </div>
         </div>
+        <ConnectedBadge />
       </div>
     );
   }
@@ -138,7 +148,7 @@ function EmailRow({ email }: { email: string | null }): ReactElement {
   }
 
   return (
-    <div className="space-y-2 rounded-md border bg-card p-4">
+    <div className="space-y-2 rounded-md border border-border p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Mail className="h-5 w-5 text-muted-foreground" aria-hidden />

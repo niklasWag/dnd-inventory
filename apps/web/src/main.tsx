@@ -20,6 +20,7 @@ import { seedCatalogIfNeeded } from '@/store/seed';
 import { attachThemeSideEffects, useThemeStore } from '@/store/theme';
 import { attachAccentSideEffects, useAccentStore } from '@/store/accent';
 import { useSidebarStore } from '@/store/sidebar';
+import { useHubLayoutStore } from '@/store/hubLayout';
 import { attachUnloadFlush, configureQueue } from '@/sync/queue';
 import { syncSocketWithSession } from '@/sync/socket';
 import '@/index.css';
@@ -60,6 +61,7 @@ async function boot(): Promise<void> {
     useThemeStore.getState().hydrate(),
     useAccentStore.getState().hydrate(),
     useSidebarStore.getState().hydrate(),
+    useHubLayoutStore.getState().hydrate(),
   ]);
   attachThemeSideEffects();
 
