@@ -100,15 +100,15 @@ describe('ShopDetail (R6.2)', () => {
     return { shopId, stockEntryId };
   }
 
-  it('DM sees Open/Close toggle + Add stock section on a closed shop', () => {
+  it('DM sees the storefront-status toggle + Stock panel on a closed shop', () => {
     bootstrap();
     const { shopId } = seedShop({ isOpen: false });
     renderAt(`/party/:partyId/shops/${shopId}`);
-    expect(screen.getByRole('button', { name: /^open shop$/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /add stock/i })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /storefront status/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^stock$/i })).toBeInTheDocument();
   });
 
-  it('DM buys 1 from a stocked shop — item lands + stock decrements', async () => {
+  it('DM can switch to the storefront and buy — item lands + stock decrements', async () => {
     const user = userEvent.setup();
     const b = bootstrap();
     // Give DM some gold to spend.
@@ -123,6 +123,8 @@ describe('ShopDetail (R6.2)', () => {
     const { shopId, stockEntryId } = seedShop({ isOpen: true, withStock: true });
     renderAt(`/party/:partyId/shops/${shopId}`);
 
+    // R9.7 — DM/solo flips to the player Storefront to buy.
+    await user.click(screen.getByRole('button', { name: /^storefront$/i }));
     await user.click(screen.getByRole('button', { name: /^buy rope, hempen/i }));
 
     const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
@@ -134,14 +136,18 @@ describe('ShopDetail (R6.2)', () => {
     expect(inv[0]!.quantity).toBe(1);
   });
 
-  it('toggling open flips the status pill', async () => {
+  it('toggling storefront status flips the state', async () => {
     const user = userEvent.setup();
     bootstrap();
     const { shopId } = seedShop({ isOpen: false });
     renderAt(`/party/:partyId/shops/${shopId}`);
-    expect(screen.getByText(/^Closed$/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /^open shop$/i }));
-    expect(screen.getByText(/^Open$/)).toBeInTheDocument();
+    const toggle = screen.getByRole('switch', { name: /storefront status/i });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await user.click(toggle);
+    expect(screen.getByRole('switch', { name: /storefront status/i })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 
   it('add-stock has no raw id input — DM picks item via the catalog picker', async () => {
@@ -207,12 +213,12 @@ describe('ShopDetail (R6.2)', () => {
     const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
     await user.click(pickBtns[0]!);
 
-    expect(
-      screen.getByText(/no default price\. set an override to sell this item/i),
-    ).toBeInTheDocument();
+    // R9.7 — the add-stock row surfaces a "No catalog price — set an override."
+    // hint under the item cell for no-cost defs.
+    expect(screen.getByText(/no catalog price — set an override/i)).toBeInTheDocument();
   });
 
-  it('shows the default price hint when picking an item with cost', async () => {
+  it('shows the default price as the override placeholder when picking an item with cost', async () => {
     const user = userEvent.setup();
     bootstrap();
     const { shopId } = seedShop({ isOpen: false });
@@ -224,7 +230,9 @@ describe('ShopDetail (R6.2)', () => {
     const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
     await user.click(pickBtns[0]!);
 
-    expect(screen.getByText(/default: .+ — leave blank to use\./i)).toBeInTheDocument();
+    // The default effective price prefills the override input's placeholder.
+    const override = screen.getByLabelText(/price override/i);
+    expect(override).toHaveAttribute('placeholder', expect.stringMatching(/gp|sp|cp|ep|pp/i));
   });
 
   it('blocks Add for a no-cost item when the price override is blank', async () => {
@@ -241,7 +249,9 @@ describe('ShopDetail (R6.2)', () => {
 
     await user.click(screen.getByRole('button', { name: /^add$/i }));
 
-    expect(await screen.findByText(/no catalog price/i)).toBeInTheDocument();
+    // The toast (distinct wording from the inline row hint) confirms the
+    // pre-flight guard fired; the stock stays empty.
+    expect(await screen.findByText(/set a price override/i)).toBeInTheDocument();
     const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
     expect(shop.stock).toHaveLength(0);
   });
@@ -268,7 +278,8 @@ describe('ShopDetail (R6.2)', () => {
     expect(shop.stock[0]!.priceOverride).toBe(50000);
   });
 
-  it('disables the Buy button for a stock row that has no price', () => {
+  it('disables the Buy button for a stock row that has no price', async () => {
+    const user = userEvent.setup();
     bootstrap();
     const { shopId } = seedShop({ isOpen: true });
     // Bypass the reducer guard (which we just added) to seed a pre-fix
@@ -300,9 +311,78 @@ describe('ShopDetail (R6.2)', () => {
     });
     renderAt(`/party/:partyId/shops/${shopId}`);
 
+    // R9.7 — DM/solo buys from the Storefront surface.
+    await user.click(screen.getByRole('button', { name: /^storefront$/i }));
+
     const buyBtn = screen.getByRole('button', { name: /^buy cloak of the bat$/i });
     expect(buyBtn).toBeDisabled();
     expect(buyBtn).toHaveAttribute('title', 'No price set for this item');
+  });
+
+  // R9.7 — new storefront + settings behaviors.
+  it('storefront: qty stepper drives the Buy label and buys N', async () => {
+    const user = userEvent.setup();
+    const b = bootstrap();
+    void useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: b.inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 100, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    const { shopId, stockEntryId } = seedShop({ isOpen: true, withStock: true });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+    await user.click(screen.getByRole('button', { name: /^storefront$/i }));
+
+    // Step the qty up to 2, then Buy 2.
+    await user.click(screen.getByRole('button', { name: /increase quantity/i }));
+    await user.click(screen.getByRole('button', { name: /^buy rope, hempen/i }));
+
+    const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
+    expect(shop.stock.find((e) => e.id === stockEntryId)!.quantity).toBe(3); // 5 − 2
+  });
+
+  it('storefront: the Sell items modal lists inventory and sells', async () => {
+    const user = userEvent.setup();
+    const b = bootstrap();
+    // Put a priced item (rope) in the DM's inventory to sell.
+    void useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: b.inventoryStashId,
+        definitionId: 'phb-2024:rope-hempen-50ft',
+        quantity: 2,
+        source: 'catalog-add',
+        newItemInstanceId: newUuidV7(),
+      },
+    });
+    const { shopId } = seedShop({ isOpen: true });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+    await user.click(screen.getByRole('button', { name: /^storefront$/i }));
+
+    await user.click(screen.getByRole('button', { name: /sell items/i }));
+    expect(screen.getByRole('heading', { name: /sell to cauldron/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^sell rope, hempen/i }));
+
+    // One instance sold → a stock row now exists on the shop.
+    const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
+    expect(shop.stock.length).toBeGreaterThan(0);
+  });
+
+  it('DM edits the price modifier via edit-shop on blur', async () => {
+    const user = userEvent.setup();
+    bootstrap();
+    const { shopId } = seedShop({ isOpen: false });
+    renderAt(`/party/:partyId/shops/${shopId}`);
+
+    const modifier = screen.getByLabelText(/price modifier/i);
+    await user.clear(modifier);
+    await user.type(modifier, '1.5');
+    await user.tab(); // blur commits
+
+    const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
+    expect(shop.priceModifier).toBe(1.5);
   });
 });
 
