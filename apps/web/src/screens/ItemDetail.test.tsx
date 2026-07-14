@@ -59,6 +59,15 @@ function bootstrapWithTorch(): { itemInstanceId: string; inventoryStashId: strin
   return { itemInstanceId: r.itemInstanceId, inventoryStashId: r.inventoryStashId };
 }
 
+/**
+ * R9.4 — the custom-name + notes form is collapsed behind the Notes-card
+ * "Edit" affordance. Open it before interacting with those fields / the
+ * Save button.
+ */
+async function openNotesEditor(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: /^edit$/i }));
+}
+
 describe('ItemDetail (M2.5)', () => {
   it('redirects to / when itemInstanceId does not resolve', () => {
     renderAt('/item/does-not-exist');
@@ -83,9 +92,11 @@ describe('ItemDetail (M2.5)', () => {
     expect(screen.getByRole('heading', { name: 'Eternal Flame' })).toBeInTheDocument();
   });
 
-  it('Save is disabled when the form is pristine', () => {
+  it('Save is disabled when the form is pristine', async () => {
+    const user = userEvent.setup();
     const { itemInstanceId } = bootstrapWithTorch();
     renderAt(`/item/${itemInstanceId}`);
+    await openNotesEditor(user);
     expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
   });
 
@@ -93,23 +104,26 @@ describe('ItemDetail (M2.5)', () => {
     const user = userEvent.setup();
     const { itemInstanceId } = bootstrapWithTorch();
     renderAt(`/item/${itemInstanceId}`);
+    await openNotesEditor(user);
 
     await user.type(screen.getByLabelText(/custom name/i), 'Sting');
     await user.click(screen.getByRole('button', { name: /^save$/i }));
 
-    // Reducer state mutated, log entry recorded, form re-pristine.
+    // Reducer state mutated, log entry recorded.
     const row = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
     expect(row.customName).toBe('Sting');
     const last = useStore.getState().log.at(-1);
     expect(last?.type).toBe('edit-item-instance');
-    // Defaults reset via useEffect, so Save is disabled again.
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    // R9.4 — a successful save closes the inline editor, so the Notes card
+    // collapses back to its read view with the Edit affordance.
+    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
   });
 
   it('editing notes persists through a simulated reload', async () => {
     const user = userEvent.setup();
     const { itemInstanceId } = bootstrapWithTorch();
     renderAt(`/item/${itemInstanceId}`);
+    await openNotesEditor(user);
 
     await user.type(screen.getByLabelText(/notes/i), 'made of moonsilver');
     await user.click(screen.getByRole('button', { name: /^save$/i }));
@@ -134,6 +148,7 @@ describe('ItemDetail (M2.5)', () => {
     const user = userEvent.setup();
     const { itemInstanceId } = bootstrapWithTorch();
     renderAt(`/item/${itemInstanceId}`);
+    await openNotesEditor(user);
 
     await user.type(screen.getByLabelText(/notes/i), 'fragile');
     await user.click(screen.getByRole('button', { name: /^save$/i }));
@@ -145,6 +160,7 @@ describe('ItemDetail (M2.5)', () => {
     const user = userEvent.setup();
     const { itemInstanceId } = bootstrapWithTorch();
     renderAt(`/item/${itemInstanceId}`);
+    await openNotesEditor(user);
 
     // Stub dispatch to throw. Wrap in vi.spyOn so we can restore.
     const dispatchSpy = vi.spyOn(useStore.getState(), 'dispatch').mockImplementation(() => {
@@ -278,9 +294,10 @@ describe('ItemDetail — R2.2 charges row + Use/Recharge buttons', () => {
   it('renders the charges line on an Inventory wand row', () => {
     const { itemInstanceId } = bootstrapWithChargedRow('dmg-2024:wand-of-magic-missiles');
     renderAt(`/item/${itemInstanceId}`);
-    expect(screen.getByLabelText('Charges')).toHaveTextContent(
-      '7 / 7 charges — Recharges at dawn (1d6+1)',
-    );
+    // R9.4 — the Charges card splits the count (big `n / max`, labelled
+    // "Charges") from the recharge-rule caption in the card header.
+    expect(screen.getByLabelText('Charges')).toHaveTextContent('7 / 7');
+    expect(screen.getByText('Recharges at dawn (1d6+1)')).toBeInTheDocument();
   });
 
   it('does NOT render the charges row on a non-charged item (Torch)', () => {
@@ -554,5 +571,159 @@ describe('ItemDetail — R2.3 identification panel + display gate', () => {
     renderAt(`/item/${wandId}`);
     // Identified would show the charges line; unidentified hides it.
     expect(screen.queryByLabelText('Charges')).not.toBeInTheDocument();
+  });
+});
+
+describe('ItemDetail — R9.4 State toggles (equip / attune)', () => {
+  /**
+   * R9.4 — the two-column State card exposes Equipped + Attuned toggles
+   * for carried-Inventory items, reusing the StashItemsTable dispatch
+   * plumbing: equip/attune mint via `dispatchMintingAction` (BUG-008),
+   * unequip/unattune are plain dispatches, and a full attunement cap
+   * routes DM/solo users through the R4.5 cap-override confirm dialog.
+   */
+  function bootstrapWithCloak(): { itemInstanceId: string; characterId: string } {
+    const base = bootstrap();
+    const cloak = base.catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection');
+    if (cloak === undefined) throw new Error('cloak missing from catalog');
+    void useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    const itemInstanceId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    return { itemInstanceId, characterId: base.characterId };
+  }
+
+  it('clicking the Equipped toggle equips the item', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithCloak();
+    renderAt(`/item/${itemInstanceId}`);
+
+    const toggle = screen.getByRole('switch', { name: 'Equipped' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await user.click(toggle);
+
+    expect(useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.equipped).toBe(
+      true,
+    );
+    expect(screen.getByRole('switch', { name: 'Equipped' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('clicking the Equipped toggle on an equipped item unequips it', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId, characterId } = bootstrapWithCloak();
+    void useStore.getState().dispatch({
+      type: 'equip',
+      payload: { characterId, itemInstanceId },
+    });
+    renderAt(`/item/${itemInstanceId}`);
+
+    await user.click(screen.getByRole('switch', { name: 'Equipped' }));
+    expect(useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.equipped).toBe(
+      false,
+    );
+  });
+
+  it('clicking the Attuned toggle attunes the item', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId } = bootstrapWithCloak();
+    renderAt(`/item/${itemInstanceId}`);
+
+    await user.click(screen.getByRole('switch', { name: 'Attuned' }));
+    expect(useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.attuned).toBe(
+      true,
+    );
+    const last = useStore.getState().log.at(-1)!;
+    expect(last.type).toBe('attune');
+  });
+
+  it('attuning into a full cap (solo/DM) opens the cap-override dialog and confirming attunes', async () => {
+    const user = userEvent.setup();
+    const { itemInstanceId, characterId } = bootstrapWithCloak();
+    // Force a full cap so the un-attuned toggle routes through the R4.5
+    // DM/solo cap-override dialog rather than attuning directly.
+    useStore.setState((s) => {
+      if (s.appState === null) return s;
+      return {
+        ...s,
+        appState: {
+          ...s.appState,
+          characters: s.appState.characters.map((c) =>
+            c.id === characterId ? { ...c, maxAttunement: 0 } : c,
+          ),
+        },
+      };
+    });
+    renderAt(`/item/${itemInstanceId}`);
+
+    await user.click(screen.getByRole('switch', { name: 'Attuned' }));
+    // Not attuned yet — the dialog gates the mutation.
+    expect(useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!.attuned).toBe(
+      false,
+    );
+    expect(screen.getByRole('alertdialog', { name: /bypass attunement cap/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /override cap/i }));
+    const after = useStore.getState().appState!.items.find((i) => i.id === itemInstanceId)!;
+    expect(after.attuned).toBe(true);
+  });
+
+  it('hides the Attuned toggle for a carried item that does not require attunement', () => {
+    // A Torch is carried Inventory gear with requiresAttunement falsy —
+    // Equipped shows, Attuned does not.
+    const { itemInstanceId } = bootstrapWithTorch();
+    renderAt(`/item/${itemInstanceId}`);
+    expect(screen.getByRole('switch', { name: 'Equipped' })).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Attuned' })).not.toBeInTheDocument();
+  });
+
+  it('hides the equip / attune toggles for an item outside a carried Inventory', () => {
+    const base = bootstrap();
+    const cloak = base.catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
+    void useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: base.inventoryStashId,
+        definitionId: cloak.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    const itemInstanceId = useStore
+      .getState()
+      .appState!.items.find((i) => i.definitionId === cloak.id)!.id;
+    // Move the cloak to the Party Stash (scope != carried character Inventory).
+    void useStore.getState().dispatch({
+      type: 'transfer',
+      payload: {
+        itemInstanceId,
+        toStashId: base.partyStashId,
+        quantity: 1,
+        ...transferIds(),
+        ...transferIds(),
+      },
+    });
+    const movedId = useStore
+      .getState()
+      .appState!.items.find((i) => i.ownerId === base.partyStashId)!.id;
+    renderAt(`/item/${movedId}`);
+
+    expect(screen.queryByRole('switch', { name: 'Equipped' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Attuned' })).not.toBeInTheDocument();
+    expect(screen.getByText(/available only in a carried Inventory/i)).toBeInTheDocument();
+    // The Identified toggle is scope-independent and still renders.
+    expect(screen.getByRole('switch', { name: 'Identified' })).toBeInTheDocument();
   });
 });
