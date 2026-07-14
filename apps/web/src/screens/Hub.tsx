@@ -513,7 +513,7 @@ export function Hub(): ReactElement {
           {dialog === 'join' ? (
             <>
               <DialogHeader>
-                <DialogTitle>Join a party</DialogTitle>
+                <DialogTitle className="font-display">Join a party</DialogTitle>
                 <DialogDescription>
                   Paste the invite code your DM shared with you. You can create your character on
                   the next screen.
@@ -529,7 +529,7 @@ export function Hub(): ReactElement {
           ) : dialog === 'create-solo' ? (
             <>
               <DialogHeader>
-                <DialogTitle>Create a solo party</DialogTitle>
+                <DialogTitle className="font-display">Create a solo party</DialogTitle>
                 <DialogDescription>
                   Enter your character&apos;s basics. You can change everything except size and
                   species later.
@@ -546,7 +546,7 @@ export function Hub(): ReactElement {
           ) : dialog === 'create-party' && createPartyStep === 'name' ? (
             <>
               <DialogHeader>
-                <DialogTitle>Create a party</DialogTitle>
+                <DialogTitle className="font-display">Create a party</DialogTitle>
                 <DialogDescription>
                   Give your party a name. You can rename it later from Settings.
                 </DialogDescription>
@@ -563,7 +563,7 @@ export function Hub(): ReactElement {
           ) : dialog === 'create-party' && createPartyStep === 'play' ? (
             <>
               <DialogHeader>
-                <DialogTitle>Will you also play a character?</DialogTitle>
+                <DialogTitle className="font-display">Will you also play a character?</DialogTitle>
                 <DialogDescription>
                   Choose &quot;Yes&quot; to create your own character in this party. Choose
                   &quot;No&quot; if you&apos;ll only run the campaign as the DM — you can still add
@@ -591,7 +591,7 @@ export function Hub(): ReactElement {
           ) : dialog === 'create-party' && createPartyStep === 'character' ? (
             <>
               <DialogHeader>
-                <DialogTitle>Create your character</DialogTitle>
+                <DialogTitle className="font-display">Create your character</DialogTitle>
                 <DialogDescription>
                   Enter your character&apos;s basics. You can change everything except size and
                   species later.

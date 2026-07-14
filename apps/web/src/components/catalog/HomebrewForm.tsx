@@ -626,7 +626,7 @@ export function HomebrewForm({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 font-display">
             <FlaskConical className="h-4 w-4 text-primary" aria-hidden="true" />
             {title}
           </DialogTitle>

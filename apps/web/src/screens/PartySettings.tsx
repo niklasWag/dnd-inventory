@@ -645,7 +645,7 @@ export function PartySettings(): ReactElement {
       <Dialog open={createCharacterOpen} onOpenChange={(o) => setCreateCharacterOpen(o)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create your character</DialogTitle>
+            <DialogTitle className="font-display">Create your character</DialogTitle>
             <DialogDescription>
               Enter your character&apos;s details. They&apos;ll get their own Inventory and currency
               in this party.
@@ -661,7 +661,7 @@ export function PartySettings(): ReactElement {
       <Dialog open={confirmLeave} onOpenChange={(o) => !o && setConfirmLeave(false)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Leave this party?</DialogTitle>
+            <DialogTitle className="font-display">Leave this party?</DialogTitle>
             <DialogDescription>
               Your character&apos;s items and currency will be moved to Recovered Loot. This cannot
               be undone (but the party log will still record everything).
@@ -685,7 +685,9 @@ export function PartySettings(): ReactElement {
       <Dialog open={confirmKick !== null} onOpenChange={(o) => !o && setConfirmKick(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Kick {confirmKick !== null ? confirmKick.displayName : ''}?</DialogTitle>
+            <DialogTitle className="font-display">
+              Kick {confirmKick !== null ? confirmKick.displayName : ''}?
+            </DialogTitle>
             <DialogDescription>
               Their character&apos;s items and currency will be moved to Recovered Loot. This cannot
               be undone.
@@ -714,7 +716,7 @@ export function PartySettings(): ReactElement {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="font-display">
               Transfer DM to {confirmTransferDm !== null ? confirmTransferDm.displayName : ''}?
             </DialogTitle>
             <DialogDescription>

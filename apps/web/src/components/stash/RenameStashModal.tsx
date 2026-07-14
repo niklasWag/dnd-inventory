@@ -93,7 +93,7 @@ export function RenameStashModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Rename Storage stash</DialogTitle>
+          <DialogTitle className="font-display">Rename Storage stash</DialogTitle>
           <DialogDescription>Pick a new name (1–60 characters).</DialogDescription>
         </DialogHeader>
 

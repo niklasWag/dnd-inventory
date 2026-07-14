@@ -157,7 +157,7 @@ export function ConvertCurrencyModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Convert currency</DialogTitle>
+          <DialogTitle className="font-display">Convert currency</DialogTitle>
           <DialogDescription>
             Convert one denomination into another. Lossy conversions (e.g. 1 sp → 0.1 gp) are
             refused; the result must be a whole-number target.

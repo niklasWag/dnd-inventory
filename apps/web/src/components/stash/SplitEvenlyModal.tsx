@@ -167,7 +167,7 @@ export function SplitEvenlyModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Split the pot</DialogTitle>
+          <DialogTitle className="font-display">Split the pot</DialogTitle>
           <DialogDescription>
             Distributes Party Stash currency evenly across the selected characters. Leftover copper
             stays in the pool.

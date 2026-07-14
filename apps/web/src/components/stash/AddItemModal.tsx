@@ -85,7 +85,7 @@ export function AddItemModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Add item to {stashLabel}</DialogTitle>
+          <DialogTitle className="font-display">Add item to {stashLabel}</DialogTitle>
           <DialogDescription>
             Pick from the catalog or build a custom homebrew item.
           </DialogDescription>

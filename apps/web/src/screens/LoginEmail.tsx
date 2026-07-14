@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { AuthShell } from '@/components/auth/AuthShell';
 import { ApiError, requestEmailOtp } from '@/lib/api';
 
 /**
@@ -63,14 +64,10 @@ export function LoginEmail(): ReactElement {
   }
 
   return (
-    <div className="mx-auto max-w-md space-y-6 py-16">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">Sign in with email</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          We&apos;ll send you a one-time 8-digit code. No password required.
-        </p>
-      </header>
-
+    <AuthShell
+      title="Sign in with email"
+      description="We'll send you a one-time 8-digit code. No password required."
+    >
       <form
         onSubmit={(e) => {
           void handleSubmit(onSubmit)(e);
@@ -109,6 +106,6 @@ export function LoginEmail(): ReactElement {
           </Button>
         </div>
       </form>
-    </div>
+    </AuthShell>
   );
 }

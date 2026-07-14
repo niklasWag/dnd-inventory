@@ -112,7 +112,7 @@ export function CharacterSheet(): ReactElement {
                   Edit character
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
+                  className="text-destructive focus:bg-destructive focus:text-destructive-foreground"
                   onSelect={() => setDeleteOpen(true)}
                 >
                   <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />

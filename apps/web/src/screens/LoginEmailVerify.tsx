@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Label } from '@/components/ui/label';
+import { AuthShell } from '@/components/auth/AuthShell';
 import { ApiError, verifyEmailOtp } from '@/lib/api';
 import { useSession } from '@/store/session';
 
@@ -65,15 +66,15 @@ export function LoginEmailVerify(): ReactElement {
   }
 
   return (
-    <div className="mx-auto max-w-md space-y-6 py-16">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">Enter your code</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <AuthShell
+      title="Enter your code"
+      description={
+        <>
           We sent an 8-digit code to <span className="font-medium text-foreground">{email}</span>.
           It&apos;s valid for 15 minutes.
-        </p>
-      </header>
-
+        </>
+      }
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -82,8 +83,10 @@ export function LoginEmailVerify(): ReactElement {
         className="space-y-4"
         noValidate
       >
-        <div className="space-y-1.5">
-          <Label htmlFor="otp">Code</Label>
+        <div className="flex flex-col items-center space-y-1.5">
+          <Label htmlFor="otp" className="self-start">
+            Code
+          </Label>
           <InputOTP id="otp" maxLength={8} value={otp} onChange={setOtp} autoFocus>
             <InputOTPGroup>
               <InputOTPSlot index={0} />
@@ -119,6 +122,6 @@ export function LoginEmailVerify(): ReactElement {
           </Button>
         </div>
       </form>
-    </div>
+    </AuthShell>
   );
 }

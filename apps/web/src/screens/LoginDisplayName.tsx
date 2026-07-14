@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { AuthShell } from '@/components/auth/AuthShell';
 import { ApiError, setDisplayName as setDisplayNameRequest } from '@/lib/api';
 import { useSession } from '@/store/session';
 
@@ -70,15 +71,10 @@ export function LoginDisplayName(): ReactElement {
   }
 
   return (
-    <div className="mx-auto max-w-md space-y-6 py-16">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">Pick a display name</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          This is what other party members will see in the audit log. You can change it later in
-          Settings.
-        </p>
-      </header>
-
+    <AuthShell
+      title="Pick a display name"
+      description="This is what other party members will see in the audit log. You can change it later in Settings."
+    >
       <form
         onSubmit={(e) => {
           void handleSubmit(onSubmit)(e);
@@ -106,6 +102,6 @@ export function LoginDisplayName(): ReactElement {
           {isSubmitting ? 'Saving…' : 'Continue'}
         </Button>
       </form>
-    </div>
+    </AuthShell>
   );
 }

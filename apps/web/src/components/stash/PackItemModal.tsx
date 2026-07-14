@@ -138,7 +138,7 @@ export function PackItemModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Pack into container</DialogTitle>
+          <DialogTitle className="font-display">Pack into container</DialogTitle>
           <DialogDescription>
             Choose a container in this stash. The item moves inside; you can take it back out
             anytime.

@@ -115,7 +115,7 @@ export function DrainCurrencyModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Drain from {stashLabel}</DialogTitle>
+          <DialogTitle className="font-display">Drain from {stashLabel}</DialogTitle>
           <DialogDescription>
             Remove currency for gameplay reasons (magical drain, NPC tax, theft, etc.). This
             bypasses the Banker gate — use it only for world-level effects, not to distribute

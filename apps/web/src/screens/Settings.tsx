@@ -368,7 +368,7 @@ export function Settings(): ReactElement {
       <Dialog open={wipeOpen} onOpenChange={setWipeOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Wipe all data?</DialogTitle>
+            <DialogTitle className="font-display">Wipe all data?</DialogTitle>
             <DialogDescription>
               This will permanently erase your local app state. This action cannot be undone.
             </DialogDescription>
@@ -393,7 +393,7 @@ export function Settings(): ReactElement {
       <Dialog open={corruptionRecoveryOpen} onOpenChange={setCorruptionRecoveryOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Wipe corrupted party data?</DialogTitle>
+            <DialogTitle className="font-display">Wipe corrupted party data?</DialogTitle>
             <DialogDescription>
               This deletes the local blob for party <code>{corruptedPartyId}</code>. Other parties
               are unaffected. In server mode the party will be re-fetched from the server on next

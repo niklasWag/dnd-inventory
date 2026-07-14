@@ -412,7 +412,7 @@ function BatchIdentifyDialog({
     <Dialog open onOpenChange={(next) => (next ? undefined : onCancel())}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Identify all {count} copies</DialogTitle>
+          <DialogTitle className="font-display">Identify all {count} copies</DialogTitle>
           <DialogDescription>
             Flip every copy of <span className="font-medium">{label}</span> in the party to
             identified. Leave the hint blank to keep each copy's existing hint; enter one to apply

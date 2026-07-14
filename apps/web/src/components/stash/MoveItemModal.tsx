@@ -197,7 +197,7 @@ export function MoveItemModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 font-display">
             <Package className="h-4 w-4 text-primary" aria-hidden="true" />
             Move item
           </DialogTitle>

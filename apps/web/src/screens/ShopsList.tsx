@@ -2,6 +2,7 @@ import { type ReactElement, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
+import { ChevronRight, Plus, Store } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -70,10 +71,10 @@ export function ShopsList(): ReactElement {
   }
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">Shops</h1>
+    <div className="mx-auto max-w-5xl space-y-4 px-4 py-8">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Shops</h1>
           <p className="text-sm text-muted-foreground">
             {isDmOrSolo
               ? 'Manage per-party shops. Only DMs see the full list; players see open shops.'
@@ -81,63 +82,84 @@ export function ShopsList(): ReactElement {
           </p>
         </div>
         {isDmOrSolo ? (
-          <Button type="button" onClick={() => setCreatingOpen(true)}>
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0 shadow-e1"
+            onClick={() => setCreatingOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
             New shop
           </Button>
         ) : null}
-      </header>
+      </div>
 
       {visibleShops.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border bg-surface-2/40 p-10 text-center text-sm text-muted-foreground">
           {isDmOrSolo ? (
             <>
-              No shops yet. Click <span className="font-semibold">New shop</span> to create one.
+              No shops yet. Click <span className="font-semibold text-foreground">New shop</span> to
+              stock a merchant, a black-market fence, or a wandering pedlar.
             </>
           ) : (
             'No shops are open right now.'
           )}
-        </p>
+        </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
+        <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-border bg-surface-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 text-left font-medium">Name</th>
-                <th className="px-3 py-2 text-left font-medium">Status</th>
-                <th className="px-3 py-2 text-right font-medium">Modifier</th>
-                <th className="px-3 py-2 text-right font-medium">Sell rate</th>
-                <th className="px-3 py-2 text-right font-medium">Stock</th>
+                <th className="px-4 py-2.5 font-semibold">Name</th>
+                <th className="px-4 py-2.5 font-semibold">Status</th>
+                <th className="px-4 py-2.5 text-right font-semibold">Modifier</th>
+                <th className="px-4 py-2.5 text-right font-semibold">Sell rate</th>
+                <th className="px-4 py-2.5 text-right font-semibold">Stock</th>
+                <th className="px-4 py-2.5 text-right font-semibold">
+                  <span className="sr-only">Open</span>
+                </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {visibleShops.map((shop) => (
                 <tr
                   key={shop.id}
-                  className="cursor-pointer border-t border-border hover:bg-muted/20"
+                  className="group cursor-pointer transition hover:bg-surface-2/60"
                   onClick={() => {
                     void navigate(`/party/${partyId}/shops/${shop.id}`);
                   }}
                 >
-                  <td className="px-3 py-2 font-medium">{shop.name}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-2.5">
+                    <span className="inline-flex items-center gap-2 font-medium">
+                      <Store className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                      {shop.name}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
                     <span
                       className={
-                        'inline-flex items-center rounded-full px-2 py-0.5 text-xs ' +
+                        'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ' +
                         (shop.isOpen
-                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                          : 'bg-muted text-muted-foreground')
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-surface-2 text-muted-foreground')
                       }
                     >
                       {shop.isOpen ? 'Open' : 'Closed'}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+                  <td className="px-4 py-2.5 text-right tabular-nums">
                     {String(shop.priceModifier)}×
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+                  <td className="px-4 py-2.5 text-right tabular-nums">
                     {String(shop.sellToMerchantRate)}×
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{shop.stock.length}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{shop.stock.length}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <ChevronRight
+                      className="ml-auto h-4 w-4 text-muted-foreground transition group-hover:translate-x-0.5"
+                      aria-hidden="true"
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -157,7 +179,7 @@ export function ShopsList(): ReactElement {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New shop</DialogTitle>
+            <DialogTitle className="font-display">New shop</DialogTitle>
             <DialogDescription>
               Pick a name. You can edit modifiers, stock, and visibility on the shop's page.
             </DialogDescription>

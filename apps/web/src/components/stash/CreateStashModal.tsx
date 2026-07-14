@@ -83,7 +83,7 @@ export function CreateStashModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New Storage stash</DialogTitle>
+          <DialogTitle className="font-display">New Storage stash</DialogTitle>
           <DialogDescription>
             Pick a name like &ldquo;Chest at home&rdquo; or &ldquo;Bag of holding&rdquo;.
           </DialogDescription>

@@ -246,7 +246,7 @@ export function HistoryScreen(): ReactElement {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 px-4 py-8">
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-8">
       <header className="space-y-1">
         <p className="text-sm text-muted-foreground">{state.party.name}</p>
         <div className="flex flex-wrap items-baseline justify-between gap-3">

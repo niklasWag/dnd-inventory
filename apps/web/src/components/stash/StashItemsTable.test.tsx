@@ -66,10 +66,12 @@ function renderTable(stashId: string): void {
 }
 
 /**
- * R9.3 — the per-row actions (Split / Equip / Attune / Pack / Take out /
- * Move / Remove) moved into a kebab DropdownMenu. Open the row's menu (by
- * the item's display name) so its `menuitem`s are queryable. If no name is
- * given, opens the first/only row's menu.
+ * R9.3 / R9.12 — per-row actions. In the carried Inventory (characterId
+ * provided) they live in a kebab DropdownMenu; open it via this helper so
+ * its `menuitem`s are queryable. The party-scope stash tables (no
+ * characterId — the `renderTable` path below) render the actions as inline
+ * buttons instead, so those tests query the buttons directly without a
+ * menu open step.
  */
 async function openRowMenu(user: ReturnType<typeof userEvent.setup>, name?: RegExp): Promise<void> {
   const trigger = name
@@ -79,36 +81,24 @@ async function openRowMenu(user: ReturnType<typeof userEvent.setup>, name?: RegE
 }
 
 describe('StashItemsTable — M5 Move/Split buttons', () => {
-  it('renders Split + Move actions in the row menu', async () => {
-    const user = userEvent.setup();
+  it('renders Split + Move actions as inline buttons', () => {
     const { stashId } = setupWith(3);
     renderTable(stashId);
 
-    await openRowMenu(user);
-    expect(screen.getByRole('menuitem', { name: /^split torch/i })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /^move torch/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^split torch/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^move torch/i })).toBeInTheDocument();
   });
 
-  it('disables Split when the row is a singleton', async () => {
-    const user = userEvent.setup();
+  it('disables Split when the row is a singleton', () => {
     const { stashId } = setupWith(1);
     renderTable(stashId);
-    await openRowMenu(user);
-    expect(screen.getByRole('menuitem', { name: /^split torch/i })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    expect(screen.getByRole('button', { name: /^split torch/i })).toBeDisabled();
   });
 
-  it('enables Split when the row has qty >= 2', async () => {
-    const user = userEvent.setup();
+  it('enables Split when the row has qty >= 2', () => {
     const { stashId } = setupWith(2);
     renderTable(stashId);
-    await openRowMenu(user);
-    expect(screen.getByRole('menuitem', { name: /^split torch/i })).not.toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    expect(screen.getByRole('button', { name: /^split torch/i })).not.toBeDisabled();
   });
 
   it('opens the SplitModal when Split is clicked', async () => {
@@ -116,8 +106,7 @@ describe('StashItemsTable — M5 Move/Split buttons', () => {
     const { stashId } = setupWith(3);
     renderTable(stashId);
 
-    await openRowMenu(user);
-    await user.click(screen.getByRole('menuitem', { name: /^split torch/i }));
+    await user.click(screen.getByRole('button', { name: /^split torch/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/split stack/i)).toBeInTheDocument();
   });
@@ -127,8 +116,7 @@ describe('StashItemsTable — M5 Move/Split buttons', () => {
     const { stashId } = setupWith(2);
     renderTable(stashId);
 
-    await openRowMenu(user);
-    await user.click(screen.getByRole('menuitem', { name: /^move torch/i }));
+    await user.click(screen.getByRole('button', { name: /^move torch/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/move item/i)).toBeInTheDocument();
   });
@@ -565,16 +553,13 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
    * container's name.
    */
 
-  it('hides the Pack menu item when no containers are in the stash', async () => {
-    const user = userEvent.setup();
+  it('hides the Pack action when no containers are in the stash', () => {
     const { stashId } = setupWith(1); // just a torch, no containers
     renderTable(stashId);
-    await openRowMenu(user);
-    expect(screen.queryByRole('menuitem', { name: /^pack torch/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^pack torch/i })).not.toBeInTheDocument();
   });
 
-  it('shows the Pack menu item on free top-level items when a container exists', async () => {
-    const user = userEvent.setup();
+  it('shows the Pack action on free top-level items when a container exists', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -599,13 +584,11 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       },
     });
     renderTable(inventoryStashId);
-    // R9.3 — Pack is a menu item on the Torch row's kebab menu.
-    await openRowMenu(user, /actions for torch/i);
-    expect(screen.getByRole('menuitem', { name: /^pack torch/i })).toBeInTheDocument();
+    // R9.12 — Pack is an inline button on the Torch row (no-characterId path).
+    expect(screen.getByRole('button', { name: /^pack torch/i })).toBeInTheDocument();
   });
 
-  it('hides Pack on the container row itself (no container-in-container per §3.6)', async () => {
-    const user = userEvent.setup();
+  it('hides Pack on the container row itself (no container-in-container per §3.6)', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     // Two backpacks so a candidate container exists in the stash, but
@@ -633,11 +616,8 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       },
     });
     renderTable(inventoryStashId);
-    // Both rows share the "Backpack" display name — open the first row's
-    // menu and assert no Pack item.
-    const triggers = screen.getAllByRole('button', { name: /actions for backpack/i });
-    await user.click(triggers[0]!);
-    expect(screen.queryByRole('menuitem', { name: /^pack backpack/i })).not.toBeInTheDocument();
+    // Neither Backpack row exposes a Pack action.
+    expect(screen.queryByRole('button', { name: /^pack backpack/i })).not.toBeInTheDocument();
   });
 
   it('opens PackItemModal when Pack is clicked, dispatches transfer with toContainerInstanceId', async () => {
@@ -673,9 +653,8 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     renderTable(inventoryStashId);
 
-    // R9.3 — Pack is a menu item; open the Torch row's menu then click it.
-    await openRowMenu(user, /actions for torch/i);
-    await user.click(screen.getByRole('menuitem', { name: /^pack torch/i }));
+    // R9.12 — Pack is an inline button; click it directly.
+    await user.click(screen.getByRole('button', { name: /^pack torch/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/pack into container/i)).toBeInTheDocument();
 

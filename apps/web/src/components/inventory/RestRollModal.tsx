@@ -183,7 +183,9 @@ export function RestRollModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{batchTriggerLabel(trigger)} — roll for recharge</DialogTitle>
+          <DialogTitle className="font-display">
+            {batchTriggerLabel(trigger)} — roll for recharge
+          </DialogTitle>
           <DialogDescription>
             Enter your dice roll for each item below. Items without a formula will fully recharge
             automatically.
