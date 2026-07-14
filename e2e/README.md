@@ -87,6 +87,10 @@ pages into meaningful actions; specs compose steps into journeys.
   the regression fence for the join→leave→rejoin and kick-with-character
   paths.
 
+Candidate journeys not yet written live in **`TEST_BACKLOG.md`** (a
+summary table + per-case design notes, each with a "why E2E" justification
+against the cheaper test layers).
+
 ## Auth in specs
 
 There is **no** test-only auth bypass. Specs sign in through the real
