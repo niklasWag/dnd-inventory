@@ -256,6 +256,15 @@ describe('HistoryScreen', () => {
     useStore.setState({ appState: null, log: [] });
   });
 
+  /** R9.8 — entries render as a `<table>` (When/Actor/Type/Summary). Return
+   * the BODY rows (excluding the header row) so the count assertions match
+   * the old `listitem` semantics. */
+  function bodyRows(): HTMLElement[] {
+    const table = screen.getByRole('table', { name: /history entries/i });
+    // First row is the <thead> header; the rest are entry rows.
+    return within(table).getAllByRole('row').slice(1);
+  }
+
   it('renders "No entries" empty state when log is empty', () => {
     useStore.setState({ appState: makeState({ currentUserId: 'u-dm', log: [] }), log: [] });
     renderScreen();
@@ -269,8 +278,7 @@ describe('HistoryScreen', () => {
     useStore.setState({ appState: makeState({ currentUserId: 'u-dm', log }), log });
     renderScreen();
 
-    const list = screen.getByRole('list', { name: /history entries/i });
-    const rows = within(list).getAllByRole('listitem');
+    const rows = bodyRows();
     // Both rendered; first row is the newer entry.
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText(/party stash/i)).toBeInTheDocument();
@@ -287,8 +295,7 @@ describe('HistoryScreen', () => {
     useStore.setState({ appState: makeState({ currentUserId: 'u-dm', log }), log });
     renderScreen();
 
-    const list = screen.getByRole('list', { name: /history entries/i });
-    const rows = within(list).getAllByRole('listitem');
+    const rows = bodyRows();
     expect(rows).toHaveLength(1); // only acquire is visible by default
   });
 
@@ -305,15 +312,11 @@ describe('HistoryScreen', () => {
     renderScreen();
 
     // Verify 1 row initially.
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(1);
+    expect(bodyRows()).toHaveLength(1);
 
     await user.click(screen.getByLabelText('use-charge'));
 
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(2);
+    expect(bodyRows()).toHaveLength(2);
   });
 
   it('Session filter — "Untagged" bucket', async () => {
@@ -325,15 +328,11 @@ describe('HistoryScreen', () => {
     renderScreen();
 
     // Both visible with default filter.
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(2);
+    expect(bodyRows()).toHaveLength(2);
 
     await user.selectOptions(screen.getByLabelText('Session filter'), 'untagged');
 
-    const rows = within(screen.getByRole('list', { name: /history entries/i })).getAllByRole(
-      'listitem',
-    );
+    const rows = bodyRows();
     expect(rows).toHaveLength(1);
   });
 
@@ -346,9 +345,7 @@ describe('HistoryScreen', () => {
     renderScreen();
 
     await user.selectOptions(screen.getByLabelText('Session filter'), 'gs1');
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(1);
+    expect(bodyRows()).toHaveLength(1);
   });
 
   it('Item filter matches split source AND new ids', async () => {
@@ -371,9 +368,7 @@ describe('HistoryScreen', () => {
     // Filter by the NEW id — split entry should still match.
     await user.selectOptions(screen.getByLabelText('Item filter'), 'item-inv-a');
     // 1 row: the acquire on item-inv-a.
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(1);
+    expect(bodyRows()).toHaveLength(1);
   });
 
   it('Actor role filter — only DM entries', async () => {
@@ -385,9 +380,23 @@ describe('HistoryScreen', () => {
     renderScreen();
 
     await user.selectOptions(screen.getByLabelText('Actor role filter'), 'dm');
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(1);
+    expect(bodyRows()).toHaveLength(1);
+  });
+
+  it('R9.8 — free-text search narrows rows by summary/actor', async () => {
+    const user = userEvent.setup();
+    const a = acquire('item-ps', { id: 'e1' });
+    const b = acquire('item-inv-a', { id: 'e2' });
+    const log = [a, b];
+    useStore.setState({ appState: makeState({ currentUserId: 'u-dm', log }), log });
+    renderScreen();
+
+    expect(bodyRows()).toHaveLength(2);
+    // "party stash" appears only in the item-ps acquire summary.
+    await user.type(screen.getByLabelText(/search history/i), 'party stash');
+    const rows = bodyRows();
+    expect(rows).toHaveLength(1);
+    expect(within(rows[0]!).getByText(/party stash/i)).toBeInTheDocument();
   });
 
   it('Permission — Player A cannot see Player B\u2019s Inventory item', () => {
@@ -399,9 +408,7 @@ describe('HistoryScreen', () => {
     renderScreen();
 
     // Only the party-stash entry is visible.
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(1);
+    expect(bodyRows()).toHaveLength(1);
   });
 
   it('Permission — DM sees everything', () => {
@@ -411,9 +418,7 @@ describe('HistoryScreen', () => {
     useStore.setState({ appState: makeState({ currentUserId: 'u-dm', log }), log });
     renderScreen();
 
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(2);
+    expect(bodyRows()).toHaveLength(2);
   });
 
   it('Permission — banker widening (Player A sees Player B\u2019s Inventory when banker-authored)', () => {
@@ -426,9 +431,7 @@ describe('HistoryScreen', () => {
     useStore.setState({ appState: makeState({ currentUserId: 'u-a', log }), log });
     renderScreen();
 
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(1);
+    expect(bodyRows()).toHaveLength(1);
   });
 
   it('Load more reveals additional rows past PAGE_SIZE', async () => {
@@ -440,16 +443,12 @@ describe('HistoryScreen', () => {
     renderScreen();
 
     // Initial page shows 100.
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(100);
+    expect(bodyRows()).toHaveLength(100);
 
     await user.click(screen.getByRole('button', { name: /load more/i }));
 
     // After Load more, all 150 visible; button hidden.
-    expect(
-      within(screen.getByRole('list', { name: /history entries/i })).getAllByRole('listitem'),
-    ).toHaveLength(150);
+    expect(bodyRows()).toHaveLength(150);
     expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
   });
 });
