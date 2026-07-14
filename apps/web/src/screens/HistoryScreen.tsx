@@ -242,7 +242,13 @@ export function HistoryScreen(): ReactElement {
   const remaining = Math.max(0, filtered.length - visible.length);
 
   if (state === null) {
-    return <p className="text-sm text-muted-foreground">No party loaded.</p>;
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        <div className="rounded-xl border border-dashed border-border bg-surface-2/40 p-10 text-center text-sm text-muted-foreground">
+          No party loaded.
+        </div>
+      </div>
+    );
   }
 
   return (

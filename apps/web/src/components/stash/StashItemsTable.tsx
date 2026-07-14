@@ -293,7 +293,7 @@ export function StashItemsTable({
   })();
 
   if (filterActive && displayRows.length === 0) {
-    return <p className="text-sm text-muted-foreground">No items match your search.</p>;
+    return <p className="p-4 text-sm text-muted-foreground">No items match your search.</p>;
   }
 
   /**
