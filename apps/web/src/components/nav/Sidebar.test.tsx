@@ -188,6 +188,19 @@ describe('Sidebar', () => {
     expect(link).toHaveAttribute('aria-current', 'page');
   });
 
+  it('on the Stashes page, only Stashes is active — Character Sheet is NOT (prefix-match guard)', () => {
+    // `/character/:id` is a prefix of `/character/:id/stashes`; the Character
+    // Sheet link uses NavLink `end` so it only highlights on the exact path.
+    renderSidebar('/party/p1/character/char-1/stashes');
+    expect(screen.getByRole('link', { name: /^stashes$/i })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('link', { name: /character sheet/i })).not.toHaveAttribute(
+      'aria-current',
+    );
+  });
+
   it('Character Sheet link targets the own character', () => {
     renderSidebar();
     const link = screen.getByRole('link', { name: /character sheet/i });

@@ -190,11 +190,9 @@ describe('CharacterSheet (M2)', () => {
   });
 
   // R9.3 — the Storage tab was removed from the Character Sheet (Storage is
-  // now the per-character "Stashes" page reached from the sidebar). The
-  // `StorageStashList` empty-state + card-listing behavior these two tests
-  // used to cover here is exercised directly in
-  // `components/stash/StorageStashList.test.tsx`; it re-mounts on the R9.5
-  // Stashes screen unchanged.
+  // now the per-character "Stashes" page reached from the sidebar). R9.5 —
+  // that page shipped as the `StorageOverview` screen (card grid); the
+  // empty-state + card-listing coverage lives in `screens/StorageOverview.test.tsx`.
 
   it('clicking a row name navigates to /item/:id (M2.5)', async () => {
     const user = userEvent.setup();

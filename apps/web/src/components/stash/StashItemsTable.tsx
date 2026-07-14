@@ -206,7 +206,9 @@ export function StashItemsTable({
       return <p className="p-4 text-sm text-muted-foreground">No items match your filters.</p>;
     }
     return (
-      <p className="text-sm text-muted-foreground">Nothing here yet. Add items from the catalog.</p>
+      <p className="p-4 text-sm text-muted-foreground">
+        Nothing here yet. Add items from the catalog.
+      </p>
     );
   }
 

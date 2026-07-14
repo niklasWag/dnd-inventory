@@ -8,31 +8,31 @@ import { useCurrentPartyId } from '@/lib/useCurrentPartyId';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyBreakdown } from '@/components/stash/CurrencyBreakdown';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
-import { StashItemsTable } from '@/components/stash/StashItemsTable';
-import { StashSearchInput } from '@/components/stash/StashSearchInput';
-import { CreateStashModal as _CreateStashModal } from '@/components/stash/CreateStashModal'; // ensure no circular import issues
+import { InventoryPanel } from '@/components/stash/InventoryPanel';
 import { RenameStashModal } from '@/components/stash/RenameStashModal';
 import { DeleteStashDialog } from '@/components/stash/DeleteStashDialog';
 import { useStore } from '@/store';
 
-void _CreateStashModal; // tree-shaken; import kept to surface circular issues at build time
-
 /**
- * StorageDetail (M3 / MVP §7 screen 3).
+ * StorageDetail (MVP §7 screen 3; R9.5 restyle).
  *
  * Renders one Storage stash's items list with rename + delete affordances
  * and an in-screen Back button (per the M2.5 UX principle: detail routes
  * own their own Back; `RootLayout` stays minimal).
  *
+ * R9.5 — the items list now uses the shared `InventoryPanel` (framed card +
+ * in-card toolbar: search + category select + quick-filter pills) so Storage
+ * reads identically to the Inventory / Party Stash / Recovered Loot screens.
+ * No `characterId` is passed — equip/attune are Inventory-only (§3.4), so the
+ * panel shows only the base quick-filters. The panel owns its own search
+ * state, retiring the former per-screen `StashSearchInput` + `query`.
+ *
  * Guards:
  *   - Unknown stashId → `<Navigate to="/" replace />` (no record to show).
  *   - Non-Storage stash id (Inventory / Party / Recovered Loot) → same.
- *     Those stashes live on the CharacterSheet tabs, not on this screen.
+ *     Those stashes live on their own dedicated screens, not this route.
  *
- * Reuses `StashItemsTable` + `AddItemModal` — the items table already
- * handles +/− and Remove for any `stashId`.
- *
- * Selector design (M2.5 + StorageStashList lesson): we pull the raw
+ * Selector design (M2.5 + StorageOverview lesson): we pull the raw
  * primitives we need through `useShallow` and derive the rest in the
  * component body via `useMemo`. Returning freshly-built nested objects
  * from the selector triggers the infinite-update loop because
@@ -60,7 +60,6 @@ export function StorageDetail(): ReactElement {
         stashId: stash.id,
         stashName: stash.name,
         characterId: character.id,
-        characterName: character.name,
       };
     }),
   );
@@ -76,30 +75,28 @@ export function StorageDetail(): ReactElement {
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [adding, setAdding] = useState(false);
-  // R7.5 — fuzzy filter local to this Storage detail screen.
-  const [query, setQuery] = useState('');
 
   if (view === null) return <Navigate to="/" replace />;
-  const { stashName, characterId, characterName } = view;
+  const { stashName, characterId } = view;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
       <Button
         type="button"
         variant="ghost"
         size="sm"
         onClick={() => {
-          void navigate(`/party/${partyId}/character/${characterId}`);
+          void navigate(`/party/${partyId}/character/${characterId}/stashes`);
         }}
         className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
-        Back to {characterName}
+        Back to Storage
       </Button>
 
       <header className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">{stashName}</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight">{stashName}</h1>
           <p className="text-sm text-muted-foreground">
             Storage stash · {itemCount} {itemCount === 1 ? 'item' : 'items'} ·{' '}
             <CurrencyBreakdown stashId={view.stashId} />
@@ -133,9 +130,10 @@ export function StorageDetail(): ReactElement {
 
       <CurrencyRow stashId={view.stashId} />
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-muted-foreground">Items</h2>
+      <InventoryPanel
+        stashId={view.stashId}
+        title="Items"
+        action={
           <Button
             type="button"
             size="sm"
@@ -143,17 +141,10 @@ export function StorageDetail(): ReactElement {
               setAdding(true);
             }}
           >
-            + Add item
+            Add item
           </Button>
-        </div>
-        <StashSearchInput
-          value={query}
-          onChange={setQuery}
-          label="Search items"
-          idPrefix="storage-search"
-        />
-        <StashItemsTable stashId={view.stashId} query={query} />
-      </section>
+        }
+      />
 
       <AddItemModal
         open={adding}
@@ -174,7 +165,7 @@ export function StorageDetail(): ReactElement {
         stashName={stashName}
         itemCount={itemCount}
         onDeleted={() => {
-          void navigate(`/party/${partyId}/character/${characterId}`);
+          void navigate(`/party/${partyId}/character/${characterId}/stashes`);
         }}
       />
     </div>

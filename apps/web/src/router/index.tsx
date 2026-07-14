@@ -18,11 +18,12 @@ import { LoginDisplayName } from '@/screens/LoginDisplayName';
 import { LoginEmail } from '@/screens/LoginEmail';
 import { LoginEmailVerify } from '@/screens/LoginEmailVerify';
 import { PartySettings } from '@/screens/PartySettings';
+import { PartyStash, RecoveredLoot } from '@/screens/SharedPools';
 import { Settings } from '@/screens/Settings';
 import { ShopDetail } from '@/screens/ShopDetail';
 import { ShopsList } from '@/screens/ShopsList';
-import { StashPlaceholder } from '@/screens/StashPlaceholder';
 import { StorageDetail } from '@/screens/StorageDetail';
+import { StorageOverview } from '@/screens/StorageOverview';
 
 /**
  * RH4.1 — URL-scoped router. Every party-scoped surface now takes
@@ -39,6 +40,9 @@ import { StorageDetail } from '@/screens/StorageDetail';
  *   /settings                      — Settings (app-wide, unscoped)
  *   /party/:partyId/settings       — PartySettings                (protected)
  *   /party/:partyId/character/:id  — CharacterSheet                (protected)
+ *   /party/:partyId/character/:id/stashes — StorageOverview        (protected)
+ *   /party/:partyId/party-stash    — PartyStash                    (protected)
+ *   /party/:partyId/recovered-loot — RecoveredLoot                 (protected)
  *   /party/:partyId/catalog        — CatalogBrowser                (protected)
  *   /party/:partyId/item/:itemInstanceId — ItemDetail             (protected)
  *   /party/:partyId/stash/:stashId — StorageDetail                (protected)
@@ -108,18 +112,17 @@ export const router = createBrowserRouter([
                 children: [
                   { path: 'settings', Component: PartySettings },
                   { path: 'character/:id', Component: CharacterSheet },
-                  // R9.3 — per-character Stashes (Storage overview) + the
-                  // party-wide Party Stash / Recovered Loot are now their own
+                  // R9.5 — per-character Stashes (Storage overview) + the
+                  // party-wide Party Stash / Recovered Loot are their own
                   // sidebar destinations (the old 4-tab Character Sheet is
-                  // gone). The real screens land in R9.5; until then these
-                  // routes render a shared placeholder so the nav has no dead
-                  // links.
+                  // gone). These shipped in R9.5, replacing the R9.3
+                  // `StashPlaceholder`.
                   {
                     path: 'character/:id/stashes',
-                    element: <StashPlaceholder title="Stashes" />,
+                    Component: StorageOverview,
                   },
-                  { path: 'party-stash', element: <StashPlaceholder title="Party Stash" /> },
-                  { path: 'recovered-loot', element: <StashPlaceholder title="Recovered Loot" /> },
+                  { path: 'party-stash', Component: PartyStash },
+                  { path: 'recovered-loot', Component: RecoveredLoot },
                   { path: 'catalog', Component: CatalogBrowser },
                   { path: 'history', Component: HistoryScreen },
                   { path: 'item/:itemInstanceId', Component: ItemDetail },

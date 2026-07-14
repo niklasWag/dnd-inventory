@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
-import { StorageStashList } from './StorageStashList';
+import { StorageOverview } from './StorageOverview';
 import { Toaster } from '@/components/ui/sonner';
 import { useStore } from '@/store';
 import { wipeAll } from '@/db/wipe';
@@ -12,9 +12,15 @@ import { bootstrap } from '@/test/fixtures';
 import { newUuidV7 } from '@app/shared';
 
 /**
- * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID
- * v7 per call keeps the fixture within the guard's clock-skew window
- * and hermetic per-test.
+ * R9.5 — StorageOverview is the screen port of the old M3 `StorageStashList`
+ * (card grid, verified against `drawings/storage-list.png`). This suite
+ * carries over the StorageStashList coverage, mounting the real
+ * `/party/:partyId/character/:id/stashes` route so `:id` resolves the
+ * character from the store rather than a prop.
+ *
+ * RH1.2 — id-injection helpers for direct `dispatch` sites. Fresh UUID v7
+ * per call keeps the fixture within the guard's clock-skew window and
+ * hermetic per-test.
  */
 function acquireIds() {
   return { newItemInstanceId: newUuidV7() };
@@ -32,14 +38,11 @@ function renderWith(characterId: string): void {
   const partyId = useStore.getState().appState?.party.id ?? 'test-party';
   const router = createMemoryRouter(
     [
-      {
-        path: '/party/:partyId/character/:id',
-        Component: () => <StorageStashList characterId={characterId} />,
-      },
-      // Destination route — we just verify the URL changes; no real screen.
+      { path: '/party/:partyId/character/:id/stashes', Component: StorageOverview },
+      // Open-card destination — verify the URL changes; no real screen.
       { path: '/party/:partyId/stash/:stashId', element: <p>storage-detail-stub</p> },
     ],
-    { initialEntries: [`/party/${partyId}/character/${characterId}`] },
+    { initialEntries: [`/party/${partyId}/character/${characterId}/stashes`] },
   );
   render(
     <>
@@ -57,7 +60,7 @@ function createOne(characterId: string, name: string): string {
   return useStore.getState().appState!.stashes.at(-1)!.id;
 }
 
-describe('StorageStashList (M3)', () => {
+describe('StorageOverview (R9.5)', () => {
   it('renders an empty state when no Storage stashes exist', () => {
     const { characterId } = bootstrap();
     renderWith(characterId);
@@ -82,7 +85,6 @@ describe('StorageStashList (M3)', () => {
 
   it('renders cards in createdAt ascending order', async () => {
     const { characterId } = bootstrap();
-    // Two creates; the first is older by virtue of dispatch order.
     createOne(characterId, 'Alpha');
     // Force a slight delay so createdAt timestamps differ.
     await new Promise((r) => setTimeout(r, 5));
@@ -128,7 +130,7 @@ describe('StorageStashList (M3)', () => {
     expect(screen.getByText(/4 items/i)).toBeInTheDocument();
   });
 
-  it('renders the M4 currency breakdown on each card (zero values for a fresh stash)', () => {
+  it('renders the currency breakdown on each card (zero values for a fresh stash)', () => {
     const { characterId } = bootstrap();
     createOne(characterId, 'Treasury');
     renderWith(characterId);
@@ -153,19 +155,18 @@ describe('StorageStashList (M3)', () => {
     expect(screen.getByText(/25g/)).toBeInTheDocument();
   });
 
-  it('clicking the + New Storage stash button opens the create modal', async () => {
+  it('clicking the New Storage stash button opens the create modal', async () => {
     const user = userEvent.setup();
     const { characterId } = bootstrap();
     renderWith(characterId);
 
     await user.click(screen.getByRole('button', { name: /new storage stash/i }));
 
-    // The dialog (from CreateStashModal) is now visible.
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /new storage stash/i })).toBeInTheDocument();
   });
 
-  it('clicking a card navigates to /storage/:stashId', async () => {
+  it('clicking a card navigates to /stash/:stashId', async () => {
     const user = userEvent.setup();
     const { characterId } = bootstrap();
     const stashId = createOne(characterId, 'Chest at home');
@@ -173,9 +174,20 @@ describe('StorageStashList (M3)', () => {
 
     await user.click(screen.getByRole('button', { name: /open chest at home/i }));
 
-    // Stub destination renders.
     expect(screen.getByText('storage-detail-stub')).toBeInTheDocument();
-    // (The stashId is in the URL; we trust the router rather than asserting on URL strings.)
     expect(stashId).toBeTruthy();
+  });
+
+  it('redirects to / for an unknown character id', () => {
+    bootstrap();
+    const router = createMemoryRouter(
+      [
+        { path: '/party/:partyId/character/:id/stashes', Component: StorageOverview },
+        { path: '/', element: <p>root-stub</p> },
+      ],
+      { initialEntries: ['/party/p1/character/does-not-exist/stashes'] },
+    );
+    render(<RouterProvider router={router} />);
+    expect(screen.getByText('root-stub')).toBeInTheDocument();
   });
 });

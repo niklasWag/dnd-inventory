@@ -50,6 +50,14 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   to: string;
+  /**
+   * When true, the active highlight requires an EXACT path match (NavLink
+   * `end`). Set on links whose `to` is a prefix of a sibling's `to` — e.g.
+   * Character Sheet (`/character/:id`) is a prefix of Stashes
+   * (`/character/:id/stashes`), so without `end` both would highlight when
+   * viewing Stashes.
+   */
+  end?: boolean;
 }
 interface NavGroup {
   heading: string;
@@ -95,7 +103,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }): ReactEleme
     {
       heading: 'My Character',
       items: [
-        { label: 'Character Sheet', icon: PanelsTopLeft, to: characterHref },
+        { label: 'Character Sheet', icon: PanelsTopLeft, to: characterHref, end: true },
         { label: 'Stashes', icon: Boxes, to: stashesHref },
       ],
     },
@@ -228,7 +236,7 @@ function ExpandedSidebar({
             <ul className="space-y-0.5">
               {group.items.map((item) => (
                 <li key={item.label}>
-                  <ExpandedNavItem item={item} onNavigate={onNavigate} />
+                  <ExpandedNavItem item={item} onNavigate={onNavigate} end={item.end ?? false} />
                 </li>
               ))}
             </ul>
@@ -331,7 +339,7 @@ function CollapsedRail({
           key={item.label}
           item={item}
           onNavigate={onNavigate}
-          end={item.to === '/hub'}
+          end={item.to === '/hub' || (item.end ?? false)}
         />
       ))}
 
