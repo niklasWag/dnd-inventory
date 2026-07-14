@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserPlus, Users, Link as LinkIcon } from 'lucide-react';
+import { ChevronRight, Clock, Crown, Link as LinkIcon, Play, UserPlus, Users } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -23,10 +23,27 @@ import { ApiError, joinParty, listParties } from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
 import { getOwnCharacter } from '@/lib/ownCharacter';
 import { useStore, flushPendingPersist, dispatchMintingAction } from '@/store';
+import { useSession } from '@/store/session';
+import { useHubLayoutStore } from '@/store/hubLayout';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { pullState } from '@/sync/client';
 import { flush as flushSyncQueue } from '@/sync/queue';
 import { appStateSchema, transactionLogEntrySchema, type PartyListItem } from '@app/shared';
+
+/**
+ * A party the Hub can list + open, normalized across server + local mode.
+ * Server rows carry role/member/activity metadata; local rows carry only
+ * id + name (the full per-party stats — item/gold counts — live inside a
+ * loaded party's state, which the Hub does NOT fetch; see R9 Notes).
+ */
+interface HubParty {
+  id: string;
+  name: string;
+  /** server mode only */
+  roles?: readonly string[];
+  memberCount?: number;
+  lastActivityAt?: string | null;
+}
 
 /**
  * RH5.2 — Zod schema for the persisted blob shape, mirroring
@@ -59,6 +76,8 @@ const persistedBlobSchema = z.object({
  */
 export function Hub(): ReactElement {
   const navigate = useNavigate();
+  const sessionUser = useSession((s) => s.user);
+  const hubLayout = useHubLayoutStore((s) => s.layout);
   // The currently-loaded party (if any). In local mode this is the
   // pointer the previous session left behind. In server mode it's
   // whatever the user last navigated into.
@@ -422,57 +441,67 @@ export function Hub(): ReactElement {
     }
   }
 
-  return (
-    <div className="mx-auto max-w-3xl space-y-8 py-10">
-      <header>
-        <h1 className="text-3xl font-bold tracking-tight">Your parties</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Choose a party to open, or start something new.
-        </p>
-      </header>
+  // Normalized party list + loading/error flags across both modes.
+  const parties: HubParty[] | null = isServerMode
+    ? serverParties === null
+      ? null
+      : serverParties.map((p) => ({
+          id: p.id,
+          name: p.name,
+          roles: p.roles,
+          memberCount: p.memberCount,
+          lastActivityAt: p.lastActivityAt,
+        }))
+    : localParties;
+  const partiesLoading = parties === null;
+  const openParty = isServerMode
+    ? (id: string) => void openServerParty(id)
+    : (id: string) => void openLocalParty(id);
 
-      <ExistingParties
-        localParties={localParties}
-        serverParties={serverParties}
+  return (
+    <div className="mx-auto max-w-4xl space-y-8 px-4 py-10">
+      {/* R9.11 — Hero medallion + welcome (server mode has an account
+          identity; local mode gets a plain heading). Medallion → Settings. */}
+      {sessionUser !== null ? (
+        <div className="flex flex-col items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void navigate('/settings')}
+            aria-label="Account settings"
+            className="group relative outline-none"
+          >
+            <span className="absolute -inset-1 rounded-full bg-primary/20 opacity-0 blur transition group-hover:opacity-100" />
+            <span className="relative grid h-20 w-20 place-items-center rounded-full border-2 border-primary/40 bg-gradient-to-br from-primary/15 to-surface-2 shadow-e2 ring-2 ring-surface transition group-hover:border-primary/70">
+              <span className="font-display text-3xl font-bold text-primary">
+                {sessionUser.displayName.charAt(0).toUpperCase()}
+              </span>
+            </span>
+          </button>
+          <div className="text-center">
+            <p className="text-sm text-muted-foreground">Welcome back, {sessionUser.displayName}</p>
+            <h1 className="font-display text-3xl font-bold tracking-tight">Ready to play?</h1>
+          </div>
+        </div>
+      ) : (
+        <header>
+          <h1 className="font-display text-3xl font-bold tracking-tight">Your parties</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Choose a party to open, or start something new.
+          </p>
+        </header>
+      )}
+
+      <PartyChooser
+        layout={hubLayout}
+        parties={parties}
+        loading={partiesLoading}
         serverError={serverError}
         openingPartyId={openingPartyId}
-        onOpenServer={(id) => {
-          void openServerParty(id);
-        }}
-        onOpenLocal={(id) => {
-          void openLocalParty(id);
-        }}
+        onOpen={openParty}
+        onNew={() => setDialog('create-party')}
+        onSolo={() => setDialog('create-solo')}
+        onJoin={isServerMode ? () => setDialog('join') : null}
       />
-
-      <section aria-label="New party">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Start something new
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <ActionCard
-            icon={<UserPlus className="h-5 w-5" />}
-            title="Solo"
-            description="Start a party-of-one — just you and your character."
-            onClick={() => setDialog('create-solo')}
-          />
-          <ActionCard
-            icon={<Users className="h-5 w-5" />}
-            title="Create party"
-            description="Start a party others can join later."
-            onClick={() => setDialog('create-party')}
-          />
-          <ActionCard
-            icon={<LinkIcon className="h-5 w-5" />}
-            title="Join party"
-            description={
-              isServerMode
-                ? 'Paste an invite code from another DM.'
-                : 'Available when this app runs against a hosted server.'
-            }
-            {...(isServerMode ? { onClick: () => setDialog('join') } : { disabled: true })}
-          />
-        </div>
-      </section>
 
       <Dialog
         open={dialog !== null}
@@ -675,142 +704,285 @@ function JoinPartyForm({
   );
 }
 
-interface ExistingPartiesProps {
-  localParties: { id: string; name: string }[] | null;
-  serverParties: PartyListItem[] | null;
+interface PartyChooserProps {
+  layout: 'hero' | 'list';
+  parties: HubParty[] | null;
+  loading: boolean;
   serverError: string | null;
-  /** Non-null while a party is being opened (server or local). */
   openingPartyId: string | null;
-  /** Server-mode click — receives the party id and owns the pull+navigate. */
-  onOpenServer: (partyId: string) => void;
-  /**
-   * Local-mode click — receives the party id. Hub orchestrates the
-   * Dexie load + store hydrate + navigate.
-   */
-  onOpenLocal: (partyId: string) => void;
+  onOpen: (partyId: string) => void;
+  onNew: () => void;
+  onSolo: () => void;
+  /** null in local mode (join is server-only). */
+  onJoin: (() => void) | null;
 }
 
-function ExistingParties({
-  localParties,
-  serverParties,
+/**
+ * R9.11 — the Hub party chooser. Two layouts driven by the `hubLayout`
+ * preference (Settings → Appearance):
+ *   - `hero` (default) — a big "Continue" card for the most-recently-active
+ *     party + a grid of the others (HubHeroNoPip mockup).
+ *   - `list` — a master party list beside a detail pane (HubListDetail).
+ * The "start something new" actions (Solo / Create party / Join) always
+ * render below, and are the whole surface when there are no parties yet.
+ */
+function PartyChooser({
+  layout,
+  parties,
+  loading,
   serverError,
   openingPartyId,
-  onOpenServer,
-  onOpenLocal,
-}: ExistingPartiesProps): ReactElement | null {
-  // Server mode: render the server's parties list. Local mode: render
-  // every known party from Dexie (including ones not currently loaded
-  // in memory).
-  if (isServerMode) {
-    if (serverError !== null) {
-      return (
-        <section aria-label="Existing parties">
-          <p className="text-sm text-destructive">{serverError}</p>
-        </section>
-      );
+  onOpen,
+  onNew,
+  onSolo,
+  onJoin,
+}: PartyChooserProps): ReactElement {
+  const anyOpening = openingPartyId !== null;
+
+  // Most-recently-active first (server: by lastActivityAt; local: input order).
+  const sorted = [...(parties ?? [])].sort((a, b) => {
+    const at = a.lastActivityAt ?? '';
+    const bt = b.lastActivityAt ?? '';
+    return at < bt ? 1 : at > bt ? -1 : 0;
+  });
+
+  function partySubtitle(p: HubParty): string {
+    const bits: string[] = [];
+    if (p.roles !== undefined) bits.push(p.roles.join(' + '));
+    if (p.memberCount !== undefined) {
+      bits.push(p.memberCount === 1 ? 'Solo' : `${p.memberCount} members`);
+    } else {
+      bits.push('Local party');
     }
-    if (serverParties === null) {
-      return (
-        <section aria-label="Existing parties" className="text-sm text-muted-foreground">
-          Loading…
-        </section>
-      );
-    }
-    if (serverParties.length === 0) return null;
+    if (p.lastActivityAt != null) bits.push(new Date(p.lastActivityAt).toLocaleDateString());
+    return bits.join(' · ');
+  }
+
+  const newActions = (
+    <div className="flex flex-wrap justify-center gap-3">
+      <Button type="button" variant="outline" onClick={onSolo}>
+        <UserPlus className="h-4 w-4" />
+        Solo
+      </Button>
+      <Button type="button" variant="outline" onClick={onNew}>
+        <Users className="h-4 w-4" />
+        Create party
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        {...(onJoin !== null ? { onClick: onJoin } : { disabled: true })}
+        title={onJoin === null ? 'Available when running against a hosted server.' : undefined}
+      >
+        <LinkIcon className="h-4 w-4" />
+        Join party
+      </Button>
+    </div>
+  );
+
+  if (serverError !== null) {
     return (
-      <section aria-label="Existing parties" className="space-y-2">
-        {serverParties.map((p) => {
-          const isOpening = openingPartyId === p.id;
-          const anyOpening = openingPartyId !== null;
-          return (
-            <button
-              type="button"
-              key={p.id}
-              disabled={anyOpening}
-              className="flex w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => onOpenServer(p.id)}
-            >
-              <div>
-                <p className="font-medium">{p.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {p.roles.join(' + ')} • {p.memberCount} member{p.memberCount === 1 ? '' : 's'}
-                </p>
-              </div>
-              {isOpening ? (
-                <span className="text-xs text-muted-foreground">Opening…</span>
-              ) : p.lastActivityAt !== null ? (
-                <span className="text-xs text-muted-foreground">
-                  {new Date(p.lastActivityAt).toLocaleDateString()}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
+      <section aria-label="Existing parties" className="space-y-6">
+        <p className="text-sm text-destructive">{serverError}</p>
+        {newActions}
       </section>
     );
   }
 
-  // Local mode: enumerate every known party blob from Dexie.
-  if (localParties === null) {
+  if (loading) {
     return (
-      <section aria-label="Existing parties" className="text-sm text-muted-foreground">
-        Loading…
+      <section aria-label="Existing parties" className="space-y-6">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+        {newActions}
       </section>
     );
   }
-  if (localParties.length === 0) return null;
+
+  // Empty state — no parties yet. The "start new" actions are the whole
+  // surface (matches the original Hub's create-first-party CTA).
+  if (sorted.length === 0) {
+    return (
+      <section aria-label="New party" className="space-y-4">
+        <div className="rounded-xl border border-dashed border-border bg-surface-2/40 p-10 text-center text-sm text-muted-foreground">
+          No parties yet. Start a solo run or create a party others can join.
+        </div>
+        {newActions}
+      </section>
+    );
+  }
+
+  if (layout === 'list') {
+    return (
+      <PartyListDetail
+        parties={sorted}
+        openingPartyId={openingPartyId}
+        onOpen={onOpen}
+        partySubtitle={partySubtitle}
+        newActions={newActions}
+      />
+    );
+  }
+
+  // Hero layout (default). First party = "Continue"; the rest are a grid.
+  const [recent, ...others] = sorted;
   return (
-    <section aria-label="Existing parties" className="space-y-2">
-      {localParties.map((p) => {
-        const isOpening = openingPartyId === p.id;
-        const anyOpening = openingPartyId !== null;
-        return (
-          <button
+    <section aria-label="Existing parties" className="space-y-8">
+      <div className="overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-surface p-6 shadow-e2">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-primary">
+          <Clock className="h-3 w-3" aria-hidden="true" />
+          Continue
+        </div>
+        <div className="mt-1 flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="font-display text-2xl font-bold tracking-tight">{recent!.name}</h2>
+            <p className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+              {recent!.roles?.includes('dm') ? (
+                <span className="inline-flex items-center gap-1 text-primary">
+                  <Crown className="h-3 w-3" aria-hidden="true" /> DM
+                </span>
+              ) : null}
+              {partySubtitle(recent!)}
+            </p>
+          </div>
+          <Button
             type="button"
-            key={p.id}
             disabled={anyOpening}
-            className="flex w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={() => onOpenLocal(p.id)}
+            onClick={() => onOpen(recent!.id)}
+            className="gap-2"
           >
-            <div>
-              <p className="font-medium">{p.name}</p>
-              <p className="text-xs text-muted-foreground">Local party</p>
-            </div>
-            {isOpening ? <span className="text-xs text-muted-foreground">Opening…</span> : null}
-          </button>
-        );
-      })}
+            <Play className="h-4 w-4" aria-hidden="true" />
+            {openingPartyId === recent!.id ? 'Opening…' : 'Enter party'}
+          </Button>
+        </div>
+      </div>
+
+      {others.length > 0 ? (
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Your other parties
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {others.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={anyOpening}
+                onClick={() => onOpen(p.id)}
+                aria-label={`Open ${p.name}`}
+                className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5 text-left transition hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-surface-2 font-display text-xs font-bold text-muted-foreground">
+                  {p.name.charAt(0)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{p.name}</div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {openingPartyId === p.id ? 'Opening…' : partySubtitle(p)}
+                  </div>
+                </div>
+                <ChevronRight
+                  className="h-4 w-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {newActions}
     </section>
   );
 }
 
-interface ActionCardProps {
-  icon: ReactElement;
-  title: string;
-  description: string;
-  onClick?: () => void;
-  disabled?: boolean;
-}
+/** List + detail layout for the Hub (HubListDetail mockup). */
+function PartyListDetail({
+  parties,
+  openingPartyId,
+  onOpen,
+  partySubtitle,
+  newActions,
+}: {
+  parties: HubParty[];
+  openingPartyId: string | null;
+  onOpen: (partyId: string) => void;
+  partySubtitle: (p: HubParty) => string;
+  newActions: ReactElement;
+}): ReactElement {
+  const [selectedId, setSelectedId] = useState(parties[0]!.id);
+  const anyOpening = openingPartyId !== null;
+  const selected = parties.find((p) => p.id === selectedId) ?? parties[0]!;
 
-function ActionCard({
-  icon,
-  title,
-  description,
-  onClick,
-  disabled,
-}: ActionCardProps): ReactElement {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="flex flex-col gap-2 rounded-md border bg-card p-4 text-left transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        {icon}
-        {title}
+    <section aria-label="Existing parties" className="space-y-4">
+      <div className="grid gap-6 md:grid-cols-[18rem_1fr]">
+        <div className="space-y-2">
+          {parties.map((p) => {
+            const active = p.id === selected.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setSelectedId(p.id)}
+                aria-label={`Select ${p.name}`}
+                aria-pressed={active}
+                className={
+                  'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ' +
+                  (active
+                    ? 'border-primary/50 bg-primary/5'
+                    : 'border-border bg-surface hover:bg-surface-2')
+                }
+              >
+                <div
+                  className={
+                    'grid h-9 w-9 shrink-0 place-items-center rounded-md font-display text-sm font-bold ' +
+                    (active ? 'bg-primary/15 text-primary' : 'bg-surface-2 text-muted-foreground')
+                  }
+                >
+                  {p.name.charAt(0)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{p.name}</div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {partySubtitle(p)}
+                  </div>
+                </div>
+                <ChevronRight
+                  className="h-4 w-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="rounded-lg border border-border bg-surface p-6 shadow-e1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              {selected.roles?.includes('dm') ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                  <Crown className="h-3 w-3" aria-hidden="true" /> DM
+                </span>
+              ) : null}
+              <h2 className="mt-2 font-display text-2xl font-bold tracking-tight">
+                {selected.name}
+              </h2>
+              <p className="text-sm text-muted-foreground">{partySubtitle(selected)}</p>
+            </div>
+            <Button
+              type="button"
+              disabled={anyOpening}
+              onClick={() => onOpen(selected.id)}
+              className="gap-2"
+            >
+              <Play className="h-4 w-4" aria-hidden="true" />
+              {openingPartyId === selected.id ? 'Opening…' : 'Enter'}
+            </Button>
+          </div>
+        </div>
       </div>
-      <p className="text-xs text-muted-foreground">{description}</p>
-    </button>
+
+      {newActions}
+    </section>
   );
 }
