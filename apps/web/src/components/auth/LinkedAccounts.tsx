@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Link as LinkIcon, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Label } from '@/components/ui/label';
-import { ApiError, requestLinkEmailOtp, verifyLinkEmailOtp } from '@/lib/api';
+import { ApiError, getAuthMethods, requestLinkEmailOtp, verifyLinkEmailOtp } from '@/lib/api';
 import { SERVER_URL } from '@/lib/serverMode';
 import { useSession } from '@/store/session';
 
@@ -22,7 +22,11 @@ import { useSession } from '@/store/session';
  *     same browsing context. The server handles the rest and 302s
  *     back to `${WEB_ORIGIN}/settings?linked=discord` (or
  *     `?linkError=discord_already_linked`); the Settings screen reads
- *     those params and toasts.
+ *     those params and toasts. The "Connect" button is hidden when the
+ *     server has no Discord OAuth triple configured (probed via
+ *     `GET /auth/methods`, same as the Login screen) — clicking it would
+ *     otherwise just lead to a 503. An already-linked account still shows
+ *     its "Connected" badge regardless of config.
  *   - Email: inline two-step form — request OTP → verify OTP. Uses
  *     the link-flow endpoints (`/auth/email/link/*`) so the session
  *     cookie carries; on success the user's row gets the email +
@@ -30,6 +34,24 @@ import { useSession } from '@/store/session';
  */
 export function LinkedAccounts(): ReactElement {
   const session = useSession((s) => s);
+  const [discordEnabled, setDiscordEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (SERVER_URL === null) return;
+    let cancelled = false;
+    getAuthMethods()
+      .then((res) => {
+        if (!cancelled) setDiscordEnabled(res.discord);
+      })
+      .catch(() => {
+        // On probe failure, treat Discord as unconfigured — hiding the
+        // Connect button is safer than surfacing one that would 503.
+        if (!cancelled) setDiscordEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (session.user === null) {
     return (
@@ -39,7 +61,10 @@ export function LinkedAccounts(): ReactElement {
 
   return (
     <div className="space-y-4">
-      <DiscordRow discordId={session.user.discordId ?? null} />
+      <DiscordRow
+        discordId={session.user.discordId ?? null}
+        discordEnabled={discordEnabled ?? false}
+      />
       <EmailRow email={session.user.email ?? null} />
     </div>
   );
@@ -54,7 +79,13 @@ function ConnectedBadge(): ReactElement {
   );
 }
 
-function DiscordRow({ discordId }: { discordId: string | null }): ReactElement {
+function DiscordRow({
+  discordId,
+  discordEnabled,
+}: {
+  discordId: string | null;
+  discordEnabled: boolean;
+}): ReactElement {
   return (
     <div className="flex items-center justify-between rounded-md border border-border p-4">
       <div className="flex items-center gap-3">
@@ -62,11 +93,17 @@ function DiscordRow({ discordId }: { discordId: string | null }): ReactElement {
         <div>
           <p className="text-sm font-medium">Discord</p>
           <p className="text-xs text-muted-foreground">
-            {discordId === null ? 'Not connected.' : `id ${discordId}`}
+            {discordId !== null
+              ? `id ${discordId}`
+              : discordEnabled
+                ? 'Not connected.'
+                : 'Not configured on this server.'}
           </p>
         </div>
       </div>
-      {discordId === null ? (
+      {discordId !== null ? (
+        <ConnectedBadge />
+      ) : discordEnabled ? (
         <Button asChild size="sm" variant="outline">
           <a
             href={SERVER_URL === null ? '#' : `${SERVER_URL}/auth/discord/login?link=1`}
@@ -75,9 +112,7 @@ function DiscordRow({ discordId }: { discordId: string | null }): ReactElement {
             Connect
           </a>
         </Button>
-      ) : (
-        <ConnectedBadge />
-      )}
+      ) : null}
     </div>
   );
 }
