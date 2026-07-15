@@ -145,6 +145,7 @@ model User {
   memberships     PartyMembership[]
   transactionLogs TransactionLog[]
   pendingLinks    PendingDiscordLink[]
+  pendingEmailChange PendingEmailChange?
 
   // CHECK: discordId IS NOT NULL OR emailVerified IS NOT NULL — added in
   // migration tail per SECURITY §1.2 / OUTLINE §4 invariant. Prisma DSL
@@ -555,6 +556,32 @@ model PendingDiscordLink {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([expires])
+}
+
+// R10.1 — durable state for the user-initiated "change email" flow (dual
+// OTP: one code to the CURRENT address, one to the NEW address). Mirrors
+// PendingDiscordLink in shape. The two OTP codes live in VerificationToken
+// under namespaced identifiers (`emailchange-cur:<userId>` and
+// `emailchange-new:<userId>:<newEmail>`); this row only tracks the target
+// address + which legs are consumed. The actual User.email swap fires in a
+// single transaction only when BOTH `consumedAt` timestamps are set.
+//
+// @@unique([userId]) enforces one in-flight change per user — start upserts,
+// so a second tab starting a new flow invalidates the first. `expires`
+// bounds row growth (a future cron sweep can reap stale rows cheaply).
+model PendingEmailChange {
+  token                String    @id
+  userId               String
+  newEmail             String
+  currentOtpConsumedAt DateTime?
+  newOtpConsumedAt     DateTime?
+  expires              DateTime
+  createdAt            DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
   @@index([expires])
 }
 

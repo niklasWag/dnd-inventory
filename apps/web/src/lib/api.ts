@@ -22,6 +22,10 @@ import { z, type ZodType } from 'zod';
 import {
   apiErrorSchema,
   authMethodsResponseSchema,
+  emailChangeAbortResponseSchema,
+  emailChangeCommitResponseSchema,
+  emailChangeSentResponseSchema,
+  emailChangeStartResponseSchema,
   joinPartyRequestSchema,
   joinPartyResponseSchema,
   kickPlayerRequestSchema,
@@ -55,6 +59,10 @@ import {
   type SetDisplayNameResponse,
   type VerifyOtpResponse,
   type BatchRejectedResponse,
+  type EmailChangeAbortResponse,
+  type EmailChangeCommitResponse,
+  type EmailChangeSentResponse,
+  type EmailChangeStartResponse,
 } from '@app/shared';
 
 import { SERVER_URL } from './serverMode';
@@ -272,6 +280,53 @@ export function verifyLinkEmailOtp(email: string, otp: string): Promise<LinkEmai
     method: 'POST',
     body: { email, otp },
     schema: linkEmailResponseSchema,
+  });
+}
+
+// ----- R10.1 — change email (dual-OTP) --------------------------------
+
+/**
+ * Start the change-email flow. Sends a code to the CURRENT address and
+ * returns the pending-change token to thread through the verify steps.
+ */
+export function startEmailChange(newEmail: string): Promise<EmailChangeStartResponse> {
+  return apiFetch('/auth/email/change/start', {
+    method: 'POST',
+    body: { newEmail },
+    schema: emailChangeStartResponseSchema,
+  });
+}
+
+/**
+ * Verify the code sent to the CURRENT address. On success the server sends
+ * the second code to the NEW address.
+ */
+export function verifyCurrentEmailOtp(
+  token: string,
+  otp: string,
+): Promise<EmailChangeSentResponse> {
+  return apiFetch('/auth/email/change/verify-current', {
+    method: 'POST',
+    body: { token, otp },
+    schema: emailChangeSentResponseSchema,
+  });
+}
+
+/** Verify the code sent to the NEW address and commit the swap. */
+export function verifyNewEmailOtp(token: string, otp: string): Promise<EmailChangeCommitResponse> {
+  return apiFetch('/auth/email/change/verify-new', {
+    method: 'POST',
+    body: { token, otp },
+    schema: emailChangeCommitResponseSchema,
+  });
+}
+
+/** Explicitly abort an in-flight change (deletes the pending row + codes). */
+export function abortEmailChange(token: string): Promise<EmailChangeAbortResponse> {
+  return apiFetch('/auth/email/change/abort', {
+    method: 'POST',
+    body: { token },
+    schema: emailChangeAbortResponseSchema,
   });
 }
 

@@ -26,6 +26,7 @@
  * working without Discord — useful for R3.5 client probes.
  */
 import { Auth } from '@auth/core';
+import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
@@ -380,6 +381,17 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
   });
   const setDisplayNameSchema = z.object({ displayName: z.string().min(1).max(80) });
 
+  // R10.1 — change-email flow. Tighter TTL than the 15-min login OTP
+  // (OTP_LIFETIME_MS): a sensitive account mutation gets a 10-min window
+  // per code. Both legs (current-address code + new-address code) use it.
+  const EMAIL_CHANGE_OTP_LIFETIME_MS = 10 * 60 * 1000;
+  const emailChangeStartSchema = z.object({ newEmail: z.email() });
+  const emailChangeVerifySchema = z.object({
+    token: z.string().min(1),
+    otp: z.string().regex(new RegExp(`^\\d{${OTP_LENGTH}}$`)),
+  });
+  const emailChangeAbortSchema = z.object({ token: z.string().min(1) });
+
   /**
    * Sleep for a `delayMs` to keep request-otp responses constant-time
    * regardless of whether the email is registered. Bounds are chosen to
@@ -728,5 +740,344 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         discordId: updated.discordId,
       },
     });
+  });
+
+  // ===== R10.1 — user-initiated email change (dual-OTP) ==================
+  //
+  // Proves possession of BOTH the current address (code #1) and the new
+  // address (code #2) before swapping User.email. Requires an authenticated
+  // session; identity comes from the cookie (SECURITY §6), never the body.
+  //
+  // A PendingEmailChange row (unique per userId) holds the target address +
+  // which legs are consumed. The two OTP codes live in VerificationToken
+  // under namespaced identifiers so a login/link code can never be consumed
+  // here and vice versa:
+  //   - `emailchange-cur:<userId>`            → sent to the CURRENT address
+  //   - `emailchange-new:<userId>:<newEmail>` → sent to the NEW address
+  //
+  // No party-scoped TransactionLog entry is written: TransactionLog.partyId
+  // is non-nullable (every entry is party-scoped) and an account-level email
+  // change has no party context. The audit record is the server request log
+  // + the emailVerified re-stamp on the User row.
+
+  function emailChangeCurIdentifier(userId: string): string {
+    return `emailchange-cur:${userId}`;
+  }
+  function emailChangeNewIdentifier(userId: string, newEmail: string): string {
+    return `emailchange-new:${userId}:${newEmail}`;
+  }
+
+  /**
+   * Step 1 — start the flow. Body `{ newEmail }`. Mints + sends a code to the
+   * CURRENT address (proving the caller still controls the stored email).
+   * Upserts the PendingEmailChange row, invalidating any prior in-flight
+   * change for this user (multi-tab: last start wins).
+   */
+  app.post('/auth/email/change/start', async (req, reply) => {
+    if (!isEmailAuthEnabled(env) || !mailService) {
+      return reply.code(503).send({ error: 'email_auth_disabled' });
+    }
+    const session = await app.getSession(req);
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    // Discord-only accounts (no current email) use the existing add-backup
+    // flow, not this change flow.
+    const currentEmail = session.user.email;
+    if (!currentEmail) return reply.code(400).send({ error: 'no_current_email' });
+
+    const parsed = emailChangeStartSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_email' });
+    const { newEmail } = parsed.data;
+
+    if (newEmail === currentEmail) {
+      return reply.code(400).send({ error: 'email_unchanged' });
+    }
+
+    const ip = req.ip;
+    const ipLock = await recordOtpRequest(prisma, ip);
+    if (ipLock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((ipLock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: ipLock.until.toISOString() });
+    }
+
+    // Fast-fail if the new address is already taken. Re-checked at commit so
+    // a race between start and commit can't slip a duplicate through.
+    const collision = await prisma.user.findUnique({ where: { email: newEmail } });
+    if (collision && collision.id !== session.user.id) {
+      return reply.code(409).send({ error: 'email_already_linked' });
+    }
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const now = Date.now();
+    const rowExpires = new Date(now + EMAIL_CHANGE_OTP_LIFETIME_MS);
+    const code = generateOtp();
+    const curIdentifier = emailChangeCurIdentifier(session.user.id);
+
+    // Upsert the pending row (one per user) + replace any stale current-leg
+    // code in one transaction so a parallel start can't see a torn state.
+    await prisma.$transaction([
+      prisma.pendingEmailChange.upsert({
+        where: { userId: session.user.id },
+        create: {
+          token,
+          userId: session.user.id,
+          newEmail,
+          expires: rowExpires,
+        },
+        update: {
+          token,
+          newEmail,
+          currentOtpConsumedAt: null,
+          newOtpConsumedAt: null,
+          expires: rowExpires,
+        },
+      }),
+      prisma.verificationToken.deleteMany({ where: { identifier: curIdentifier } }),
+      prisma.verificationToken.create({
+        data: {
+          identifier: curIdentifier,
+          token: code,
+          expires: new Date(now + EMAIL_CHANGE_OTP_LIFETIME_MS),
+        },
+      }),
+    ]);
+
+    try {
+      await mailService.sendOtp(currentEmail, code);
+    } catch (err) {
+      req.log.error({ err }, 'sendOtp failed (email-change current)');
+      await prisma.verificationToken.deleteMany({ where: { identifier: curIdentifier } });
+      return reply.code(500).send({ error: 'internal' });
+    }
+
+    await constantTimePad();
+    return reply.code(200).send({ status: 'sent', token });
+  });
+
+  /**
+   * Step 2 — verify the CURRENT-address code. Body `{ token, otp }`. On
+   * success stamps `currentOtpConsumedAt` and sends code #2 to the new
+   * address.
+   */
+  app.post('/auth/email/change/verify-current', async (req, reply) => {
+    if (!isEmailAuthEnabled(env) || !mailService) {
+      return reply.code(503).send({ error: 'email_auth_disabled' });
+    }
+    const session = await app.getSession(req);
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const currentEmail = session.user.email;
+    if (!currentEmail) return reply.code(400).send({ error: 'no_current_email' });
+
+    const parsed = emailChangeVerifySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_request' });
+    const { token, otp } = parsed.data;
+
+    const pending = await prisma.pendingEmailChange.findUnique({
+      where: { userId: session.user.id },
+    });
+    if (!pending || pending.token !== token) {
+      return reply.code(404).send({ error: 'no_pending_change' });
+    }
+    if (pending.expires.getTime() <= Date.now()) {
+      return reply.code(410).send({ error: 'change_expired' });
+    }
+
+    const ip = req.ip;
+    // Lockout keyed on the CURRENT address for this leg.
+    const lock = await checkLockout(prisma, currentEmail, ip);
+    if (lock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((lock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: lock.until.toISOString() });
+    }
+
+    const curIdentifier = emailChangeCurIdentifier(session.user.id);
+    const row = await prisma.verificationToken.findFirst({ where: { identifier: curIdentifier } });
+    const candidate = row?.token ?? '0'.repeat(OTP_LENGTH);
+    const matches = row !== null && constantTimeEqual(candidate, otp);
+    const expired = row !== null && isOtpExpired(row.expires);
+
+    if (!matches || expired) {
+      const { shouldInvalidateCode } = await recordFailedAttempt(prisma, currentEmail, ip);
+      if (shouldInvalidateCode && row) {
+        await prisma.verificationToken.deleteMany({ where: { identifier: curIdentifier } });
+      }
+      return reply.code(401).send({ error: 'invalid_code' });
+    }
+
+    try {
+      await prisma.verificationToken.delete({ where: { token: row.token } });
+    } catch (err) {
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2025') {
+        return reply.code(401).send({ error: 'invalid_code' });
+      }
+      throw err;
+    }
+    await resetAttempts(prisma, currentEmail, ip);
+
+    // Stamp the current leg + mint the new-address code.
+    const code = generateOtp();
+    const newIdentifier = emailChangeNewIdentifier(session.user.id, pending.newEmail);
+    await prisma.$transaction([
+      prisma.pendingEmailChange.update({
+        where: { userId: session.user.id },
+        data: { currentOtpConsumedAt: new Date() },
+      }),
+      prisma.verificationToken.deleteMany({ where: { identifier: newIdentifier } }),
+      prisma.verificationToken.create({
+        data: {
+          identifier: newIdentifier,
+          token: code,
+          expires: new Date(Date.now() + EMAIL_CHANGE_OTP_LIFETIME_MS),
+        },
+      }),
+    ]);
+
+    try {
+      await mailService.sendOtp(pending.newEmail, code);
+    } catch (err) {
+      req.log.error({ err }, 'sendOtp failed (email-change new)');
+      await prisma.verificationToken.deleteMany({ where: { identifier: newIdentifier } });
+      return reply.code(500).send({ error: 'internal' });
+    }
+
+    await constantTimePad();
+    return reply.code(200).send({ status: 'sent' });
+  });
+
+  /**
+   * Step 3 — verify the NEW-address code and commit. Body `{ token, otp }`.
+   * Swaps User.email + re-stamps emailVerified, deletes the pending row, and
+   * reaps stale EmailAuthAttempt rows for the old address — all in one txn.
+   */
+  app.post('/auth/email/change/verify-new', async (req, reply) => {
+    if (!isEmailAuthEnabled(env)) {
+      return reply.code(503).send({ error: 'email_auth_disabled' });
+    }
+    const session = await app.getSession(req);
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const oldEmail = session.user.email;
+    if (!oldEmail) return reply.code(400).send({ error: 'no_current_email' });
+
+    const parsed = emailChangeVerifySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_request' });
+    const { token, otp } = parsed.data;
+
+    const pending = await prisma.pendingEmailChange.findUnique({
+      where: { userId: session.user.id },
+    });
+    if (!pending || pending.token !== token) {
+      return reply.code(404).send({ error: 'no_pending_change' });
+    }
+    if (pending.expires.getTime() <= Date.now()) {
+      return reply.code(410).send({ error: 'change_expired' });
+    }
+    if (!pending.currentOtpConsumedAt) {
+      return reply.code(409).send({ error: 'current_not_verified' });
+    }
+
+    const ip = req.ip;
+    // Lockout keyed on the NEW address for this leg.
+    const lock = await checkLockout(prisma, pending.newEmail, ip);
+    if (lock.locked) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil((lock.until.getTime() - Date.now()) / 1000)))
+        .send({ error: 'rate_limited', retryAfter: lock.until.toISOString() });
+    }
+
+    const newIdentifier = emailChangeNewIdentifier(session.user.id, pending.newEmail);
+    const row = await prisma.verificationToken.findFirst({ where: { identifier: newIdentifier } });
+    const candidate = row?.token ?? '0'.repeat(OTP_LENGTH);
+    const matches = row !== null && constantTimeEqual(candidate, otp);
+    const expired = row !== null && isOtpExpired(row.expires);
+
+    if (!matches || expired) {
+      const { shouldInvalidateCode } = await recordFailedAttempt(prisma, pending.newEmail, ip);
+      if (shouldInvalidateCode && row) {
+        await prisma.verificationToken.deleteMany({ where: { identifier: newIdentifier } });
+      }
+      return reply.code(401).send({ error: 'invalid_code' });
+    }
+
+    // Re-check uniqueness just before committing (a fresh signup could have
+    // claimed newEmail between start and now).
+    const collision = await prisma.user.findUnique({ where: { email: pending.newEmail } });
+    if (collision && collision.id !== session.user.id) {
+      return reply.code(409).send({ error: 'email_already_linked' });
+    }
+
+    const now = new Date();
+    let updated;
+    try {
+      [, updated] = await prisma.$transaction([
+        prisma.verificationToken.delete({ where: { token: row.token } }),
+        prisma.user.update({
+          where: { id: session.user.id },
+          data: { email: pending.newEmail, emailVerified: now },
+        }),
+        prisma.pendingEmailChange.delete({ where: { userId: session.user.id } }),
+        // The old address is released outright — reap its lockout rows so
+        // they don't linger as noise (roadmap R10.1 "freeing the old email").
+        prisma.emailAuthAttempt.deleteMany({ where: { email: oldEmail } }),
+      ]);
+    } catch (err) {
+      // P2025: the new-address code was consumed by a parallel request, or
+      // the pending row vanished (concurrent abort). Treat as verify failure.
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2025') {
+        return reply.code(401).send({ error: 'invalid_code' });
+      }
+      // P2002: unique violation on email — lost the uniqueness race.
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002') {
+        return reply.code(409).send({ error: 'email_already_linked' });
+      }
+      throw err;
+    }
+    await resetAttempts(prisma, pending.newEmail, ip);
+
+    return reply.code(200).send({
+      user: {
+        id: updated.id,
+        displayName: updated.displayName,
+        needsDisplayName: updated.needsDisplayName,
+        email: updated.email,
+        emailVerified: updated.emailVerified?.toISOString() ?? null,
+        avatarUrl: updated.avatarUrl,
+        discordId: updated.discordId,
+      },
+    });
+  });
+
+  /**
+   * Abort — explicit cancel. Body `{ token }`. Deletes the pending row + both
+   * namespaced codes. Idempotent: a missing/mismatched row is still a 200.
+   */
+  app.post('/auth/email/change/abort', async (req, reply) => {
+    const session = await app.getSession(req);
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const parsed = emailChangeAbortSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    const pending = await prisma.pendingEmailChange.findUnique({
+      where: { userId: session.user.id },
+    });
+    if (pending && pending.token === parsed.data.token) {
+      await prisma.$transaction([
+        prisma.pendingEmailChange.delete({ where: { userId: session.user.id } }),
+        prisma.verificationToken.deleteMany({
+          where: { identifier: emailChangeCurIdentifier(session.user.id) },
+        }),
+        prisma.verificationToken.deleteMany({
+          where: { identifier: emailChangeNewIdentifier(session.user.id, pending.newEmail) },
+        }),
+      ]);
+    }
+    return reply.code(200).send({ status: 'aborted' });
   });
 }

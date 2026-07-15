@@ -123,6 +123,37 @@ export const linkEmailResponseSchema = z.object({
 export type LinkEmailResponse = z.infer<typeof linkEmailResponseSchema>;
 
 /**
+ * R10.1 — change-email dual-OTP flow response bodies.
+ * `start` returns the pending-change token the client threads through the
+ * two verify steps. `verify-current` re-sends (code to the new address).
+ * `verify-new` commits and returns the updated session user. `abort` acks.
+ */
+export const emailChangeStartResponseSchema = z.object({
+  status: z.literal('sent'),
+  token: z.string().min(1),
+});
+
+export type EmailChangeStartResponse = z.infer<typeof emailChangeStartResponseSchema>;
+
+export const emailChangeSentResponseSchema = z.object({
+  status: z.literal('sent'),
+});
+
+export type EmailChangeSentResponse = z.infer<typeof emailChangeSentResponseSchema>;
+
+export const emailChangeCommitResponseSchema = z.object({
+  user: sessionUserSchema,
+});
+
+export type EmailChangeCommitResponse = z.infer<typeof emailChangeCommitResponseSchema>;
+
+export const emailChangeAbortResponseSchema = z.object({
+  status: z.literal('aborted'),
+});
+
+export type EmailChangeAbortResponse = z.infer<typeof emailChangeAbortResponseSchema>;
+
+/**
  * Per-row shape for `GET /sync/parties`. `roles` is an array because the
  * same user may hold both `dm` and `player` rows in a single party
  * (party-of-one is exactly that case).

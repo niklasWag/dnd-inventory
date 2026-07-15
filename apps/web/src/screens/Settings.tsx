@@ -250,7 +250,21 @@ export function Settings(): ReactElement {
             <div className="-my-1 divide-y divide-border">
               <Row label="Display name" value={session.user.displayName} />
               {session.user.email !== undefined && session.user.email !== null ? (
-                <Row label="Email" value={session.user.email} />
+                <Row
+                  label="Email"
+                  value={session.user.email}
+                  action={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void navigate('/settings/email/change');
+                      }}
+                    >
+                      Change
+                    </Button>
+                  }
+                />
               ) : null}
               {session.user.discordId !== undefined && session.user.discordId !== null ? (
                 <Row label="Discord" value={`id ${session.user.discordId}`} />
