@@ -455,7 +455,7 @@ function SellModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-start justify-center bg-black/40 px-4 py-16">
-      <div className="flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-e3">
+      <div className="flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-e3 sm:min-w-[28rem]">
         <div className="flex items-start justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="font-display text-lg font-semibold">Sell to {view.shop.name}</h2>
