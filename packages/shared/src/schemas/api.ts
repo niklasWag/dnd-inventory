@@ -160,6 +160,14 @@ export type EmailChangeAbortResponse = z.infer<typeof emailChangeAbortResponseSc
  *
  * R4.1 — `isSoloShortcut` removed. UI derives the "solo" badge from
  * `memberCount === 1` (OUTLINE §4 amendment 2026-06-24).
+ *
+ * R10.3 — `itemCount` (total ItemInstance quantity across ALL the party's
+ * stashes — character inventories + Storage + Party Stash + Recovered Loot,
+ * excluding shop stock) and `totalCp` (integer copper-equivalent of every
+ * stash's CurrencyHolding) are Hub-card glance stats. `totalCp` is integer
+ * CP on the wire per SECURITY §3.2 (CP-integer only); the client divides to
+ * gp for display. Server computes them in `GET /sync/parties`; local mode
+ * computes them from the keyed Dexie AppState blob.
  */
 export const partyListItemSchema = z.object({
   id: z.string().min(1),
@@ -167,6 +175,8 @@ export const partyListItemSchema = z.object({
   roles: z.array(z.enum(['dm', 'player'])).min(1),
   memberCount: z.number().int().min(1),
   lastActivityAt: z.string().datetime().nullable(),
+  itemCount: z.number().int().nonnegative(),
+  totalCp: z.number().int().nonnegative(),
 });
 
 export type PartyListItem = z.infer<typeof partyListItemSchema>;
