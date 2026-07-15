@@ -3984,9 +3984,7 @@ Full app UI overhaul. **Charter, design system, and per-screen designs are DONE*
 
 #### R9 — Deferred / open during build
 
-- [ ] **DM-tools mobile posture** — OUTLINE §5 now says desktop-priority with the reflow-vs-min-width-banner decision **deferred to implementation**; decide per DM screen with real device testing, then amend OUTLINE §5 with the final stance.
-- [ ] **Settings account features from the mockup that the app doesn't support yet** (surfaced during R9.11a — the `SettingsProfileHero` mockup shows affordances beyond the current backend). R9.11 renders honest read-only equivalents (initial-avatar hero, read-only Account rows, single-device Logout, local-data Wipe) and defers the real support to **R10 (account management)** — see the R10 Notes "Profile hero backing data + Edit profile" candidate sibling for the concrete plan (avatars, member-since, party-count, Edit-profile flow, device sessions, delete-account).
-- [ ] **Hub per-party stats** (surfaced during R9.11b — the `HubHeroNoPip` / `HubListDetail` mockups show per-party item + gold counts on each card). The Hub deliberately renders **only available list metadata** (name, role, member count, last-activity) — the item/gold totals live inside each party's full `AppState`, which the Hub does NOT fetch (the whole state per party is too large to pull for a listing screen). To surface them, add a lightweight server aggregate to `GET /sync/parties` (e.g. `itemCount` + `totalCp` denormalized per membership, or a cheap COUNT/SUM join) and extend `PartyListItem`; local mode can compute from the keyed Dexie blob it already enumerates. Until then the card subtitle is role · members · last-active only.
+- _All R9-Deferred items promoted to R10 sub-slices on 2026-07-15 — **R10.2** DM-tools mobile posture, **R10.3** Hub per-party stats, **R10.4** Settings account/profile features. See R10._
 
 #### R9 — Notes
 
@@ -4053,7 +4051,7 @@ Full app UI overhaul. **Charter, design system, and per-screen designs are DONE*
 
 ### R10 — User account management (stub — depends on R9)
 
-Self-service user account CRUD. **Depends on R9's redesigned UI language — do not ship before R9.** R10.1 (email change with dual-OTP confirmation) is the main deliverable; other candidate siblings are listed in R10 Notes.
+Self-service user account CRUD. **Depends on R9's redesigned UI language — do not ship before R9.** R10.1 (email change with dual-OTP confirmation) is the main deliverable. **R10.2–R10.6** were formalized as sub-slices on 2026-07-15 — R10.2–R10.4 promoted from the R9-Deferred backlog, R10.5 promoted from Future/Stretch (item wishlist), and R10.6 a new DM bulk level-up feature. Other candidate siblings remain listed in R10 Notes.
 
 #### R10.1 — Email change with dual-OTP confirmation
 
@@ -4077,6 +4075,26 @@ Self-service user account CRUD. **Depends on R9's redesigned UI language — do 
 #### R10.1 — Notes
 
 > - **OUTLINE §3.1 amendment needed at kickoff.** The "backup login" language in §3.1 covers ADDING an email to a Discord account; it does not describe changing an already-set email. Draft an amendment before writing code.
+
+#### R10.2 — DM-tools mobile posture
+
+- [ ] **DM-tools mobile posture** (promoted from R9-Deferred 2026-07-15) — OUTLINE §5 now says desktop-priority with the reflow-vs-min-width-banner decision **deferred to implementation**; decide per DM screen with real device testing, then amend OUTLINE §5 with the final stance.
+
+#### R10.3 — Hub per-party stats
+
+- [ ] **Hub per-party stats** (promoted from R9-Deferred 2026-07-15; surfaced during R9.11b — the `HubHeroNoPip` / `HubListDetail` mockups show per-party item + gold counts on each card). The Hub deliberately renders **only available list metadata** (name, role, member count, last-activity) — the item/gold totals live inside each party's full `AppState`, which the Hub does NOT fetch (the whole state per party is too large to pull for a listing screen). To surface them, add a lightweight server aggregate to `GET /sync/parties` (e.g. `itemCount` + `totalCp` denormalized per membership, or a cheap COUNT/SUM join) and extend `PartyListItem`; local mode can compute from the keyed Dexie blob it already enumerates. Until then the card subtitle is role · members · last-active only.
+
+#### R10.4 — Settings account/profile features
+
+- [ ] **Settings account features from the mockup that the app doesn't support yet** (promoted from R9-Deferred 2026-07-15; surfaced during R9.11a — the `SettingsProfileHero` mockup shows affordances beyond the current backend). R9.11 renders honest read-only equivalents (initial-avatar hero, read-only Account rows, single-device Logout, local-data Wipe) and defers the real support here. Concrete plan is the **R10 Notes "Profile hero backing data + Edit profile" candidate sibling** below (avatars, member-since, party-count, Edit-profile flow, device sessions, delete-account) — that Notes block is the detailed scoping for this sub-slice.
+
+#### R10.5 — Item wishlist per character
+
+- [ ] **Item wishlist per character (DM hints)** (promoted from Future/Stretch 2026-07-15). A per-character list of desired items the player is hoping for; the DM sees it as a hint when generating hoards / distributing loot. **New product scope** — needs an OUTLINE data-model entry at charter time (either `Character.wishlist` on the existing schema — `packages/shared/src/schemas/character.ts` — or a dedicated `Wishlist` entity) plus a `wishlist-*` reducer action + matching `TransactionLog` type per the "reducer-action 1:1 with log-type" rule. Surfaces on the Character Sheet (owner edits) + the DM Hoard Generator / Loot Distribution wizards (read-only hint).
+
+#### R10.6 — DM bulk "level up party" from the Dashboard
+
+- [ ] **DM bulk level-up all characters from the Command Center** (new 2026-07-15). A DM Dashboard control that increments **every** party character's `level` by 1 (capped at 20) in one confirmed action. Reuses the existing **`edit-character`** action (`level` is already in its `changedFields` enum — `packages/shared/src/schemas/action.ts` + `transactionLog.ts`; `broadcastOnApplied: true`), dispatched per-character via the R8.5 batched / continue-on-failure pattern the Loot Distribution Wizard already uses — **no new action variant or log type**. Emits one `edit-character` log entry per character (audit trail preserved per OUTLINE §8; server re-validates DM identity from the session cookie per SECURITY §6). Lands as a tile/button on the DM Command Center (`apps/web/src/screens/DmDashboard.tsx`), `DmOnlyRoute`-gated + `useCanDispatch()`-gated, behind a confirm dialog (bulk mutation). **New UX scope** → note an OUTLINE §5/§8 mention at charter time; the underlying mutation is already spec'd.
 
 #### R10 — Notes
 
@@ -4121,7 +4139,7 @@ Not committed; capture interest + scope creep here so it doesn't leak into M1–
 - [ ] Live shopping session (promote shop module from static to live; players browse + buy in real time)
 - [ ] Crafting tracker (downtime, components)
 - [ ] Wear-and-tear / item conditions (homebrew-friendly)
-- [ ] Item wishlist per character (DM hints)
+- [x] Item wishlist per character (DM hints) — *promoted to R10.5 on 2026-07-15*
 - [ ] Print-friendly inventory sheet (PDF)
 - [ ] VTT integration (Foundry / Roll20 character link)
 - [ ] Public party directory (opt-in) for finding open campaigns
