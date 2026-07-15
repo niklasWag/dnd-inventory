@@ -455,7 +455,7 @@ function SellModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-start justify-center bg-black/40 px-4 py-16">
-      <div className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-e3">
+      <div className="flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-e3">
         <div className="flex items-start justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="font-display text-lg font-semibold">Sell to {view.shop.name}</h2>
@@ -473,7 +473,7 @@ function SellModal({
           </button>
         </div>
 
-        <div className="border-b border-border p-3">
+        <div className="border-b border-border px-5 py-3">
           <Input
             autoFocus
             value={query}
@@ -485,7 +485,7 @@ function SellModal({
 
         <div className="flex-1 overflow-y-auto">
           {matches.length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <p className="px-5 py-8 text-center text-sm text-muted-foreground">
               {sellable.length === 0
                 ? 'No inventory items available to sell.'
                 : `Nothing matches “${query}”.`}
@@ -495,7 +495,7 @@ function SellModal({
               {matches.map((it) => {
                 const qty = qtyOf(it.id);
                 return (
-                  <div key={it.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div key={it.id} className="flex items-center gap-3 px-5 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium">{defNameOf(view, it.definitionId)}</div>
                       <div className="text-[11px] text-muted-foreground">{it.quantity} owned</div>
