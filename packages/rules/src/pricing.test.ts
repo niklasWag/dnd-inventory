@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buyPrice, formatPrice } from './pricing';
+import { buyPrice, formatPrice, sellPrice } from './pricing';
 
 /**
  * R6.1 — Pricing rules (OUTLINE §3.5).
@@ -74,6 +74,47 @@ describe('pricing.buyPrice — modifier composition', () => {
   it('zero base cost yields zero regardless of modifier', () => {
     expect(buyPrice(0, 'PHB', { partyModifier: 0.1 })).toBe(0);
     expect(buyPrice(0, 'homebrew', { partyModifier: 2.0, shopModifier: 3.0 })).toBe(0);
+  });
+});
+
+describe('pricing.sellPrice — merchant payout (§3.9)', () => {
+  it('half rate on an identity-scaled PHB item: 500 cp × 0.5 → 250 cp', () => {
+    expect(sellPrice(500, 'PHB', { partyModifier: 1.0 }, 0.5)).toBe(250);
+  });
+
+  it('composes buy-scaling THEN sell rate: 400 cp × 0.5 (party) × 0.5 (rate) → 100 cp', () => {
+    // buyPrice(400, party 0.5) = 200; 200 × 0.5 = 100.
+    expect(sellPrice(400, 'PHB', { partyModifier: 0.5 }, 0.5)).toBe(100);
+  });
+
+  it('applies shopModifier through buyPrice then the sell rate', () => {
+    // buyPrice(400, party 0.5, shop 0.8) = 160; 160 × 0.5 = 80.
+    expect(sellPrice(400, 'PHB', { partyModifier: 0.5, shopModifier: 0.8 }, 0.5)).toBe(80);
+  });
+
+  it('homebrew skips partyModifier but the sell rate still applies', () => {
+    // buyPrice(500, homebrew, party 0.1) = 500; 500 × 0.5 = 250.
+    expect(sellPrice(500, 'homebrew', { partyModifier: 0.1 }, 0.5)).toBe(250);
+  });
+
+  it('full-rate merchant (1.0) pays the buy price', () => {
+    expect(sellPrice(500, 'PHB', { partyModifier: 1.0 }, 1.0)).toBe(500);
+  });
+
+  it('sub-cp payout rounds to nearest; ties go up', () => {
+    // buyPrice(1, party 1.0) = 1; 1 × 0.5 = 0.5 → 1 (ties up).
+    expect(sellPrice(1, 'PHB', { partyModifier: 1.0 }, 0.5)).toBe(1);
+    // buyPrice(1, party 1.0) = 1; 1 × 0.4 = 0.4 → 0.
+    expect(sellPrice(1, 'PHB', { partyModifier: 1.0 }, 0.4)).toBe(0);
+  });
+
+  it('float-precision drift is absorbed by rounding', () => {
+    // buyPrice(500, party 1.0) = 500; 500 × 0.3 = 149.999… → 150.
+    expect(sellPrice(500, 'PHB', { partyModifier: 1.0 }, 0.3)).toBe(150);
+  });
+
+  it('zero base cost yields zero regardless of rate', () => {
+    expect(sellPrice(0, 'PHB', { partyModifier: 1.0 }, 0.5)).toBe(0);
   });
 });
 

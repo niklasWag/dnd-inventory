@@ -105,7 +105,7 @@ export function ShopDetail(): ReactElement {
   }
 
   if (!isDmOrSolo) {
-    return <ShopStorefront view={view} dispatch={dispatch} />;
+    return <ShopStorefront view={view} partyId={partyId} dispatch={dispatch} />;
   }
 
   // DM / solo: a Manage ⇄ Storefront segmented toggle above the chosen surface.
@@ -138,7 +138,7 @@ export function ShopDetail(): ReactElement {
       {dmMode === 'manage' ? (
         <ShopManage view={view} partyId={partyId} dispatch={dispatch} />
       ) : (
-        <ShopStorefront view={view} dispatch={dispatch} />
+        <ShopStorefront view={view} partyId={null} dispatch={dispatch} />
       )}
     </div>
   );
@@ -176,6 +176,21 @@ function defNameOf(view: ShopView, id: string): string {
   return view.catalog.find((d) => d.id === id)?.name ?? id.slice(0, 12);
 }
 
+/** Per-unit merchant payout (cp) for selling `it` to this shop. Null when
+ * the def has no `cost` (DMG magic) — mirrors `sellable`'s cost filter and
+ * the `sale` reducer's payout math via `pricing.sellPrice`. */
+function sellUnitCp(view: ShopView, it: ItemInstance): number | null {
+  const def = view.catalog.find((d) => d.id === it.definitionId);
+  if (def === undefined || def.cost === undefined) return null;
+  const baseCp = currency.toCopper({ [def.cost.currency]: def.cost.amount });
+  return pricing.sellPrice(
+    baseCp,
+    def.source,
+    { partyModifier: view.partyModifier, shopModifier: view.shop.priceModifier },
+    view.shop.sellToMerchantRate,
+  );
+}
+
 function defRarityOf(view: ShopView, id: string): ItemDefinition['rarity'] {
   return view.catalog.find((d) => d.id === id)?.rarity;
 }
@@ -186,16 +201,34 @@ function defRarityOf(view: ShopView, id: string): ItemDefinition['rarity'] {
 
 function ShopStorefront({
   view,
+  partyId,
   dispatch,
 }: {
   view: ShopView;
+  partyId: string | null;
   dispatch: DispatchFn;
 }): ReactElement {
+  const navigate = useNavigate();
   const { shop, baseCurrency, myInventoryStashId } = view;
   const [sellOpen, setSellOpen] = useState(false);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
+      {partyId !== null ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            void navigate(`/party/${partyId}/shops`);
+          }}
+          className="-ml-2 mb-4 h-8 gap-1.5 px-2 text-muted-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Shops
+        </Button>
+      ) : null}
+
       {/* Storefront banner */}
       <div className="mb-6 overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-surface shadow-e2">
         <div className="flex flex-wrap items-center justify-between gap-4 p-6">
@@ -494,11 +527,23 @@ function SellModal({
             <div className="divide-y divide-border">
               {matches.map((it) => {
                 const qty = qtyOf(it.id);
+                const unitCp = sellUnitCp(view, it);
+                const totalCp = unitCp === null ? null : unitCp * qty;
                 return (
                   <div key={it.id} className="flex items-center gap-3 px-5 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium">{defNameOf(view, it.definitionId)}</div>
-                      <div className="text-[11px] text-muted-foreground">{it.quantity} owned</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {it.quantity} owned
+                        {totalCp !== null ? (
+                          <>
+                            {' · '}
+                            <span className="text-primary">
+                              +{pricing.formatPrice(totalCp, view.baseCurrency)}
+                            </span>
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="inline-flex items-center overflow-hidden rounded-md border border-border">
                       <button

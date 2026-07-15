@@ -17,8 +17,12 @@
  *     rather than "20 pp"). Sub-cp values are impossible on input
  *     because `buyPrice` already floors to integer cp.
  *
- * `sellPrice` remains a stub — activated in R6.2 when the `purchase` /
- * `sale` reducers land.
+ * `sellPrice(baseCostCp, source, ctx, sellToMerchantRate)` — merchant
+ * payout in integer CP (§3.9). The item is first buy-scaled via
+ * `buyPrice` (party/shop modifiers), then the merchant's
+ * `sellToMerchantRate` is applied; the result rounds half-up to
+ * integer CP. Mirrors the `sale` reducer exactly so the modal preview
+ * never drifts from what the reducer credits.
  */
 
 export type ItemSource = 'PHB' | 'DMG' | 'homebrew';
@@ -74,6 +78,22 @@ export function buyPrice(baseCostCp: number, source: ItemSource, ctx: PriceConte
   const scale = source === 'homebrew' ? shop : ctx.partyModifier * shop;
   const raw = baseCostCp * scale;
   return Math.floor(raw + 0.5);
+}
+
+/**
+ * Compute the merchant payout in integer CP for selling an item (§3.9).
+ * The item is buy-scaled first (`buyPrice`), then multiplied by the
+ * shop's `sellToMerchantRate`. Rounds half-up like `buyPrice` so the
+ * displayed preview matches the `sale` reducer's credit exactly.
+ */
+export function sellPrice(
+  baseCostCp: number,
+  source: ItemSource,
+  ctx: PriceContext,
+  sellToMerchantRate: number,
+): number {
+  const scaled = buyPrice(baseCostCp, source, ctx);
+  return Math.floor(scaled * sellToMerchantRate + 0.5);
 }
 
 /**
