@@ -88,7 +88,7 @@ export function StorageDetail(): ReactElement {
         onClick={() => {
           void navigate(`/party/${partyId}/character/${characterId}/stashes`);
         }}
-        className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+        className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Storage
