@@ -1,7 +1,6 @@
 import { type ReactElement } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
-import { Progress } from '@/components/ui/progress';
 import { useStore } from '@/store';
 import { capacity, weight as weightRules } from '@app/rules';
 
@@ -98,36 +97,46 @@ export function CapacityBar({ characterId }: CapacityBarProps): ReactElement | n
     encumbered: 'text-amber-600',
     'heavily-encumbered': 'text-destructive',
   };
-  // shadcn Progress uses an inner Indicator div — target it with the
-  // arbitrary descendant selector to recolor the fill per state.
-  const barClass: Record<typeof state, string> = {
-    unencumbered: '',
-    encumbered: '[&>div]:bg-amber-500',
-    'heavily-encumbered': '[&>div]:bg-destructive',
-  };
 
   const ruleBadge = data.rule === 'phb' ? 'PHB' : 'Variant';
   const sizeBadge = data.size.charAt(0).toUpperCase() + data.size.slice(1);
   const enforceBadge = data.enforce ? ' · enforced' : '';
 
+  // Slim custom bar fill (mockup treatment); color tracks the state.
+  const fillClass: Record<typeof state, string> = {
+    unencumbered: 'bg-primary',
+    encumbered: 'bg-amber-500',
+    'heavily-encumbered': 'bg-destructive',
+  };
+
   return (
     <section
-      className="space-y-2 rounded-lg border border-border bg-card p-3"
+      className="overflow-hidden rounded-xl border border-border bg-surface shadow-e1"
       aria-label="Encumbrance"
     >
-      <div className="flex items-center justify-between text-sm">
-        <span className="font-semibold">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <h2 className="font-display text-sm font-semibold uppercase tracking-wide">
           Encumbrance{' '}
-          <span className="font-normal text-xs text-muted-foreground">
+          <span className="text-xs font-normal normal-case tracking-normal text-muted-foreground">
             ({sizeBadge} · {ruleBadge}
             {enforceBadge})
           </span>
-        </span>
-        <span className={textClass[state]}>
-          {data.currentWeight} / {capacityLb} lb{stateLabel[state]}
-        </span>
+        </h2>
+        <span className="text-[11px] tabular-nums text-muted-foreground">{pct}%</span>
       </div>
-      <Progress value={pct} className={barClass[state]} />
+      <div className="px-4 py-3">
+        <div className="mb-1 flex justify-between text-sm">
+          <span className={`tabular-nums ${textClass[state]}`}>
+            {data.currentWeight} / {capacityLb} lb{stateLabel[state]}
+          </span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-surface-2">
+          <div
+            className={`h-full rounded-full transition-all ${fillClass[state]}`}
+            style={{ width: `${String(pct)}%` }}
+          />
+        </div>
+      </div>
     </section>
   );
 }

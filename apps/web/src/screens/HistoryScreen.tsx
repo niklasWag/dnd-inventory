@@ -1,6 +1,21 @@
 import type { ChangeEvent, ReactElement } from 'react';
 import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import {
+  ArrowLeftRight,
+  Coins,
+  Package,
+  PackageMinus,
+  PackagePlus,
+  Play,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Sword,
+  UserPlus,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
 
 import { RoleBadge } from '@/components/RoleBadge';
 import { resolveActorLabel } from '@/lib/resolveActorLabel';
@@ -99,6 +114,95 @@ const ALL_ACTION_TYPES: readonly TransactionLogEntry['type'][] = [
 
 const EMPTY_LOG: readonly TransactionLogEntry[] = [];
 
+/**
+ * R9.8 — grouped Type-chip visuals (icon + token-driven color) for the
+ * table's Type column, ported from the `HistoryTable` mockup. The app has
+ * 40+ log types, so rather than a per-type map we group them into a handful
+ * of families sharing an icon + chip color, with a neutral fallback for
+ * anything unmapped. Purely presentational — the filter logic still keys off
+ * the exact `entry.type`.
+ */
+interface TypeVisual {
+  icon: LucideIcon;
+  chip: string;
+  label: string;
+}
+
+const NEUTRAL_VISUAL: TypeVisual = {
+  icon: Package,
+  chip: 'bg-surface-2 text-muted-foreground',
+  label: 'Other',
+};
+
+function typeVisual(type: TransactionLogEntry['type']): TypeVisual {
+  switch (type) {
+    case 'acquire':
+      return {
+        icon: PackagePlus,
+        chip: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+        label: 'Acquire',
+      };
+    case 'consume':
+      return {
+        icon: PackageMinus,
+        chip: 'bg-rose-500/10 text-rose-600 dark:text-rose-400',
+        label: 'Consume',
+      };
+    case 'transfer':
+    case 'split':
+    case 'split-evenly':
+      return {
+        icon: ArrowLeftRight,
+        chip: 'bg-rarity-rare/10 text-rarity-rare',
+        label: 'Transfer',
+      };
+    case 'currency-change':
+    case 'currency-transfer':
+      return {
+        icon: Coins,
+        chip: 'bg-rarity-legendary/10 text-rarity-legendary',
+        label: 'Currency',
+      };
+    case 'identify':
+      return {
+        icon: Sparkles,
+        chip: 'bg-rarity-very-rare/10 text-rarity-very-rare',
+        label: 'Identify',
+      };
+    case 'equip':
+    case 'unequip':
+    case 'attune':
+    case 'unattune':
+      return { icon: Sword, chip: 'bg-rarity-uncommon/10 text-rarity-uncommon', label: 'Loadout' };
+    case 'use-charge':
+    case 'recharge':
+      return { icon: Zap, chip: 'bg-primary/10 text-primary', label: 'Charges' };
+    case 'create-character':
+    case 'delete-character':
+    case 'rename-character':
+    case 'edit-character':
+      return { icon: UserPlus, chip: 'bg-primary/10 text-primary', label: 'Character' };
+    case 'start-game-session':
+    case 'end-game-session':
+    case 'edit-game-session-notes':
+      return { icon: Play, chip: 'bg-primary/10 text-primary', label: 'Session' };
+    case 'appoint-banker':
+    case 'revoke-banker':
+    case 'dm-transfer':
+    case 'kick-player':
+    case 'join-party':
+    case 'leave-party':
+    case 'rename-party':
+      return {
+        icon: ShieldCheck,
+        chip: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+        label: 'Party',
+      };
+    default:
+      return NEUTRAL_VISUAL;
+  }
+}
+
 export function HistoryScreen(): ReactElement {
   const { state, log } = useStore(
     useShallow((s) => ({
@@ -108,6 +212,7 @@ export function HistoryScreen(): ReactElement {
   );
 
   // Filter state (component-local; resets per mount).
+  const [query, setQuery] = useState('');
   const [sessionFilter, setSessionFilter] = useState<string>('all'); // 'all' | 'untagged' | gameSessionId
   const [characterFilter, setCharacterFilter] = useState<string>('all'); // 'all' | characterId
   const [itemFilter, setItemFilter] = useState<string>('all'); // 'all' | itemInstanceId
@@ -122,6 +227,7 @@ export function HistoryScreen(): ReactElement {
         ? applyFilters({
             log,
             state,
+            query,
             sessionFilter,
             characterFilter,
             itemFilter,
@@ -129,24 +235,52 @@ export function HistoryScreen(): ReactElement {
             actionTypes,
           })
         : EMPTY_LOG,
-    [log, state, sessionFilter, characterFilter, itemFilter, roleFilter, actionTypes],
+    [log, state, query, sessionFilter, characterFilter, itemFilter, roleFilter, actionTypes],
   );
 
   const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
   const remaining = Math.max(0, filtered.length - visible.length);
 
   if (state === null) {
-    return <p className="text-sm text-muted-foreground">No party loaded.</p>;
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        <div className="rounded-xl border border-dashed border-border bg-surface-2/40 p-10 text-center text-sm text-muted-foreground">
+          No party loaded.
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">Party History</h1>
-        <p className="text-sm text-muted-foreground">
-          Showing {visible.length} of {filtered.length} entries
-        </p>
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-8">
+      <header className="space-y-1">
+        <p className="text-sm text-muted-foreground">{state.party.name}</p>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h1 className="font-display text-2xl font-bold tracking-tight">Audit Log</h1>
+          <p className="text-sm text-muted-foreground">
+            Showing {visible.length} of {filtered.length} entries
+          </p>
+        </div>
       </header>
+
+      {/* Search + rich filters */}
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setVisibleCount(PAGE_SIZE);
+          }}
+          placeholder="Search summary or actor…"
+          aria-label="Search history"
+          className="h-9 w-full rounded-md border border-border bg-surface pl-8 pr-3 text-sm outline-none transition focus:border-primary/50"
+        />
+      </div>
 
       <FilterBar
         state={state}
@@ -178,13 +312,14 @@ export function HistoryScreen(): ReactElement {
       />
 
       {filtered.length === 0 ? (
-        <div className="rounded-md border border-dashed p-6 text-center">
-          <p className="text-sm text-muted-foreground">No entries match the current filters.</p>
+        <div className="rounded-lg border border-dashed border-border bg-surface-2/40 p-10 text-center">
+          <p className="text-sm font-medium">No entries match the current filters.</p>
           <Button
             variant="outline"
             size="sm"
             className="mt-3"
             onClick={() => {
+              setQuery('');
               setSessionFilter('all');
               setCharacterFilter('all');
               setItemFilter('all');
@@ -198,23 +333,50 @@ export function HistoryScreen(): ReactElement {
         </div>
       ) : (
         <>
-          <ul className="space-y-1 text-sm" role="list" aria-label="History entries">
-            {visible.map((e) => (
-              <li
-                key={e.id}
-                className="flex flex-wrap items-baseline gap-3 border-b border-border/50 py-1.5 last:border-0"
-              >
-                <span className="font-mono text-xs text-muted-foreground">
-                  {new Date(e.timestamp).toLocaleString()}
-                </span>
-                <RoleBadge role={e.actorRole} />
-                <span className="text-xs font-medium">
-                  {resolveActorLabel(e.actorUserId, state)}
-                </span>
-                <span>{summarizeLogEntry(e, state)}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
+            <table className="w-full text-left text-sm" aria-label="History entries">
+              <thead className="border-b border-border bg-surface-2/50 text-[11px] uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2.5 font-semibold">When</th>
+                  <th className="px-4 py-2.5 font-semibold">Actor</th>
+                  <th className="px-4 py-2.5 font-semibold">Type</th>
+                  <th className="px-4 py-2.5 font-semibold">Summary</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {visible.map((e) => {
+                  const v = typeVisual(e.type);
+                  const Icon = v.icon;
+                  return (
+                    <tr key={e.id} className="transition hover:bg-surface-2/50">
+                      <td className="whitespace-nowrap px-4 py-2.5 align-top text-xs tabular-nums text-muted-foreground">
+                        {new Date(e.timestamp).toLocaleString()}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2.5 align-top">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-medium">
+                            {resolveActorLabel(e.actorUserId, state)}
+                          </span>
+                          <RoleBadge role={e.actorRole} />
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2.5 align-top">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${v.chip}`}
+                        >
+                          <Icon className="h-3 w-3" aria-hidden="true" />
+                          {v.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 align-top text-foreground">
+                        {summarizeLogEntry(e, state)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
           {remaining > 0 ? (
             <div className="flex justify-center pt-2">
@@ -434,19 +596,22 @@ function FilterField({ label, children }: { label: string; children: ReactElemen
 function applyFilters(args: {
   log: readonly TransactionLogEntry[];
   state: AppState;
+  query: string;
   sessionFilter: string;
   characterFilter: string;
   itemFilter: string;
   roleFilter: string;
   actionTypes: ReadonlySet<TransactionLogEntry['type']>;
 }): TransactionLogEntry[] {
-  const { log, state, sessionFilter, characterFilter, itemFilter, roleFilter, actionTypes } = args;
+  const { log, state, query, sessionFilter, characterFilter, itemFilter, roleFilter, actionTypes } =
+    args;
 
   const currentUserId = state.user.id;
   const isDm = state.memberships.some(
     (m) => m.userId === currentUserId && m.role === 'dm' && m.leftAt === null,
   );
   const ctx = { currentUserId, isDm, state };
+  const q = query.trim().toLowerCase();
 
   const character =
     characterFilter === 'all'
@@ -473,6 +638,15 @@ function applyFilters(args: {
 
     if (roleFilter !== 'all') {
       if (entry.actorRole !== roleFilter) return false;
+    }
+
+    // R9.8 — free-text search over the rendered summary + the resolved
+    // actor label (the two columns a reader scans). Applied last so the
+    // more selective structured filters narrow the set first.
+    if (q !== '') {
+      const summary = summarizeLogEntry(entry, state).toLowerCase();
+      const actor = resolveActorLabel(entry.actorUserId, state).toLowerCase();
+      if (!summary.includes(q) && !actor.includes(q)) return false;
     }
 
     return true;

@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { currency } from '@app/rules';
 
 interface ConvertCurrencyModalProps {
@@ -72,6 +73,7 @@ export function ConvertCurrencyModal({
   onOpenChange,
 }: ConvertCurrencyModalProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const holding = useStore(
@@ -157,7 +159,7 @@ export function ConvertCurrencyModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Convert currency</DialogTitle>
+          <DialogTitle className="font-display">Convert currency</DialogTitle>
           <DialogDescription>
             Convert one denomination into another. Lossy conversions (e.g. 1 sp → 0.1 gp) are
             refused; the result must be a whole-number target.
@@ -226,7 +228,7 @@ export function ConvertCurrencyModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+            <Button type="submit" disabled={!canSubmit || isSubmitting || !canDispatch}>
               {isSubmitting ? 'Converting…' : 'Convert'}
             </Button>
           </DialogFooter>

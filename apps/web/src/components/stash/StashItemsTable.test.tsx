@@ -65,8 +65,23 @@ function renderTable(stashId: string): void {
   );
 }
 
+/**
+ * R9.3 / R9.12 — per-row actions. In the carried Inventory (characterId
+ * provided) they live in a kebab DropdownMenu; open it via this helper so
+ * its `menuitem`s are queryable. The party-scope stash tables (no
+ * characterId — the `renderTable` path below) render the actions as inline
+ * buttons instead, so those tests query the buttons directly without a
+ * menu open step.
+ */
+async function openRowMenu(user: ReturnType<typeof userEvent.setup>, name?: RegExp): Promise<void> {
+  const trigger = name
+    ? screen.getByRole('button', { name })
+    : screen.getByRole('button', { name: /actions for/i });
+  await user.click(trigger);
+}
+
 describe('StashItemsTable — M5 Move/Split buttons', () => {
-  it('renders Split + Move buttons on each row', () => {
+  it('renders Split + Move actions as inline buttons', () => {
     const { stashId } = setupWith(3);
     renderTable(stashId);
 
@@ -83,7 +98,7 @@ describe('StashItemsTable — M5 Move/Split buttons', () => {
   it('enables Split when the row has qty >= 2', () => {
     const { stashId } = setupWith(2);
     renderTable(stashId);
-    expect(screen.getByRole('button', { name: /^split torch/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^split torch/i })).not.toBeDisabled();
   });
 
   it('opens the SplitModal when Split is clicked', async () => {
@@ -186,7 +201,8 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     );
   }
 
-  it('disables the Attune button when maxAttunement is met (non-DM path)', () => {
+  it('disables the Attune menu item when maxAttunement is met (non-DM path)', async () => {
+    const user = userEvent.setup();
     const { characterId, inventoryStashId } = bootstrapWithMagicItems(4);
     // Attune the first three (default cap = 3).
     const ids = useStore
@@ -220,23 +236,49 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     });
     renderInventory(inventoryStashId, characterId);
 
-    // The fourth row's Attune button must be disabled (cap met + player).
-    const attuneButtons = screen.getAllByRole('button', { name: /^attune cloak of protection/i });
-    expect(attuneButtons).toHaveLength(1); // only the un-attuned row shows "Attune"
-    expect(attuneButtons[0]).toBeDisabled();
-    // The three attuned rows show "Unattune" and remain enabled.
-    expect(screen.getAllByRole('button', { name: /^unattune cloak of protection/i })).toHaveLength(
-      3,
-    );
+    // R9.3 — actions are in per-row kebab menus. All four rows share the
+    // display name "Cloak of Protection", so their triggers are ambiguous
+    // by name; index the trigger array. The fourth row (index 3) is the
+    // un-attuned one and its Attune item must be aria-disabled (cap met +
+    // player). Only one Radix menu can be open at a time, so open each
+    // row's menu separately and Escape-close before the next.
+    const triggers = screen.getAllByRole('button', {
+      name: /actions for cloak of protection/i,
+    });
+    expect(triggers).toHaveLength(4);
+
+    // Un-attuned row (index 3): shows a disabled "Attune" item.
+    await user.click(triggers[3]!);
+    const attuneItem = screen.getByRole('menuitem', { name: /^attune cloak of protection/i });
+    expect(attuneItem).toHaveAttribute('aria-disabled', 'true');
+    expect(
+      screen.queryByRole('menuitem', { name: /^unattune cloak of protection/i }),
+    ).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+
+    // The three attuned rows (indexes 0-2) each show an "Unattune" item.
+    for (let i = 0; i < 3; i += 1) {
+      await user.click(triggers[i]!);
+      expect(
+        screen.getByRole('menuitem', { name: /^unattune cloak of protection/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('menuitem', { name: /^attune cloak of protection/i }),
+      ).not.toBeInTheDocument();
+      await user.keyboard('{Escape}');
+    }
   });
 
   it('shows a toast (not an uncaught error) when the reducer rejects', async () => {
     // The pre-disable guard prevents the common over-cap click. To
-    // exercise the toast path we simulate the race window: cap drops
-    // mid-session AFTER the click is already in flight. `fireEvent.click`
-    // (unlike userEvent) bypasses the `disabled` check so we can reach
-    // the dispatch handler even though React has re-rendered with a
-    // disabled button by the time the click lands.
+    // exercise the toast path we simulate the race window: the row's
+    // Attune menu item is opened while a free slot still exists (item
+    // enabled), THEN the cap drops to 0 mid-session. `fireEvent.click`
+    // (unlike userEvent) fires the already-mounted menu item's handler
+    // even though React has re-rendered it as aria-disabled, so we reach
+    // the dispatch and the reducer's reject surfaces as a toast.
+    // R9.3 — the Attune toggle now lives in the row's kebab menu, so we
+    // open the menu first (while still enabled) before firing the click.
     // R4.5 — force a non-DM actor so the click routes through the
     // reducer (not the cap-override dialog).
     const { characterId, inventoryStashId } = bootstrapWithMagicItems(1);
@@ -259,25 +301,36 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     });
     renderInventory(inventoryStashId, characterId);
 
-    // Drop cap to 0 — re-render disables the Attune button.
+    // Open the row menu while a slot is still free (item enabled).
+    const user = userEvent.setup();
+    await openRowMenu(user);
+    const item = screen.getByRole('menuitem', { name: /^attune cloak of protection/i });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+
+    // Drop cap to 0 — re-render marks the (still-mounted) menu item
+    // aria-disabled, but `fireEvent.click` bypasses that and reaches the
+    // reducer, which rejects with the "no free attunement slot" message.
     void useStore
       .getState()
       .dispatch({ type: 'edit-character', payload: { characterId, patch: { maxAttunement: 0 } } });
 
-    const button = screen.getByRole('button', { name: /^attune cloak of protection/i });
-    fireEvent.click(button); // bypass `disabled` to hit the reducer
+    fireEvent.click(item); // bypass aria-disabled to hit the reducer
 
     expect(await screen.findByText(/no free attunement slot/i)).toBeInTheDocument();
   });
 
-  it('Equip toggle dispatches equip and flips the button label', async () => {
+  it('Equip toggle dispatches equip and flips the menu item label', async () => {
     const user = userEvent.setup();
     const { characterId, inventoryStashId } = bootstrapWithTorches(1);
     renderInventory(inventoryStashId, characterId);
 
-    await user.click(screen.getByRole('button', { name: /^equip torch/i }));
-    // Label flipped to "Unequip".
-    expect(screen.getByRole('button', { name: /^unequip torch/i })).toBeInTheDocument();
+    // R9.3 — Equip is a menu item now: open the row menu, click Equip
+    // (which closes the menu), then re-open and assert the label flipped
+    // to "Unequip".
+    await openRowMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: /^equip torch/i }));
+    await openRowMenu(user);
+    expect(screen.getByRole('menuitem', { name: /^unequip torch/i })).toBeInTheDocument();
   });
 
   // -------------------- R4.5 — attune cap-override for DMs --------------------
@@ -299,13 +352,19 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     }
     renderInventory(inventoryStashId, characterId);
 
-    const attuneButton = screen.getByRole('button', {
+    // R9.3 — open the un-attuned row's kebab menu (index 3; all four rows
+    // share the display name so triggers are ambiguous by name).
+    const triggers = screen.getAllByRole('button', {
+      name: /actions for cloak of protection/i,
+    });
+    await user.click(triggers[3]!);
+    const attuneItem = screen.getByRole('menuitem', {
       name: /^attune cloak of protection/i,
     });
     // R4.5 flip: no longer disabled for DMs.
-    expect(attuneButton).not.toBeDisabled();
+    expect(attuneItem).not.toHaveAttribute('aria-disabled', 'true');
 
-    await user.click(attuneButton);
+    await user.click(attuneItem);
     // Confirm dialog appears.
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent(/attunement cap/i);
@@ -343,7 +402,12 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     }
     renderInventory(inventoryStashId, characterId);
 
-    await user.click(screen.getByRole('button', { name: /^attune cloak of protection/i }));
+    // R9.3 — open the un-attuned row's kebab menu (index 3) and click Attune.
+    const triggers = screen.getAllByRole('button', {
+      name: /actions for cloak of protection/i,
+    });
+    await user.click(triggers[3]!);
+    await user.click(screen.getByRole('menuitem', { name: /^attune cloak of protection/i }));
     await screen.findByRole('alertdialog');
     await user.click(screen.getByRole('button', { name: /cancel/i }));
 
@@ -354,7 +418,8 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     expect(attunedCount).toBe(3);
   });
 
-  it('R4.5 — non-DM player in a 2+-member party still sees a disabled Attune button (no dialog)', () => {
+  it('R4.5 — non-DM player in a 2+-member party still sees a disabled Attune menu item (no dialog)', async () => {
+    const user = userEvent.setup();
     const { characterId, inventoryStashId } = bootstrapWithMagicItems(4);
     const ids = useStore
       .getState()
@@ -387,10 +452,16 @@ describe('StashItemsTable — R1.2 equip / attune toggles', () => {
     });
     renderInventory(inventoryStashId, characterId);
 
-    const attuneButton = screen.getByRole('button', {
+    // R9.3 — open the un-attuned row's kebab menu (index 3). The Attune
+    // item is aria-disabled for a plain player at cap, and no dialog opens.
+    const triggers = screen.getAllByRole('button', {
+      name: /actions for cloak of protection/i,
+    });
+    await user.click(triggers[3]!);
+    const attuneItem = screen.getByRole('menuitem', {
       name: /^attune cloak of protection/i,
     });
-    expect(attuneButton).toBeDisabled();
+    expect(attuneItem).toHaveAttribute('aria-disabled', 'true');
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
@@ -482,13 +553,13 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
    * container's name.
    */
 
-  it('hides the Pack button when no containers are in the stash', () => {
+  it('hides the Pack action when no containers are in the stash', () => {
     const { stashId } = setupWith(1); // just a torch, no containers
     renderTable(stashId);
     expect(screen.queryByRole('button', { name: /^pack torch/i })).not.toBeInTheDocument();
   });
 
-  it('shows the Pack button on free top-level items when a container exists', () => {
+  it('shows the Pack action on free top-level items when a container exists', () => {
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -513,6 +584,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       },
     });
     renderTable(inventoryStashId);
+    // R9.12 — Pack is an inline button on the Torch row (no-characterId path).
     expect(screen.getByRole('button', { name: /^pack torch/i })).toBeInTheDocument();
   });
 
@@ -520,7 +592,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     const { inventoryStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     // Two backpacks so a candidate container exists in the stash, but
-    // the container row itself shouldn't get a Pack button (avoids the
+    // the container row itself shouldn't get a Pack action (avoids the
     // illegal "pack backpack into backpack" combo even though the
     // reducer would reject it).
     void useStore.getState().dispatch({
@@ -544,6 +616,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       },
     });
     renderTable(inventoryStashId);
+    // Neither Backpack row exposes a Pack action.
     expect(screen.queryByRole('button', { name: /^pack backpack/i })).not.toBeInTheDocument();
   });
 
@@ -580,6 +653,7 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       .appState!.items.find((i) => i.definitionId === torch.id)!.id;
     renderTable(inventoryStashId);
 
+    // R9.12 — Pack is an inline button; click it directly.
     await user.click(screen.getByRole('button', { name: /^pack torch/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/pack into container/i)).toBeInTheDocument();
@@ -654,11 +728,16 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
       </MemoryRouter>,
     );
 
-    // The torch row now has Take out; the backpack row doesn't.
-    expect(screen.getByRole('button', { name: /take torch/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /take backpack/i })).not.toBeInTheDocument();
+    // R9.3 — Take out is a menu item. The backpack row's menu has none;
+    // the torch row's menu has one, and clicking it dispatches the
+    // take-out transfer.
+    await openRowMenu(user, /actions for backpack/i);
+    expect(screen.queryByRole('menuitem', { name: /take backpack/i })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
 
-    await user.click(screen.getByRole('button', { name: /take torch/i }));
+    await openRowMenu(user, /actions for torch/i);
+    expect(screen.getByRole('menuitem', { name: /take torch/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: /take torch/i }));
     const torchAfter = useStore.getState().appState!.items.find((i) => i.id === torchId)!;
     expect(torchAfter.containerInstanceId).toBeNull();
   });
@@ -728,13 +807,14 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
     expect(screen.getByText(/3 items inside/i)).toBeInTheDocument();
   });
 
-  it('hides Take out when the parent is in a different stash (dangling reference)', () => {
+  it('hides Take out when the parent is in a different stash (dangling reference)', async () => {
     // Defensive UI filter: a row whose `containerInstanceId` points at
     // a row in a DIFFERENT stash is not actually contained from the
     // user's perspective — the parent isn't visible here, so a
-    // "Take out" button would be confusing. The R1.5 reducer's
+    // "Take out" action would be confusing. The R1.5 reducer's
     // orphan-drop usually prevents this state, but partial states
     // (legacy JSON imports, manual DevTools pokes) could still trip it.
+    const user = userEvent.setup();
     const { characterId, inventoryStashId, partyStashId, catalog } = bootstrap();
     const backpack = catalog.find((d) => d.id === 'phb-2024:backpack')!;
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
@@ -803,7 +883,8 @@ describe('StashItemsTable — R1.5 Pack / Take out buttons + container summary',
 
     // Torch renders top-level (no Take out, because the backpack isn't here).
     expect(screen.getByText('Torch')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /take torch/i })).not.toBeInTheDocument();
+    await openRowMenu(user, /actions for torch/i);
+    expect(screen.queryByRole('menuitem', { name: /take torch/i })).not.toBeInTheDocument();
   });
 });
 
@@ -836,7 +917,8 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
     );
   }
 
-  it('hides the Attune button on a mundane PHB row (Torch) but shows Equip', () => {
+  it('hides the Attune menu item on a mundane PHB row (Torch) but shows Equip', async () => {
+    const user = userEvent.setup();
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const torch = catalog.find((d) => d.id === 'phb-2024:torch')!;
     void useStore.getState().dispatch({
@@ -852,12 +934,15 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
 
     renderInventory(inventoryStashId, characterId);
 
-    expect(screen.getByRole('button', { name: /^equip torch/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^attune torch/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^unattune torch/i })).not.toBeInTheDocument();
+    // R9.3 — Equip / Attune are menu items; open the Torch row's menu.
+    await openRowMenu(user);
+    expect(screen.getByRole('menuitem', { name: /^equip torch/i })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^attune torch/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^unattune torch/i })).not.toBeInTheDocument();
   });
 
-  it('shows both Equip and Attune on a DMG row with requiresAttunement:true', () => {
+  it('shows both Equip and Attune on a DMG row with requiresAttunement:true', async () => {
+    const user = userEvent.setup();
     const { characterId, inventoryStashId, catalog } = bootstrap();
     const magic = catalog.find((d) => d.id === 'dmg-2024:cloak-of-protection')!;
     void useStore.getState().dispatch({
@@ -873,9 +958,12 @@ describe('StashItemsTable — R2.1 magic-item display + Attune visibility', () =
 
     renderInventory(inventoryStashId, characterId);
 
-    expect(screen.getByRole('button', { name: /^equip cloak of protection/i })).toBeInTheDocument();
+    await openRowMenu(user);
     expect(
-      screen.getByRole('button', { name: /^attune cloak of protection/i }),
+      screen.getByRole('menuitem', { name: /^equip cloak of protection/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: /^attune cloak of protection/i }),
     ).toBeInTheDocument();
   });
 

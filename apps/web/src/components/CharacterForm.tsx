@@ -1,6 +1,7 @@
-import { useState, type ReactElement } from 'react';
+import { useState, type ReactElement, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Dumbbell, Swords, User, type LucideIcon } from 'lucide-react';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
@@ -91,45 +92,58 @@ export function CharacterForm({
       onSubmit={(e) => {
         void handleSubmit(handle)(e);
       }}
-      className="space-y-5"
+      className="space-y-4"
       noValidate
     >
-      <Field id="name" label="Name" error={errors.name?.message}>
-        <Input id="name" autoFocus {...register('name')} />
-      </Field>
-
-      <Field id="species" label="Species" error={errors.species?.message}>
-        <Input id="species" placeholder="e.g. Dwarf" {...register('species')} />
-      </Field>
-
-      <Field id="size" label="Size" error={errors.size?.message}>
-        <select
-          id="size"
-          {...register('size')}
-          className="flex h-10 w-full items-center rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-        >
-          <option value="tiny">Tiny (× 0.5 capacity)</option>
-          <option value="small">Small (× 0.5 capacity)</option>
-          <option value="medium">Medium (× 1 capacity)</option>
-          <option value="large">Large (× 2 capacity)</option>
-          <option value="huge">Huge (× 4 capacity)</option>
-          <option value="gargantuan">Gargantuan (× 8 capacity)</option>
-        </select>
-      </Field>
-
-      <Field id="class" label="Class" error={errors.class?.message}>
-        <Input id="class" placeholder="e.g. Fighter" {...register('class')} />
-      </Field>
-
-      <div className="grid grid-cols-2 gap-4">
-        <Field id="level" label="Level" error={errors.level?.message}>
-          <Input id="level" type="number" min={1} max={20} {...register('level')} />
+      <Group icon={User} title="Identity">
+        <Field id="name" label="Name" error={errors.name?.message}>
+          <Input id="name" autoFocus {...register('name')} />
         </Field>
 
-        <Field id="str" label="STR" error={errors.str?.message}>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="species" label="Species" error={errors.species?.message}>
+            <Input id="species" placeholder="e.g. Dwarf" {...register('species')} />
+          </Field>
+
+          <Field id="size" label="Size" error={errors.size?.message}>
+            <select
+              id="size"
+              {...register('size')}
+              className="flex h-10 w-full items-center rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            >
+              <option value="tiny">Tiny (× 0.5 capacity)</option>
+              <option value="small">Small (× 0.5 capacity)</option>
+              <option value="medium">Medium (× 1 capacity)</option>
+              <option value="large">Large (× 2 capacity)</option>
+              <option value="huge">Huge (× 4 capacity)</option>
+              <option value="gargantuan">Gargantuan (× 8 capacity)</option>
+            </select>
+          </Field>
+        </div>
+      </Group>
+
+      <Group icon={Swords} title="Class & level">
+        <div className="grid grid-cols-[1fr_5rem] gap-3">
+          <Field id="class" label="Class" error={errors.class?.message}>
+            <Input id="class" placeholder="e.g. Fighter" {...register('class')} />
+          </Field>
+
+          <Field id="level" label="Level" error={errors.level?.message}>
+            <Input id="level" type="number" min={1} max={20} {...register('level')} />
+          </Field>
+        </div>
+      </Group>
+
+      <Group icon={Dumbbell} title="Ability">
+        <Field
+          id="str"
+          label="STR"
+          error={errors.str?.message}
+          hint="Drives carrying capacity together with size (§3.6). Range 1–30."
+        >
           <Input id="str" type="number" min={1} max={30} {...register('str')} />
         </Field>
-      </div>
+      </Group>
 
       {errorMessage !== null && errorMessage !== undefined ? (
         <p className="text-sm text-destructive" role="alert">
@@ -151,18 +165,47 @@ export function CharacterForm({
   );
 }
 
+/**
+ * R9.12b — labelled sub-section grouping the character fields
+ * (Identity / Class & level / Ability), ported from the design-lab
+ * `character/CharacterFormGrouped` mockup. Framed `surface-2` block with a
+ * `font-display` uppercase eyebrow + icon.
+ */
+function Group({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-1.5 font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" /> {title}
+      </h3>
+      <div className="space-y-3 rounded-lg border border-border bg-surface-2/30 p-3">
+        {children}
+      </div>
+    </section>
+  );
+}
+
 interface FieldProps {
   id: string;
   label: string;
   error: string | undefined;
+  hint?: string;
   children: ReactElement;
 }
 
-function Field({ id, label, error, children }: FieldProps): ReactElement {
+function Field({ id, label, error, hint, children }: FieldProps): ReactElement {
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
       {children}
+      {hint !== undefined ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
       {error !== undefined ? (
         <p className="text-sm text-destructive" role="alert">
           {error}

@@ -1,7 +1,17 @@
 import { type ReactElement, useMemo, useState, useEffect } from 'react';
 import { Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { Calendar, Coins, Package, Play, Square, Users } from 'lucide-react';
+import {
+  Calendar,
+  ChevronRight,
+  Coins,
+  Gem,
+  Play,
+  ScrollText,
+  Sparkles,
+  Square,
+  Users,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { currency } from '@app/rules';
@@ -66,8 +76,9 @@ export function DmOnlyRoute(): ReactElement {
 export function DmDashboard(): ReactElement {
   const navigate = useNavigate();
   const partyId = useCurrentPartyId();
-  const { characters, stashes, currencies, items, gameSessions } = useStore(
+  const { partyName, characters, stashes, currencies, items, gameSessions } = useStore(
     useShallow((s) => ({
+      partyName: s.appState?.party.name ?? '',
       characters: s.appState?.characters ?? EMPTY_CHARACTERS,
       stashes: s.appState?.stashes ?? EMPTY_STASHES,
       currencies: s.appState?.currencies ?? EMPTY_CURRENCIES,
@@ -109,88 +120,159 @@ export function DmDashboard(): ReactElement {
     return perCharacter + partyGp + recoveredGp;
   }, [characterRows, partyStashHolding, recoveredLootHolding]);
 
+  const currentSession = gameSessions.find((s) => s.isCurrent) ?? null;
+
+  // R9.9 — DM-tool launcher tiles. Each navigates to its dedicated route.
+  const tools: { icon: typeof Sparkles; label: string; desc: string; to: string }[] = [
+    {
+      icon: Sparkles,
+      label: 'Generate hoard',
+      desc: 'Roll treasure by CR',
+      to: `/party/${partyId}/loot/generate`,
+    },
+    {
+      icon: Coins,
+      label: 'Distribute loot',
+      desc: 'Hand out coins & items',
+      to: `/party/${partyId}/loot/distribute`,
+    },
+    {
+      icon: Gem,
+      label: 'Identify items',
+      desc: 'Reveal unknown magic',
+      to: `/party/${partyId}/identify`,
+    },
+    {
+      icon: Users,
+      label: 'Manage party',
+      desc: 'Roles, banker, invites',
+      to: `/party/${partyId}/settings`,
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-3xl font-bold tracking-tight">DM Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          At-a-glance view of every character, shared pools, and total party wealth.
-        </p>
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+      <header className="space-y-1">
+        <p className="text-sm text-muted-foreground">{partyName}</p>
+        <h1 className="font-display text-2xl font-bold tracking-tight">DM Command Center</h1>
       </header>
 
-      <section
-        role="region"
-        aria-label="Total party gold"
-        className="rounded-md border border-border bg-muted/20 p-4"
-      >
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Coins className="h-4 w-4" aria-hidden />
-          Total party gold
+      {/* Current-session banner. The button jumps to the Sessions region
+       * below (which owns the start/end/notes lifecycle + its tests). */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-surface p-5 shadow-e2">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-full bg-primary/15 text-primary">
+            <ScrollText className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+              {currentSession !== null
+                ? `Session ${currentSession.number} · in progress`
+                : 'No active session'}
+            </div>
+            <div className="font-display text-xl font-bold">
+              {currentSession !== null
+                ? (currentSession.notes ?? `Session ${currentSession.number}`)
+                : 'Start a new session'}
+            </div>
+          </div>
         </div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums">{formatGp(totalPartyGp)}</div>
-      </section>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <SummaryCard
-          label="Party Stash"
-          gp={partyStashHolding ? currency.toGpEquivalent(partyStashHolding) : 0}
-          itemCount={partyStashItems.length}
-        />
-        <SummaryCard
-          label="Recovered Loot"
-          gp={recoveredLootHolding ? currency.toGpEquivalent(recoveredLootHolding) : 0}
-          itemCount={recoveredLootItems.length}
-        />
+        <a
+          href="#sessions"
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+        >
+          <Play className="h-4 w-4" aria-hidden="true" />
+          {currentSession !== null ? 'Session tools' : 'Start session'}
+        </a>
       </div>
 
-      <section className="space-y-2">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Users className="h-4 w-4" aria-hidden />
-          Characters
-        </div>
-        {characterRows.length === 0 ? (
-          <p className="rounded-md border border-border p-4 text-sm text-muted-foreground">
-            No characters yet.
-          </p>
-        ) : (
-          <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-border text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Name</th>
-                  <th className="px-3 py-2 font-medium">Class</th>
-                  <th className="px-3 py-2 font-medium">Level</th>
-                  <th className="px-3 py-2 text-right font-medium">Inventory GP</th>
-                </tr>
-              </thead>
-              <tbody>
-                {characterRows.map(({ character, gp }) => (
-                  <tr
-                    key={character.id}
-                    className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-muted/40"
-                  >
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void navigate(`/party/${partyId}/character/${character.id}`);
-                        }}
-                        aria-label={`Open ${character.name}`}
-                        className="text-left font-medium underline-offset-2 hover:underline"
-                      >
-                        {character.name}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">{character.class}</td>
-                    <td className="px-3 py-2 tabular-nums">{character.level}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatGp(gp)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* DM tool launchers */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {tools.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.label}
+              type="button"
+              onClick={() => {
+                void navigate(t.to);
+              }}
+              className="group flex flex-col items-start rounded-lg border border-border bg-surface p-4 text-left shadow-e1 transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-e2"
+            >
+              <div className="mb-2 grid h-9 w-9 place-items-center rounded-md bg-primary/10 text-primary">
+                <Icon className="h-[17px] w-[17px]" aria-hidden="true" />
+              </div>
+              <div className="text-sm font-semibold">{t.label}</div>
+              <div className="text-xs text-muted-foreground">{t.desc}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Party overview + summary side cards */}
+      <div className="grid gap-4 md:grid-cols-[1fr_16rem]">
+        <section
+          aria-label="Characters"
+          className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1"
+        >
+          <div className="border-b border-border px-4 py-3">
+            <h2 className="font-display text-sm font-semibold uppercase tracking-wide">
+              Party at a glance
+            </h2>
           </div>
-        )}
-      </section>
+          {characterRows.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-muted-foreground">No characters yet.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {characterRows.map(({ character, gp }) => (
+                <button
+                  key={character.id}
+                  type="button"
+                  onClick={() => {
+                    void navigate(`/party/${partyId}/character/${character.id}`);
+                  }}
+                  aria-label={`Open ${character.name}`}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-surface-2/60"
+                >
+                  <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-surface-2 font-display text-xs font-bold text-muted-foreground">
+                    {character.name.charAt(0)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{character.name}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {character.class} · L{character.level}
+                    </div>
+                  </div>
+                  <span className="tabular-nums text-xs text-muted-foreground">{formatGp(gp)}</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <div className="space-y-3">
+          <section
+            aria-label="Total party gold"
+            className="rounded-lg border border-border bg-surface p-4 shadow-e1"
+          >
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              Total party gold
+            </div>
+            <div className="mt-1 text-2xl font-semibold tabular-nums">{formatGp(totalPartyGp)}</div>
+          </section>
+          <SummaryCard
+            label="Party Stash"
+            gp={partyStashHolding ? currency.toGpEquivalent(partyStashHolding) : 0}
+            itemCount={partyStashItems.length}
+          />
+          <SummaryCard
+            label="Recovered Loot"
+            gp={recoveredLootHolding ? currency.toGpEquivalent(recoveredLootHolding) : 0}
+            itemCount={recoveredLootItems.length}
+          />
+        </div>
+      </div>
 
       <SessionsSection sessions={gameSessions} />
     </div>
@@ -207,14 +289,16 @@ function SummaryCard({
   itemCount: number;
 }): ReactElement {
   return (
-    <section role="region" aria-label={label} className="rounded-md border border-border p-4">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Package className="h-4 w-4" aria-hidden />
-        {label}
-      </div>
-      <div className="mt-1 text-lg font-semibold tabular-nums">{formatGp(gp)}</div>
-      <div className="text-xs text-muted-foreground">
-        {itemCount} {itemCount === 1 ? 'item' : 'items'}
+    <section
+      aria-label={label}
+      className="rounded-lg border border-border bg-surface p-4 text-sm shadow-e1"
+    >
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="mt-1 flex items-baseline justify-between gap-2">
+        <span className="text-lg font-semibold tabular-nums">{formatGp(gp)}</span>
+        <span className="text-xs text-muted-foreground">
+          {itemCount} {itemCount === 1 ? 'item' : 'items'}
+        </span>
       </div>
     </section>
   );
@@ -284,9 +368,10 @@ function SessionsSection({ sessions }: { sessions: readonly GameSession[] }): Re
 
   return (
     <section
+      id="sessions"
       role="region"
       aria-label="Sessions"
-      className="space-y-3 rounded-md border border-border p-4"
+      className="space-y-3 rounded-lg border border-border bg-surface p-4 shadow-e1"
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-medium">

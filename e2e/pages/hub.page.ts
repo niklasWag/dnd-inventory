@@ -20,7 +20,11 @@ export class HubPage {
   readonly joinButton: Locator;
 
   constructor(private readonly page: Page) {
-    this.heading = page.getByRole('heading', { name: /your parties/i });
+    // R9.11b — the Hub heading is mode-dependent: server mode (the e2e
+    // path, where the user is signed in) shows the "Ready to play?" hero;
+    // local mode shows "Your parties". Match either so the POM survives
+    // both.
+    this.heading = page.getByRole('heading', { name: /ready to play\?|your parties/i });
     this.createPartyCard = page.getByRole('button', { name: /create party/i });
     this.partyNameInput = page.getByLabel('Party name');
     this.nextButton = page.getByRole('button', { name: /next/i });

@@ -61,6 +61,24 @@ describe('ItemHistory', () => {
     expect(screen.getByText(/no log entries for this item yet/i)).toBeInTheDocument();
   });
 
+  it('R9.4 — hides the show-all toggle when the ownership-only filter hides nothing', () => {
+    // A single ownership-transition (acquire) event: the default filter
+    // hides nothing, so the toggle is suppressed (nothing to collapse).
+    useStore.setState({
+      log: [
+        makeEntry('acquire', {
+          stashId: 'stash-1',
+          itemInstanceId: 'item-1',
+          definitionId: 'phb-2024:torch',
+          quantity: 1,
+          source: 'catalog-add',
+        }),
+      ],
+    });
+    render(<ItemHistory itemInstanceId="item-1" />);
+    expect(screen.queryByRole('button', { name: /show all events/i })).not.toBeInTheDocument();
+  });
+
   it('renders acquire + consume + edit-item-instance entries in chronological order (with Show all events toggled)', async () => {
     const user = userEvent.setup();
     const t1 = '2026-06-23T10:00:00.000Z';
@@ -102,7 +120,7 @@ describe('ItemHistory', () => {
     // R2.3 — default filter hides edit-item-instance; only 2 rows visible.
     // The "Show all events" toggle exposes the hidden entry.
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
-    await user.click(screen.getByRole('checkbox', { name: /show all events/i }));
+    await user.click(screen.getByRole('button', { name: /show all events/i }));
 
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(3);
@@ -139,7 +157,7 @@ describe('ItemHistory', () => {
     render(<ItemHistory itemInstanceId="item-1" />);
     // Default filter hides edit-item-instance; the empty-rows placeholder shows the hidden count.
     expect(screen.queryByText(/edited customName \+ notes/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('checkbox', { name: /show all events/i }));
+    await user.click(screen.getByRole('button', { name: /show all events/i }));
     expect(screen.getByText(/edited customName \+ notes/i)).toBeInTheDocument();
   });
 
@@ -649,7 +667,7 @@ describe('ItemHistory', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(1);
     expect(screen.getByText(/Show all events \(\+2\)/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('checkbox', { name: /show all events/i }));
+    await user.click(screen.getByRole('button', { name: /show all events/i }));
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(3);
     expect(within(items[1]!).getByText(/Used ×1 charge/)).toBeInTheDocument();

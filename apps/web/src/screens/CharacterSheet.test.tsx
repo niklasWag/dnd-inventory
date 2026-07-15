@@ -21,9 +21,6 @@ import { bootstrap } from '@/test/fixtures';
 function acquireIds() {
   return { newItemInstanceId: newUuidV7() };
 }
-function createStashIds() {
-  return { newStashId: newUuidV7(), newCurrencyHoldingId: newUuidV7() };
-}
 function createCharacterIds() {
   return {
     newCharacterId: newUuidV7(),
@@ -93,43 +90,22 @@ describe('CharacterSheet (M1)', () => {
     renderAt(`/character/${id}`);
 
     expect(screen.getByRole('heading', { name: 'Thorin' })).toBeInTheDocument();
-    expect(screen.getByText(/Level 3 Dwarf Fighter/)).toBeInTheDocument();
+    expect(screen.getByText('Lv 3')).toBeInTheDocument();
+    expect(screen.getByText(/Dwarf · Fighter/)).toBeInTheDocument();
     expect(screen.getByText(/STR 16/)).toBeInTheDocument();
-  });
-
-  it('renders all four tabs', () => {
-    void useStore.getState().dispatch({
-      type: 'create-character',
-      payload: {
-        name: 'A',
-        species: 'B',
-        size: 'medium',
-        class: 'C',
-        level: 1,
-        str: 10,
-        ...createCharacterIds(),
-      },
-    });
-    const id = useStore.getState().appState!.characters[0]!.id;
-
-    renderAt(`/character/${id}`);
-
-    expect(screen.getByRole('tab', { name: 'Inventory' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Storage' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Party Stash' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Recovered Loot' })).toBeInTheDocument();
   });
 
   it('redirects to / when the character id is unknown', () => {
     renderAt('/character/does-not-exist');
-    // CharacterSheet renders its own h1 from the character name; if the redirect fires,
-    // we land on "/" (the test stub renders nothing) and that heading isn't present.
-    expect(screen.queryByRole('tab', { name: 'Inventory' })).not.toBeInTheDocument();
+    // CharacterSheet renders its own h1 from the character name; if the redirect
+    // fires, we land on "/" (the test stub renders nothing) and no Inventory
+    // panel heading is present.
+    expect(screen.queryByRole('heading', { name: /^inventory$/i })).not.toBeInTheDocument();
   });
 });
 
 describe('CharacterSheet (M2)', () => {
-  it('renders an empty-state for the Inventory tab when nothing has been acquired', () => {
+  it('renders an empty-state for the Inventory when nothing has been acquired', () => {
     const { characterId: id } = bootstrap();
     renderAt(`/character/${id}`);
 
@@ -213,36 +189,10 @@ describe('CharacterSheet (M2)', () => {
     expect(within(row!).getByText('1')).toBeInTheDocument();
   });
 
-  it('Storage tab renders the empty-state when no Storage stashes exist (M3)', async () => {
-    const user = userEvent.setup();
-    const { characterId: id } = bootstrap();
-    renderAt(`/character/${id}`);
-
-    await user.click(screen.getByRole('tab', { name: 'Storage' }));
-
-    expect(screen.getByText(/no storage stashes yet/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /new storage stash/i })).toBeInTheDocument();
-  });
-
-  it('Storage tab lists a Storage stash card after one is created (M3)', async () => {
-    const user = userEvent.setup();
-    const { characterId: id } = bootstrap();
-    void useStore.getState().dispatch({
-      type: 'create-stash',
-      payload: {
-        ownerCharacterId: id,
-        name: 'Vault of Waterdeep',
-        ...createStashIds(),
-        ...createStashIds(),
-        ...createStashIds(),
-      },
-    });
-    renderAt(`/character/${id}`);
-
-    await user.click(screen.getByRole('tab', { name: 'Storage' }));
-
-    expect(screen.getByText('Vault of Waterdeep')).toBeInTheDocument();
-  });
+  // R9.3 — the Storage tab was removed from the Character Sheet (Storage is
+  // now the per-character "Stashes" page reached from the sidebar). R9.5 —
+  // that page shipped as the `StorageOverview` screen (card grid); the
+  // empty-state + card-listing coverage lives in `screens/StorageOverview.test.tsx`.
 
   it('clicking a row name navigates to /item/:id (M2.5)', async () => {
     const user = userEvent.setup();
@@ -597,7 +547,9 @@ describe('CharacterSheet — R6.0 Edit character button', () => {
   it('solo actor sees the Edit character button', () => {
     const base = bootstrap();
     renderAt(`/character/${base.characterId}`);
-    expect(screen.getByRole('button', { name: /edit character/i })).toBeInTheDocument();
+    // R9.3 — Edit/Delete moved into the "Character options" header menu;
+    // its trigger renders iff the actor may edit the character.
+    expect(screen.getByRole('button', { name: /character options/i })).toBeInTheDocument();
   });
 
   it("DM viewing another player's character sees the button", () => {
@@ -649,7 +601,7 @@ describe('CharacterSheet — R6.0 Edit character button', () => {
     void base;
 
     renderAt(`/character/${bobCharId}`);
-    expect(screen.getByRole('button', { name: /edit character/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /character options/i })).toBeInTheDocument();
   });
 
   it("non-DM viewer of another player's character does NOT see the button", () => {
@@ -680,7 +632,7 @@ describe('CharacterSheet — R6.0 Edit character button', () => {
       },
     });
     renderAt(`/character/${base.characterId}`);
-    expect(screen.queryByRole('button', { name: /edit character/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /character options/i })).toBeNull();
   });
 
   it('non-DM owner of own character in a multi-member party sees the button', () => {
@@ -703,6 +655,116 @@ describe('CharacterSheet — R6.0 Edit character button', () => {
       },
     });
     renderAt(`/character/${base.characterId}`);
-    expect(screen.getByRole('button', { name: /edit character/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /character options/i })).toBeInTheDocument();
+  });
+});
+
+// -------------------------------------------------------------------- //
+// R9.2 — Combined layout + delete-character entry
+// -------------------------------------------------------------------- //
+
+describe('CharacterSheet — R9.2 Combined layout', () => {
+  it('renders the prominent currency panel with a big gp total', () => {
+    const { characterId, inventoryStashId } = bootstrap();
+    // Give the character 5 gp so the total is a non-zero, distinctive value.
+    void useStore.getState().dispatch({
+      type: 'currency-change',
+      payload: {
+        stashId: inventoryStashId,
+        delta: { cp: 0, sp: 0, ep: 0, gp: 5, pp: 0 },
+        reason: 'deposit',
+      },
+    });
+    renderAt(`/character/${characterId}`);
+
+    // The Currency heading + the total (via the stable sr-only line) surface.
+    expect(screen.getByRole('heading', { name: /^currency$/i })).toBeInTheDocument();
+    expect(screen.getByText(/total: 5 gp/i)).toBeInTheDocument();
+  });
+
+  it('shows an Equipped chip in the State column for an equipped item', async () => {
+    const user = userEvent.setup();
+    const { characterId, inventoryStashId } = bootstrap();
+    const torch = useStore.getState().appState!.catalog.find((d) => d.id === 'phb-2024:torch')!;
+    void useStore.getState().dispatch({
+      type: 'acquire',
+      payload: {
+        stashId: inventoryStashId,
+        definitionId: torch.id,
+        quantity: 1,
+        source: 'catalog-add',
+        ...acquireIds(),
+      },
+    });
+    renderAt(`/character/${characterId}`);
+
+    // R9.3 — Equip moved into the per-row actions menu.
+    await user.click(screen.getByRole('button', { name: /actions for torch/i }));
+    await user.click(screen.getByRole('menuitem', { name: /^equip torch$/i }));
+
+    // Scope to the table row (the equipped-slots rail also lists "Torch").
+    const row = screen.getByRole('button', { name: /open details for torch/i }).closest('tr');
+    expect(within(row!).getByText('Equipped')).toBeInTheDocument();
+  });
+
+  it('renders the encumbrance/equipped rail on the Inventory tab', () => {
+    const { characterId } = bootstrap();
+    // PHB encumbrance so the CapacityBar renders (off = hidden).
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: { ...state, party: { ...state.party, encumbranceRule: 'phb' } },
+    });
+    renderAt(`/character/${characterId}`);
+
+    expect(screen.getByLabelText(/encumbrance/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/equipped and attuned items/i)).toBeInTheDocument();
+  });
+});
+
+describe('CharacterSheet — R9.2 delete-character entry', () => {
+  it('solo actor sees the Delete character button', () => {
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+    // R9.3 — Delete lives in the "Character options" header menu.
+    expect(screen.getByRole('button', { name: /character options/i })).toBeInTheDocument();
+  });
+
+  it('opens the delete confirm dialog naming the character', async () => {
+    const user = userEvent.setup();
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+
+    await user.click(screen.getByRole('button', { name: /character options/i }));
+    await user.click(screen.getByRole('menuitem', { name: /delete character/i }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText(/delete thorin/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/recovered loot/i)).toBeInTheDocument();
+  });
+
+  it("non-DM viewer of another player's character does NOT see the Delete button", () => {
+    const base = bootstrap();
+    const state = useStore.getState().appState!;
+    useStore.setState({
+      appState: {
+        ...state,
+        memberships: state.memberships.filter((m) => m.role !== 'dm'),
+        characters: [{ ...state.characters[0]!, ownerUserId: 'stranger' }],
+      },
+    });
+    const s2 = useStore.getState().appState!;
+    const strangerMembership: PartyMembership = {
+      userId: 'stranger',
+      partyId: s2.party.id,
+      role: 'player',
+      characterId: s2.characters[0]!.id,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+      leftAt: null,
+    };
+    useStore.setState({
+      appState: { ...s2, memberships: [...s2.memberships, strangerMembership] },
+    });
+    renderAt(`/character/${base.characterId}`);
+    expect(screen.queryByRole('button', { name: /character options/i })).toBeNull();
   });
 });

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Mail, MessageSquare } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { AuthShell } from '@/components/auth/AuthShell';
 import { getAuthMethods } from '@/lib/api';
 import { SERVER_URL } from '@/lib/serverMode';
 
@@ -49,56 +50,47 @@ export function Login(): ReactElement {
 
   if (SERVER_URL === null) {
     return (
-      <div className="mx-auto max-w-md py-16 text-center">
-        <h1 className="text-2xl font-semibold">Login unavailable</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          This deployment is running in local-only mode. The application is being used without a
-          server.
-        </p>
-      </div>
+      <AuthShell
+        title="Login unavailable"
+        description="This deployment is running in local-only mode. The application is being used without a server."
+      >
+        <span className="sr-only">No server configured.</span>
+      </AuthShell>
     );
   }
 
   if (methodsError) {
     return (
-      <div className="mx-auto max-w-md py-16 text-center">
-        <h1 className="text-2xl font-semibold">Sign in unavailable</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Could not reach the server. Please try again in a moment.
-        </p>
-      </div>
+      <AuthShell
+        title="Sign in unavailable"
+        description="Could not reach the server. Please try again in a moment."
+      >
+        <span className="sr-only">Server unreachable.</span>
+      </AuthShell>
     );
   }
 
   if (methods === null) {
-    // Initial probe in flight — render the header skeleton so the buttons
+    // Initial probe in flight — render the shell + title so the buttons
     // don't pop in jarringly.
-    return (
-      <div className="mx-auto flex max-w-md flex-col gap-6 py-16">
-        <header className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
-        </header>
-      </div>
-    );
+    return <AuthShell title="Sign in">{null}</AuthShell>;
   }
 
   const noMethods = !methods.discord && !methods.email;
 
   return (
-    <div className="mx-auto flex max-w-md flex-col gap-6 py-16">
-      <header className="text-center">
-        <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
-        {!noMethods && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            {methods.discord && methods.email
-              ? 'Use Discord or your email — both work and can be linked later in Settings.'
-              : methods.discord
-                ? 'Use Discord to sign in.'
-                : 'Use your email to sign in.'}
-          </p>
-        )}
-      </header>
-
+    <AuthShell
+      title="Sign in"
+      description={
+        noMethods
+          ? undefined
+          : methods.discord && methods.email
+            ? 'Use Discord or your email — both work and can be linked later in Settings.'
+            : methods.discord
+              ? 'Use Discord to sign in.'
+              : 'Use your email to sign in.'
+      }
+    >
       {noMethods ? (
         <p className="text-center text-sm text-muted-foreground">
           No sign-in methods are configured on this server. Ask the operator to set up Discord OAuth
@@ -132,10 +124,10 @@ export function Login(): ReactElement {
       )}
 
       {!noMethods && (
-        <p className="text-center text-xs text-muted-foreground">
+        <p className="mt-4 text-center text-xs text-muted-foreground">
           No passwords. Discord uses OAuth; email uses a one-time code.
         </p>
       )}
-    </div>
+    </AuthShell>
   );
 }

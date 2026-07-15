@@ -3,6 +3,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { FlaskConical } from 'lucide-react';
 
 import {
   Dialog,
@@ -17,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import type { HomebrewDefinitionInput, HomebrewDefinitionPatch } from '@/store/types';
 import type { ItemCategory, ItemDefinition, Rarity } from '@app/shared';
 
@@ -284,6 +286,7 @@ export function HomebrewForm({
   onCreated,
 }: HomebrewFormProps): ReactElement | null {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -392,33 +395,32 @@ export function HomebrewForm({
       className="space-y-4"
       noValidate
     >
-      <div className="grid grid-cols-[2fr_1fr] gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="homebrew-name">Name</Label>
-          <Input id="homebrew-name" autoFocus {...register('name')} />
-          {errors.name?.message !== undefined ? (
-            <p className="text-sm text-destructive" role="alert">
-              {errors.name.message}
-            </p>
-          ) : null}
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="homebrew-category">Category</Label>
-          <select
-            id="homebrew-category"
-            {...register('category')}
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-          >
-            {CATEGORY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="homebrew-name">Name</Label>
+        <Input id="homebrew-name" autoFocus {...register('name')} />
+        {errors.name?.message !== undefined ? (
+          <p className="text-sm text-destructive" role="alert">
+            {errors.name.message}
+          </p>
+        ) : null}
       </div>
 
-      <div className="grid grid-cols-[1fr_1fr_1fr] gap-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="homebrew-category">Category</Label>
+        <select
+          id="homebrew-category"
+          {...register('category')}
+          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {CATEGORY_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="homebrew-weight">Weight (lb)</Label>
           <Input
@@ -435,33 +437,114 @@ export function HomebrewForm({
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="homebrew-cost-amount">Cost (amount)</Label>
-          <Input
-            id="homebrew-cost-amount"
-            inputMode="numeric"
-            placeholder="optional"
-            {...register('costAmount')}
-          />
+          <div className="flex gap-2">
+            <Input
+              id="homebrew-cost-amount"
+              inputMode="numeric"
+              placeholder="optional"
+              className="min-w-0 flex-1"
+              {...register('costAmount')}
+            />
+            <select
+              id="homebrew-cost-currency"
+              aria-label="Currency"
+              {...register('costCurrency')}
+              className="h-10 w-16 shrink-0 rounded-md border border-input bg-background px-2 text-sm uppercase"
+            >
+              <option value="cp">cp</option>
+              <option value="sp">sp</option>
+              <option value="ep">ep</option>
+              <option value="gp">gp</option>
+              <option value="pp">pp</option>
+            </select>
+          </div>
           {errors.costAmount?.message !== undefined ? (
             <p className="text-sm text-destructive" role="alert">
               {errors.costAmount.message}
             </p>
           ) : null}
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="homebrew-cost-currency">Currency</Label>
-          <select
-            id="homebrew-cost-currency"
-            {...register('costCurrency')}
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="cp">cp</option>
-            <option value="sp">sp</option>
-            <option value="ep">ep</option>
-            <option value="gp">gp</option>
-            <option value="pp">pp</option>
-          </select>
-        </div>
       </div>
+
+      {/* BUG-012 (2026-07-06) — magic-item metadata. Gated by
+          `category === 'magic'`: non-magic homebrew items don't need
+          rarity or attunement info. Rarity is required when this
+          section is visible (enforced by the schema refinement).
+          The nested prereq input surfaces only when the user checks
+          `Requires attunement`. R9.6 — restyled to the CustomItemSingle
+          mockup's accent-tinted "Magic properties" block. */}
+      {isMagicCategory ? (
+        <div className="space-y-4 rounded-lg border border-primary/30 bg-primary/5 p-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+            Magic properties
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="homebrew-rarity">Rarity</Label>
+            <select
+              id="homebrew-rarity"
+              {...register('rarity')}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              {RARITY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            {errors.rarity?.message !== undefined ? (
+              <p className="text-sm text-destructive" role="alert">
+                {errors.rarity.message}
+              </p>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">Required for magic items.</p>
+            )}
+          </div>
+
+          {/* R9.6 — "Requires attunement" as the CustomItemSingle mockup's
+              right-aligned pill switch. The native checkbox stays (visually
+              hidden via `peer sr-only`) so `register` + label association +
+              the `getByLabelText(...).click()` test path keep working; the
+              styled track/knob is driven by `peer-checked`. */}
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="homebrew-requires-attunement" className="cursor-pointer text-sm">
+              Requires attunement
+            </Label>
+            <label
+              htmlFor="homebrew-requires-attunement"
+              className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center"
+            >
+              <input
+                id="homebrew-requires-attunement"
+                type="checkbox"
+                {...register('requiresAttunement')}
+                className="peer sr-only"
+              />
+              <span className="h-5 w-9 rounded-full bg-surface-2 ring-1 ring-inset ring-border transition peer-checked:bg-primary peer-checked:ring-primary" />
+              <span className="absolute left-0.5 h-4 w-4 rounded-full bg-surface shadow-e1 transition peer-checked:translate-x-4" />
+            </label>
+          </div>
+          <p className="-mt-2 text-xs text-muted-foreground">
+            When on, players must Attune the item in Inventory before its magical effects apply
+            (subject to the character&apos;s attunement slot cap).
+          </p>
+
+          {watchedRequiresAttunement ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="homebrew-attunement-prereq">Attunement prerequisite (optional)</Label>
+              <Input
+                id="homebrew-attunement-prereq"
+                placeholder="e.g. by a wizard, by a creature of good alignment"
+                {...register('attunementPrereq')}
+              />
+              {errors.attunementPrereq?.message !== undefined ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {errors.attunementPrereq.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="space-y-1.5">
         <Label htmlFor="homebrew-description">Description</Label>
@@ -470,7 +553,7 @@ export function HomebrewForm({
           rows={4}
           placeholder="optional"
           {...register('description')}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
         {errors.description?.message !== undefined ? (
           <p className="text-sm text-destructive" role="alert">
@@ -488,73 +571,6 @@ export function HomebrewForm({
           </p>
         ) : null}
       </div>
-
-      {/* BUG-012 (2026-07-06) — magic-item metadata. Gated by
-          `category === 'magic'`: non-magic homebrew items don't need
-          rarity or attunement info. Rarity is required when this
-          section is visible (enforced by the schema refinement).
-          The nested prereq input surfaces only when the user checks
-          `Requires attunement`. */}
-      {isMagicCategory ? (
-        <div className="space-y-4 rounded-md border border-border p-3">
-          <div className="grid grid-cols-[1fr_1fr] gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="homebrew-rarity">Rarity</Label>
-              <select
-                id="homebrew-rarity"
-                {...register('rarity')}
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                {RARITY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              {errors.rarity?.message !== undefined ? (
-                <p className="text-sm text-destructive" role="alert">
-                  {errors.rarity.message}
-                </p>
-              ) : null}
-            </div>
-            <div />
-          </div>
-
-          <div className="flex items-start gap-2">
-            <input
-              id="homebrew-requires-attunement"
-              type="checkbox"
-              {...register('requiresAttunement')}
-              className="mt-1 h-4 w-4 rounded border-input"
-            />
-            <div className="space-y-1">
-              <Label htmlFor="homebrew-requires-attunement" className="cursor-pointer">
-                Requires attunement
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                When on, players must Attune the item in Inventory before its magical effects apply
-                (subject to the character&apos;s attunement slot cap).
-              </p>
-            </div>
-          </div>
-
-          {watchedRequiresAttunement ? (
-            <div className="space-y-1.5 pl-6">
-              <Label htmlFor="homebrew-attunement-prereq">Attunement prerequisite (optional)</Label>
-              <Input
-                id="homebrew-attunement-prereq"
-                placeholder="e.g. by a wizard, by a creature of good alignment"
-                {...register('attunementPrereq')}
-              />
-              {errors.attunementPrereq?.message !== undefined ? (
-                <p className="text-sm text-destructive" role="alert">
-                  {errors.attunementPrereq.message}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
       {submitError !== null ? (
         <p className="text-sm text-destructive" role="alert">
@@ -576,7 +592,7 @@ export function HomebrewForm({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || !canDispatch}>
             {submitLabel}
           </Button>
         </DialogFooter>
@@ -591,7 +607,7 @@ export function HomebrewForm({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || !canDispatch}>
             {submitLabel}
           </Button>
         </div>
@@ -610,12 +626,15 @@ export function HomebrewForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2 font-display">
+            <FlaskConical className="h-4 w-4 text-primary" aria-hidden="true" />
+            {title}
+          </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        {formBody}
+        <div className="max-h-[65vh] overflow-y-auto">{formBody}</div>
       </DialogContent>
     </Dialog>
   );

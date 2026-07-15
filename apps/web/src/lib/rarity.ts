@@ -74,6 +74,37 @@ export function rarityClasses(r: Rarity | null | undefined): string {
 }
 
 /**
+ * R9.2 — token-driven rarity pill classes for the Combined item table.
+ *
+ * Unlike `rarityClasses` (raw Tailwind slate/green/blue/… palette, kept
+ * for Catalog/ItemDetail until their R9 slices land), this uses the R9
+ * `--rarity-*` design tokens so the pill matches the DESIGN_SYSTEM
+ * flavor layer and light/dark derive from one source. Rendered as a
+ * bordered outline pill: `border-rarity-<r>` + `text-rarity-<r>` over a
+ * transparent fill. `common` and absent rarity fall back to the muted
+ * border/foreground (the table only renders a pill for identified,
+ * non-common items per OUTLINE §8, so those cases are defensive).
+ */
+export function rarityPillClass(r: Rarity | null | undefined): string {
+  switch (r) {
+    case 'uncommon':
+      return 'border-rarity-uncommon text-rarity-uncommon';
+    case 'rare':
+      return 'border-rarity-rare text-rarity-rare';
+    case 'very-rare':
+      return 'border-rarity-very-rare text-rarity-very-rare';
+    case 'legendary':
+      return 'border-rarity-legendary text-rarity-legendary';
+    case 'artifact':
+      // No dedicated artifact token; reuse legendary's gold band.
+      return 'border-rarity-legendary text-rarity-legendary';
+    case 'common':
+    default:
+      return 'border-border text-muted-foreground';
+  }
+}
+
+/**
  * Tailwind utility classes for a compact rarity dot (background-only)
  * matching the chip palette above. Use as a 2x2-rem inline span in
  * dense row layouts where a full chip would be too noisy.

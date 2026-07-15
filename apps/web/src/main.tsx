@@ -1,6 +1,16 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
+// R9.0 — self-hosted fonts (Fontsource; OFL 1.1 bundled in each package).
+// Inter is the variable body/UI face (weight axis covers 400–700);
+// Cinzel is the display serif (500/600/700). Vite inlines the @font-face
+// CSS and copies the .woff2 files into the build — no runtime CDN call,
+// works offline. Consumed via the --font-sans / --font-display tokens.
+import '@fontsource-variable/inter/wght.css';
+import '@fontsource/cinzel/500.css';
+import '@fontsource/cinzel/600.css';
+import '@fontsource/cinzel/700.css';
+
 import { App } from '@/App';
 import { isServerMode } from '@/lib/serverMode';
 import { useStore } from '@/store';
@@ -8,6 +18,9 @@ import { useSession } from '@/store/session';
 import { hydrateFromDexie } from '@/store/hydrate';
 import { seedCatalogIfNeeded } from '@/store/seed';
 import { attachThemeSideEffects, useThemeStore } from '@/store/theme';
+import { attachAccentSideEffects, useAccentStore } from '@/store/accent';
+import { useSidebarStore } from '@/store/sidebar';
+import { useHubLayoutStore } from '@/store/hubLayout';
 import { attachUnloadFlush, configureQueue } from '@/sync/queue';
 import { syncSocketWithSession } from '@/sync/socket';
 import '@/index.css';
@@ -35,7 +48,21 @@ async function boot(): Promise<void> {
   // there's no light-mode flash on cold boot. Attach the side-effect
   // subscription immediately after, so subsequent preference changes
   // and matchMedia flips update the `<html>` class in real time.
-  await useThemeStore.getState().hydrate();
+  //
+  // R9.0 — resolve the accent preference in the same pre-render window
+  // (avoids a default-accent flash). Its side-effect is attached AFTER
+  // the store is hydrated (below), since it reads the active character's
+  // class for the follow-class model.
+  //
+  // R9.2 — resolve the sidebar collapse preference in the same window so
+  // the nav rail renders at its persisted width on first paint (no
+  // expand→collapse flash).
+  await Promise.all([
+    useThemeStore.getState().hydrate(),
+    useAccentStore.getState().hydrate(),
+    useSidebarStore.getState().hydrate(),
+    useHubLayoutStore.getState().hydrate(),
+  ]);
   attachThemeSideEffects();
 
   await useSession.getState().hydrate();
@@ -46,6 +73,12 @@ async function boot(): Promise<void> {
   }
   // RH4.2 — server-mode boot is a no-op for AppState. PartyScopeSync
   // handles loading on route mount.
+
+  // R9.0 — attach the accent side-effect after store hydration so the
+  // first paint's accent already reflects the active party's character
+  // class (when follow-class is on). Subsequent accent/theme/store
+  // changes recompute it live.
+  attachAccentSideEffects();
 
   // R3.5 — wire the queue's deps. Done after the store is hydrated
   // so the snapshot path reads a stable shape. Local mode also

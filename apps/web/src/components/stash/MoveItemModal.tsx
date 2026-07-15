@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
+import { ArrowRight, Package } from 'lucide-react';
 
 import {
   Dialog,
@@ -17,7 +18,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { buildStashLabels } from '@/lib/stashLabels';
+import { displayName as computeDisplayName } from '@/lib/identify';
 
 interface MoveItemModalProps {
   open: boolean;
@@ -34,6 +37,9 @@ interface SourceSnapshot {
   attuned: boolean;
   /** True when the source row lives in a character's Inventory stash. */
   isInInventory: boolean;
+  /** R9.5 — display name + source-stash label for the pre-selected summary. */
+  name: string;
+  sourceLabel: string;
 }
 
 const EMPTY_TARGETS: ReadonlyArray<{ id: string; label: string }> = [];
@@ -75,6 +81,7 @@ export function MoveItemModal({
   itemInstanceId,
 }: MoveItemModalProps): ReactElement {
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const canDispatch = useCanDispatch();
 
   // Source row snapshot.
   const source = useStore(
@@ -84,12 +91,15 @@ export function MoveItemModal({
       const stash = s.appState?.stashes.find((st) => st.id === row.ownerId);
       const isInInventory =
         stash !== undefined && stash.scope === 'character' && stash.isCarried === true;
+      const def = s.appState?.catalog.find((d) => d.id === row.definitionId);
       return {
         ownerId: row.ownerId,
         quantity: row.quantity,
         equipped: row.equipped,
         attuned: row.attuned,
         isInInventory,
+        name: computeDisplayName(row, def),
+        sourceLabel: stash?.name ?? '—',
       };
     }),
   );
@@ -182,11 +192,17 @@ export function MoveItemModal({
     parsedQty >= 1 &&
     parsedQty <= sourceQty;
 
+  const selectedTargetId: unknown = watch('toStashId');
+  const selectedTargetLabel = targets.find((t) => t.id === selectedTargetId)?.label;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Move item</DialogTitle>
+          <DialogTitle className="flex items-center gap-2 font-display">
+            <Package className="h-4 w-4 text-primary" aria-hidden="true" />
+            Move item
+          </DialogTitle>
           <DialogDescription>
             Move this stack (or part of it) into another stash. Matching rows on the destination
             auto-stack.
@@ -200,6 +216,20 @@ export function MoveItemModal({
           className="space-y-4"
           noValidate
         >
+          {/* R9.5 — pre-selected item summary (no picker; the modal opens
+           * from a specific row per the TransferItemMove mockup). */}
+          {source !== null ? (
+            <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2/50 px-3 py-2.5">
+              <Package className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{source.name}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {source.sourceLabel} · ×{sourceQty} in stack
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-1.5">
             <Label htmlFor="move-target">Target stash</Label>
             <select
@@ -247,6 +277,15 @@ export function MoveItemModal({
             ) : null}
           </div>
 
+          {/* R9.5 — source → target summary line (TransferItemMove mockup). */}
+          {source !== null && selectedTargetLabel !== undefined ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>{source.sourceLabel}</span>
+              <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="font-medium text-foreground">{selectedTargetLabel}</span>
+            </div>
+          ) : null}
+
           {willLoseFlags ? (
             <p
               className="rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
@@ -275,7 +314,7 @@ export function MoveItemModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+            <Button type="submit" disabled={!canSubmit || isSubmitting || !canDispatch}>
               {isSubmitting ? 'Moving…' : 'Move'}
             </Button>
           </DialogFooter>

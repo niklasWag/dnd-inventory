@@ -77,7 +77,7 @@ Designed as a **party manager** with full DM tooling. **Every user is always ins
 ### 3.3 Characters & Stashes
 Each character has:
 - **Inventory** — exactly one carried stash, auto-created with the character. **Encumbrance applies here**; equip/attune state lives on items in this stash.
-- **Storage** stashes — zero or more named non-carried stashes (e.g., "Chest at home", "Vault in Waterdeep", "Wagon"). **Encumbrance does NOT apply** to Storage. The user can transfer items freely between Inventory and Storage. **Characters are created with zero Storage stashes** — the user adds them on demand via the Storage tab (§5.3). Only the Inventory stash is auto-created.
+- **Storage** stashes — zero or more named non-carried stashes (e.g., "Chest at home", "Vault in Waterdeep", "Wagon"). **Encumbrance does NOT apply** to Storage. The user can transfer items freely between Inventory and Storage. **Characters are created with zero Storage stashes** — the user adds them on demand via the Stashes screen (§5.3a). Only the Inventory stash is auto-created.
 
 Character data stored (inventory-only minimum):
 - name, species, class, level
@@ -367,14 +367,17 @@ No HP, spells, AC, proficiencies in v1.
 
 ## 5. UI / Screens
 
+**Navigation (R9):** sidebar + task-grouped IA — a collapsible icon rail on desktop; mobile bottom-bar + drawer. Party-scoped screens mount under `/party/:partyId/*`.
+
+**Screen routing model (R9.3):** the stash-bearing surfaces are **separate sidebar destinations**, not tabs. **Per-character** surfaces nest the character id — Character Sheet (Inventory) at `/party/:partyId/character/:characterId`, Stashes (Storage overview) at `/party/:partyId/character/:characterId/stashes`, a Storage stash detail at `/party/:partyId/stash/:stashId`. **Party-wide** surfaces need no character segment — Party Stash at `/party/:partyId/party-stash`, Recovered Loot at `/party/:partyId/recovered-loot` (kebab-case for multi-word segments). All reuse one shared inventory-panel + currency-display component pair (established on the Character Sheet, screen 3).
+
 ### Entry / Identity
 1. **Login** — single "Sign in with Discord" button.
-2. **Hub (post-login)** — three cards: *Create party*, *Join party (paste code)*, *Create solo (party-of-one)*. Below: list of the user's existing parties (solo parties marked with a small "solo" badge).
+2. **Hub (post-login)** — three cards: *Create party*, *Join party (paste code)*, *Create solo (party-of-one)*. Below: list of the user's existing parties (solo parties marked with a small "solo" badge). Hub **layout is user-selectable** (Hero/Continue default · List+Detail alternative) via the Settings Appearance cluster (§5.17).
 
 ### Player-facing
-3. **Character Sheet** — header with character details (name, species, class, level, STR). Tabs:
-   - **Inventory** — carried stash; equipped slots, attunement (X/max), capacity bar, container view (one level), item list with filters.
-   - **Storage** — list of additional named stashes; click into one to see/edit its items + currency.
+3. **Character Sheet (R9.3: Inventory-only)** — header with character details (name, species, class, level, STR) + actions (Add item, Rest, a Character-options menu with Edit / Delete character). Body: a prominent **currency panel** (gp-equivalent total + per-denomination inline ±/bulk edits), the carried-Inventory **item table** (framed card with a search + category-filter + quick-filter toolbar; equipped/attunement/charges state chips; per-row actions menu), and a right rail (equipped/attuned loadout + capacity bar). The old Inventory/Storage **tabs are gone** — Storage is now its own screen (§5.3a).
+   - **3a. Stashes (Storage overview)** — per-character screen listing the character's additional named non-carried stashes as cards; click into one to see/edit its items + currency (reuses the shared item table + currency display). Encumbrance never applies here (§3.3).
 4. **Item Detail** — full description, charges, **per-item history** (defaults to the ownership-transition filter; "Show all events" toggle expands to the full log per §3.11).
 5. **Party Stash** — shared list; deposit/take actions. When viewed by the **Banker**, shows additional "Distribute" controls (split-evenly, give-to-player, give-items-to-player). When viewed by the **DM with Banker active**, distribute-to-player controls are hidden; "add/remove for gameplay" controls remain.
 6. **Recovered Loot** — visible to all party members; same Banker/DM control split as Party Stash.
@@ -392,12 +395,12 @@ No HP, spells, AC, proficiencies in v1.
 
 ### Shared
 16. **Item Catalog** — global search & filter; "Add to…" picker.
-17. **Settings** — theme (light/dark toggle, system default), variant rules, export/import, account/logout.
+17. **Settings** — an **Appearance** cluster (theme: light / dark / system · **brand accent**: default cyan-teal + selectable options · **"accent follows character class"** toggle: inside a party the accent follows the current character's class, reverting to the user's default accent outside a party · **Hub layout**: Hero / List+Detail), variant rules, export/import, account/logout.
 
 ### Form factor
 - **Desktop-first** (the primary device, especially for DM).
 - **Player views responsive on mobile** — the character sheet, party stash, recovered loot, transfer modal, item detail are all mobile-usable.
-- DM tools (dashboard, loot wizard, shop manager) are **desktop-only** in v1.
+- DM tools (dashboard, loot wizard, hoard generator, shop manager, party settings) are **desktop-priority**; their mobile posture (responsive reflow vs. a min-width "use a larger screen" banner) is **deferred to R9 implementation**, decided with real device testing.
 
 ---
 
@@ -574,7 +577,7 @@ When the **DM** leaves:
 - **Session TTL** → **30 days idle expiry** with sliding expiry on activity (`SECURITY.md` §1.1). Tuned for private campaigns that may go weeks between sessions.
 - **Recovered-loot pruning** → **never auto-purges**. The pile only shrinks when items/currency are explicitly claimed (player self-claim when no Banker, Banker distribution when one is active, or DM action) or when the DM explicitly removes items/currency for gameplay reasons. See §3.10 / §3.15 / §8.1. No time-based or size-based eviction.
 - **DM-as-player on creation** → the party-creation flow **prompts the user explicitly**: *"Do you also play a character in this party?"* with yes / no. Defaults to yes for convenience but is not silent — the user's choice determines whether the second `PartyMembership` row (`role="player"`, with a character) is created alongside the `role="dm"` row. See §3.1 and §4 `PartyMembership`.
-- **Default Storage stashes on character creation** → **start with zero Storage stashes**. Only the auto-created Inventory stash (§3.3, the single `isCarried=true` stash referenced by `Character.inventoryStashId`) exists at character-creation time. The user adds Storage stashes on demand via the Storage tab (§5.3). Rationale: storage is opt-in scenery (a chest at home, a vault in Waterdeep) that not every character needs; auto-creating a "Storage" stash with no narrative purpose adds noise.
+- **Default Storage stashes on character creation** → **start with zero Storage stashes**. Only the auto-created Inventory stash (§3.3, the single `isCarried=true` stash referenced by `Character.inventoryStashId`) exists at character-creation time. The user adds Storage stashes on demand via the Stashes screen (§5.3a). Rationale: storage is opt-in scenery (a chest at home, a vault in Waterdeep) that not every character needs; auto-creating a "Storage" stash with no narrative purpose adds noise.
 - **History detail level** → **ownership-transition filter by default on per-item history; full filtered party log for everything else.** Per §4 there is no separate `ItemHistory` table — per-item history is a filtered view over `TransactionLog`. The Item Detail screen (§5.4) defaults to showing types that change ownership or identity (`acquire`, `transfer`, `purchase`, `sale`, `consume`, `identify`, `attune`, `unattune`, `equip`, `unequip`) and offers a "Show all events" toggle that expands to the full set (including `use-charge`, `recharge`, `edit-item-instance`). Everything is still logged; the default filter just keeps the focused view from drowning in charge-tick rows.
 
 ### Resolved 2026-06-24 (review batch after M5 / M5.5)

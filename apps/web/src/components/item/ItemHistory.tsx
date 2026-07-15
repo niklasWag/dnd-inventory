@@ -1,12 +1,26 @@
 import type { ReactElement } from 'react';
 import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { ArrowLeftRight, Eye, ShieldCheck } from 'lucide-react';
 
 import { useStore } from '@/store';
 import { buildStashLabels, shortStashId } from '@/lib/stashLabels';
 import { RoleBadge } from '@/components/RoleBadge';
 import { canSeeLogEntry } from '@app/shared';
 import type { ItemDefinition, ItemInstance, TransactionLogEntry } from '@app/shared';
+
+/**
+ * R9.4 — the "History" heading with its leading shield icon. Shared by
+ * both the empty-state branch and the populated branch so the two render
+ * identically.
+ */
+function HistoryHeading(): ReactElement {
+  return (
+    <h2 className="flex items-center gap-1.5 font-display text-sm font-semibold uppercase tracking-wide">
+      <ShieldCheck className="h-4 w-4 text-muted-foreground" /> History
+    </h2>
+  );
+}
 
 interface ItemHistoryProps {
   itemInstanceId: string;
@@ -198,9 +212,7 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
   if (permittedEntries.length === 0) {
     return (
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          History
-        </h2>
+        <HistoryHeading />
         {permissionHiddenCount > 0 ? (
           <p className="text-sm text-muted-foreground">
             {permissionHiddenCount} entr{permissionHiddenCount === 1 ? 'y is' : 'ies are'} hidden by
@@ -216,23 +228,29 @@ export function ItemHistory({ itemInstanceId }: ItemHistoryProps): ReactElement 
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          History
-        </h2>
+        <HistoryHeading />
+        {/*
+         * The show-all / ownership-only toggle renders only when it would
+         * actually change what's shown — i.e. the default ownership-only
+         * filter is hiding non-transition events (`hiddenCount > 0`), or the
+         * user has already expanded (`showAll`) and needs a way back. For an
+         * item whose events are all ownership-transitions the two views are
+         * identical, so the toggle is suppressed (nothing to collapse).
+         */}
         {hiddenCount > 0 || showAll ? (
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={showAll}
-              onChange={(e) => {
-                setShowAll(e.target.checked);
-              }}
-              className="h-3.5 w-3.5"
-            />
-            <span>
-              Show all events{!showAll && hiddenCount > 0 ? ` (+${String(hiddenCount)})` : ''}
-            </span>
-          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAll((v) => !v);
+            }}
+            aria-pressed={showAll}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition hover:text-foreground"
+          >
+            {showAll ? <Eye className="h-3 w-3" /> : <ArrowLeftRight className="h-3 w-3" />}
+            {showAll
+              ? 'Ownership only'
+              : `Show all events${hiddenCount > 0 ? ` (+${String(hiddenCount)})` : ''}`}
+          </button>
         ) : null}
       </div>
       {visibleEntries.length === 0 ? (

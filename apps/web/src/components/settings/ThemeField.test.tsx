@@ -12,21 +12,18 @@ beforeEach(async () => {
 });
 
 describe('ThemeField', () => {
-  it('renders the three preference options and reflects the current value', () => {
+  it('renders the three preference options as radios and marks the current one', () => {
     useThemeStore.setState({ preference: 'dark' });
     render(<ThemeField />);
-    const select = screen.getByLabelText(/theme/i);
-    expect(select).toHaveValue('dark');
-    expect(screen.getByRole('option', { name: /system — follow os setting/i })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /^light$/i })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /^dark$/i })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^light$/i })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^dark$/i })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: /^system$/i })).toBeInTheDocument();
   });
 
-  it('changing the select updates the store', async () => {
+  it('clicking a segment updates the store', async () => {
     const user = userEvent.setup();
     render(<ThemeField />);
-    const select = screen.getByLabelText(/theme/i);
-    await user.selectOptions(select, 'light');
+    await user.click(screen.getByRole('radio', { name: /^light$/i }));
     expect(useThemeStore.getState().preference).toBe('light');
   });
 

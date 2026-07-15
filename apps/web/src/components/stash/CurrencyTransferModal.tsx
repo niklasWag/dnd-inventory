@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
+import { ArrowRight, Coins } from 'lucide-react';
 
 import {
   Dialog,
@@ -18,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import { currency } from '@app/rules';
 import { buildStashLabels } from '@/lib/stashLabels';
 
@@ -74,6 +76,7 @@ export function CurrencyTransferModal({
   onOpenChange,
 }: CurrencyTransferModalProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Source's current holding — drives per-denom max bounds + the "insufficient"
@@ -101,6 +104,12 @@ export function CurrencyTransferModal({
     return stashes
       .filter((st) => st.id !== stashId)
       .map((st) => ({ id: st.id, label: labelById.get(st.id) ?? st.name }));
+  }, [stashes, characters, log, stashId]);
+
+  // R9.5 — source stash label for the source → target summary row.
+  const sourceLabel = useMemo<string>(() => {
+    if (stashes === null) return '—';
+    return buildStashLabels(stashes, characters, log).get(stashId) ?? '—';
   }, [stashes, characters, log, stashId]);
 
   const defaultTargetId = targets[0]?.id ?? '';
@@ -184,11 +193,17 @@ export function CurrencyTransferModal({
   const totalGpEquivalent = currency.toGpEquivalent(parsed);
   const canSubmit = targets.length > 0 && insufficient === undefined && totalCoinsRequested > 0;
 
+  const selectedTargetId: unknown = watched.toStashId;
+  const selectedTargetLabel = targets.find((t) => t.id === selectedTargetId)?.label;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Transfer currency</DialogTitle>
+          <DialogTitle className="flex items-center gap-2 font-display">
+            <Coins className="h-4 w-4 text-primary" aria-hidden="true" />
+            Transfer currency
+          </DialogTitle>
           <DialogDescription>
             Move coins between stashes atomically. Enter how many of each denomination to send.
           </DialogDescription>
@@ -201,6 +216,17 @@ export function CurrencyTransferModal({
           className="space-y-4"
           noValidate
         >
+          {/* R9.5 — source → target summary row (TransferCurrency mockup). */}
+          {selectedTargetLabel !== undefined ? (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-medium">
+                {sourceLabel}
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="font-medium text-foreground">{selectedTargetLabel}</span>
+            </div>
+          ) : null}
+
           <div className="space-y-1.5">
             <Label htmlFor="currency-transfer-target">Target stash</Label>
             <select
@@ -274,7 +300,7 @@ export function CurrencyTransferModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+            <Button type="submit" disabled={!canSubmit || isSubmitting || !canDispatch}>
               {isSubmitting ? 'Transferring…' : 'Transfer'}
             </Button>
           </DialogFooter>

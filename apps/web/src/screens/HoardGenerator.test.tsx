@@ -33,11 +33,28 @@ function renderAt(path: string): void {
   render(<RouterProvider router={router} />);
 }
 
-describe('HoardGenerator (R6.3)', () => {
-  it('renders a coin/rarity/gem preview on mount', () => {
+describe('HoardGenerator (R6.3 / R9.9 stepper)', () => {
+  /** R9.9 — the generator is a 3-step stepper (Parameters → Review roll →
+   * Hand off). Advance from step 1 to the roll preview via the "Roll" nav. */
+  async function goToReview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(screen.getByRole('button', { name: /^roll$/i }));
+  }
+
+  /** Advance all the way to the final "Hand off" step. */
+  async function goToHandoff(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: /^next$/i }));
+  }
+
+  it('renders the stepper title + parameters on mount, roll preview on step 2', async () => {
+    const user = userEvent.setup();
     bootstrap();
     renderAt('/party/:partyId/loot/generate');
-    expect(screen.getByRole('heading', { name: /hoard generator/i })).toBeInTheDocument();
+    // Eyebrow names the tool; the h1 is the stepper title.
+    expect(screen.getByText(/hoard generator/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /roll a treasure hoard/i })).toBeInTheDocument();
+    // Preview headings live on the "Review roll" step.
+    await goToReview(user);
     expect(screen.getByRole('heading', { name: /coins/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /magic items/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /gems/i })).toBeInTheDocument();
@@ -54,9 +71,9 @@ describe('HoardGenerator (R6.3)', () => {
     const user = userEvent.setup();
     bootstrap();
     renderAt('/party/:partyId/loot/generate');
-    // Just verify that changing the select doesn't throw and the
-    // preview is still rendered.
+    // Change the band on step 1, then advance to the preview.
     await user.selectOptions(screen.getByLabelText(/cr band/i), '17+');
+    await goToReview(user);
     expect(screen.getByRole('heading', { name: /coins/i })).toBeInTheDocument();
   });
 
@@ -64,21 +81,28 @@ describe('HoardGenerator (R6.3)', () => {
     const user = userEvent.setup();
     bootstrap();
     renderAt('/party/:partyId/loot/generate');
+    await goToHandoff(user);
     await user.click(screen.getByRole('button', { name: /continue/i }));
     // Wizard renders as the new route.
-    expect(screen.getByRole('heading', { name: /loot distribution/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /distribution wizard/i })).toBeInTheDocument();
   });
 
   it('Reroll button re-runs the roll (values may change)', async () => {
     const user = userEvent.setup();
     bootstrap();
     renderAt('/party/:partyId/loot/generate');
-    const before = screen.getByRole('heading', { name: /coins/i }).parentElement!.textContent;
+    await goToReview(user);
+    // The Coins card wraps its header + the 5-denom value grid.
+    const coinsCard = screen
+      .getByRole('heading', { name: /coins/i })
+      .closest('div.overflow-hidden')!;
+    const before = coinsCard.textContent;
     await user.click(screen.getByRole('button', { name: /reroll/i }));
-    const after = screen.getByRole('heading', { name: /coins/i }).parentElement!.textContent;
-    // Not strictly guaranteed different (rng could repeat), but this
-    // gives us signal that the button doesn't throw and the DOM is
-    // re-rendered. Assert weakly that both blocks contain digits.
+    const after = screen
+      .getByRole('heading', { name: /coins/i })
+      .closest('div.overflow-hidden')!.textContent;
+    // Not strictly guaranteed different (rng could repeat), but this gives
+    // signal the button doesn't throw + the DOM re-renders.
     expect(before).toMatch(/\d/);
     expect(after).toMatch(/\d/);
   });

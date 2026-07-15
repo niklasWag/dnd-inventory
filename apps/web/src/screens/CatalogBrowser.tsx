@@ -1,5 +1,6 @@
 import { type ReactElement, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { FlaskConical, Sparkles } from 'lucide-react';
 
 import { pricing, currency, searchCatalog } from '@app/rules';
 import { Button } from '@/components/ui/button';
@@ -15,7 +16,7 @@ import {
 import { HomebrewForm } from '@/components/catalog/HomebrewForm';
 import { DeleteHomebrewDialog } from '@/components/catalog/DeleteHomebrewDialog';
 import { useStore } from '@/store';
-import { rarityClasses, rarityLabel } from '@/lib/rarity';
+import { rarityPillClass, rarityLabel } from '@/lib/rarity';
 import type { ItemCategory, ItemDefinition, ItemInstance } from '@app/shared';
 
 /**
@@ -97,10 +98,11 @@ export function CatalogBrowser(): ReactElement {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-8">
       <header className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">Catalog</h1>
+          <p className="text-sm text-muted-foreground">Reference · shared catalog</p>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Catalog</h1>
           <p className="text-sm text-muted-foreground">
             PHB 2024 mundane items, DMG 2024 magic items, and homebrew. PHB / DMG rows are read-only
             — use Duplicate to create an editable homebrew copy.
@@ -108,6 +110,7 @@ export function CatalogBrowser(): ReactElement {
         </div>
         <Button
           type="button"
+          className="shrink-0 shadow-e1"
           onClick={() => {
             setActiveDef(null);
             setFormMode('create');
@@ -117,11 +120,13 @@ export function CatalogBrowser(): ReactElement {
         </Button>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {/* R9.6 — framed in-card filter bar (CatalogTable mockup). */}
+      <div className="grid gap-3 rounded-lg border border-border bg-surface p-3 shadow-e1 sm:grid-cols-2 lg:grid-cols-5">
         <div className="space-y-1.5 lg:col-span-2">
           <Label htmlFor="catalog-browser-search">Search</Label>
           <Input
             id="catalog-browser-search"
+            className="bg-surface-2"
             placeholder="rope, longsword, torch, lgsw…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -130,7 +135,7 @@ export function CatalogBrowser(): ReactElement {
         <div className="space-y-1.5">
           <Label htmlFor="catalog-browser-category">Category</Label>
           <Select value={category} onValueChange={(v) => setCategory(v as 'all' | ItemCategory)}>
-            <SelectTrigger id="catalog-browser-category">
+            <SelectTrigger id="catalog-browser-category" className="bg-surface-2">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -151,7 +156,7 @@ export function CatalogBrowser(): ReactElement {
         <div className="space-y-1.5">
           <Label htmlFor="catalog-browser-rarity">Rarity</Label>
           <Select value={rarity} onValueChange={(v) => setRarity(v as typeof rarity)}>
-            <SelectTrigger id="catalog-browser-rarity">
+            <SelectTrigger id="catalog-browser-rarity" className="bg-surface-2">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -169,7 +174,7 @@ export function CatalogBrowser(): ReactElement {
         <div className="space-y-1.5">
           <Label htmlFor="catalog-browser-source">Source</Label>
           <Select value={source} onValueChange={(v) => setSource(v as typeof source)}>
-            <SelectTrigger id="catalog-browser-source">
+            <SelectTrigger id="catalog-browser-source" className="bg-surface-2">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -183,7 +188,7 @@ export function CatalogBrowser(): ReactElement {
         <div className="space-y-1.5">
           <Label htmlFor="catalog-browser-attunement">Attunement</Label>
           <Select value={attunement} onValueChange={(v) => setAttunement(v as typeof attunement)}>
-            <SelectTrigger id="catalog-browser-attunement">
+            <SelectTrigger id="catalog-browser-attunement" className="bg-surface-2">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -195,11 +200,7 @@ export function CatalogBrowser(): ReactElement {
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        {results.length} of {catalog.length} entries
-      </p>
-
-      <div className="rounded-md border border-border">
+      <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
         {results.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">
             {catalog.length === 0
@@ -207,40 +208,56 @@ export function CatalogBrowser(): ReactElement {
               : 'No items match your search.'}
           </p>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-border text-xs uppercase text-muted-foreground">
+          <table className="w-full text-left text-sm" aria-label="Catalog items">
+            <thead className="border-b border-border bg-surface-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 font-medium">Source</th>
-                <th className="px-3 py-2 font-medium">Category</th>
-                <th className="px-3 py-2 font-medium">Rarity</th>
-                <th className="px-3 py-2 text-right font-medium">Weight</th>
-                <th className="px-3 py-2 text-right font-medium">Cost</th>
-                <th className="px-3 py-2 text-right font-medium">Actions</th>
+                <th className="px-4 py-2.5 font-semibold">Name</th>
+                <th className="px-4 py-2.5 font-semibold">Source</th>
+                <th className="px-4 py-2.5 font-semibold">Category</th>
+                <th className="px-4 py-2.5 text-right font-semibold">Weight</th>
+                <th className="px-4 py-2.5 text-right font-semibold">Cost</th>
+                <th className="px-4 py-2.5 text-right font-semibold">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {results.map((d) => (
-                <tr key={d.id} className="border-b border-border/50 last:border-0">
-                  <td className="px-3 py-2 font-medium">{d.name}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{d.source}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{d.category}</td>
-                  <td className="px-3 py-2">
-                    {d.rarity != null ? (
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${rarityClasses(d.rarity)}`}
-                        aria-label={`Rarity: ${rarityLabel(d.rarity)}`}
-                      >
-                        {rarityLabel(d.rarity)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                <tr key={d.id} className="transition hover:bg-surface-2/60">
+                  <td className="px-4 py-2.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium">{d.name}</span>
+                      {d.rarity != null ? (
+                        <span
+                          className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${rarityPillClass(d.rarity)}`}
+                          aria-label={`Rarity: ${rarityLabel(d.rarity)}`}
+                        >
+                          {rarityLabel(d.rarity)}
+                        </span>
+                      ) : null}
+                      {d.requiresAttunement === true ? (
+                        <span
+                          className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground"
+                          title="Requires attunement"
+                        >
+                          <Sparkles className="h-2.5 w-2.5" aria-hidden="true" />
+                          attune
+                        </span>
+                      ) : null}
+                      {d.source === 'homebrew' ? (
+                        <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                          <FlaskConical className="h-2.5 w-2.5" aria-hidden="true" />
+                          Homebrew
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+                  <td className="px-4 py-2.5 text-muted-foreground">{d.source}</td>
+                  <td className="px-4 py-2.5 capitalize text-muted-foreground">{d.category}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
                     {d.weight !== undefined ? `${String(d.weight)} lb` : '—'}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+                  <td className="px-4 py-2.5 text-right tabular-nums">
                     {d.cost !== undefined
                       ? pricing.formatPrice(
                           pricing.buyPrice(
@@ -252,7 +269,7 @@ export function CatalogBrowser(): ReactElement {
                         )
                       : '—'}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-4 py-2.5 text-right">
                     {d.source === 'PHB' || d.source === 'DMG' ? (
                       <Button
                         type="button"
@@ -300,6 +317,10 @@ export function CatalogBrowser(): ReactElement {
           </table>
         )}
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        {results.length} of {catalog.length} entries
+      </p>
 
       {formMode !== null ? (
         <HomebrewForm

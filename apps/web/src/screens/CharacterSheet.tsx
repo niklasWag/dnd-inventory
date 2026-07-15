@@ -2,11 +2,12 @@ import { useState, type ReactElement } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import { Moon, Pencil } from 'lucide-react';
+import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 
 import { charges as chargesRules } from '@app/rules';
 
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,35 +18,25 @@ import { CapacityBar } from '@/components/inventory/CapacityBar';
 import { EquippedSlotsPanel } from '@/components/inventory/EquippedSlotsPanel';
 import { RestRollModal } from '@/components/inventory/RestRollModal';
 import { EditCharacterDialog } from '@/components/character/EditCharacterDialog';
+import { DeleteCharacterDialog } from '@/components/character/DeleteCharacterDialog';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
-import { StashItemsTable } from '@/components/stash/StashItemsTable';
-import { StashSearchInput } from '@/components/stash/StashSearchInput';
-import { StorageStashList } from '@/components/stash/StorageStashList';
+import { InventoryPanel } from '@/components/stash/InventoryPanel';
 import { useStore } from '@/store';
 import { useDispatch } from '@/lib/useDispatch';
 import { BATCH_TRIGGER_ORDER, batchTriggerLabel, type BatchRechargeTrigger } from '@/lib/charges';
 
-type Tab = 'inventory' | 'storage' | 'party' | 'recovered-loot';
-
-const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
-  { id: 'inventory', label: 'Inventory' },
-  { id: 'storage', label: 'Storage' },
-  { id: 'party', label: 'Party Stash' },
-  { id: 'recovered-loot', label: 'Recovered Loot' },
-];
-
 /**
- * CharacterSheet (MVP §7 screen 2). Header + 4 tabs.
+ * CharacterSheet (OUTLINE §5 screen 2) — R9.3 Combined layout.
  *
- * M2 wires three of the four tabs (Inventory / Party Stash / Recovered
- * Loot) to the shared `StashItemsTable` + `AddItemModal`. M3 shipped the
- * Storage tab card list. M4 adds the `<CurrencyRow>` above the items
- * table on the three non-Storage tabs (Storage cards show their own
- * `<CurrencyBreakdown>` per card).
- *
- * Remaining placeholders that future milestones fill in:
- *   - Move / Split per row → M5
+ * R9.3 dropped the old 4-tab model (Inventory / Storage / Party Stash /
+ * Recovered Loot). Those are now separate sidebar-routed pages (Stashes
+ * is per-character; Party Stash + Recovered Loot are party-wide — see the
+ * router). This screen is now **Inventory-only**: the character header, a
+ * prominent currency panel, the framed inventory table (`InventoryPanel`
+ * with its in-card search/category/quick-filter toolbar), and a right rail
+ * with the equipped/attuned loadout + encumbrance bar. Mirrors
+ * `design-lab/src/character/CharacterCombined.tsx`.
  */
 export function CharacterSheet(): ReactElement {
   const { id } = useParams<{ id: string }>();
@@ -54,246 +45,127 @@ export function CharacterSheet(): ReactElement {
       if (s.appState === null) return null;
       const c = s.appState.characters.find((ch) => ch.id === id);
       if (c === undefined) return null;
-      const partyStash = s.appState.stashes.find((st) => st.scope === 'party');
-      if (partyStash === undefined) return null;
-      // R4.2.e — resolve Banker + DM context up-front so CurrencyRow /
-      // StashItemsTable can render conditional affordances without
-      // reaching back into the store themselves. `userIsBanker` uses
-      // OUTLINE §3.14: banker is derived from `Party.bankerUserId`,
-      // never from a membership row. `userIsDm` reads from the local
-      // DM membership; §3.14 also bars the DM from being the Banker so
-      // the two flags are mutually exclusive.
+      // R4.5 — cross-character cue. When a DM is viewing another player's
+      // character, surface a subtle "editing X's character" banner.
+      // Suppressed in solo (§8.2) + for own-character views.
       const myUserId = s.appState.user.id;
-      const bankerActive = s.appState.party.bankerUserId !== null;
-      const userIsBanker = bankerActive && s.appState.party.bankerUserId === myUserId;
       const userIsDm = s.appState.memberships.some(
         (m) => m.userId === myUserId && m.role === 'dm' && m.leftAt === null,
       );
-      // R4.5 — cross-character cue. When a DM is viewing another
-      // player's character, surface a subtle "editing X's character"
-      // banner so the mutation surface is unambiguous. Suppressed in
-      // solo (§8.2 union-of-rights makes the DM/owner distinction
-      // irrelevant) and for own-character views. The owner's display
-      // name is resolved server-side via memberships → user rows; the
-      // client doesn't have a user map in AppState, so we fall back to
-      // the character name.
       const isCrossCharacterDmView =
         userIsDm && c.ownerUserId !== null && c.ownerUserId !== myUserId;
-      // R6.0 — "Edit character" button visibility. Owner OR DM OR solo
-      // (solo party of one — per §8.2 union-of-rights the sole member
-      // acts as both). Non-DM viewers of someone else's character
-      // never see the button. The dialog itself does per-field
-      // disabled gating; this flag just controls whether the button
-      // even appears.
+      // R6.0 — "Edit character" visibility: owner OR DM OR solo (§8.2
+      // union-of-rights). Non-DM viewers of another's character don't see it.
       const activeMemberships = s.appState.memberships.filter((m) => m.leftAt === null);
-      const distinctUserIds = new Set(activeMemberships.map((m) => m.userId));
-      const isSolo = distinctUserIds.size === 1;
+      const isSolo = new Set(activeMemberships.map((m) => m.userId)).size === 1;
       const isOwner = c.ownerUserId === myUserId;
       const canEditCharacter = userIsDm || isOwner || isSolo;
       return {
         character: c,
         inventoryStashId: c.inventoryStashId,
-        partyStashId: partyStash.id,
-        recoveredLootStashId: s.appState.party.recoveredLootStashId,
-        bankerActive,
-        userIsBanker,
-        userIsDm,
         isCrossCharacterDmView,
         canEditCharacter,
       };
     }),
   );
-  const [tab, setTab] = useState<Tab>('inventory');
   const [adding, setAdding] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  // R7.5 — per-tab fuzzy search state. Kept independent so switching
-  // tabs doesn't leak a filter from Inventory into Party Stash. Storage
-  // has no `<StashItemsTable>` mount, so its slot is unused.
-  const [searchByTab, setSearchByTab] = useState<Record<Tab, string>>({
-    inventory: '',
-    storage: '',
-    party: '',
-    'recovered-loot': '',
-  });
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   if (sheet === null) {
     return <Navigate to="/" replace />;
   }
 
-  const {
-    character,
-    inventoryStashId,
-    partyStashId,
-    recoveredLootStashId,
-    bankerActive,
-    userIsBanker,
-    userIsDm,
-    isCrossCharacterDmView,
-    canEditCharacter,
-  } = sheet;
-  const targetStash = stashForTab(tab, {
-    inventoryStashId,
-    partyStashId,
-    recoveredLootStashId,
-  });
-
-  // R4.2.e — CurrencyRow banker context. Only meaningful for shared-
-  // pool tabs (party / recovered-loot); Inventory / Storage get
-  // `undefined` so the row renders the default control set.
-  const currencyRowBankerContext =
-    tab === 'party' || tab === 'recovered-loot'
-      ? {
-          userIsBanker,
-          userIsDmWithBankerActive: bankerActive && userIsDm && !userIsBanker,
-          userIsGatedFromPool: bankerActive && !userIsBanker && !userIsDm,
-          isPartyStash: tab === 'party',
-        }
-      : undefined;
+  const { character, inventoryStashId, isCrossCharacterDmView, canEditCharacter } = sheet;
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-start justify-between gap-4">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">{character.name}</h1>
-          <p className="text-sm text-muted-foreground">
-            Level {character.level} {character.species} {character.class}
-            <span className="mx-2">•</span>
-            STR {character.abilityScores.STR}
-          </p>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge className="bg-primary/10 text-primary hover:bg-primary/10">
+              Lv {character.level}
+            </Badge>
+            <span>
+              {character.species} · {character.class}
+            </span>
+            <span className="text-muted-foreground/60">·</span>
+            <span className="tabular-nums">STR {character.abilityScores.STR}</span>
+          </div>
+          <h1 className="font-display text-3xl font-bold tracking-tight">{character.name}</h1>
         </div>
         <div className="flex items-center gap-2">
-          {canEditCharacter ? (
-            <Button type="button" variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-              <Pencil className="mr-2 h-4 w-4" aria-hidden="true" />
-              Edit character
-            </Button>
-          ) : null}
+          <Button type="button" size="sm" onClick={() => setAdding(true)}>
+            Add item
+          </Button>
           <RestMenu characterId={character.id} />
+          {canEditCharacter ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="sm" aria-label="Character options">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+                  <Pencil className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Edit character
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive focus:bg-destructive focus:text-destructive-foreground"
+                  onSelect={() => setDeleteOpen(true)}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Delete character
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </div>
       </header>
 
       {canEditCharacter ? (
-        <EditCharacterDialog
-          characterId={character.id}
-          open={editOpen}
-          onOpenChange={setEditOpen}
-        />
+        <>
+          <EditCharacterDialog
+            characterId={character.id}
+            open={editOpen}
+            onOpenChange={setEditOpen}
+          />
+          <DeleteCharacterDialog
+            characterId={character.id}
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+          />
+        </>
       ) : null}
 
       {isCrossCharacterDmView ? (
         <div
           role="note"
-          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
         >
           Editing {character.name}'s character as DM.
         </div>
       ) : null}
 
-      <div className="border-b border-border">
-        <nav className="-mb-px flex gap-1" aria-label="Tabs">
-          {TABS.map((t) => {
-            const active = t.id === tab;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setTab(t.id)}
-                className={
-                  'border-b-2 px-3 py-2 text-sm font-medium transition-colors ' +
-                  (active
-                    ? 'border-foreground text-foreground'
-                    : 'border-transparent text-muted-foreground hover:text-foreground')
-                }
-              >
-                {t.label}
-              </button>
-            );
-          })}
-        </nav>
+      <CurrencyRow stashId={inventoryStashId} />
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+        <InventoryPanel stashId={inventoryStashId} title="Inventory" characterId={character.id} />
+        <aside className="space-y-4 lg:sticky lg:top-8 lg:self-start">
+          <EquippedSlotsPanel characterId={character.id} />
+          <CapacityBar characterId={character.id} />
+        </aside>
       </div>
 
-      <section>
-        {tab === 'storage' ? (
-          <StorageStashList characterId={character.id} />
-        ) : (
-          <div className="space-y-4">
-            <CurrencyRow
-              stashId={targetStash}
-              {...(currencyRowBankerContext !== undefined
-                ? { bankerContext: currencyRowBankerContext }
-                : {})}
-            />
-            {tab === 'inventory' ? <CapacityBar characterId={character.id} /> : null}
-            {tab === 'inventory' ? <EquippedSlotsPanel characterId={character.id} /> : null}
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-muted-foreground">{labelForTab(tab)}</h2>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  setAdding(true);
-                }}
-              >
-                + Add item
-              </Button>
-            </div>
-            <StashSearchInput
-              value={searchByTab[tab]}
-              onChange={(next) => setSearchByTab((prev) => ({ ...prev, [tab]: next }))}
-              label={`Search ${labelForTab(tab)}`}
-              idPrefix={`stash-search-${tab}`}
-            />
-            <StashItemsTable
-              stashId={targetStash}
-              {...(tab === 'inventory' ? { characterId: character.id } : {})}
-              query={searchByTab[tab]}
-            />
-          </div>
-        )}
-      </section>
-
-      {tab !== 'storage' ? (
-        <AddItemModal
-          open={adding}
-          onOpenChange={setAdding}
-          stashId={targetStash}
-          stashLabel={labelForTab(tab)}
-        />
-      ) : null}
+      <AddItemModal
+        open={adding}
+        onOpenChange={setAdding}
+        stashId={inventoryStashId}
+        stashLabel="Inventory"
+      />
     </div>
   );
-}
-
-function labelForTab(tab: Exclude<Tab, 'storage'>): string {
-  switch (tab) {
-    case 'inventory':
-      return 'Inventory';
-    case 'party':
-      return 'Party Stash';
-    case 'recovered-loot':
-      return 'Recovered Loot';
-  }
-}
-
-function stashForTab(
-  tab: Tab,
-  ids: { inventoryStashId: string; partyStashId: string; recoveredLootStashId: string },
-): string {
-  switch (tab) {
-    case 'inventory':
-      return ids.inventoryStashId;
-    case 'party':
-      return ids.partyStashId;
-    case 'recovered-loot':
-      return ids.recoveredLootStashId;
-    case 'storage':
-      // Unused — the Storage tab renders the M3 placeholder instead of the
-      // StashItemsTable. Return Inventory's id to satisfy the type; the
-      // modal is also hidden when `tab === 'storage'`.
-      return ids.inventoryStashId;
-  }
 }
 
 /**
@@ -381,8 +253,7 @@ function RestMenu({ characterId }: { characterId: string }): ReactElement {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant="outline" size="sm" className="gap-1.5">
-            <Moon className="h-4 w-4" aria-hidden="true" />
+          <Button type="button" variant="outline" size="sm">
             Rest
           </Button>
         </DropdownMenuTrigger>

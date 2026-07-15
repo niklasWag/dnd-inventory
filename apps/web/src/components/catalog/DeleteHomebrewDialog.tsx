@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 
 interface DeleteHomebrewDialogProps {
   open: boolean;
@@ -38,6 +39,7 @@ export function DeleteHomebrewDialog({
   referenceStashCount,
 }: DeleteHomebrewDialogProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   function confirm(): void {
@@ -86,7 +88,11 @@ export function DeleteHomebrewDialog({
 
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={confirm} disabled={inUse} aria-disabled={inUse}>
+          <AlertDialogAction
+            onClick={confirm}
+            disabled={inUse || !canDispatch}
+            aria-disabled={inUse || !canDispatch}
+          >
             Delete
           </AlertDialogAction>
         </AlertDialogFooter>

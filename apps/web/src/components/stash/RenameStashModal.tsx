@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useDispatch } from '@/lib/useDispatch';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 
 interface RenameStashModalProps {
   open: boolean;
@@ -45,6 +46,7 @@ export function RenameStashModal({
   currentName,
 }: RenameStashModalProps): ReactElement {
   const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -93,7 +95,7 @@ export function RenameStashModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Rename Storage stash</DialogTitle>
+          <DialogTitle className="font-display">Rename Storage stash</DialogTitle>
           <DialogDescription>Pick a new name (1–60 characters).</DialogDescription>
         </DialogHeader>
 
@@ -130,7 +132,7 @@ export function RenameStashModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" disabled={isSubmitting || !canDispatch}>
               {isSubmitting ? 'Saving…' : 'Save'}
             </Button>
           </DialogFooter>

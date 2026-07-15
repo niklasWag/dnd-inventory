@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useStore, dispatchMintingAction } from '@/store';
+import { useCanDispatch } from '@/lib/useCanDispatch';
 import type { ItemDefinition, ItemInstance } from '@app/shared';
 
 interface PackItemModalProps {
@@ -60,6 +61,7 @@ export function PackItemModal({
   itemInstanceId,
 }: PackItemModalProps): ReactElement {
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const canDispatch = useCanDispatch();
 
   // Source row snapshot — primitives only, so `useShallow` short-circuits.
   const source = useStore(
@@ -138,7 +140,7 @@ export function PackItemModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Pack into container</DialogTitle>
+          <DialogTitle className="font-display">Pack into container</DialogTitle>
           <DialogDescription>
             Choose a container in this stash. The item moves inside; you can take it back out
             anytime.
@@ -192,7 +194,7 @@ export function PackItemModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!canSubmit}>
+            <Button type="submit" disabled={!canSubmit || !canDispatch}>
               Pack
             </Button>
           </DialogFooter>

@@ -212,8 +212,10 @@ describe('CatalogBrowser', () => {
     // ancestor-scoped query.
     await user.type(screen.getByLabelText(/^search$/i), 'cloak of protection');
 
-    const cloakCell = screen.getByRole('cell', { name: 'Cloak of Protection' });
-    const cloakRow = cloakCell.closest('tr');
+    // R9.6 — the rarity pill is now inline with the name in the same cell,
+    // so the cell's accessible name includes the pill text. Locate the row
+    // via the name text node instead of an exact cell-name match.
+    const cloakRow = screen.getByText('Cloak of Protection').closest('tr');
     if (cloakRow === null) throw new Error('expected the Cloak row to be a <tr>');
     expect(within(cloakRow).getByLabelText('Rarity: Uncommon')).toBeInTheDocument();
   });

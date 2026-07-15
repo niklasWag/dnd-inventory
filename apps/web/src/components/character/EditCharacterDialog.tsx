@@ -250,7 +250,7 @@ function EditCharacterDialogInner({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit {character.name}</DialogTitle>
+            <DialogTitle className="font-display">Edit {character.name}</DialogTitle>
             <DialogDescription>
               {canEditMaxAttunement
                 ? 'Update any field. Max attunement is DM-only.'

@@ -3,18 +3,19 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { RootLayout } from './Layout';
-import type { AppState, GameSession, PartyMembership, Shop } from '@app/shared';
+import type { AppState, GameSession } from '@app/shared';
 import { useStore } from '@/store';
+import { useSidebarStore } from '@/store/sidebar';
 
 /**
- * R5.2 — Layout hosts a current-session indicator (§3.12) that surfaces
- * on every party-scoped screen. The badge appears iff:
- *   - We're inside `/party/:partyId/*` (partyId resolved via
- *     `useCurrentPartyIdOrNull`), AND
- *   - `state.appState.gameSessions` contains a row with `isCurrent: true`.
+ * R9.2 — RootLayout is now a two-shape shell:
+ *   - inside a party (`/party/:partyId/*` + AppState loaded) → the grouped
+ *     `Sidebar` frames the routed content;
+ *   - outside a party (`/hub`, `/settings`, auth) → chrome-light, no sidebar.
  *
- * These tests exercise the visibility rules only. Full navigation
- * behaviour and role-gated nav buttons are covered elsewhere.
+ * The nav items themselves (Character Sheet / History / Shops / …) are
+ * covered by `nav/Sidebar.test.tsx`. These tests assert the shell's
+ * shape decisions + the current-session badge visibility.
  */
 
 function makeSession(overrides: Partial<GameSession> = {}): GameSession {
@@ -73,13 +74,14 @@ function makeState(gameSessions: GameSession[]): AppState {
   };
 }
 
-function renderInParty(url: string): void {
+function renderAt(url: string): void {
   render(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
         <Route element={<RootLayout />}>
           <Route path="/party/:partyId/dm" element={<div>content</div>} />
           <Route path="/hub" element={<div>hub</div>} />
+          <Route path="/settings" element={<div>settings</div>} />
           <Route path="/" element={<div>root</div>} />
         </Route>
       </Routes>
@@ -87,154 +89,62 @@ function renderInParty(url: string): void {
   );
 }
 
-describe('RootLayout — current session indicator (R5.2)', () => {
-  beforeEach(() => {
-    useStore.setState({ appState: null, log: [] });
+beforeEach(() => {
+  useStore.setState({ appState: null, log: [] });
+  useSidebarStore.setState({ collapsed: false, hydrated: true });
+});
+
+describe('RootLayout — shell shape', () => {
+  it('renders the party sidebar inside the party subtree', () => {
+    useStore.setState({ appState: makeState([]), log: [] });
+    renderAt('/party/p1/dm');
+    expect(screen.getByRole('navigation', { name: /party navigation/i })).toBeInTheDocument();
+    expect(screen.getByText('content')).toBeInTheDocument();
   });
 
-  it('renders the badge when a session is current AND we are on a party route', () => {
+  it('does NOT render the sidebar on /hub (unscoped)', () => {
+    useStore.setState({ appState: makeState([]), log: [] });
+    renderAt('/hub');
+    expect(screen.queryByRole('navigation', { name: /party navigation/i })).toBeNull();
+    expect(screen.getByText('hub')).toBeInTheDocument();
+  });
+
+  it('does NOT render the sidebar on /settings (unscoped)', () => {
+    useStore.setState({ appState: makeState([]), log: [] });
+    renderAt('/settings');
+    expect(screen.queryByRole('navigation', { name: /party navigation/i })).toBeNull();
+    expect(screen.getByText('settings')).toBeInTheDocument();
+  });
+
+  it('does NOT render the sidebar when appState is null (no party loaded)', () => {
+    renderAt('/party/p1/dm');
+    expect(screen.queryByRole('navigation', { name: /party navigation/i })).toBeNull();
+  });
+});
+
+describe('RootLayout — current session badge (R5.2)', () => {
+  it('renders the badge when a session is current AND we are inside a party', () => {
     useStore.setState({ appState: makeState([makeSession({ number: 12 })]), log: [] });
-    renderInParty('/party/p1/dm');
-    expect(screen.getByLabelText(/session 12 in progress/i)).toBeInTheDocument();
-    expect(screen.getByText(/session 12/i)).toBeInTheDocument();
+    renderAt('/party/p1/dm');
+    // Two placements (mobile top bar + desktop strip) both carry the aria-label.
+    expect(screen.getAllByLabelText(/session 12 in progress/i).length).toBeGreaterThan(0);
   });
 
   it('hides the badge when gameSessions is empty', () => {
     useStore.setState({ appState: makeState([]), log: [] });
-    renderInParty('/party/p1/dm');
+    renderAt('/party/p1/dm');
     expect(screen.queryByLabelText(/session .* in progress/i)).toBeNull();
   });
 
   it('hides the badge when no session is current (all past)', () => {
-    useStore.setState({
-      appState: makeState([makeSession({ isCurrent: false })]),
-      log: [],
-    });
-    renderInParty('/party/p1/dm');
+    useStore.setState({ appState: makeState([makeSession({ isCurrent: false })]), log: [] });
+    renderAt('/party/p1/dm');
     expect(screen.queryByLabelText(/session .* in progress/i)).toBeNull();
   });
 
-  it('hides the badge outside the party subtree (e.g. /hub, /)', () => {
+  it('hides the badge outside the party subtree (e.g. /hub)', () => {
     useStore.setState({ appState: makeState([makeSession()]), log: [] });
-    renderInParty('/hub');
+    renderAt('/hub');
     expect(screen.queryByLabelText(/session .* in progress/i)).toBeNull();
-  });
-
-  it('hides the badge when appState is null (no party loaded)', () => {
-    renderInParty('/party/p1/dm');
-    expect(screen.queryByLabelText(/session .* in progress/i)).toBeNull();
-  });
-});
-
-describe('RootLayout — History nav button (R5.3.a)', () => {
-  beforeEach(() => {
-    useStore.setState({ appState: null, log: [] });
-  });
-
-  it('renders the History button in the party subtree', () => {
-    useStore.setState({ appState: makeState([]), log: [] });
-    renderInParty('/party/p1/dm');
-    expect(screen.getByRole('button', { name: /^history$/i })).toBeInTheDocument();
-  });
-
-  it('hides the History button outside the party subtree', () => {
-    useStore.setState({ appState: makeState([]), log: [] });
-    renderInParty('/hub');
-    expect(screen.queryByRole('button', { name: /^history$/i })).toBeNull();
-  });
-
-  it('hides the History button when appState is null (no party loaded)', () => {
-    renderInParty('/party/p1/dm');
-    expect(screen.queryByRole('button', { name: /^history$/i })).toBeNull();
-  });
-});
-
-describe('RootLayout — Shops button + open-count badge (R6.2 follow-up)', () => {
-  function makeShop(id: string, isOpen: boolean): Shop {
-    return {
-      id,
-      partyId: 'p1',
-      name: `Shop ${id}`,
-      priceModifier: 1,
-      sellToMerchantRate: 0.5,
-      isOpen,
-      stock: [],
-      createdAt: '2026-01-01T00:00:00.000Z',
-    };
-  }
-
-  function stateWithShops(opts: {
-    shops: Shop[];
-    /** When true, seed a second dm-role member so u0 reads as a plain player. */
-    playerViewer?: boolean;
-  }): AppState {
-    const base = makeState([]);
-    const extraMemberships: PartyMembership[] =
-      opts.playerViewer === true
-        ? [
-            {
-              userId: 'u-other-dm',
-              partyId: 'p1',
-              role: 'dm',
-              characterId: null,
-              joinedAt: '2026-01-01T00:00:00.000Z',
-              leftAt: null,
-            },
-          ]
-        : [];
-    return {
-      ...base,
-      memberships: [...base.memberships, ...extraMemberships],
-      shops: opts.shops,
-    };
-  }
-
-  beforeEach(() => {
-    useStore.setState({ appState: null, log: [] });
-  });
-
-  it('renders the Shops button with the open count when ≥1 shop is open (DM viewer)', () => {
-    useStore.setState({
-      appState: stateWithShops({
-        shops: [makeShop('s1', true), makeShop('s2', true), makeShop('s3', false)],
-      }),
-      log: [],
-    });
-    renderInParty('/party/p1/dm');
-    expect(screen.getByRole('button', { name: /shops \(2 open\)/i })).toBeInTheDocument();
-  });
-
-  it('renders the Shops button for a player when at least one shop is open', () => {
-    useStore.setState({
-      appState: stateWithShops({
-        shops: [makeShop('s1', true), makeShop('s2', false)],
-        playerViewer: true,
-      }),
-      log: [],
-    });
-    renderInParty('/party/p1/dm');
-    expect(screen.getByRole('button', { name: /shops \(1 open\)/i })).toBeInTheDocument();
-  });
-
-  it('hides the Shops button for a player when no shop is open', () => {
-    useStore.setState({
-      appState: stateWithShops({
-        shops: [makeShop('s1', false)],
-        playerViewer: true,
-      }),
-      log: [],
-    });
-    renderInParty('/party/p1/dm');
-    expect(screen.queryByRole('button', { name: /^shops/i })).toBeNull();
-  });
-
-  it('still shows the Shops button for a DM when no shop is open (no badge)', () => {
-    useStore.setState({
-      appState: stateWithShops({ shops: [] }),
-      log: [],
-    });
-    renderInParty('/party/p1/dm');
-    // aria-label falls back to plain "Shops" (no count suffix) when the count is 0.
-    expect(screen.getByRole('button', { name: /^shops$/i })).toBeInTheDocument();
   });
 });

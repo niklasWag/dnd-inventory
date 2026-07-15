@@ -307,10 +307,10 @@ describe('DmDashboard', () => {
     );
     // Alice row
     expect(screen.getByText('Alice')).toBeInTheDocument();
-    expect(screen.getByText('Wizard')).toBeInTheDocument();
+    expect(screen.getByText(/Wizard/)).toBeInTheDocument();
     // Bob row
     expect(screen.getByText('Bob')).toBeInTheDocument();
-    expect(screen.getByText('Rogue')).toBeInTheDocument();
+    expect(screen.getByText(/Rogue/)).toBeInTheDocument();
     // GP-equivalent values surface as text.
     expect(screen.getByText(/10(\.0)? gp/)).toBeInTheDocument();
     expect(screen.getByText(/5(\.0)? gp/)).toBeInTheDocument();

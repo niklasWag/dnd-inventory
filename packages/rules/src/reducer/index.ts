@@ -2830,11 +2830,15 @@ function sale(
 
   // Sell price ignores `priceOverride` (see plan). Scaled base × sellToMerchantRate.
   const baseCp = currency.toCopper({ [def.cost.currency]: def.cost.amount });
-  const scaled = pricing.buyPrice(baseCp, def.source, {
-    partyModifier: s.party.priceModifier,
-    shopModifier: shop.priceModifier,
-  });
-  const unitCreditCp = Math.floor(scaled * shop.sellToMerchantRate + 0.5);
+  const unitCreditCp = pricing.sellPrice(
+    baseCp,
+    def.source,
+    {
+      partyModifier: s.party.priceModifier,
+      shopModifier: shop.priceModifier,
+    },
+    shop.sellToMerchantRate,
+  );
   const totalCreditCp = unitCreditCp * payload.quantity;
 
   // Credit the seller's stash currency.

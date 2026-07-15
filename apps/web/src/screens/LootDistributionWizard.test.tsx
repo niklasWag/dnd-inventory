@@ -45,11 +45,27 @@ function renderWizard(routeState: HoardGeneratorRouteState | null = null): void 
   );
 }
 
+/**
+ * R9.9 — the wizard is now a 3-step stepper (Review hoard → Assign targets
+ * → Confirm). Amount editing lives on step 1; target selects on step 2; the
+ * Distribute button on step 3. These helpers walk the footer nav so the
+ * assertions can reach the step that owns the control under test.
+ */
+async function next(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: /^next$/i }));
+}
+async function gotoConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  // Step 1 → 2 → 3. Rows prefilled from a roll default to the Party Stash
+  // target, so the assign step is already valid and Next is enabled.
+  await next(user);
+  await next(user);
+}
+
 describe('LootDistributionWizard (R6.3)', () => {
   it('renders the empty-state when opened without route state', () => {
     bootstrap();
     renderWizard(null);
-    expect(screen.getByRole('heading', { name: /loot distribution/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /distribution wizard/i })).toBeInTheDocument();
     expect(screen.getByText(/no rows yet/i)).toBeInTheDocument();
   });
 
@@ -78,10 +94,7 @@ describe('LootDistributionWizard (R6.3)', () => {
       },
     });
     // 2 coin rows + 1 magic-item placeholder + 2 gem placeholders = 5 rows.
-    const rows = screen.getAllByRole('row');
-    // Header row + 5 data rows = 6.
-    expect(rows).toHaveLength(6);
-    // Amount inputs present per row (excluding header).
+    // Step 1 shows one amount input (spinbutton) per row.
     expect(screen.getAllByRole('spinbutton')).toHaveLength(5);
   });
 
@@ -130,6 +143,8 @@ describe('LootDistributionWizard (R6.3)', () => {
     });
 
     const before = useStore.getState().log.length;
+    // Distribute lives on the final (Confirm) step.
+    await gotoConfirm(user);
     await user.click(screen.getByRole('button', { name: /^distribute$/i }));
 
     const after = useStore.getState().log;
@@ -144,14 +159,19 @@ describe('LootDistributionWizard (R6.3)', () => {
     }
   });
 
-  it('Distribute with no rows is disabled', () => {
+  it('cannot advance past the empty-state (no rows to distribute)', () => {
     bootstrap();
     renderWizard(null);
-    const btn = screen.getByRole('button', { name: /^distribute$/i });
+    // With no rows there is nothing to distribute: the stepper is stuck on
+    // step 1 because Next is disabled, so the Distribute button (step 3) is
+    // unreachable.
+    const btn = screen.getByRole('button', { name: /^next$/i });
     expect(btn).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^distribute$/i })).toBeNull();
   });
 
-  it('shows Party Stash and character Inventory in the target picker', () => {
+  it('shows Party Stash and character Inventory in the target picker', async () => {
+    const user = userEvent.setup();
     bootstrap();
     renderWizard({
       band: '0-4',
@@ -168,10 +188,13 @@ describe('LootDistributionWizard (R6.3)', () => {
         gemsByTier: { '10': 0, '50': 0, '100': 0, '500': 0, '1000': 0, '5000': 0 },
       },
     });
+    // Target selects live on the Assign targets step (step 2).
+    await next(user);
     const targetSelect = screen.getByLabelText(/^target$/i);
     const options = within(targetSelect as HTMLSelectElement).getAllByRole('option');
-    expect(options.length).toBeGreaterThanOrEqual(2);
-    // Party Stash is first, then the character's Inventory.
-    expect((options[0] as HTMLOptionElement).text).toMatch(/party stash/i);
+    // "— Unassigned —" placeholder + Party Stash + character Inventory.
+    expect(options.length).toBeGreaterThanOrEqual(3);
+    // Party Stash is the first real target, right after the unassigned option.
+    expect((options[1] as HTMLOptionElement).text).toMatch(/party stash/i);
   });
 });

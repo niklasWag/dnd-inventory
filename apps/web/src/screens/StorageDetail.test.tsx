@@ -59,6 +59,7 @@ function renderAt(path: string): void {
     [
       { path: '/', Component: RedirectToCharacter },
       { path: '/party/:partyId/character/:id', Component: CharacterSheet },
+      { path: '/party/:partyId/character/:id/stashes', element: <p>storage-overview-stub</p> },
       { path: '/party/:partyId/stash/:stashId', Component: StorageDetail },
     ],
     { initialEntries: [prefixed] },
@@ -113,17 +114,18 @@ describe('StorageDetail (M3)', () => {
     expect(screen.getByRole('heading', { name: 'Vault of Waterdeep' })).toBeInTheDocument();
   });
 
-  it('renders a Back link to the owning character sheet', async () => {
+  it('renders a Back link to the Storage overview (stash list)', async () => {
     const user = userEvent.setup();
     const { storageStashId } = bootstrapWithStorage();
     renderAt(`/storage/${storageStashId}`);
 
-    const back = screen.getByRole('button', { name: /back to thorin/i });
+    const back = screen.getByRole('button', { name: /back to storage/i });
     expect(back).toBeInTheDocument();
     await user.click(back);
 
-    // CharacterSheet renders the character name as an h1.
-    expect(screen.getByRole('heading', { name: 'Thorin' })).toBeInTheDocument();
+    // R9.5 — Storage detail navigates back to the per-character stash list,
+    // not the Character Sheet (the sidebar handles the character link).
+    expect(screen.getByText('storage-overview-stub')).toBeInTheDocument();
   });
 
   it('renders a Rename button that opens the rename modal and dispatches on submit', async () => {
@@ -176,7 +178,7 @@ describe('StorageDetail (M3)', () => {
     expect(dialog).toHaveTextContent(/3 items/i);
   });
 
-  it('delete confirm dispatches delete-stash, navigates back to character sheet, and toasts', async () => {
+  it('delete confirm dispatches delete-stash, navigates back to the Storage overview, and toasts', async () => {
     const user = userEvent.setup();
     const { storageStashId, characterId } = bootstrapWithStorage('Doomed chest');
     renderAt(`/storage/${storageStashId}`);
@@ -196,8 +198,8 @@ describe('StorageDetail (M3)', () => {
     ).toBeUndefined();
     // Toast appears.
     expect(await screen.findByText(/stash deleted/i)).toBeInTheDocument();
-    // Navigated to the character sheet (which renders Thorin's name).
-    expect(screen.getByRole('heading', { name: 'Thorin' })).toBeInTheDocument();
+    // R9.5 — navigates back to the per-character Storage overview (stub).
+    expect(screen.getByText('storage-overview-stub')).toBeInTheDocument();
     expect(characterId).toBeTruthy();
   });
 
