@@ -494,7 +494,7 @@ export function PartySettings(): ReactElement {
                 <Copy className="mr-1 h-4 w-4" />
                 Copy
               </Button>
-              {iAmDm ? (
+              {iAmDm || iAmDmFromLocalMemberships ? (
                 <Button
                   variant="outline"
                   size="sm"
