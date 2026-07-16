@@ -389,7 +389,7 @@ No HP, spells, AC, proficiencies in v1.
 8. **History/Log** — filterable timeline (session/character/item/type/actorRole).
 
 ### DM-facing (additional)
-9. **DM Dashboard** — all characters at a glance, party stash, recovered loot, gold totals.
+9. **DM Dashboard** — all characters at a glance, party stash, recovered loot, gold totals. (R10.6) A **"Level up party"** control raises every character's level by 1 (capped at 20; already-maxed characters skipped) behind a confirm dialog — reuses the `edit-character` action per-character (one log entry each), DM-only, no new action/log type.
 10. **Loot Distribution Wizard** — per-hoard: shared pool OR direct assign.
 11. **Hoard Generator** — DMG 2024 tables, CR/level band; output feeds the wizard.
 12. **Shop Manager** — build/edit shop catalogs and modifiers; resolve purchases manually.
