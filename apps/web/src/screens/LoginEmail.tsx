@@ -77,7 +77,22 @@ export function LoginEmail(): ReactElement {
       >
         <div className="space-y-1.5">
           <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" autoComplete="email" autoFocus {...register('email')} />
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            autoFocus
+            {...register('email')}
+            onKeyDown={(e) => {
+              // Enter in the single email field submits the form. Guards
+              // against environments where implicit form submission doesn't
+              // fire (the "Send code" button stayed unpressable on Enter).
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleSubmit(onSubmit)();
+              }
+            }}
+          />
           {errors.email !== undefined ? (
             <p className="text-sm text-destructive" role="alert">
               {errors.email.message}
