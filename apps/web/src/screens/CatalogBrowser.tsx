@@ -200,7 +200,7 @@ export function CatalogBrowser(): ReactElement {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
+      <div className="overflow-x-auto rounded-lg border border-border bg-surface shadow-e1">
         {results.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">
             {catalog.length === 0
@@ -212,9 +212,11 @@ export function CatalogBrowser(): ReactElement {
             <thead className="border-b border-border bg-surface-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-4 py-2.5 font-semibold">Name</th>
-                <th className="px-4 py-2.5 font-semibold">Source</th>
-                <th className="px-4 py-2.5 font-semibold">Category</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Weight</th>
+                <th className="hidden px-4 py-2.5 font-semibold sm:table-cell">Source</th>
+                <th className="hidden px-4 py-2.5 font-semibold sm:table-cell">Category</th>
+                <th className="hidden px-4 py-2.5 text-right font-semibold sm:table-cell">
+                  Weight
+                </th>
                 <th className="px-4 py-2.5 text-right font-semibold">Cost</th>
                 <th className="px-4 py-2.5 text-right font-semibold">
                   <span className="sr-only">Actions</span>
@@ -252,9 +254,13 @@ export function CatalogBrowser(): ReactElement {
                       ) : null}
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 text-muted-foreground">{d.source}</td>
-                  <td className="px-4 py-2.5 capitalize text-muted-foreground">{d.category}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                  <td className="hidden px-4 py-2.5 text-muted-foreground sm:table-cell">
+                    {d.source}
+                  </td>
+                  <td className="hidden px-4 py-2.5 capitalize text-muted-foreground sm:table-cell">
+                    {d.category}
+                  </td>
+                  <td className="hidden px-4 py-2.5 text-right tabular-nums text-muted-foreground sm:table-cell">
                     {d.weight !== undefined ? `${String(d.weight)} lb` : '—'}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums">
