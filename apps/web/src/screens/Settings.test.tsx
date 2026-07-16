@@ -200,3 +200,8 @@ describe('Settings — Import end-to-end (M7 / MVP DoD)', () => {
 // BUG-011 (2026-07-06) — the "Settings — Encumbrance" describe block
 // was removed from this file. The party-wide encumbrance UI moved to
 // `/party/settings`; PartySettings.test.tsx owns those assertions.
+//
+// R10.4 — server-mode account features (profile stats, display-name edit,
+// device sessions, account export, delete-account) are tested in the
+// sibling `Settings.r104.test.tsx`, which forces `isServerMode: true` via a
+// hoisted module mock (kept separate so it doesn't flip this file's mode).

@@ -35,6 +35,9 @@ interface DbUserRow {
   avatarUrl: string | null;
   needsDisplayName?: boolean;
   discordId?: string | null;
+  // R10.4 — carried through so `callbacks.session` can project the
+  // member-since stat onto the public session payload.
+  createdAt?: Date;
 }
 
 function dbToAdapterUser(row: DbUserRow): AdapterUser {
@@ -59,6 +62,10 @@ function dbToAdapterUser(row: DbUserRow): AdapterUser {
     needsDisplayName: row.needsDisplayName ?? false,
     avatarUrl: row.avatarUrl,
     discordId: (row as { discordId?: string | null }).discordId ?? null,
+    // R10.4 — member-since. `callbacks.session` reads `u.createdAt`; a real
+    // adapter-loaded row always carries it (Prisma includes all scalars),
+    // but keep a defensive fallback so a partial fixture can't throw.
+    createdAt: row.createdAt ?? new Date(),
   } as unknown as AdapterUser;
 }
 

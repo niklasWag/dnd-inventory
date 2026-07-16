@@ -573,6 +573,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         emailVerified: user.emailVerified?.toISOString() ?? null,
         avatarUrl: user.avatarUrl,
         discordId: user.discordId,
+        createdAt: user.createdAt.toISOString(),
       },
       expires: expires.toISOString(),
     });
@@ -738,6 +739,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         emailVerified: updated.emailVerified?.toISOString() ?? null,
         avatarUrl: updated.avatarUrl,
         discordId: updated.discordId,
+        createdAt: updated.createdAt.toISOString(),
       },
     });
   });
@@ -1049,6 +1051,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: RegisterAuthRoute
         emailVerified: updated.emailVerified?.toISOString() ?? null,
         avatarUrl: updated.avatarUrl,
         discordId: updated.discordId,
+        createdAt: updated.createdAt.toISOString(),
       },
     });
   });

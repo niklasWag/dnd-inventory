@@ -396,7 +396,7 @@ No HP, spells, AC, proficiencies in v1.
 
 ### Shared
 16. **Item Catalog** — global search & filter; "Add to…" picker.
-17. **Settings** — an **Appearance** cluster (theme: light / dark / system · **brand accent**: default cyan-teal + selectable options · **"accent follows character class"** toggle: inside a party the accent follows the current character's class, reverting to the user's default accent outside a party · **Hub layout**: Hero / List+Detail), variant rules, export/import, account/logout.
+17. **Settings** — a profile hero (display name · email · **member-since** + **party-count** stats, R10.4), an **Account** cluster (**change display name** · change email via dual-OTP §3.1/R10.1), **Login methods** (link Discord / email), an **Appearance** cluster (theme: light / dark / system · **brand accent**: default cyan-teal + selectable options · **"accent follows character class"** toggle: inside a party the accent follows the current character's class, reverting to the user's default accent outside a party · **Hub layout**: Hero / List+Detail), **Sessions** (device list + per-device revoke + "sign out other devices", R10.4), export/import, and an account danger zone (**export all my data** · **delete account** — soft delete per §8.4, R10.4) plus the browser-local data wipe.
 
 ### Form factor
 - **Desktop-first** (the primary device, especially for DM).
@@ -515,6 +515,16 @@ When the **DM** leaves:
 > **R4.1.e archive mechanics.** "Archived" is implemented as a nullable `Party.archivedAt: timestamp` column (server-side only — not surfaced in `AppState`). The sole-member case is detected by `POST /parties/:partyId/leave`: when the leaver is the only active member, the route soft-deletes their memberships AND stamps `archivedAt`, but does NOT run the §8.3 character / currency cascade (the data is preserved verbatim for the DM's records). Archived parties are filtered out of `GET /sync/parties` so they vanish from the Hub. Multi-member leaves continue through the normal `leave-party` reducer cascade above. Restoration is intentionally not exposed in v1 — manual DB intervention only.
 >
 > **Followup (operational):** `POST /sync/actions` does NOT yet check `archivedAt`. Because archived parties have zero active memberships, the existing `not_a_member` guard already rejects all mutations from any logged-in user, so the effective behaviour matches the intent. An explicit `archivedAt` check at the route layer would surface a clearer error code (`party_archived`) — captured as an unscheduled operational followup.
+
+### 8.4 Account deletion (R10.4)
+
+Self-service account deletion is a **soft delete**, distinct from the party-leave / archive flow above. The `User` row is **preserved** — this keeps every `Party.ownerUserId` and `TransactionLog.actorUserId` reference valid, so a remaining party member's audit history never breaks. What changes:
+
+- The user **leaves every active party** first, reusing the §8.3 machinery: sole-member parties are archived; multi-member parties run the `leave-party` cascade (items + currency → Recovered Loot, membership soft-deleted). If the user is the **sole DM of a multi-member party**, deletion is refused with `sole_dm_must_transfer_first` (they must transfer the DM role first — exactly the same guard as a DM trying to leave) and **no** account mutation runs.
+- Once no active memberships remain, in one transaction: `displayName` is anonymized to `[deleted user]`, `email` / `emailVerified` / `discordId` are nulled (**releasing** the UNIQUE addresses for reuse by a future signup), a `deactivatedAt` timestamp is stamped, and all `Session` + `Account` + pending-flow rows are deleted. The session cookie is cleared on the response.
+- A deactivated account **cannot log in** (no session, no credentials) and the deletion is **irreversible** — the released email/Discord identity is not reserved for the original owner (same model as R10.1's email change). The old email string becomes available for a brand-new account, which gets a fresh `User.id` (not a resurrection of the old row).
+
+> **Why soft delete (not a hard row delete).** `Party.ownerUserId`, `Character.ownerUserId`, and `TransactionLog.actorUserId` are all `RESTRICT` FKs onto `User`. A hard delete would be blocked by archived owned parties and by log entries in surviving multi-member parties, forcing either a destructive party cascade or a nullable-actor schema change that weakens the audit trail (SECURITY §3). Preserving the row under an anonymized name sidesteps all of it and matches the codebase's existing soft-delete idioms (`PartyMembership.leftAt`, `Party.archivedAt`). The auth-present CHECK (`discordId IS NOT NULL OR emailVerified IS NOT NULL`, SECURITY §1.2) was amended in R10.4 to also allow `deactivatedAt IS NOT NULL`, since a deactivated account is intentionally credential-less.
 
 ---
 

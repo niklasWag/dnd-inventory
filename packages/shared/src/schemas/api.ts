@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { appStateSchema } from './appState';
+import { exportEnvelopeSchema } from './exportEnvelope';
 import { transactionLogEntrySchema } from './transactionLog';
 
 /**
@@ -47,6 +48,10 @@ export const sessionUserSchema = z
     avatarUrl: z.string().url().nullable().optional(),
     discordId: z.string().nullable().optional(),
     needsDisplayName: z.boolean(),
+    // R10.4 — account creation time, exposed for the Settings profile hero
+    // "Member since {Mon YYYY}" stat. Optional so pre-R10.4 payloads (and the
+    // Discord OAuth session, which builds its user via mappers) still parse.
+    createdAt: z.string().datetime().optional(),
   })
   .passthrough();
 
@@ -152,6 +157,78 @@ export const emailChangeAbortResponseSchema = z.object({
 });
 
 export type EmailChangeAbortResponse = z.infer<typeof emailChangeAbortResponseSchema>;
+
+/**
+ * R10.4 — `POST /users/me/display-name` happy-path body. A pure rename for
+ * already-onboarded users (distinct from `/auth/email/set-display-name`,
+ * which also flips `needsDisplayName`). Returns the patched session user.
+ */
+export const updateDisplayNameResponseSchema = z.object({
+  user: sessionUserSchema,
+});
+
+export type UpdateDisplayNameResponse = z.infer<typeof updateDisplayNameResponseSchema>;
+
+/**
+ * R10.4 — device-session management (`GET /users/me/sessions`). The
+ * Auth.js `Session` model carries no device/user-agent data, so a row is
+ * surfaced as its opaque `id`, `createdAt`, `expires`, and a `current`
+ * flag (true for the row whose token matches the request cookie). The
+ * client renders the current one badged "This device" and offers Revoke
+ * on the rest.
+ */
+export const sessionSummarySchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime(),
+  expires: z.string().datetime(),
+  current: z.boolean(),
+});
+
+export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+
+export const sessionListResponseSchema = z.object({
+  sessions: z.array(sessionSummarySchema),
+});
+
+export type SessionListResponse = z.infer<typeof sessionListResponseSchema>;
+
+/**
+ * R10.4 — `POST /users/me/sessions/revoke` ack. Reports how many rows were
+ * deleted (1 for a single `sessionId`, N for `allOthers`).
+ */
+export const revokeSessionsResponseSchema = z.object({
+  revoked: z.number().int().nonnegative(),
+});
+
+export type RevokeSessionsResponse = z.infer<typeof revokeSessionsResponseSchema>;
+
+/**
+ * R10.4 — account-wide export (`GET /users/me/export`). Bundles one
+ * `exportEnvelope` per active party the user belongs to (archived parties
+ * excluded, mirroring `GET /sync/parties`). Distinct from the per-party
+ * `GET /sync/export` (SECURITY §7) — same envelope shape, one per party.
+ */
+export const accountExportResponseSchema = z.object({
+  schemaVersion: z.literal(1),
+  exportedAt: z.string(),
+  parties: z.array(exportEnvelopeSchema),
+});
+
+export type AccountExportResponse = z.infer<typeof accountExportResponseSchema>;
+
+/**
+ * R10.4 — `POST /users/me/delete` ack. Account deletion is a SOFT delete
+ * (see `User.deactivatedAt` in schema.prisma + OUTLINE §8.3): the row is
+ * preserved with an anonymized displayName so audit-log actor references
+ * stay valid. Blocked with `sole_dm_must_transfer_first` (surfaced as the
+ * standard `apiErrorSchema` on a non-2xx) if the user is the sole DM of a
+ * multi-member party.
+ */
+export const deleteAccountResponseSchema = z.object({
+  deleted: z.literal(true),
+});
+
+export type DeleteAccountResponse = z.infer<typeof deleteAccountResponseSchema>;
 
 /**
  * Per-row shape for `GET /sync/parties`. `roles` is an array because the

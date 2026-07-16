@@ -20,7 +20,12 @@
  */
 import { create } from 'zustand';
 
-import { ApiError, getSessionMe, signOut as signOutRequest } from '@/lib/api';
+import {
+  ApiError,
+  deleteAccount as deleteAccountRequest,
+  getSessionMe,
+  signOut as signOutRequest,
+} from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
 import type { SessionUser } from '@app/shared';
 
@@ -33,6 +38,7 @@ export interface SessionStoreState {
   setUserPatch: (patch: Partial<SessionUser> & Pick<SessionUser, 'id'>) => void;
   setSession: (user: SessionUser) => void;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   reset: () => void;
 }
 
@@ -99,6 +105,16 @@ export const useSession = create<SessionStoreState>((set, get) => ({
         console.warn('[session] signOut request failed; clearing local state anyway', e);
       }
     }
+    set({ status: 'anonymous', user: null });
+  },
+
+  deleteAccount: async () => {
+    // R10.4 — server soft-deletes the account (leave all parties, anonymize,
+    // release credentials) and clears the cookie. On success we tear down
+    // local session state exactly like signOut. The server may reject with
+    // `sole_dm_must_transfer_first` — that ApiError propagates so the caller
+    // can surface it (and NOT clear local state, since nothing was deleted).
+    await deleteAccountRequest();
     set({ status: 'anonymous', user: null });
   },
 

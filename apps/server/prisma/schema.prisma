@@ -135,6 +135,14 @@ model User {
   // events.signIn callback fills displayName from the Discord profile.
   needsDisplayName Boolean @default(false)
   createdAt     DateTime  @default(now())
+  // R10.4 — soft-delete marker. Account deletion is a soft-delete (not a
+  // hard row delete): the User row is preserved so `Party.ownerUserId` and
+  // `TransactionLog.actorUserId` RESTRICT FKs never break. On deletion we
+  // anonymize `displayName` → "[deleted user]", null `email`/`emailVerified`/
+  // `discordId` (releasing the UNIQUE addresses for reuse), delete all
+  // Session + Account rows, and stamp `deactivatedAt`. A stamped row can no
+  // longer log in (no session, no credentials) and is irreversible.
+  deactivatedAt DateTime?
 
   // R3.2 — Auth.js adapter relations.
   accounts Account[]
@@ -149,7 +157,8 @@ model User {
 
   // CHECK: discordId IS NOT NULL OR emailVerified IS NOT NULL — added in
   // migration tail per SECURITY §1.2 / OUTLINE §4 invariant. Prisma DSL
-  // cannot express it.
+  // cannot express it. R10.4 amended it to also allow `deactivatedAt IS NOT
+  // NULL` (a soft-deleted account is intentionally credential-less).
 }
 
 model Party {

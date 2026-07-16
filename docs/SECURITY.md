@@ -322,6 +322,28 @@ R3.4.b adds `GET /sync/export?partyId=<id>` so a synced user can download their 
 - The endpoint returns the SAME `exportEnvelope` shape that the nightly snapshot writer produces (`packages/shared/src/schemas/exportEnvelope.ts`) — both go through `exportEnvelopeSchema.parse()` at the wire boundary, so any drift surfaces as a parse error before bytes leave the server. The web's existing import flow already round-trips this shape losslessly.
 - Snapshot files and the export endpoint are equivalent in terms of leaked data; the file-permission + retention guidance in §8 applies equally to whatever the user downloads (storing an export on a shared host is the user's responsibility, same as for snapshots).
 
+### 7.2 Account-wide export endpoint (R10.4)
+
+R10.4 adds `GET /users/me/export` for the Settings "Export my data" affordance: it bundles **one `exportEnvelope` per active party** the user belongs to (archived parties excluded, same filter as `GET /sync/parties`), wrapped as `{ schemaVersion, exportedAt, parties: ExportEnvelope[] }`.
+
+**Mitigations:**
+- Same auth + `needsDisplayName` gates as the per-party export. Each party's envelope is loaded via the same `loadAppStateForUser` membership-scoped loader — a user can only export parties they are an active member of, so it cannot leak another user's party.
+- Each envelope is `exportEnvelopeSchema.parse()`-d at the boundary before send (same drift guard as §7.1).
+- The bundle is the same class of data as the per-party export; the §8 file-permission caveat applies equally (the user is responsible for where they store the downloaded JSON).
+
+### 7.3 Account deletion (R10.4)
+
+`POST /users/me/delete` is a **soft delete** (see OUTLINE §8.4). Security-relevant points:
+
+| Concern | Notes / mitigation |
+|---|---|
+| **Identity** | Session-cookie-derived per §6 — the request body carries no user id. |
+| **Credential release** | `email` / `emailVerified` / `discordId` are nulled and all `Account` rows deleted, so the released addresses are free for a fresh signup. The old identity is **not** reserved for the original owner — same model as R10.1's email change (call this out in the confirm dialog). |
+| **Session teardown** | All `Session` rows are deleted (logs the user out on every device) and the caller's cookie is cleared; a deactivated account has no way to authenticate. |
+| **Audit-trail integrity** | The `User` row is preserved under an anonymized `displayName` (`[deleted user]`), so `TransactionLog.actorUserId` references in surviving parties stay valid and history for remaining members is not broken. No "silent mutation" of others' data — the log rows themselves are untouched, only the actor's display label changes. |
+| **Auth-present invariant** | The §1.2 CHECK is amended to allow `deactivatedAt IS NOT NULL`, since a deactivated account is intentionally credential-less (a live account still requires Discord or a verified email). |
+| **Sole-DM guard** | Deletion is refused (`sole_dm_must_transfer_first`) while the user is the sole DM of a multi-member party, so a party is never left leaderless by an account deletion. |
+
 ---
 
 ## 8. Server & Infrastructure (self-hosted, M3+)

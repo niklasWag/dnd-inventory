@@ -34,6 +34,7 @@ import { resolveActor } from '../sync/actor.js';
 import { appendTransactionLog, buildLogEntryServer } from '../sync/log-builder.js';
 import { applyDelta } from '../sync/persistor.js';
 import { loadAppStateForUser, StateLoaderError } from '../sync/state-loader.js';
+import { leavePartyForUser } from './leave.js';
 
 /**
  * The reducer's `Action` (from `@app/rules`) and Zod's inferred
@@ -151,62 +152,14 @@ export function registerPartyRoutes(app: FastifyInstance, prisma: PrismaClient):
     }
     const actor = actorRes.actor;
 
-    // Check sole-member status BEFORE running the cascade — that
-    // determines whether we route to the archive flow or the normal
-    // leave-party reducer.
-    const activeMembers = await prisma.partyMembership.findMany({
-      where: { partyId, leftAt: null },
-      select: { userId: true },
-    });
-    const uniqueActiveUsers = new Set(activeMembers.map((m) => m.userId));
-
-    if (uniqueActiveUsers.size === 1 && uniqueActiveUsers.has(actor.userId)) {
-      // Sole-member archive path. Soft-delete the actor's memberships
-      // and stamp `Party.archivedAt`. NO leave-party log entry is
-      // written — archive is a meta-state change, not a §8.3 cascade.
-      await prisma.$transaction(async (tx) => {
-        await tx.partyMembership.updateMany({
-          where: { userId: actor.userId, partyId, leftAt: null },
-          data: { leftAt: new Date() },
-        });
-        await tx.party.update({
-          where: { id: partyId },
-          data: { archivedAt: new Date() },
-        });
-      });
-      return reply.code(200).send({ archived: true });
-    }
-
-    // Multi-member leave-party path. Dispatch the reducer action so the
-    // §8.3 cascade runs (items + currency → Recovered Loot, soft-delete
-    // memberships, banker auto-clear stub, log entry).
-    try {
-      const state = await loadAppStateForUser(prisma, actor.userId, partyId);
-      const ctx = {
-        now: () => new Date().toISOString(),
-        newInviteCode: generateInviteCode,
-      };
-
-      await prisma.$transaction(async (tx) => {
-        await applyDelta(tx, asReducerAction({ type: 'leave-party', payload: {} }), actor, ctx);
-        const result = reduce(state, asReducerAction({ type: 'leave-party', payload: {} }), ctx);
-        for (const slice of result.logEntries) {
-          // RH2.1a — pass pre-reduce state so the shared role deriver
-          // sees the party's bankerUserId at dispatch time.
-          const entry = buildLogEntryServer(slice, actor, ctx, state);
-          await appendTransactionLog(tx, entry);
-        }
-      });
-      return reply.code(200).send({ archived: false });
-    } catch (e) {
-      if (e instanceof StateLoaderError) {
-        return reply.code(404).send({ error: e.code });
-      }
-      if (e instanceof Error && e.message.includes('sole DM')) {
+    const result = await leavePartyForUser(prisma, actor, partyId);
+    if (!result.ok) {
+      if (result.error === 'sole_dm_must_transfer_first') {
         return reply.code(422).send({ error: 'sole_dm_must_transfer_first' });
       }
-      throw e;
+      return reply.code(404).send({ error: result.error });
     }
+    return reply.code(200).send({ archived: result.archived });
   });
 
   // ----- POST /parties/:partyId/kick -----
