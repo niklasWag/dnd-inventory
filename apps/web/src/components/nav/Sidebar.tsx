@@ -64,7 +64,21 @@ interface NavGroup {
   items: NavItem[];
 }
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void }): ReactElement {
+export function Sidebar({
+  onNavigate,
+  drawer = false,
+}: {
+  onNavigate?: () => void;
+  /**
+   * R10-fix — when true the sidebar is rendered inside the mobile `Sheet`
+   * drawer. The collapse-to-icon-rail affordance is desktop-only: on mobile
+   * the drawer IS the sidebar, and collapsing produced a broken icon-rail-
+   * inside-a-drawer state. So a drawer instance ALWAYS renders the expanded
+   * layout (ignoring the persisted `collapsed` pref) and hides the Collapse
+   * button. Desktop is unaffected.
+   */
+  drawer?: boolean;
+}): ReactElement {
   const collapsed = useSidebarStore((s) => s.collapsed);
   const toggle = useSidebarStore((s) => s.toggle);
 
@@ -139,7 +153,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }): ReactEleme
   const hubItem: NavItem = { label: 'Hub', icon: Home, to: '/hub' };
   const settingsItem: NavItem = { label: 'Settings', icon: SettingsIcon, to: '/settings' };
 
-  if (collapsed) {
+  if (collapsed && !drawer) {
     return (
       <TooltipProvider delayDuration={0}>
         <CollapsedRail
@@ -164,7 +178,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }): ReactEleme
       groups={groups}
       settingsItem={settingsItem}
       onNavigate={onNavigate}
-      onCollapse={toggle}
+      onCollapse={drawer ? undefined : toggle}
     />
   );
 }
@@ -192,34 +206,34 @@ function ExpandedSidebar({
   settingsItem,
   onNavigate,
   onCollapse,
-}: SidebarBodyProps & { memberLine: string; onCollapse: () => void }): ReactElement {
+}: SidebarBodyProps & {
+  memberLine: string;
+  onCollapse?: (() => void) | undefined;
+}): ReactElement {
   return (
     <nav
       aria-label="Party navigation"
       className="flex h-full w-60 flex-col border-r border-border bg-surface"
     >
-      {/* Party header */}
-      <div className="border-b border-border px-3 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Party
-            </div>
-            <div className="truncate font-display text-sm font-bold" title={partyName}>
-              {partyName}
-            </div>
-          </div>
-          <NavLink
-            to={partySettingsHref}
-            onClick={onNavigate}
-            aria-label="Party settings"
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            <SettingsIcon className="h-4 w-4" />
-          </NavLink>
+      {/* Party header. Clicking the party name/block opens party settings
+          (parity with the collapsed rail's medallion → settings link). No
+          separate gear — the "Members" nav item routes to the same screen,
+          so a header gear was pure duplication (and on mobile it overlapped
+          the drawer's close button). */}
+      <NavLink
+        to={partySettingsHref}
+        onClick={onNavigate}
+        aria-label="Party settings"
+        className="block border-b border-border px-3 py-3 transition-colors hover:bg-surface-2"
+      >
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Party
+        </div>
+        <div className="truncate font-display text-sm font-bold" title={partyName}>
+          {partyName}
         </div>
         <div className="mt-0.5 text-xs text-muted-foreground">{memberLine}</div>
-      </div>
+      </NavLink>
 
       {/* Hub back link — directly below the party header */}
       <div className="px-2 py-2">
@@ -244,18 +258,21 @@ function ExpandedSidebar({
         ))}
       </div>
 
-      {/* Footer — Settings + collapse toggle */}
+      {/* Footer — Settings + collapse toggle (collapse is desktop-only; the
+          mobile drawer omits `onCollapse`). */}
       <div className="border-t border-border px-2 py-2">
         <ExpandedNavItem item={settingsItem} onNavigate={onNavigate} end />
-        <button
-          type="button"
-          onClick={onCollapse}
-          aria-label="Collapse sidebar"
-          className="mt-1 flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
-        >
-          <ChevronsLeft className="h-4 w-4 shrink-0" />
-          <span>Collapse</span>
-        </button>
+        {onCollapse !== undefined ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-label="Collapse sidebar"
+            className="mt-1 flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            <ChevronsLeft className="h-4 w-4 shrink-0" />
+            <span>Collapse</span>
+          </button>
+        ) : null}
       </div>
     </nav>
   );

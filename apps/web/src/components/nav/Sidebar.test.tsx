@@ -140,6 +140,13 @@ describe('Sidebar', () => {
     expect(screen.getByText(/solo/i)).toBeInTheDocument();
   });
 
+  it('the party name links to party settings (no separate gear)', () => {
+    renderSidebar();
+    const link = screen.getByRole('link', { name: /party settings/i });
+    expect(link).toHaveTextContent('The Emberwarden');
+    expect(link).toHaveAttribute('href', '/party/p1/settings');
+  });
+
   it('renders the grouped nav items', () => {
     renderSidebar();
     expect(screen.getByRole('link', { name: /character sheet/i })).toBeInTheDocument();
@@ -272,5 +279,39 @@ describe('Sidebar — collapsed rail', () => {
       'href',
       '/party/p1/character/char-1',
     );
+  });
+});
+
+describe('Sidebar — mobile drawer (drawer prop)', () => {
+  function renderDrawer(collapsed: boolean): void {
+    useSidebarStore.setState({ collapsed, hydrated: true });
+    render(
+      <MemoryRouter initialEntries={['/party/p1/character/char-1']}>
+        <Routes>
+          <Route path="/party/:partyId/*" element={<Sidebar drawer />} />
+          <Route path="/hub" element={<div>hub landing</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it('hides the Collapse button (collapse is desktop-only)', () => {
+    renderDrawer(false);
+    expect(screen.queryByRole('button', { name: /collapse sidebar/i })).toBeNull();
+  });
+
+  it('keeps the party-name → settings link (no gear to overlap the close button)', () => {
+    renderDrawer(false);
+    const link = screen.getByRole('link', { name: /party settings/i });
+    expect(link).toHaveAttribute('href', '/party/p1/settings');
+  });
+
+  it('forces the expanded layout even when the collapsed pref is set', () => {
+    // A desktop user who left the rail collapsed still gets the full labelled
+    // nav in the mobile drawer (no broken icon-rail-inside-a-drawer state).
+    renderDrawer(true);
+    expect(screen.getByText('My Character')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /expand sidebar/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /collapse sidebar/i })).toBeNull();
   });
 });

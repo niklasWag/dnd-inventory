@@ -109,7 +109,7 @@ function PartyShell(): ReactElement {
         {/* Mobile drawer — the sidebar rendered inside a Sheet */}
         <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
           <SheetContent side="left" className="w-60 p-0">
-            <Sidebar onNavigate={() => setDrawerOpen(false)} />
+            <Sidebar drawer onNavigate={() => setDrawerOpen(false)} />
           </SheetContent>
         </Sheet>
 
