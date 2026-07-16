@@ -57,6 +57,7 @@ function makeChar(id: string, name: string): Character {
     abilityScores: { STR: 10 },
     maxAttunement: 3,
     inventoryStashId: 's',
+    wishlist: [],
   };
 }
 

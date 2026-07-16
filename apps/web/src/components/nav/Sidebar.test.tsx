@@ -80,6 +80,7 @@ function makeState(overrides?: {
               abilityScores: { STR: 12 },
               maxAttunement: 3,
               inventoryStashId: 's-inv',
+              wishlist: [],
             },
           ],
     gameSessions: [],

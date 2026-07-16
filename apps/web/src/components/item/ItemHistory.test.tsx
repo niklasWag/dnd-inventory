@@ -362,6 +362,7 @@ describe('ItemHistory', () => {
             abilityScores: { STR: 16 },
             maxAttunement: 3,
             inventoryStashId: 'some-inventory-id',
+            wishlist: [],
           },
         ],
         gameSessions: [],
@@ -819,6 +820,7 @@ describe('ItemHistory', () => {
           abilityScores: { STR: 10 },
           maxAttunement: 3,
           inventoryStashId: 'inv-a',
+          wishlist: [],
         },
         {
           id: 'char-b',
@@ -832,6 +834,7 @@ describe('ItemHistory', () => {
           abilityScores: { STR: 10 },
           maxAttunement: 3,
           inventoryStashId: 'inv-b',
+          wishlist: [],
         },
       ],
       gameSessions: [],

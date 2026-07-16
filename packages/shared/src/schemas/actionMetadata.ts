@@ -79,6 +79,11 @@ const metadataByType: Record<Action['type'], ActionMetadata> = {
   'edit-character': { broadcastOnApplied: true },
   'rename-character': { broadcastOnApplied: true },
 
+  // R10.5 — item wishlist (DM loot hint). Broadcast so party members see
+  // live wishlist changes (the DM's loot wizard reads the current list).
+  'wishlist-add': { broadcastOnApplied: true },
+  'wishlist-remove': { broadcastOnApplied: true },
+
   // Party-scope actions
   'rename-party': { broadcastOnApplied: true },
   'set-encumbrance': { broadcastOnApplied: true },

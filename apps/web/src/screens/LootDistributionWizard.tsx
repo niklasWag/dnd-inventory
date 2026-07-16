@@ -12,6 +12,7 @@ import {
   PackageCheck,
   Plus,
   Split,
+  Star,
   Trash2,
 } from 'lucide-react';
 
@@ -140,6 +141,23 @@ export function LootDistributionWizard(): ReactElement {
       }),
     [characters, stashes],
   );
+
+  // R10.5 — DM loot hint. Map each wishlisted catalog definitionId → the
+  // names of characters who wishlisted it, so a rolled item that matches a
+  // player's wish can be badged in the assign step. Free-text wishes have no
+  // definitionId and are shown in the DM Command Center Wishlist Overview.
+  const wishlistByDef = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const c of characters) {
+      for (const entry of c.wishlist) {
+        if (entry.kind !== 'catalog') continue;
+        const names = m.get(entry.definitionId) ?? [];
+        names.push(c.name);
+        m.set(entry.definitionId, names);
+      }
+    }
+    return m;
+  }, [characters]);
 
   // Precompute the initial rows from the generator's route state (if any).
   // Must be `useState` initializer (not `useEffect`) so re-mounts don't
@@ -528,6 +546,15 @@ export function LootDistributionWizard(): ReactElement {
                         {row.kind === 'coin' ? `${row.amount} ${row.denom}` : `×${row.quantity}`}
                       </span>
                       {row.kind === 'item' ? renderRarityPill(row) : null}
+                      {row.kind === 'item' && wishlistByDef.has(row.itemDefinitionId) ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                          title={`Wishlisted by ${wishlistByDef.get(row.itemDefinitionId)!.join(', ')}`}
+                        >
+                          <Star className="h-3 w-3" aria-hidden="true" />
+                          Wished by {wishlistByDef.get(row.itemDefinitionId)!.join(', ')}
+                        </span>
+                      ) : null}
                     </div>
                     <select
                       aria-label="Target"

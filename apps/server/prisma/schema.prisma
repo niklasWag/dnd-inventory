@@ -270,6 +270,11 @@ model Character {
   // src/db/schema-invariants.test.ts (confdeferrable + confdeferred +
   // confdeltype = 'a').
   inventoryStashId   String          @unique
+  // R10.5 — per-character item wishlist (DM loot hint). Array of tagged
+  // entries `{ id, kind:'catalog', definitionId } | { id, kind:'text', text }`,
+  // validated by `wishlistEntrySchema` at the boundary. Stored as JSON (the
+  // entries are structured, unlike the flat `ItemDefinition.tags String[]`).
+  wishlist           Json            @default("[]")
 
   party        Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)
   owner        User              @relation(fields: [ownerUserId], references: [id])

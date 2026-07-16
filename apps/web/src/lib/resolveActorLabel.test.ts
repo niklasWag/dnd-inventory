@@ -38,6 +38,7 @@ function makeState(): AppState {
         abilityScores: { STR: 16 },
         maxAttunement: 3,
         inventoryStashId: 'inv-a',
+        wishlist: [],
       },
     ],
     gameSessions: [],
@@ -71,6 +72,7 @@ describe('resolveActorLabel', () => {
           abilityScores: { STR: 10 },
           maxAttunement: 3,
           inventoryStashId: 'inv-me',
+          wishlist: [],
         },
       ],
     };

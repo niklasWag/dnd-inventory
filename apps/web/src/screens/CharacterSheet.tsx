@@ -2,7 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Gift, Pencil, Trash2 } from 'lucide-react';
 
 import { charges as chargesRules } from '@app/rules';
 
@@ -19,6 +19,7 @@ import { EquippedSlotsPanel } from '@/components/inventory/EquippedSlotsPanel';
 import { RestRollModal } from '@/components/inventory/RestRollModal';
 import { EditCharacterDialog } from '@/components/character/EditCharacterDialog';
 import { DeleteCharacterDialog } from '@/components/character/DeleteCharacterDialog';
+import { WishlistDialog } from '@/components/character/WishlistDialog';
 import { AddItemModal } from '@/components/stash/AddItemModal';
 import { CurrencyRow } from '@/components/stash/CurrencyRow';
 import { InventoryPanel } from '@/components/stash/InventoryPanel';
@@ -71,6 +72,7 @@ export function CharacterSheet(): ReactElement {
   const [adding, setAdding] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [wishlistOpen, setWishlistOpen] = useState(false);
 
   if (sheet === null) {
     return <Navigate to="/" replace />;
@@ -155,8 +157,25 @@ export function CharacterSheet(): ReactElement {
         <aside className="space-y-4 lg:sticky lg:top-8 lg:self-start">
           <EquippedSlotsPanel characterId={character.id} />
           <CapacityBar characterId={character.id} />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => setWishlistOpen(true)}
+          >
+            <Gift className="h-4 w-4" aria-hidden="true" />
+            Wishlist
+          </Button>
         </aside>
       </div>
+
+      <WishlistDialog
+        characterId={character.id}
+        canEdit={canEditCharacter}
+        open={wishlistOpen}
+        onOpenChange={setWishlistOpen}
+      />
 
       <AddItemModal
         open={adding}

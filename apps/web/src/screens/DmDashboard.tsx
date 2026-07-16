@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Coins,
   Gem,
+  Gift,
   Play,
   ScrollText,
   Sparkles,
@@ -141,6 +142,12 @@ export function DmDashboard(): ReactElement {
       label: 'Identify items',
       desc: 'Reveal unknown magic',
       to: `/party/${partyId}/identify`,
+    },
+    {
+      icon: Gift,
+      label: 'Wishlists',
+      desc: 'What players want',
+      to: `/party/${partyId}/wishlists`,
     },
     {
       icon: Users,

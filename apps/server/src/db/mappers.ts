@@ -497,6 +497,9 @@ export interface CharacterRow {
   strScore: number;
   maxAttunement: number;
   inventoryStashId: string;
+  // R10.5 — wishlist Json column (unknown on read; characterSchema.parse
+  // validates it through wishlistEntrySchema below).
+  wishlist: unknown;
 }
 
 export function fromPrismaCharacter(row: CharacterRow): Character {
@@ -513,6 +516,9 @@ export function fromPrismaCharacter(row: CharacterRow): Character {
     abilityScores: { STR: row.strScore },
     maxAttunement: row.maxAttunement,
     inventoryStashId: row.inventoryStashId,
+    // R10.5 — Json array; parsed by characterSchema. Prisma returns [] via
+    // the column default for pre-R10.5 rows.
+    wishlist: row.wishlist,
   });
 }
 

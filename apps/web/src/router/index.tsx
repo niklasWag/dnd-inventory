@@ -25,6 +25,7 @@ import { ShopDetail } from '@/screens/ShopDetail';
 import { ShopsList } from '@/screens/ShopsList';
 import { StorageDetail } from '@/screens/StorageDetail';
 import { StorageOverview } from '@/screens/StorageOverview';
+import { WishlistOverview } from '@/screens/WishlistOverview';
 
 /**
  * RH4.1 — URL-scoped router. Every party-scoped surface now takes
@@ -151,6 +152,8 @@ export const router = createBrowserRouter([
                       { path: 'loot/distribute', Component: LootDistributionWizard },
                       // R6.4 — Identification panel. DM-only.
                       { path: 'identify', Component: IdentificationPanel },
+                      // R10.5 — party-wide wishlist overview. DM-only.
+                      { path: 'wishlists', Component: WishlistOverview },
                     ],
                   },
                 ],

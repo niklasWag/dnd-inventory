@@ -272,6 +272,7 @@ No HP, spells, AC, proficiencies in v1.
 - maxAttunement (default 3; DM-overridable)
 - (BUG-011 2026-07-06) `encumbranceRule` and `enforceEncumbrance` moved to `Party` — party-wide house rule, no longer per-character.
 - inventoryStashId — direct FK to the character's auto-created **Inventory** stash (the carried one).
+- (R10.5) `wishlist` — an array of tagged entries the player is hoping for, a DM loot hint. Each entry is `{ id, kind: 'catalog', definitionId }` (a concrete catalog `ItemDefinition`) or `{ id, kind: 'text', text }` (a free-text wish; plain text per SECURITY §4, ≤200 chars). `id` is a client-minted UUID v7 so removal targets one entry unambiguously (free-text has no natural key + duplicates are allowed). Stored as a JSON column (structured, unlike the flat `tags`). Editable by the character's **owner or the DM/solo** (§8.1); surfaced read-only to the DM in the Loot Distribution wizard (rolled items matching a wishlisted `definitionId` are badged) and the DM Command Center → **Wishlists** overview. Default `[]`.
 
 ### `Stash`
 - id, scope (`character` | `party` | `recovered-loot`), name, createdAt
@@ -349,6 +350,8 @@ No HP, spells, AC, proficiencies in v1.
   - `rename-character` → `{ characterId, oldName, newName }` — dedicated type for the most common character edit; mirrors `rename-stash` / `rename-party`.
   - `set-encumbrance` → `{ partyId, oldRule, newRule, oldEnforce, newEnforce }` — dedicated type for the party-wide encumbrance pair (rule + enforce flag). One entry covers either-or-both field flips so the "every dispatch logs once" invariant stays clean. **BUG-011 amendment (2026-07-06):** moved from per-character to per-party — encumbrance is a party-wide house rule, not per-character. DM-only when memberCount ≥ 2.
   - `edit-character` → `{ characterId, changedFields: ("species" | "class" | "level" | "str" | "maxAttunement")[] }` — catch-all for the remaining mutable character fields per §3.3 + §8.1. `size` is creation-only in v1 and therefore not editable.
+  - `wishlist-add` → `{ characterId, entryId, kind: "catalog" | "text", label }` (R10.5) — appends a wishlist entry. `label` is the item name (catalog) or the wish text (free-text) so History renders without a catalog lookup.
+  - `wishlist-remove` → `{ characterId, entryId }` (R10.5) — removes a wishlist entry by id.
   - `create-stash` → `{ stashId, scope, name, ownerCharacterId? }`
   - `rename-stash` → `{ stashId, oldName, newName }`
   - `delete-stash` → `{ stashId, name, itemCount, currencyTotalCp, ownerCharacterId? }` — `delete-stash` records the snapshot at deletion time so the audit trail explains where items went (they're moved to Recovered Loot or the owning character's Inventory before deletion; the move is its own `transfer` log entry). `ownerCharacterId` is present iff the deleted stash was character-scope (Storage) — captured so post-delete history views can render the original owner alongside the stash name (added in M3 after the initial cut).
@@ -461,6 +464,8 @@ Pure / deterministic / unit-testable:
 | Edit own character STR | ✅ (logged) | ❌ | ✅ | ✅ (any character, via explicit action) |
 | Edit any character max attunement | ❌ | ❌ | ❌ | ✅ |
 | Edit any character encumbrance rule + enforce flag | ❌ | ❌ | ❌ | ✅ |
+| **Add / remove own character wishlist entry** (R10.5) | ✅ (logged) | ❌ | ✅ | ✅ (any character, via explicit action) |
+| **View a character's wishlist** (R10.5) | ✅ | ✅ | ✅ | ✅ (loot-wizard hint + Wishlists overview) |
 | Transfer item to another player directly (own → other) | ✅ | (receiver — auto-accepts) | ✅ | ✅ |
 | **Transfer currency between own stashes (Inventory ↔ Storage)** | ✅ (M0+) | — | ✅ | ✅ |
 | **Transfer currency directly to another player's Inventory stash** | ✅ (M4+, direct/immediate) | (receiver — auto-accepts) | ✅ | ✅ |

@@ -25,6 +25,7 @@
  * if a pattern emerges (e.g. `applyItemDelta`).
  */
 import type { Action, Actor, AppState } from '@app/shared';
+import { wishlistEntrySchema, type WishlistEntry } from '@app/shared';
 import { currency, pricing, type ReducerContext } from '@app/rules';
 
 import type { Prisma } from '../../prisma/generated/prisma/client.js';
@@ -134,6 +135,10 @@ export async function applyDelta(
       return persistIdentifyBatch(tx, action.payload, actor);
     case 'edit-character':
       return persistEditCharacter(tx, action.payload);
+    case 'wishlist-add':
+      return persistWishlistAdd(tx, action.payload);
+    case 'wishlist-remove':
+      return persistWishlistRemove(tx, action.payload);
     case 'delete-character':
       return persistDeleteCharacter(tx, action.payload);
     case 'leave-party':
@@ -1422,6 +1427,55 @@ async function persistEditCharacter(
   if (payload.patch.str !== undefined) data.strScore = payload.patch.str;
   if (payload.patch.maxAttunement !== undefined) data.maxAttunement = payload.patch.maxAttunement;
   await tx.character.update({ where: { id: payload.characterId }, data });
+}
+
+/**
+ * R10.5 — parse the `Character.wishlist` Json column into typed entries.
+ * The column is `unknown` on read; validate through `wishlistEntrySchema`
+ * at the boundary (SECURITY §3.4 — trust nothing crossing a boundary).
+ */
+function parseWishlist(raw: unknown): WishlistEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((e) => wishlistEntrySchema.parse(e));
+}
+
+async function persistWishlistAdd(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'wishlist-add' }>['payload'],
+): Promise<void> {
+  const character = await tx.character.findUniqueOrThrow({
+    where: { id: payload.characterId },
+    select: { wishlist: true },
+  });
+  const current = parseWishlist(character.wishlist);
+  if (current.some((e) => e.id === payload.entry.id)) {
+    // Reducer already rejected this; defensive parity.
+    throw new Error(`wishlist-add: duplicate entry id ${payload.entry.id}`);
+  }
+  const next = [...current, payload.entry];
+  await tx.character.update({
+    where: { id: payload.characterId },
+    data: { wishlist: next },
+  });
+}
+
+async function persistWishlistRemove(
+  tx: Prisma.TransactionClient,
+  payload: Extract<Action, { type: 'wishlist-remove' }>['payload'],
+): Promise<void> {
+  const character = await tx.character.findUniqueOrThrow({
+    where: { id: payload.characterId },
+    select: { wishlist: true },
+  });
+  const current = parseWishlist(character.wishlist);
+  const next = current.filter((e) => e.id !== payload.entryId);
+  if (next.length === current.length) {
+    throw new Error(`wishlist-remove: entry ${payload.entryId} not in wishlist`);
+  }
+  await tx.character.update({
+    where: { id: payload.characterId },
+    data: { wishlist: next },
+  });
 }
 
 /**

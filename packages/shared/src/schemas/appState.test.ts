@@ -69,6 +69,7 @@ describe('appStateSchema round-trip', () => {
         abilityScores: { STR: 16 },
         maxAttunement: 3,
         inventoryStashId: 'stash-inv',
+        wishlist: [],
       },
     ],
     gameSessions: [],

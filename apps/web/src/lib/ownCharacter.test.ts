@@ -57,6 +57,7 @@ function makeAppState(opts: {
       maxAttunement: 3,
       encumbranceRule: 'off' as const,
       inventoryStashId: `inv-${id}`,
+      wishlist: [],
     })),
     gameSessions: [],
     stashes: [],

@@ -460,6 +460,7 @@ describe('CharacterSheet — R4.5 cross-character DM cue', () => {
       abilityScores: { STR: 8 },
       maxAttunement: 3,
       inventoryStashId: 's-inv-bob',
+      wishlist: [],
     };
     const bobStash: Stash = {
       id: 's-inv-bob',
@@ -576,6 +577,7 @@ describe('CharacterSheet — R6.0 Edit character button', () => {
       abilityScores: { STR: 8 },
       maxAttunement: 3,
       inventoryStashId: 's-inv-bob',
+      wishlist: [],
     };
     const bobStash: Stash = {
       id: 's-inv-bob',
@@ -766,5 +768,48 @@ describe('CharacterSheet — R9.2 delete-character entry', () => {
     });
     renderAt(`/character/${base.characterId}`);
     expect(screen.queryByRole('button', { name: /character options/i })).toBeNull();
+  });
+});
+
+describe('CharacterSheet — wishlist (R10.5)', () => {
+  it('opens the Wishlist dialog, adds a free-text wish, and it lands in state', async () => {
+    const user = userEvent.setup();
+    const base = bootstrap();
+    renderAt(`/character/${base.characterId}`);
+
+    await user.click(screen.getByRole('button', { name: /^wishlist$/i }));
+    // Dialog open.
+    expect(await screen.findByText(/is hoping for/i)).toBeInTheDocument();
+
+    const input = screen.getByLabelText(/free-text wish/i);
+    await user.type(input, 'a flaming sword');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    const wishlist = useStore.getState().appState!.characters[0]!.wishlist;
+    expect(wishlist).toHaveLength(1);
+    expect(wishlist[0]).toMatchObject({ kind: 'text', text: 'a flaming sword' });
+    // Rendered in the dialog list.
+    expect(
+      within(screen.getByLabelText(/wishlist items/i)).getByText('a flaming sword'),
+    ).toBeInTheDocument();
+  });
+
+  it('removes a wishlist entry', async () => {
+    const user = userEvent.setup();
+    const base = bootstrap();
+    // Seed a wish directly via dispatch.
+    void useStore.getState().dispatch({
+      type: 'wishlist-add',
+      payload: {
+        characterId: base.characterId,
+        entry: { id: newUuidV7(), kind: 'text', text: 'old wish' },
+      },
+    });
+    renderAt(`/character/${base.characterId}`);
+
+    await user.click(screen.getByRole('button', { name: /^wishlist$/i }));
+    await user.click(await screen.findByRole('button', { name: /remove old wish/i }));
+
+    expect(useStore.getState().appState!.characters[0]!.wishlist).toHaveLength(0);
   });
 });

@@ -187,6 +187,7 @@ describe('DmDashboard', () => {
           abilityScores: { STR: 10 },
           maxAttunement: 3,
           inventoryStashId: 's-inv-me',
+          wishlist: [],
         },
         {
           id: 'char-other',
@@ -200,6 +201,7 @@ describe('DmDashboard', () => {
           abilityScores: { STR: 8 },
           maxAttunement: 3,
           inventoryStashId: 's-inv-other',
+          wishlist: [],
         },
       ],
       stashes: [
