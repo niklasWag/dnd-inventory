@@ -15,6 +15,10 @@ export * as attunement from './attunement';
 export * as charges from './charges';
 export * as weight from './weight';
 export * as hoard from './hoard';
+export * as dice from './dice';
+export type { RollMode } from './dice';
+export * as initiative from './initiative';
+export type { Combatant, CycleState, RemoveResult } from './initiative';
 export * as validation from './validation';
 export * as pricing from './pricing';
 // R6.5 — the search module exports its ranker at the top level as

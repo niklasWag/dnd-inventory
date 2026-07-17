@@ -12,6 +12,7 @@ import { HistoryScreen } from '@/screens/HistoryScreen';
 import { HoardGenerator } from '@/screens/HoardGenerator';
 import { Hub } from '@/screens/Hub';
 import { IdentificationPanel } from '@/screens/IdentificationPanel';
+import { InitiativeTracker } from '@/screens/InitiativeTracker';
 import { ItemDetail } from '@/screens/ItemDetail';
 import { LootDistributionWizard } from '@/screens/LootDistributionWizard';
 import { Login } from '@/screens/Login';
@@ -154,6 +155,10 @@ export const router = createBrowserRouter([
                       { path: 'identify', Component: IdentificationPanel },
                       // R10.5 — party-wide wishlist overview. DM-only.
                       { path: 'wishlists', Component: WishlistOverview },
+                      // R11 — initiative tracker (DM combat tool). DM-only,
+                      // ephemeral (state lives in the standalone
+                      // useEncounterStore, never persisted).
+                      { path: 'initiative', Component: InitiativeTracker },
                     ],
                   },
                 ],

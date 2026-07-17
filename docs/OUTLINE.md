@@ -20,7 +20,7 @@ Designed as a **party manager** with full DM tooling. **Every user is always ins
 
 ### Non-Goals (v1)
 - Full character sheet management (HP, spells, abilities) — **inventory-only minimum** character data.
-- Combat tracking / initiative.
+- Full combat tracking (attacks, damage, conditions, PC HP). _(Amended 2026-07-17: a **DM-only, ephemeral, non-authoritative initiative tracker** — turn order + a d20 roller + a round counter, monster/NPC HP only — is in scope as R11. It is transient table-side state, lives outside `TransactionLog`, and is not persisted. This is not a full combat engine; PCs still track their own HP.)_
 - VTT integration (maps, tokens).
 - Public/multi-tenant SaaS hardening (private use).
 - Full economy (regional pricing, haggle rolls) — base price + shop modifiers only.

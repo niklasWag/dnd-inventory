@@ -4174,7 +4174,7 @@ Self-service user account CRUD. **Depends on R9's redesigned UI language — do 
 
 Promoted to R11 on 2026-07-17 (custom profile avatars moved to Future/Stretch in the same move). A DM Command Center tool for running encounter turn order.
 
-- [ ] **Initiative tracker (DM combat tool).** A DM Command Center tool for running encounter turn order. Surfaces as a tile on the DM Command Center (`apps/web/src/screens/DmDashboard.tsx`), `DmOnlyRoute`-gated. Would also help fill the Command Center's tile grid (currently 5 tiles in a 4-col layout leaves 3 empty slots on wide screens — surfaced 2026-07-16).
+- [x] **Initiative tracker (DM combat tool).** A DM Command Center tool for running encounter turn order. Surfaces as a tile on the DM Command Center (`apps/web/src/screens/DmDashboard.tsx`), `DmOnlyRoute`-gated. Would also help fill the Command Center's tile grid (currently 5 tiles in a 4-col layout leaves 3 empty slots on wide screens — surfaced 2026-07-16).
   - **Combatant roster.**
     - **Pull in party members** — a "Add party" action populates a row per active party character (name auto-filled). Players roll their own initiative at the table and tell the DM, so the character rows have a **manually-entered** initiative value (no auto-roll for PCs).
     - **Add monsters/NPCs** — the DM adds ad-hoc rows inline with fields: **name**, **initiative modifier** (signed int), **roll mode** (advantage / normal / disadvantage), and a **Roll** button that rolls `d20` (best/worst of two for adv/dis) + modifier and writes the result into the row's initiative value. (PC rows can also expose a Roll if the DM wants to roll for an absent player.)
@@ -4188,7 +4188,13 @@ Promoted to R11 on 2026-07-17 (custom profile avatars moved to Future/Stretch in
 
 #### R11 — Notes
 
-> -
+> **2026-07-17 — Initiative tracker shipped (charter decisions locked).**
+>
+> - **Doc conflict resolved first.** OUTLINE §2 listed "Combat tracking / initiative" as a v1 Non-Goal. Amended to scope it to a **DM-only, ephemeral, non-authoritative** turn-order tool (not a full combat engine) before any feature code — docs win per CLAUDE.md.
+> - **Persistence: client-only ephemeral.** State lives in a standalone `useEncounterStore` (`apps/web/src/store/encounter.ts`) — NOT the persisted `useStore`, NOT Dexie, NOT `TransactionLog`. Resets on reload (acceptable for a live-table tool). No server / migration / broadcast work. The persisted `Encounter` entity remains the escalation path if reload-survival or cross-device is ever wanted.
+> - **Tie-break: stable + manual reorder.** `sortByInitiative` is stable (insertion order preserved on ties); tied rows highlight together as a simultaneous turn; the DM reorders manually via up/down.
+> - **HP: monster/NPC rows only.** PC rows have no HP field (players track their own).
+> - **Pure core, TDD'd.** `packages/rules/src/dice.ts` (d20 + adv/dis + modifier, injectable rng mirroring `hoard.ts`) and `packages/rules/src/initiative.ts` (sort / distinct-group / advance-turn / remove) are pure + unit-tested. The screen (`InitiativeTracker.tsx`) is a thin shell over them; component tests cover add-party / add-monster / roll / roll-all / end-turn wrap / remove-current.
 
 ---
 
