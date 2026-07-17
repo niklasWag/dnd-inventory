@@ -34,6 +34,7 @@ import { getSession, type SessionAndUser } from './auth/session.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerAdminHealthRoute } from './routes/admin-health.js';
 import { registerPartyRoutes } from './parties/routes.js';
+import { registerUserRoutes } from './users/routes.js';
 import { attachRealtime, type BroadcastApplied } from './realtime/io.js';
 import { startSnapshotCron } from './snapshots/scheduler.js';
 import { registerSyncRoutes } from './sync/routes.js';
@@ -129,6 +130,11 @@ export async function buildServer(opts: BuildOptions): Promise<FastifyInstance> 
   // (sole-member archive). They use the same `applyDelta` + log-builder
   // pipeline internally so the TransactionLog stays canonical.
   registerPartyRoutes(app, opts.prisma);
+
+  // R10.4 — self-service account/profile routes (display-name, device
+  // sessions, account export, soft-delete). Needs `env` for the session
+  // cookie name (cleared on delete).
+  registerUserRoutes(app, opts.prisma, opts.env);
 
   // R3.4.b — nightly snapshot cron (03:07 local; disabled when
   // SNAPSHOTS_ENABLED=false). Stops on Fastify close so SIGTERM

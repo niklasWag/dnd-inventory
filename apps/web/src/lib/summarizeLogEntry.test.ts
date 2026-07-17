@@ -88,6 +88,7 @@ function makeState(): AppState {
         abilityScores: { STR: 16 },
         maxAttunement: 3,
         inventoryStashId: 'inv-a',
+        wishlist: [],
       },
     ],
     gameSessions: [

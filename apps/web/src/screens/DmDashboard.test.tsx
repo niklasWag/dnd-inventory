@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -187,6 +188,7 @@ describe('DmDashboard', () => {
           abilityScores: { STR: 10 },
           maxAttunement: 3,
           inventoryStashId: 's-inv-me',
+          wishlist: [],
         },
         {
           id: 'char-other',
@@ -200,6 +202,7 @@ describe('DmDashboard', () => {
           abilityScores: { STR: 8 },
           maxAttunement: 3,
           inventoryStashId: 's-inv-other',
+          wishlist: [],
         },
       ],
       stashes: [
@@ -422,6 +425,75 @@ describe('DmDashboard', () => {
     const total = screen.getByRole('region', { name: /total party gold/i });
     expect(total).toHaveTextContent(/0(\.0)? gp/);
     expect(screen.getByText(/no characters yet/i)).toBeInTheDocument();
+  });
+
+  // R10.6 — bulk level-up party.
+  it('levels up every character by 1 after confirming', async () => {
+    const user = userEvent.setup();
+    seedTwoCharState();
+    render(
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
+        <Routes>
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character page</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByRole('button', { name: /level up party/i }));
+    // Confirm dialog.
+    expect(await screen.findByText(/level up the whole party\?/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^level up party$/i }));
+
+    const chars = useStore.getState().appState!.characters;
+    expect(chars.find((c) => c.id === 'char-me')!.level).toBe(6); // 5 → 6
+    expect(chars.find((c) => c.id === 'char-other')!.level).toBe(4); // 3 → 4
+  });
+
+  it('caps at 20 and skips already-maxed characters (button hidden when all maxed)', () => {
+    // Seed a single level-20 character → nothing to level → button hidden.
+    const state = makeState({
+      userId: 'me',
+      memberships: TWO_MEMBER_DM_MEMBERSHIPS,
+      characters: [
+        {
+          id: 'char-me',
+          partyId: 'p1',
+          ownerUserId: 'me',
+          name: 'Alice',
+          species: 'Human',
+          size: 'medium',
+          class: 'Wizard',
+          level: 20,
+          abilityScores: { STR: 10 },
+          maxAttunement: 3,
+          inventoryStashId: 's-inv-me',
+          wishlist: [],
+        },
+      ],
+      stashes: [
+        {
+          id: 's-inv-me',
+          scope: 'character',
+          name: 'Inventory',
+          ownerCharacterId: 'char-me',
+          partyId: null,
+          isCarried: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      currencies: [{ id: 'c-me', stashId: 's-inv-me', cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 }],
+      items: [],
+    });
+    useStore.setState({ appState: state, log: [] });
+    render(
+      <MemoryRouter initialEntries={['/party/p1/dm']}>
+        <Routes>
+          <Route path="/party/:partyId/dm" element={<DmDashboard />} />
+          <Route path="/party/:partyId/character/:id" element={<div>character page</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('button', { name: /level up party/i })).toBeNull();
   });
 });
 

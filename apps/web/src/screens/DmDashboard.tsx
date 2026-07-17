@@ -4,8 +4,10 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   Calendar,
   ChevronRight,
+  ChevronsUp,
   Coins,
   Gem,
+  Gift,
   Play,
   ScrollText,
   Sparkles,
@@ -30,6 +32,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
+import type { MutationOutcome } from '@/store/outcome';
 import { isCurrentUserDmOrSolo } from '@/lib/currentUserRole';
 import { useCanDispatch } from '@/lib/useCanDispatch';
 import { useDispatch } from '@/lib/useDispatch';
@@ -122,6 +125,52 @@ export function DmDashboard(): ReactElement {
 
   const currentSession = gameSessions.find((s) => s.isCurrent) ?? null;
 
+  // R10.6 — bulk "level up party": +1 to every character's level, capped at
+  // 20. Reuses the existing `edit-character` action (level is in its patch),
+  // dispatched per-character via the R8.5 batched / continue-on-failure
+  // pattern (same as the Loot Distribution wizard). No new action or log
+  // type — one `edit-character` log entry per character.
+  const dispatch = useDispatch();
+  const canDispatch = useCanDispatch();
+  const [levelUpOpen, setLevelUpOpen] = useState(false);
+  const [levelingUp, setLevelingUp] = useState(false);
+
+  // Only characters below the level-20 cap are eligible.
+  const levelableCount = characters.filter((c) => c.level < 20).length;
+
+  async function handleLevelUpParty(): Promise<void> {
+    setLevelingUp(true);
+    try {
+      const pending: { label: string; outcome: Promise<MutationOutcome> }[] = [];
+      for (const c of characters) {
+        if (c.level >= 20) continue; // already capped — skip
+        pending.push({
+          label: c.name,
+          outcome: dispatch(
+            {
+              type: 'edit-character',
+              payload: { characterId: c.id, patch: { level: c.level + 1 } },
+            },
+            { onRejection: () => {} },
+          ),
+        });
+      }
+      const settled = await Promise.all(pending.map((p) => p.outcome));
+      let ok = 0;
+      settled.forEach((outcome, i) => {
+        if (outcome.ok) {
+          ok += 1;
+        } else {
+          toast.error(`${pending[i]!.label}: ${outcome.message ?? 'Level-up failed'}`);
+        }
+      });
+      if (ok > 0) toast.success(`Leveled up ${String(ok)} character${ok === 1 ? '' : 's'}`);
+      setLevelUpOpen(false);
+    } finally {
+      setLevelingUp(false);
+    }
+  }
+
   // R9.9 — DM-tool launcher tiles. Each navigates to its dedicated route.
   const tools: { icon: typeof Sparkles; label: string; desc: string; to: string }[] = [
     {
@@ -141,6 +190,12 @@ export function DmDashboard(): ReactElement {
       label: 'Identify items',
       desc: 'Reveal unknown magic',
       to: `/party/${partyId}/identify`,
+    },
+    {
+      icon: Gift,
+      label: 'Wishlists',
+      desc: 'What players want',
+      to: `/party/${partyId}/wishlists`,
     },
     {
       icon: Users,
@@ -215,10 +270,22 @@ export function DmDashboard(): ReactElement {
           aria-label="Characters"
           className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1"
         >
-          <div className="border-b border-border px-4 py-3">
+          <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
             <h2 className="font-display text-sm font-semibold uppercase tracking-wide">
               Party at a glance
             </h2>
+            {levelableCount > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!canDispatch}
+                onClick={() => setLevelUpOpen(true)}
+              >
+                <ChevronsUp className="h-4 w-4" aria-hidden="true" />
+                Level up party
+              </Button>
+            ) : null}
           </div>
           {characterRows.length === 0 ? (
             <p className="px-4 py-6 text-sm text-muted-foreground">No characters yet.</p>
@@ -275,6 +342,34 @@ export function DmDashboard(): ReactElement {
       </div>
 
       <SessionsSection sessions={gameSessions} />
+
+      {/* R10.6 — bulk level-up confirm. */}
+      <AlertDialog open={levelUpOpen} onOpenChange={setLevelUpOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-display">Level up the whole party?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This raises every character&apos;s level by 1 (characters already at level 20 are
+              skipped). {levelableCount} character{levelableCount === 1 ? '' : 's'} will level up.
+              Each change is logged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={levelingUp}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={levelingUp || !canDispatch}
+              onClick={(e) => {
+                // Keep the dialog mounted while the batch resolves; close in
+                // the handler on completion.
+                e.preventDefault();
+                void handleLevelUpParty();
+              }}
+            >
+              {levelingUp ? 'Leveling up…' : 'Level up party'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

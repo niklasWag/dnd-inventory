@@ -20,8 +20,14 @@
 import { z, type ZodType } from 'zod';
 
 import {
+  accountExportResponseSchema,
   apiErrorSchema,
   authMethodsResponseSchema,
+  deleteAccountResponseSchema,
+  emailChangeAbortResponseSchema,
+  emailChangeCommitResponseSchema,
+  emailChangeSentResponseSchema,
+  emailChangeStartResponseSchema,
   joinPartyRequestSchema,
   joinPartyResponseSchema,
   kickPlayerRequestSchema,
@@ -33,12 +39,17 @@ import {
   pullStateResponseSchema,
   pushActionsResponseSchema,
   requestOtpResponseSchema,
+  revokeSessionsResponseSchema,
   rotateInviteResponseSchema,
+  sessionListResponseSchema,
   sessionResponseSchema,
   setDisplayNameResponseSchema,
+  updateDisplayNameResponseSchema,
   verifyOtpResponseSchema,
   batchRejectedResponseSchema,
+  type AccountExportResponse,
   type AuthMethodsResponse,
+  type DeleteAccountResponse,
   type JoinPartyRequest,
   type JoinPartyResponse,
   type KickPlayerRequest,
@@ -50,11 +61,18 @@ import {
   type PullStateResponse,
   type PushActionsResponse,
   type RequestOtpResponse,
+  type RevokeSessionsResponse,
   type RotateInviteResponse,
+  type SessionListResponse,
   type SessionResponse,
   type SetDisplayNameResponse,
+  type UpdateDisplayNameResponse,
   type VerifyOtpResponse,
   type BatchRejectedResponse,
+  type EmailChangeAbortResponse,
+  type EmailChangeCommitResponse,
+  type EmailChangeSentResponse,
+  type EmailChangeStartResponse,
 } from '@app/shared';
 
 import { SERVER_URL } from './serverMode';
@@ -272,6 +290,105 @@ export function verifyLinkEmailOtp(email: string, otp: string): Promise<LinkEmai
     method: 'POST',
     body: { email, otp },
     schema: linkEmailResponseSchema,
+  });
+}
+
+// ----- R10.1 — change email (dual-OTP) --------------------------------
+
+/**
+ * Start the change-email flow. Sends a code to the CURRENT address and
+ * returns the pending-change token to thread through the verify steps.
+ */
+export function startEmailChange(newEmail: string): Promise<EmailChangeStartResponse> {
+  return apiFetch('/auth/email/change/start', {
+    method: 'POST',
+    body: { newEmail },
+    schema: emailChangeStartResponseSchema,
+  });
+}
+
+/**
+ * Verify the code sent to the CURRENT address. On success the server sends
+ * the second code to the NEW address.
+ */
+export function verifyCurrentEmailOtp(
+  token: string,
+  otp: string,
+): Promise<EmailChangeSentResponse> {
+  return apiFetch('/auth/email/change/verify-current', {
+    method: 'POST',
+    body: { token, otp },
+    schema: emailChangeSentResponseSchema,
+  });
+}
+
+/** Verify the code sent to the NEW address and commit the swap. */
+export function verifyNewEmailOtp(token: string, otp: string): Promise<EmailChangeCommitResponse> {
+  return apiFetch('/auth/email/change/verify-new', {
+    method: 'POST',
+    body: { token, otp },
+    schema: emailChangeCommitResponseSchema,
+  });
+}
+
+/** Explicitly abort an in-flight change (deletes the pending row + codes). */
+export function abortEmailChange(token: string): Promise<EmailChangeAbortResponse> {
+  return apiFetch('/auth/email/change/abort', {
+    method: 'POST',
+    body: { token },
+    schema: emailChangeAbortResponseSchema,
+  });
+}
+
+// ---------------- R10.4 — account/profile ----------------
+
+/** Rename the current user (already-onboarded). Returns the patched session user. */
+export function updateDisplayName(displayName: string): Promise<UpdateDisplayNameResponse> {
+  return apiFetch('/users/me/display-name', {
+    method: 'POST',
+    body: { displayName },
+    schema: updateDisplayNameResponseSchema,
+  });
+}
+
+/** List the current user's active device sessions (current one flagged). */
+export function listSessions(): Promise<SessionListResponse> {
+  return apiFetch('/users/me/sessions', { schema: sessionListResponseSchema });
+}
+
+/** Revoke a single (non-current) session by id. */
+export function revokeSession(sessionId: string): Promise<RevokeSessionsResponse> {
+  return apiFetch('/users/me/sessions/revoke', {
+    method: 'POST',
+    body: { sessionId },
+    schema: revokeSessionsResponseSchema,
+  });
+}
+
+/** Revoke every session except the current one ("sign out other devices"). */
+export function revokeOtherSessions(): Promise<RevokeSessionsResponse> {
+  return apiFetch('/users/me/sessions/revoke', {
+    method: 'POST',
+    body: { allOthers: true },
+    schema: revokeSessionsResponseSchema,
+  });
+}
+
+/** Account-wide JSON export (one envelope per active party). */
+export function exportAccount(): Promise<AccountExportResponse> {
+  return apiFetch('/users/me/export', { schema: accountExportResponseSchema });
+}
+
+/**
+ * Soft-delete the current account. On `sole_dm_must_transfer_first` the
+ * thrown `ApiError` carries the offending `partyId` on its body — callers
+ * read `err.body?.partyId`.
+ */
+export function deleteAccount(): Promise<DeleteAccountResponse> {
+  return apiFetch('/users/me/delete', {
+    method: 'POST',
+    body: {},
+    schema: deleteAccountResponseSchema,
   });
 }
 

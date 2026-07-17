@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { appStateSchema } from './appState';
+import { exportEnvelopeSchema } from './exportEnvelope';
 import { transactionLogEntrySchema } from './transactionLog';
 
 /**
@@ -47,6 +48,10 @@ export const sessionUserSchema = z
     avatarUrl: z.string().url().nullable().optional(),
     discordId: z.string().nullable().optional(),
     needsDisplayName: z.boolean(),
+    // R10.4 — account creation time, exposed for the Settings profile hero
+    // "Member since {Mon YYYY}" stat. Optional so pre-R10.4 payloads (and the
+    // Discord OAuth session, which builds its user via mappers) still parse.
+    createdAt: z.string().datetime().optional(),
   })
   .passthrough();
 
@@ -123,12 +128,123 @@ export const linkEmailResponseSchema = z.object({
 export type LinkEmailResponse = z.infer<typeof linkEmailResponseSchema>;
 
 /**
+ * R10.1 — change-email dual-OTP flow response bodies.
+ * `start` returns the pending-change token the client threads through the
+ * two verify steps. `verify-current` re-sends (code to the new address).
+ * `verify-new` commits and returns the updated session user. `abort` acks.
+ */
+export const emailChangeStartResponseSchema = z.object({
+  status: z.literal('sent'),
+  token: z.string().min(1),
+});
+
+export type EmailChangeStartResponse = z.infer<typeof emailChangeStartResponseSchema>;
+
+export const emailChangeSentResponseSchema = z.object({
+  status: z.literal('sent'),
+});
+
+export type EmailChangeSentResponse = z.infer<typeof emailChangeSentResponseSchema>;
+
+export const emailChangeCommitResponseSchema = z.object({
+  user: sessionUserSchema,
+});
+
+export type EmailChangeCommitResponse = z.infer<typeof emailChangeCommitResponseSchema>;
+
+export const emailChangeAbortResponseSchema = z.object({
+  status: z.literal('aborted'),
+});
+
+export type EmailChangeAbortResponse = z.infer<typeof emailChangeAbortResponseSchema>;
+
+/**
+ * R10.4 — `POST /users/me/display-name` happy-path body. A pure rename for
+ * already-onboarded users (distinct from `/auth/email/set-display-name`,
+ * which also flips `needsDisplayName`). Returns the patched session user.
+ */
+export const updateDisplayNameResponseSchema = z.object({
+  user: sessionUserSchema,
+});
+
+export type UpdateDisplayNameResponse = z.infer<typeof updateDisplayNameResponseSchema>;
+
+/**
+ * R10.4 — device-session management (`GET /users/me/sessions`). The
+ * Auth.js `Session` model carries no device/user-agent data, so a row is
+ * surfaced as its opaque `id`, `createdAt`, `expires`, and a `current`
+ * flag (true for the row whose token matches the request cookie). The
+ * client renders the current one badged "This device" and offers Revoke
+ * on the rest.
+ */
+export const sessionSummarySchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime(),
+  expires: z.string().datetime(),
+  current: z.boolean(),
+});
+
+export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+
+export const sessionListResponseSchema = z.object({
+  sessions: z.array(sessionSummarySchema),
+});
+
+export type SessionListResponse = z.infer<typeof sessionListResponseSchema>;
+
+/**
+ * R10.4 — `POST /users/me/sessions/revoke` ack. Reports how many rows were
+ * deleted (1 for a single `sessionId`, N for `allOthers`).
+ */
+export const revokeSessionsResponseSchema = z.object({
+  revoked: z.number().int().nonnegative(),
+});
+
+export type RevokeSessionsResponse = z.infer<typeof revokeSessionsResponseSchema>;
+
+/**
+ * R10.4 — account-wide export (`GET /users/me/export`). Bundles one
+ * `exportEnvelope` per active party the user belongs to (archived parties
+ * excluded, mirroring `GET /sync/parties`). Distinct from the per-party
+ * `GET /sync/export` (SECURITY §7) — same envelope shape, one per party.
+ */
+export const accountExportResponseSchema = z.object({
+  schemaVersion: z.literal(1),
+  exportedAt: z.string(),
+  parties: z.array(exportEnvelopeSchema),
+});
+
+export type AccountExportResponse = z.infer<typeof accountExportResponseSchema>;
+
+/**
+ * R10.4 — `POST /users/me/delete` ack. Account deletion is a SOFT delete
+ * (see `User.deactivatedAt` in schema.prisma + OUTLINE §8.3): the row is
+ * preserved with an anonymized displayName so audit-log actor references
+ * stay valid. Blocked with `sole_dm_must_transfer_first` (surfaced as the
+ * standard `apiErrorSchema` on a non-2xx) if the user is the sole DM of a
+ * multi-member party.
+ */
+export const deleteAccountResponseSchema = z.object({
+  deleted: z.literal(true),
+});
+
+export type DeleteAccountResponse = z.infer<typeof deleteAccountResponseSchema>;
+
+/**
  * Per-row shape for `GET /sync/parties`. `roles` is an array because the
  * same user may hold both `dm` and `player` rows in a single party
  * (party-of-one is exactly that case).
  *
  * R4.1 — `isSoloShortcut` removed. UI derives the "solo" badge from
  * `memberCount === 1` (OUTLINE §4 amendment 2026-06-24).
+ *
+ * R10.3 — `itemCount` (total ItemInstance quantity across ALL the party's
+ * stashes — character inventories + Storage + Party Stash + Recovered Loot,
+ * excluding shop stock) and `totalCp` (integer copper-equivalent of every
+ * stash's CurrencyHolding) are Hub-card glance stats. `totalCp` is integer
+ * CP on the wire per SECURITY §3.2 (CP-integer only); the client divides to
+ * gp for display. Server computes them in `GET /sync/parties`; local mode
+ * computes them from the keyed Dexie AppState blob.
  */
 export const partyListItemSchema = z.object({
   id: z.string().min(1),
@@ -136,6 +252,8 @@ export const partyListItemSchema = z.object({
   roles: z.array(z.enum(['dm', 'player'])).min(1),
   memberCount: z.number().int().min(1),
   lastActivityAt: z.string().datetime().nullable(),
+  itemCount: z.number().int().nonnegative(),
+  totalCp: z.number().int().nonnegative(),
 });
 
 export type PartyListItem = z.infer<typeof partyListItemSchema>;

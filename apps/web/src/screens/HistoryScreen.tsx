@@ -333,11 +333,11 @@ export function HistoryScreen(): ReactElement {
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
+          <div className="overflow-x-auto rounded-lg border border-border bg-surface shadow-e1">
             <table className="w-full text-left text-sm" aria-label="History entries">
               <thead className="border-b border-border bg-surface-2/50 text-[11px] uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2.5 font-semibold">When</th>
+                  <th className="hidden px-4 py-2.5 font-semibold sm:table-cell">When</th>
                   <th className="px-4 py-2.5 font-semibold">Actor</th>
                   <th className="px-4 py-2.5 font-semibold">Type</th>
                   <th className="px-4 py-2.5 font-semibold">Summary</th>
@@ -349,7 +349,7 @@ export function HistoryScreen(): ReactElement {
                   const Icon = v.icon;
                   return (
                     <tr key={e.id} className="transition hover:bg-surface-2/50">
-                      <td className="whitespace-nowrap px-4 py-2.5 align-top text-xs tabular-nums text-muted-foreground">
+                      <td className="hidden whitespace-nowrap px-4 py-2.5 align-top text-xs tabular-nums text-muted-foreground sm:table-cell">
                         {new Date(e.timestamp).toLocaleString()}
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 align-top">

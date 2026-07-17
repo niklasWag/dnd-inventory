@@ -63,6 +63,7 @@ Designed as a **party manager** with full DM tooling. **Every user is always ins
 - **Auth method is transparent to party mechanics.** A user who logs in via Discord and a user who logs in via email OTP are indistinguishable at the party/permission layer — both are just `User` rows. Auth method does not affect role, permissions, or any game feature.
 - **Account linking is fully symmetric.** Both auth methods can be added to any existing account at any time via Settings → "Linked accounts":
   - **Discord user linking an email** — enter an email address → receive a verification OTP → confirm. Once verified, that email becomes a valid standalone login credential. Useful as a fallback when Discord is unavailable.
+  - **Changing an already-set email (R10.1)** — distinct from *adding* an email above. A user whose account already has a verified `email` can change it via Settings → "Change email" using a **dual-OTP confirmation**: a code sent to the **current** address (proving they still control it) *and* a code sent to the **new** address (proving they control that). Only when both codes are confirmed does `User.email` swap and `emailVerified` re-stamp — in a single transaction. Identity is the session cookie server-side (SECURITY §6); the new address must not already belong to another account (the `email` UNIQUE constraint). On commit the old address is **released outright** (not reserved for the original owner) and becomes available for a fresh signup. The flow is app-blocking (dedicated route, no other navigation) and can be aborted at any step. Not applicable to Discord-only accounts with no current email — those use the "linking an email" flow above. This account-level change is intentionally **not** written to the party-scoped `TransactionLog` (every log entry is party-scoped; an email change has no party context — the audit record is the server request log + the `emailVerified` re-stamp).
   - **Email-only user linking Discord** — click "Connect Discord" → standard OAuth flow → on success, `discordId` and `avatarUrl` are stored on the existing `User` row. Discord then becomes an additional valid login method for that account. The user's `displayName` is not overwritten (they keep the name they set at first login; they can update it manually if desired).
   - A user may have both `discordId` and a verified `email` on their account, or only one. Either is sufficient to log in.
 - **Email-only signup.** Users without a Discord account choose "Sign in with email" on the login screen, enter their email, and receive an OTP. On first login they are prompted to enter a display name. No avatar is set by default (optional upload post-MVP).
@@ -271,6 +272,7 @@ No HP, spells, AC, proficiencies in v1.
 - maxAttunement (default 3; DM-overridable)
 - (BUG-011 2026-07-06) `encumbranceRule` and `enforceEncumbrance` moved to `Party` — party-wide house rule, no longer per-character.
 - inventoryStashId — direct FK to the character's auto-created **Inventory** stash (the carried one).
+- (R10.5) `wishlist` — an array of tagged entries the player is hoping for, a DM loot hint. Each entry is `{ id, kind: 'catalog', definitionId }` (a concrete catalog `ItemDefinition`) or `{ id, kind: 'text', text }` (a free-text wish; plain text per SECURITY §4, ≤200 chars). `id` is a client-minted UUID v7 so removal targets one entry unambiguously (free-text has no natural key + duplicates are allowed). Stored as a JSON column (structured, unlike the flat `tags`). Editable by the character's **owner or the DM/solo** (§8.1); surfaced read-only to the DM in the Loot Distribution wizard (rolled items matching a wishlisted `definitionId` are badged) and the DM Command Center → **Wishlists** overview. Default `[]`.
 
 ### `Stash`
 - id, scope (`character` | `party` | `recovered-loot`), name, createdAt
@@ -348,6 +350,8 @@ No HP, spells, AC, proficiencies in v1.
   - `rename-character` → `{ characterId, oldName, newName }` — dedicated type for the most common character edit; mirrors `rename-stash` / `rename-party`.
   - `set-encumbrance` → `{ partyId, oldRule, newRule, oldEnforce, newEnforce }` — dedicated type for the party-wide encumbrance pair (rule + enforce flag). One entry covers either-or-both field flips so the "every dispatch logs once" invariant stays clean. **BUG-011 amendment (2026-07-06):** moved from per-character to per-party — encumbrance is a party-wide house rule, not per-character. DM-only when memberCount ≥ 2.
   - `edit-character` → `{ characterId, changedFields: ("species" | "class" | "level" | "str" | "maxAttunement")[] }` — catch-all for the remaining mutable character fields per §3.3 + §8.1. `size` is creation-only in v1 and therefore not editable.
+  - `wishlist-add` → `{ characterId, entryId, kind: "catalog" | "text", label }` (R10.5) — appends a wishlist entry. `label` is the item name (catalog) or the wish text (free-text) so History renders without a catalog lookup.
+  - `wishlist-remove` → `{ characterId, entryId }` (R10.5) — removes a wishlist entry by id.
   - `create-stash` → `{ stashId, scope, name, ownerCharacterId? }`
   - `rename-stash` → `{ stashId, oldName, newName }`
   - `delete-stash` → `{ stashId, name, itemCount, currencyTotalCp, ownerCharacterId? }` — `delete-stash` records the snapshot at deletion time so the audit trail explains where items went (they're moved to Recovered Loot or the owning character's Inventory before deletion; the move is its own `transfer` log entry). `ownerCharacterId` is present iff the deleted stash was character-scope (Storage) — captured so post-delete history views can render the original owner alongside the stash name (added in M3 after the initial cut).
@@ -385,7 +389,7 @@ No HP, spells, AC, proficiencies in v1.
 8. **History/Log** — filterable timeline (session/character/item/type/actorRole).
 
 ### DM-facing (additional)
-9. **DM Dashboard** — all characters at a glance, party stash, recovered loot, gold totals.
+9. **DM Dashboard** — all characters at a glance, party stash, recovered loot, gold totals. (R10.6) A **"Level up party"** control raises every character's level by 1 (capped at 20; already-maxed characters skipped) behind a confirm dialog — reuses the `edit-character` action per-character (one log entry each), DM-only, no new action/log type.
 10. **Loot Distribution Wizard** — per-hoard: shared pool OR direct assign.
 11. **Hoard Generator** — DMG 2024 tables, CR/level band; output feeds the wizard.
 12. **Shop Manager** — build/edit shop catalogs and modifiers; resolve purchases manually.
@@ -395,12 +399,12 @@ No HP, spells, AC, proficiencies in v1.
 
 ### Shared
 16. **Item Catalog** — global search & filter; "Add to…" picker.
-17. **Settings** — an **Appearance** cluster (theme: light / dark / system · **brand accent**: default cyan-teal + selectable options · **"accent follows character class"** toggle: inside a party the accent follows the current character's class, reverting to the user's default accent outside a party · **Hub layout**: Hero / List+Detail), variant rules, export/import, account/logout.
+17. **Settings** — a profile hero (display name · email · **member-since** + **party-count** stats, R10.4), an **Account** cluster (**change display name** · change email via dual-OTP §3.1/R10.1), **Login methods** (link Discord / email), an **Appearance** cluster (theme: light / dark / system · **brand accent**: default cyan-teal + selectable options · **"accent follows character class"** toggle: inside a party the accent follows the current character's class, reverting to the user's default accent outside a party · **Hub layout**: Hero / List+Detail), **Sessions** (device list + per-device revoke + "sign out other devices", R10.4), export/import, and an account danger zone (**export all my data** · **delete account** — soft delete per §8.4, R10.4) plus the browser-local data wipe.
 
 ### Form factor
 - **Desktop-first** (the primary device, especially for DM).
 - **Player views responsive on mobile** — the character sheet, party stash, recovered loot, transfer modal, item detail are all mobile-usable.
-- DM tools (dashboard, loot wizard, hoard generator, shop manager, party settings) are **desktop-priority**; their mobile posture (responsive reflow vs. a min-width "use a larger screen" banner) is **deferred to R9 implementation**, decided with real device testing.
+- DM tools (dashboard, loot wizard, hoard generator, shop manager, party settings) are **desktop-priority**. Mobile posture **resolved in R10.2 (2026-07-15)**: the **DM Dashboard** and **Party Settings** reflow acceptably and stay responsive; the **Hoard Generator**, **Loot Distribution Wizard**, and **Shop Manage** view (not the player Storefront) don't reflow below 768px and are gated behind a **min-width "use a larger screen" notice** at the Tailwind `md` (768px) breakpoint (CSS-only guard `components/nav/DesktopOnlyNotice.tsx`). Below 768px those three show the notice instead of a broken layout; at/above they render normally.
 
 ---
 
@@ -460,6 +464,8 @@ Pure / deterministic / unit-testable:
 | Edit own character STR | ✅ (logged) | ❌ | ✅ | ✅ (any character, via explicit action) |
 | Edit any character max attunement | ❌ | ❌ | ❌ | ✅ |
 | Edit any character encumbrance rule + enforce flag | ❌ | ❌ | ❌ | ✅ |
+| **Add / remove own character wishlist entry** (R10.5) | ✅ (logged) | ❌ | ✅ | ✅ (any character, via explicit action) |
+| **View a character's wishlist** (R10.5) | ✅ | ✅ | ✅ | ✅ (loot-wizard hint + Wishlists overview) |
 | Transfer item to another player directly (own → other) | ✅ | (receiver — auto-accepts) | ✅ | ✅ |
 | **Transfer currency between own stashes (Inventory ↔ Storage)** | ✅ (M0+) | — | ✅ | ✅ |
 | **Transfer currency directly to another player's Inventory stash** | ✅ (M4+, direct/immediate) | (receiver — auto-accepts) | ✅ | ✅ |
@@ -514,6 +520,16 @@ When the **DM** leaves:
 > **R4.1.e archive mechanics.** "Archived" is implemented as a nullable `Party.archivedAt: timestamp` column (server-side only — not surfaced in `AppState`). The sole-member case is detected by `POST /parties/:partyId/leave`: when the leaver is the only active member, the route soft-deletes their memberships AND stamps `archivedAt`, but does NOT run the §8.3 character / currency cascade (the data is preserved verbatim for the DM's records). Archived parties are filtered out of `GET /sync/parties` so they vanish from the Hub. Multi-member leaves continue through the normal `leave-party` reducer cascade above. Restoration is intentionally not exposed in v1 — manual DB intervention only.
 >
 > **Followup (operational):** `POST /sync/actions` does NOT yet check `archivedAt`. Because archived parties have zero active memberships, the existing `not_a_member` guard already rejects all mutations from any logged-in user, so the effective behaviour matches the intent. An explicit `archivedAt` check at the route layer would surface a clearer error code (`party_archived`) — captured as an unscheduled operational followup.
+
+### 8.4 Account deletion (R10.4)
+
+Self-service account deletion is a **soft delete**, distinct from the party-leave / archive flow above. The `User` row is **preserved** — this keeps every `Party.ownerUserId` and `TransactionLog.actorUserId` reference valid, so a remaining party member's audit history never breaks. What changes:
+
+- The user **leaves every active party** first, reusing the §8.3 machinery: sole-member parties are archived; multi-member parties run the `leave-party` cascade (items + currency → Recovered Loot, membership soft-deleted). If the user is the **sole DM of a multi-member party**, deletion is refused with `sole_dm_must_transfer_first` (they must transfer the DM role first — exactly the same guard as a DM trying to leave) and **no** account mutation runs.
+- Once no active memberships remain, in one transaction: `displayName` is anonymized to `[deleted user]`, `email` / `emailVerified` / `discordId` are nulled (**releasing** the UNIQUE addresses for reuse by a future signup), a `deactivatedAt` timestamp is stamped, and all `Session` + `Account` + pending-flow rows are deleted. The session cookie is cleared on the response.
+- A deactivated account **cannot log in** (no session, no credentials) and the deletion is **irreversible** — the released email/Discord identity is not reserved for the original owner (same model as R10.1's email change). The old email string becomes available for a brand-new account, which gets a fresh `User.id` (not a resurrection of the old row).
+
+> **Why soft delete (not a hard row delete).** `Party.ownerUserId`, `Character.ownerUserId`, and `TransactionLog.actorUserId` are all `RESTRICT` FKs onto `User`. A hard delete would be blocked by archived owned parties and by log entries in surviving multi-member parties, forcing either a destructive party cascade or a nullable-actor schema change that weakens the audit trail (SECURITY §3). Preserving the row under an anonymized name sidesteps all of it and matches the codebase's existing soft-delete idioms (`PartyMembership.leftAt`, `Party.archivedAt`). The auth-present CHECK (`discordId IS NOT NULL OR emailVerified IS NOT NULL`, SECURITY §1.2) was amended in R10.4 to also allow `deactivatedAt IS NOT NULL`, since a deactivated account is intentionally credential-less.
 
 ---
 

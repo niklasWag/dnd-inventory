@@ -12,6 +12,7 @@ import {
   PackageCheck,
   Plus,
   Split,
+  Star,
   Trash2,
 } from 'lucide-react';
 
@@ -20,6 +21,7 @@ import type { ItemDefinition } from '@app/shared';
 import type { hoard } from '@app/rules';
 
 import { Button } from '@/components/ui/button';
+import { DesktopOnlyNotice } from '@/components/nav/DesktopOnlyNotice';
 import { Input } from '@/components/ui/input';
 import { ItemPicker, RARITY_LABELS } from '@/components/catalog/ItemPicker';
 import { rarityPillClass, rarityLabel } from '@/lib/rarity';
@@ -139,6 +141,23 @@ export function LootDistributionWizard(): ReactElement {
       }),
     [characters, stashes],
   );
+
+  // R10.5 — DM loot hint. Map each wishlisted catalog definitionId → the
+  // names of characters who wishlisted it, so a rolled item that matches a
+  // player's wish can be badged in the assign step. Free-text wishes have no
+  // definitionId and are shown in the DM Command Center Wishlist Overview.
+  const wishlistByDef = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const c of characters) {
+      for (const entry of c.wishlist) {
+        if (entry.kind !== 'catalog') continue;
+        const names = m.get(entry.definitionId) ?? [];
+        names.push(c.name);
+        m.set(entry.definitionId, names);
+      }
+    }
+    return m;
+  }, [characters]);
 
   // Precompute the initial rows from the generator's route state (if any).
   // Must be `useState` initializer (not `useEffect`) so re-mounts don't
@@ -339,209 +358,140 @@ export function LootDistributionWizard(): ReactElement {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
-      <header className="space-y-1">
-        <p className="text-sm text-muted-foreground">Loot distribution</p>
-        <h1 className="font-display text-2xl font-bold tracking-tight">Distribution wizard</h1>
-      </header>
+    <DesktopOnlyNotice>
+      <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+        <header className="space-y-1">
+          <p className="text-sm text-muted-foreground">Loot distribution</p>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Distribution wizard</h1>
+        </header>
 
-      {/* Step indicator (shared shell with HoardGenerator). */}
-      <ol className="flex items-center gap-2">
-        {STEPS.map((s, i) => {
-          const done = i < step;
-          const active = i === step;
-          const Icon = s.icon;
-          return (
-            <li key={s.title} className="flex flex-1 items-center gap-2">
-              <div
-                className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
-                  active
-                    ? 'border-primary/50 bg-primary/5'
-                    : done
-                      ? 'border-border bg-surface'
-                      : 'border-border bg-surface opacity-60'
-                }`}
-              >
-                <span
-                  className={`grid h-7 w-7 place-items-center rounded-full text-xs font-semibold ${
-                    active || done
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-surface-2 text-muted-foreground'
+        {/* Step indicator (shared shell with HoardGenerator). */}
+        <ol className="flex items-center gap-2">
+          {STEPS.map((s, i) => {
+            const done = i < step;
+            const active = i === step;
+            const Icon = s.icon;
+            return (
+              <li key={s.title} className="flex flex-1 items-center gap-2">
+                <div
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                    active
+                      ? 'border-primary/50 bg-primary/5'
+                      : done
+                        ? 'border-border bg-surface'
+                        : 'border-border bg-surface opacity-60'
                   }`}
                 >
-                  {done ? <Check className="h-3.5 w-3.5" /> : i + 1}
-                </span>
-                <span className={`text-xs font-medium ${active ? 'text-primary' : ''}`}>
-                  <Icon className="mr-1 inline h-3 w-3 align-[-1px]" aria-hidden="true" />
-                  {s.title}
-                </span>
-              </div>
-              {i < STEPS.length - 1 ? (
-                <div className={`h-px flex-1 ${done ? 'bg-primary/40' : 'bg-border'}`} />
-              ) : null}
-            </li>
-          );
-        })}
-      </ol>
-
-      <div className="rounded-lg border border-border bg-surface p-5 shadow-e1">
-        {!hasRows ? (
-          <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            No rows yet. Add a coin row or item row below, or roll a hoard first from the{' '}
-            <button
-              type="button"
-              className="text-primary underline"
-              onClick={() => {
-                void navigate(`/party/${partyId}/loot/generate`);
-              }}
-            >
-              Hoard Generator
-            </button>
-            .
-          </p>
-        ) : step === 0 ? (
-          /* Step 1 — review & edit amounts, pick items, add/delete rows. */
-          <div className="space-y-2">
-            <p className="mb-3 text-sm text-muted-foreground">
-              Adjust the rolled amounts and pick catalog items before handing anything out. Coins
-              emit <code>currency-change</code>; items emit <code>acquire</code>.
-            </p>
-            {rows.map((row) => (
-              <div
-                key={row.id}
-                className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
-              >
-                {rowIcon(row)}
-                <div className="flex flex-1 items-center gap-2">
-                  {row.kind === 'coin' ? (
-                    <select
-                      aria-label="Denomination"
-                      value={row.denom}
-                      onChange={(e) => updateRow(row.id, { denom: e.target.value as Denom })}
-                      className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                    >
-                      {DENOMS.map((d) => (
-                        <option key={d} value={d}>
-                          {d.toUpperCase()}
-                        </option>
-                      ))}
-                    </select>
-                  ) : row.itemDefinitionId === '' ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setPickerOpenForRow(row.id)}
-                    >
-                      {row.rarityHint !== undefined
-                        ? `Pick a ${RARITY_LABELS[row.rarityHint]} item`
-                        : row.tierHint !== undefined
-                          ? `Pick a ${GEM_TIER_LABELS[row.tierHint]} gem`
-                          : 'Pick an item'}
-                    </Button>
-                  ) : (
-                    <div className="space-y-0.5">
-                      <div className="text-sm font-medium">{row.itemLabel}</div>
-                      <button
-                        type="button"
-                        className="text-xs text-muted-foreground underline"
-                        onClick={() => setPickerOpenForRow(row.id)}
-                      >
-                        Change
-                      </button>
-                    </div>
-                  )}
-                  {row.kind === 'item' ? renderRarityPill(row) : null}
+                  <span
+                    className={`grid h-7 w-7 place-items-center rounded-full text-xs font-semibold ${
+                      active || done
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-surface-2 text-muted-foreground'
+                    }`}
+                  >
+                    {done ? <Check className="h-3.5 w-3.5" /> : i + 1}
+                  </span>
+                  <span className={`text-xs font-medium ${active ? 'text-primary' : ''}`}>
+                    <Icon className="mr-1 inline h-3 w-3 align-[-1px]" aria-hidden="true" />
+                    {s.title}
+                  </span>
                 </div>
-                <Input
-                  type="number"
-                  min={0}
-                  value={row.kind === 'coin' ? row.amount : row.quantity}
-                  onChange={(e) => {
-                    const n = Number.parseInt(e.target.value, 10);
-                    const safe = Number.isFinite(n) && n >= 0 ? n : 0;
-                    if (row.kind === 'coin') {
-                      updateRow(row.id, { amount: safe });
-                    } else {
-                      updateRow(row.id, { quantity: safe });
-                    }
-                  }}
-                  aria-label={row.kind === 'coin' ? 'Coin amount' : 'Item quantity'}
-                  className="w-24 text-right"
-                />
-                <span className="w-8 text-xs uppercase text-muted-foreground">
-                  {row.kind === 'coin' ? row.denom : 'qty'}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => deleteRow(row.id)}
-                  aria-label="Delete row"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
+                {i < STEPS.length - 1 ? (
+                  <div className={`h-px flex-1 ${done ? 'bg-primary/40' : 'bg-border'}`} />
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
 
-            <div className="flex items-center gap-2 pt-2">
-              <Button type="button" variant="outline" size="sm" onClick={addCoinRow}>
-                <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
-                Add coin row
-              </Button>
-              <Button
+        <div className="rounded-lg border border-border bg-surface p-5 shadow-e1">
+          {!hasRows ? (
+            <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+              No rows yet. Add a coin row or item row below, or roll a hoard first from the{' '}
+              <button
                 type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setAddRowKind(addRowKind === 'item' ? null : 'item')}
+                className="text-primary underline"
+                onClick={() => {
+                  void navigate(`/party/${partyId}/loot/generate`);
+                }}
               >
-                <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
-                Add item row
-              </Button>
-            </div>
-          </div>
-        ) : step === 1 ? (
-          /* Step 2 — assign targets. */
-          <div className="space-y-2">
-            <p className="mb-3 text-sm text-muted-foreground">
-              Choose where each row goes. Every row needs a target.
+                Hoard Generator
+              </button>
+              .
             </p>
-            {rows.map((row) => {
-              const isUnassigned =
-                row.targetStashId === '' ||
-                !targetOptions.some((t) => t.stashId === row.targetStashId);
-              return (
+          ) : step === 0 ? (
+            /* Step 1 — review & edit amounts, pick items, add/delete rows. */
+            <div className="space-y-2">
+              <p className="mb-3 text-sm text-muted-foreground">
+                Adjust the rolled amounts and pick catalog items before handing anything out. Coins
+                emit <code>currency-change</code>; items emit <code>acquire</code>.
+              </p>
+              {rows.map((row) => (
                 <div
                   key={row.id}
-                  className={`flex items-center gap-3 rounded-md border px-3 py-2 ${
-                    isUnassigned ? 'border-destructive/40 bg-destructive/5' : 'border-border'
-                  }`}
+                  className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
                 >
                   {rowIcon(row)}
                   <div className="flex flex-1 items-center gap-2">
-                    <span className="text-sm font-medium">
-                      {row.kind === 'coin' ? row.denom.toUpperCase() : row.itemLabel}
-                    </span>
-                    <span className="text-xs tabular-nums text-muted-foreground">
-                      {row.kind === 'coin' ? `${row.amount} ${row.denom}` : `×${row.quantity}`}
-                    </span>
+                    {row.kind === 'coin' ? (
+                      <select
+                        aria-label="Denomination"
+                        value={row.denom}
+                        onChange={(e) => updateRow(row.id, { denom: e.target.value as Denom })}
+                        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                      >
+                        {DENOMS.map((d) => (
+                          <option key={d} value={d}>
+                            {d.toUpperCase()}
+                          </option>
+                        ))}
+                      </select>
+                    ) : row.itemDefinitionId === '' ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setPickerOpenForRow(row.id)}
+                      >
+                        {row.rarityHint !== undefined
+                          ? `Pick a ${RARITY_LABELS[row.rarityHint]} item`
+                          : row.tierHint !== undefined
+                            ? `Pick a ${GEM_TIER_LABELS[row.tierHint]} gem`
+                            : 'Pick an item'}
+                      </Button>
+                    ) : (
+                      <div className="space-y-0.5">
+                        <div className="text-sm font-medium">{row.itemLabel}</div>
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground underline"
+                          onClick={() => setPickerOpenForRow(row.id)}
+                        >
+                          Change
+                        </button>
+                      </div>
+                    )}
                     {row.kind === 'item' ? renderRarityPill(row) : null}
                   </div>
-                  <select
-                    aria-label="Target"
-                    value={row.targetStashId}
-                    onChange={(e) => updateRow(row.id, { targetStashId: e.target.value })}
-                    className={`h-9 w-44 rounded-md border bg-background px-2 text-sm ${
-                      isUnassigned ? 'border-destructive/50 text-destructive' : 'border-input'
-                    }`}
-                  >
-                    <option value="">— Unassigned —</option>
-                    {targetOptions.map((t) => (
-                      <option key={t.stashId} value={t.stashId}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={row.kind === 'coin' ? row.amount : row.quantity}
+                    onChange={(e) => {
+                      const n = Number.parseInt(e.target.value, 10);
+                      const safe = Number.isFinite(n) && n >= 0 ? n : 0;
+                      if (row.kind === 'coin') {
+                        updateRow(row.id, { amount: safe });
+                      } else {
+                        updateRow(row.id, { quantity: safe });
+                      }
+                    }}
+                    aria-label={row.kind === 'coin' ? 'Coin amount' : 'Item quantity'}
+                    className="w-24 text-right"
+                  />
+                  <span className="w-8 text-xs uppercase text-muted-foreground">
+                    {row.kind === 'coin' ? row.denom : 'qty'}
+                  </span>
                   <Button
                     type="button"
                     size="sm"
@@ -552,111 +502,191 @@ export function LootDistributionWizard(): ReactElement {
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
-              );
-            })}
-            {unassignedCount > 0 ? (
-              <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-destructive">
-                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                {unassignedCount} row{unassignedCount === 1 ? '' : 's'} still unassigned
+              ))}
+
+              <div className="flex items-center gap-2 pt-2">
+                <Button type="button" variant="outline" size="sm" onClick={addCoinRow}>
+                  <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
+                  Add coin row
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddRowKind(addRowKind === 'item' ? null : 'item')}
+                >
+                  <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
+                  Add item row
+                </Button>
               </div>
-            ) : null}
-          </div>
-        ) : (
-          /* Step 3 — confirm summary, grouped by target. */
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Review the distribution. Committing hands out all {rows.length} row
-              {rows.length === 1 ? '' : 's'} at once.
-            </p>
-            {grouped.map((g) => (
-              <div key={g.target.stashId} className="rounded-md border border-border">
-                <div className="flex items-center justify-between border-b border-border bg-surface-2/60 px-3 py-2">
-                  <span className="font-display text-xs font-semibold uppercase tracking-wide">
-                    {g.target.label}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {g.rows.length} row{g.rows.length === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <div className="divide-y divide-border">
-                  {g.rows.map((row) => (
-                    <div key={row.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                      {row.kind === 'coin' ? (
-                        <Coins className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                      ) : (
-                        <PackageCheck
-                          className="h-3.5 w-3.5 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span className="flex-1">
+            </div>
+          ) : step === 1 ? (
+            /* Step 2 — assign targets. */
+            <div className="space-y-2">
+              <p className="mb-3 text-sm text-muted-foreground">
+                Choose where each row goes. Every row needs a target.
+              </p>
+              {rows.map((row) => {
+                const isUnassigned =
+                  row.targetStashId === '' ||
+                  !targetOptions.some((t) => t.stashId === row.targetStashId);
+                return (
+                  <div
+                    key={row.id}
+                    className={`flex items-center gap-3 rounded-md border px-3 py-2 ${
+                      isUnassigned ? 'border-destructive/40 bg-destructive/5' : 'border-border'
+                    }`}
+                  >
+                    {rowIcon(row)}
+                    <div className="flex flex-1 items-center gap-2">
+                      <span className="text-sm font-medium">
                         {row.kind === 'coin' ? row.denom.toUpperCase() : row.itemLabel}
                       </span>
-                      {row.kind === 'item' ? renderRarityPill(row) : null}
-                      <span className="tabular-nums text-muted-foreground">
+                      <span className="text-xs tabular-nums text-muted-foreground">
                         {row.kind === 'coin' ? `${row.amount} ${row.denom}` : `×${row.quantity}`}
                       </span>
+                      {row.kind === 'item' ? renderRarityPill(row) : null}
+                      {row.kind === 'item' && wishlistByDef.has(row.itemDefinitionId) ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                          title={`Wishlisted by ${wishlistByDef.get(row.itemDefinitionId)!.join(', ')}`}
+                        >
+                          <Star className="h-3 w-3" aria-hidden="true" />
+                          Wished by {wishlistByDef.get(row.itemDefinitionId)!.join(', ')}
+                        </span>
+                      ) : null}
                     </div>
-                  ))}
+                    <select
+                      aria-label="Target"
+                      value={row.targetStashId}
+                      onChange={(e) => updateRow(row.id, { targetStashId: e.target.value })}
+                      className={`h-9 w-44 rounded-md border bg-background px-2 text-sm ${
+                        isUnassigned ? 'border-destructive/50 text-destructive' : 'border-input'
+                      }`}
+                    >
+                      <option value="">— Unassigned —</option>
+                      {targetOptions.map((t) => (
+                        <option key={t.stashId} value={t.stashId}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => deleteRow(row.id)}
+                      aria-label="Delete row"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                );
+              })}
+              {unassignedCount > 0 ? (
+                <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                  {unassignedCount} row{unassignedCount === 1 ? '' : 's'} still unassigned
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ) : null}
+            </div>
+          ) : (
+            /* Step 3 — confirm summary, grouped by target. */
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Review the distribution. Committing hands out all {rows.length} row
+                {rows.length === 1 ? '' : 's'} at once.
+              </p>
+              {grouped.map((g) => (
+                <div key={g.target.stashId} className="rounded-md border border-border">
+                  <div className="flex items-center justify-between border-b border-border bg-surface-2/60 px-3 py-2">
+                    <span className="font-display text-xs font-semibold uppercase tracking-wide">
+                      {g.target.label}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {g.rows.length} row{g.rows.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {g.rows.map((row) => (
+                      <div key={row.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                        {row.kind === 'coin' ? (
+                          <Coins className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                        ) : (
+                          <PackageCheck
+                            className="h-3.5 w-3.5 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="flex-1">
+                          {row.kind === 'coin' ? row.denom.toUpperCase() : row.itemLabel}
+                        </span>
+                        {row.kind === 'item' ? renderRarityPill(row) : null}
+                        <span className="tabular-nums text-muted-foreground">
+                          {row.kind === 'coin' ? `${row.amount} ${row.denom}` : `×${row.quantity}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-      {/* Footer nav (shared shell with HoardGenerator). Distribute fires
+        {/* Footer nav (shared shell with HoardGenerator). Distribute fires
           from the last step. */}
-      <div className="flex items-center justify-between">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => setStep((s) => Math.max(0, s - 1))}
-          disabled={step === 0}
-        >
-          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-          Back
-        </Button>
-        {atLast ? (
+        <div className="flex items-center justify-between">
           <Button
             type="button"
-            onClick={() => {
-              void distribute();
+            variant="outline"
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+            disabled={step === 0}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            Back
+          </Button>
+          {atLast ? (
+            <Button
+              type="button"
+              onClick={() => {
+                void distribute();
+              }}
+              disabled={!hasRows}
+            >
+              <PackageCheck className="h-4 w-4" aria-hidden="true" />
+              Distribute
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
+              disabled={!hasRows || nextDisabled}
+              title={nextDisabled ? 'Assign every row first' : undefined}
+            >
+              Next
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          )}
+        </div>
+
+        {(pickerOpenForRow !== null || addRowKind === 'item') && (
+          <ItemPicker
+            catalog={catalog}
+            rarityFilter={
+              pickerOpenForRow !== null
+                ? (rows.find((r) => r.id === pickerOpenForRow) as ItemRow | undefined)?.rarityHint
+                : undefined
+            }
+            onCancel={() => {
+              setPickerOpenForRow(null);
+              setAddRowKind(null);
             }}
-            disabled={!hasRows}
-          >
-            <PackageCheck className="h-4 w-4" aria-hidden="true" />
-            Distribute
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
-            disabled={!hasRows || nextDisabled}
-            title={nextDisabled ? 'Assign every row first' : undefined}
-          >
-            Next
-            <ChevronRight className="h-4 w-4" aria-hidden="true" />
-          </Button>
+            onPick={(def) => addItemRow(def, pickerOpenForRow)}
+          />
         )}
       </div>
-
-      {(pickerOpenForRow !== null || addRowKind === 'item') && (
-        <ItemPicker
-          catalog={catalog}
-          rarityFilter={
-            pickerOpenForRow !== null
-              ? (rows.find((r) => r.id === pickerOpenForRow) as ItemRow | undefined)?.rarityHint
-              : undefined
-          }
-          onCancel={() => {
-            setPickerOpenForRow(null);
-            setAddRowKind(null);
-          }}
-          onPick={(def) => addItemRow(def, pickerOpenForRow)}
-        />
-      )}
-    </div>
+    </DesktopOnlyNotice>
   );
 }
 

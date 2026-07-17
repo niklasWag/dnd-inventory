@@ -8,6 +8,7 @@ import type {
   Rarity,
   TransactionLogEntry as LogEntry,
   TxType,
+  WishlistEntry,
 } from '@app/shared';
 
 /**
@@ -635,6 +636,26 @@ export type Action =
       type: 'delete-character';
       payload: {
         characterId: string;
+      };
+    }
+  | {
+      // R10.5 — append an item-wishlist entry (catalog item or free-text
+      // wish) to a character. `entry.id` is client-minted so removal targets
+      // one entry unambiguously. Editable by the character's owner or DM/solo
+      // (server-enforced via the §8.1 guard map); the pure reducer just
+      // appends + logs (mirrors `edit-character`).
+      type: 'wishlist-add';
+      payload: {
+        characterId: string;
+        entry: WishlistEntry;
+      };
+    }
+  | {
+      // R10.5 — remove a wishlist entry by its id.
+      type: 'wishlist-remove';
+      payload: {
+        characterId: string;
+        entryId: string;
       };
     }
   | {

@@ -21,6 +21,7 @@ import { newUuidV7 } from '@app/shared';
 import type { ItemDefinition, ItemInstance, Shop, ShopStockEntry } from '@app/shared';
 
 import { Button } from '@/components/ui/button';
+import { DesktopOnlyNotice } from '@/components/nav/DesktopOnlyNotice';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -136,7 +137,9 @@ export function ShopDetail(): ReactElement {
         </div>
       </div>
       {dmMode === 'manage' ? (
-        <ShopManage view={view} partyId={partyId} dispatch={dispatch} />
+        <DesktopOnlyNotice>
+          <ShopManage view={view} partyId={partyId} dispatch={dispatch} />
+        </DesktopOnlyNotice>
       ) : (
         <ShopStorefront view={view} partyId={null} dispatch={dispatch} />
       )}

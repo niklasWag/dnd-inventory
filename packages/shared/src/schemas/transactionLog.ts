@@ -859,6 +859,32 @@ const deleteCharacterEntry = z.object({
 });
 
 /**
+ * `wishlist-add` / `wishlist-remove` — R10.5. Per-character item wishlist
+ * (DM loot hint). The add entry carries a `label` (item name for a catalog
+ * entry, or the free-text wish) so History reads without a catalog lookup;
+ * `kind` distinguishes the two entry types. Both carry the entry `id`.
+ */
+const wishlistAddEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('wishlist-add'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    entryId: z.string().min(1),
+    kind: z.enum(['catalog', 'text']),
+    label: z.string().min(1),
+  }),
+});
+
+const wishlistRemoveEntry = z.object({
+  ...baseLogFields,
+  type: z.literal('wishlist-remove'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    entryId: z.string().min(1),
+  }),
+});
+
+/**
  * `leave-party` — R4.1.c. The actor self-removes from a party per
  * OUTLINE §8.3. If they had a character, it's deleted first (same
  * cascade as `delete-character` — items + currency → Recovered Loot,
@@ -1150,6 +1176,8 @@ export const transactionLogEntrySchema = z.discriminatedUnion('type', [
   identifyEntry,
   editCharacterEntry,
   deleteCharacterEntry,
+  wishlistAddEntry,
+  wishlistRemoveEntry,
   leavePartyEntry,
   kickPlayerEntry,
   joinPartyEntry,

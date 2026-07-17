@@ -103,6 +103,19 @@ if (typeof Element !== 'undefined') {
 }
 
 /**
+ * R10.1 — test-only `document.elementFromPoint` shim.
+ *
+ * jsdom 29.x doesn't ship `document.elementFromPoint`. `input-otp` calls it
+ * from a deferred `setTimeout` to sync caret/selection state; the timer
+ * fires after the test body, so a missing implementation surfaces as an
+ * *unhandled* `TypeError` that fails the run even when assertions pass.
+ * A `null`-returning stub matches the spec's "no element at point" contract.
+ */
+if (typeof document !== 'undefined' && typeof document.elementFromPoint !== 'function') {
+  document.elementFromPoint = () => null;
+}
+
+/**
  * R7.1.a — test-only `matchMedia` shim.
  *
  * jsdom 29.x doesn't ship `window.matchMedia`. The theme store
@@ -142,10 +155,27 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   });
 }
 
+/**
+ * R10.1 — test-only `ResizeObserver` shim.
+ *
+ * jsdom 29.x doesn't ship `ResizeObserver`. The shadcn `input-otp`
+ * primitive (`apps/web/src/components/ui/input-otp.tsx`) instantiates one
+ * on mount to track the input's box; a missing implementation throws
+ * `ReferenceError: ResizeObserver is not defined` during effect commit.
+ * This no-op stub satisfies the constructor + observe/unobserve/disconnect
+ * contract closely enough for the primitive to mount in tests.
+ */
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserverStub {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}
+
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' });
 });
-
 afterEach(() => {
   server.resetHandlers();
 });

@@ -332,455 +332,464 @@ export function StashItemsTable({
 
   return (
     <>
-      <table className="w-full text-left text-sm" aria-label="Items">
-        <thead className="bg-surface-2 text-xs uppercase tracking-wide text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2 font-medium">Name</th>
-            <th className="px-3 py-2 font-medium">Category</th>
-            {/* R9.12 — the State column (Equipped/Attuned/Charges badges)
+      {/* Horizontal scroll on narrow viewports — this dense item table
+      {/* Horizontal scroll is the fallback for the Inventory case (Name +
+          State badges + Qty + Actions can still be wide with long names);
+          low-priority columns (Category, Wt) are hidden on mobile via
+          `hidden sm:table-cell` to save width first. */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm" aria-label="Items">
+          <thead className="bg-surface-2 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 font-medium">Name</th>
+              <th className="hidden px-3 py-2 font-medium sm:table-cell">Category</th>
+              {/* R9.12 — the State column (Equipped/Attuned/Charges badges)
                 only carries meaning in the carried Inventory (§3.4). Hide it
                 on the party-scope stash tables (Storage / Party Stash /
                 Recovered Loot), which pass no `characterId`, freeing width
                 for inline row actions. */}
-            {characterId !== undefined ? <th className="px-3 py-2 font-medium">State</th> : null}
-            <th className="px-3 py-2 text-center font-medium">Qty</th>
-            <th className="px-3 py-2 text-right font-medium">Wt</th>
-            <th className="px-3 py-2 text-right font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {displayRows.map(({ row, depth }) => {
-            const def = catalogById.get(row.definitionId);
-            const isIdentified = row.identified;
-            // R2.3 — display gate per OUTLINE §8: unidentified rows render
-            // as "Unknown Magic Item". Helper centralises the rule + also
-            // hides `customName` (spoiler protection — a nickname can
-            // reveal magic-item-ness).
-            const displayName = computeDisplayName(row, def);
-            const canSplit = row.quantity >= 2;
-            // R1.5 — row classification for Pack / Take out buttons + the
-            // "N items inside" container summary.
-            const isContainer = def?.category === 'container';
-            // A row is "contained" only when its `containerInstanceId`
-            // resolves to a parent IN THIS STASH. Mirrors `displayRows`'
-            // defensive filter (parent might live elsewhere after a
-            // cross-stash Move — the reducer's R1.5 orphan-drop normally
-            // clears the reference, but partial states like JSON imports
-            // could still trip this; belt-and-braces).
-            const parentInStash =
-              row.containerInstanceId !== null &&
-              items.some((p) => p.id === row.containerInstanceId);
-            const isContained = parentInStash;
-            const childCount = childCountByParent.get(row.id) ?? 0;
-            // Pack button: visible only on free, top-level, non-container
-            // rows in a stash that has at least one container. Containers
-            // themselves don't get the button (no container-in-container
-            // by OUTLINE §3.6). Already-contained rows don't get it
-            // either (the user can take out first, or use Move).
-            const canPack = hasTopLevelContainer && !isContainer && !isContained;
-            return (
-              <tr key={row.id} className="transition-colors hover:bg-surface-2/60">
-                <td className={`px-3 py-2${depth === 1 ? ' pl-8' : ''}`}>
-                  {depth === 1 ? (
-                    <span aria-hidden="true" className="mr-2 text-muted-foreground">
-                      ↳
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigate(`/party/${partyId}/item/${row.id}`);
-                    }}
-                    className={`text-left font-medium underline-offset-2 hover:underline focus:outline-none focus-visible:underline${
-                      isIdentified ? '' : ' italic text-muted-foreground'
-                    }`}
-                    aria-label={`Open details for ${displayName}`}
-                  >
-                    {!isIdentified ? (
-                      <span
-                        aria-label="Unidentified"
-                        title={row.hint ?? 'Unidentified'}
-                        className="mr-2 inline-block w-3 align-middle text-center text-xs font-semibold text-muted-foreground"
-                      >
-                        ?
+              {characterId !== undefined ? <th className="px-3 py-2 font-medium">State</th> : null}
+              <th className="px-3 py-2 text-center font-medium">Qty</th>
+              <th className="hidden px-3 py-2 text-right font-medium sm:table-cell">Wt</th>
+              <th className="px-3 py-2 text-right font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {displayRows.map(({ row, depth }) => {
+              const def = catalogById.get(row.definitionId);
+              const isIdentified = row.identified;
+              // R2.3 — display gate per OUTLINE §8: unidentified rows render
+              // as "Unknown Magic Item". Helper centralises the rule + also
+              // hides `customName` (spoiler protection — a nickname can
+              // reveal magic-item-ness).
+              const displayName = computeDisplayName(row, def);
+              const canSplit = row.quantity >= 2;
+              // R1.5 — row classification for Pack / Take out buttons + the
+              // "N items inside" container summary.
+              const isContainer = def?.category === 'container';
+              // A row is "contained" only when its `containerInstanceId`
+              // resolves to a parent IN THIS STASH. Mirrors `displayRows`'
+              // defensive filter (parent might live elsewhere after a
+              // cross-stash Move — the reducer's R1.5 orphan-drop normally
+              // clears the reference, but partial states like JSON imports
+              // could still trip this; belt-and-braces).
+              const parentInStash =
+                row.containerInstanceId !== null &&
+                items.some((p) => p.id === row.containerInstanceId);
+              const isContained = parentInStash;
+              const childCount = childCountByParent.get(row.id) ?? 0;
+              // Pack button: visible only on free, top-level, non-container
+              // rows in a stash that has at least one container. Containers
+              // themselves don't get the button (no container-in-container
+              // by OUTLINE §3.6). Already-contained rows don't get it
+              // either (the user can take out first, or use Move).
+              const canPack = hasTopLevelContainer && !isContainer && !isContained;
+              return (
+                <tr key={row.id} className="transition-colors hover:bg-surface-2/60">
+                  <td className={`px-3 py-2${depth === 1 ? ' pl-8' : ''}`}>
+                    {depth === 1 ? (
+                      <span aria-hidden="true" className="mr-2 text-muted-foreground">
+                        ↳
                       </span>
                     ) : null}
-                    {displayName}
-                  </button>
-                  {isIdentified && def?.rarity != null && def.rarity !== 'common' ? (
-                    <Badge
-                      variant="outline"
-                      aria-label={`Rarity: ${rarityLabel(def.rarity)}`}
-                      title={rarityLabel(def.rarity)}
-                      className={`ml-2 align-middle ${rarityPillClass(def.rarity)}`}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigate(`/party/${partyId}/item/${row.id}`);
+                      }}
+                      className={`text-left font-medium underline-offset-2 hover:underline focus:outline-none focus-visible:underline${
+                        isIdentified ? '' : ' italic text-muted-foreground'
+                      }`}
+                      aria-label={`Open details for ${displayName}`}
                     >
-                      {rarityLabel(def.rarity)}
-                    </Badge>
-                  ) : null}
-                  {isContainer && childCount > 0 ? (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      — {childCount} {childCount === 1 ? 'item' : 'items'} inside
-                    </span>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2 capitalize text-muted-foreground">
-                  {def?.category ?? '—'}
-                </td>
-                {characterId !== undefined ? (
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {row.equipped ? (
-                        <Badge variant="secondary" className="text-[10px]">
-                          Equipped
-                        </Badge>
-                      ) : null}
-                      {row.attuned ? (
-                        <Badge variant="secondary" className="text-[10px]">
-                          Attuned
-                        </Badge>
-                      ) : null}
-                      {isIdentified && def?.charges !== undefined && row.currentCharges !== null ? (
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] tabular-nums"
-                          aria-label={`Charges: ${formatChargesShort(row.currentCharges, def.charges.max)}`}
+                      {!isIdentified ? (
+                        <span
+                          aria-label="Unidentified"
+                          title={row.hint ?? 'Unidentified'}
+                          className="mr-2 inline-block w-3 align-middle text-center text-xs font-semibold text-muted-foreground"
                         >
-                          {formatChargesShort(row.currentCharges, def.charges.max)}
-                        </Badge>
+                          ?
+                        </span>
                       ) : null}
-                    </div>
+                      {displayName}
+                    </button>
+                    {isIdentified && def?.rarity != null && def.rarity !== 'common' ? (
+                      <Badge
+                        variant="outline"
+                        aria-label={`Rarity: ${rarityLabel(def.rarity)}`}
+                        title={rarityLabel(def.rarity)}
+                        className={`ml-2 align-middle ${rarityPillClass(def.rarity)}`}
+                      >
+                        {rarityLabel(def.rarity)}
+                      </Badge>
+                    ) : null}
+                    {isContainer && childCount > 0 ? (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        — {childCount} {childCount === 1 ? 'item' : 'items'} inside
+                      </span>
+                    ) : null}
                   </td>
-                ) : null}
-                <td className="px-3 py-2 text-center">
-                  <div className="flex items-center justify-center gap-1.5">
-                    <button
-                      type="button"
-                      aria-label={`Decrease ${displayName}`}
-                      onClick={() => {
-                        void dispatch({
-                          type: 'consume',
-                          payload: { itemInstanceId: row.id, quantity: 1 },
-                        });
-                      }}
-                      className="grid h-5 w-5 place-items-center rounded text-xs text-muted-foreground transition hover:bg-surface-2 hover:text-foreground"
-                    >
-                      −
-                    </button>
-                    <span className="min-w-[2ch] text-center tabular-nums">{row.quantity}</span>
-                    <button
-                      type="button"
-                      aria-label={`Increase ${displayName}`}
-                      onClick={() => {
-                        // Re-dispatch via `acquire` rather than mutating the
-                        // row directly so the log captures the increment.
-                        // Wrapped via `dispatchMintingOrToast` because R1.4
-                        // hard-mode encumbrance can reject this dispatch (and
-                        // uncaught reducer throws would surface as a console
-                        // error instead of user-visible feedback).
-                        dispatchMintingOrToast(
-                          {
-                            type: 'acquire',
-                            payload: {
-                              stashId,
-                              definitionId: row.definitionId,
-                              quantity: 1,
-                              source: 'catalog-add',
-                              ...(row.notes !== undefined ? { notes: row.notes } : {}),
-                            },
-                          },
-                          'Could not add item',
-                        );
-                      }}
-                      className="grid h-5 w-5 place-items-center rounded text-xs text-muted-foreground transition hover:bg-surface-2 hover:text-foreground"
-                    >
-                      +
-                    </button>
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                  {def?.weight !== undefined ? (def.weight * row.quantity).toFixed(1) : '—'}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {/*
-                   * R9.3 / R9.12 — per-row actions. The carried Inventory
-                   * (characterId provided) is column-dense (it keeps the State
-                   * column + adds Equip/Attune/cap-override), so its actions
-                   * stay collapsed in a kebab DropdownMenu (matches the
-                   * character.png mockup). The party-scope stash tables
-                   * (Storage / Party Stash / Recovered Loot) dropped the State
-                   * column, so they have room to surface the smaller action set
-                   * (Split / Pack / Take out / Move / Remove) as inline buttons.
-                   * Both variants right-flush so the column mirrors the
-                   * left-flush Name column.
-                   */}
-                  {characterId === undefined ? (
-                    <div className="-mr-2 flex items-center justify-end gap-1">
-                      <Button
+                  <td className="hidden px-3 py-2 capitalize text-muted-foreground sm:table-cell">
+                    {def?.category ?? '—'}
+                  </td>
+                  {characterId !== undefined ? (
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {row.equipped ? (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Equipped
+                          </Badge>
+                        ) : null}
+                        {row.attuned ? (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Attuned
+                          </Badge>
+                        ) : null}
+                        {isIdentified &&
+                        def?.charges !== undefined &&
+                        row.currentCharges !== null ? (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] tabular-nums"
+                            aria-label={`Charges: ${formatChargesShort(row.currentCharges, def.charges.max)}`}
+                          >
+                            {formatChargesShort(row.currentCharges, def.charges.max)}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </td>
+                  ) : null}
+                  <td className="px-3 py-2 text-center">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <button
                         type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs"
-                        disabled={!canSplit}
-                        aria-label={`Split ${displayName}`}
-                        onClick={() => {
-                          setActiveItemId(row.id);
-                          setSplitOpen(true);
-                        }}
-                      >
-                        Split
-                      </Button>
-                      {canPack ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2 text-xs"
-                          aria-label={`Pack ${displayName} into a container`}
-                          onClick={() => {
-                            setActiveItemId(row.id);
-                            setPackOpen(true);
-                          }}
-                        >
-                          Pack
-                        </Button>
-                      ) : null}
-                      {isContained ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2 text-xs"
-                          aria-label={`Take ${displayName} out of its container`}
-                          onClick={() => {
-                            dispatchMintingOrToast(
-                              {
-                                type: 'transfer',
-                                payload: {
-                                  itemInstanceId: row.id,
-                                  toStashId: row.ownerId,
-                                  quantity: row.quantity,
-                                  toContainerInstanceId: null,
-                                },
-                              },
-                              'Could not take item out',
-                            );
-                          }}
-                        >
-                          Take out
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs"
-                        aria-label={`Move ${displayName}`}
-                        onClick={() => {
-                          setActiveItemId(row.id);
-                          setMoveOpen(true);
-                        }}
-                      >
-                        Move
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs text-destructive hover:bg-destructive hover:text-destructive-foreground"
-                        aria-label={`Remove ${displayName}`}
+                        aria-label={`Decrease ${displayName}`}
                         onClick={() => {
                           void dispatch({
                             type: 'consume',
-                            payload: { itemInstanceId: row.id, quantity: row.quantity },
+                            payload: { itemInstanceId: row.id, quantity: 1 },
                           });
                         }}
+                        className="grid h-5 w-5 place-items-center rounded text-xs text-muted-foreground transition hover:bg-surface-2 hover:text-foreground"
                       >
-                        Remove
-                      </Button>
+                        −
+                      </button>
+                      <span className="min-w-[2ch] text-center tabular-nums">{row.quantity}</span>
+                      <button
+                        type="button"
+                        aria-label={`Increase ${displayName}`}
+                        onClick={() => {
+                          // Re-dispatch via `acquire` rather than mutating the
+                          // row directly so the log captures the increment.
+                          // Wrapped via `dispatchMintingOrToast` because R1.4
+                          // hard-mode encumbrance can reject this dispatch (and
+                          // uncaught reducer throws would surface as a console
+                          // error instead of user-visible feedback).
+                          dispatchMintingOrToast(
+                            {
+                              type: 'acquire',
+                              payload: {
+                                stashId,
+                                definitionId: row.definitionId,
+                                quantity: 1,
+                                source: 'catalog-add',
+                                ...(row.notes !== undefined ? { notes: row.notes } : {}),
+                              },
+                            },
+                            'Could not add item',
+                          );
+                        }}
+                        className="grid h-5 w-5 place-items-center rounded text-xs text-muted-foreground transition hover:bg-surface-2 hover:text-foreground"
+                      >
+                        +
+                      </button>
                     </div>
-                  ) : (
-                    <div className="-mr-2 flex justify-end">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                  </td>
+                  <td className="hidden px-3 py-2 text-right tabular-nums text-muted-foreground sm:table-cell">
+                    {def?.weight !== undefined ? (def.weight * row.quantity).toFixed(1) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {/*
+                     * R9.3 / R9.12 — per-row actions. The carried Inventory
+                     * (characterId provided) is column-dense (it keeps the State
+                     * column + adds Equip/Attune/cap-override), so its actions
+                     * stay collapsed in a kebab DropdownMenu (matches the
+                     * character.png mockup). The party-scope stash tables
+                     * (Storage / Party Stash / Recovered Loot) dropped the State
+                     * column, so they have room to surface the smaller action set
+                     * (Split / Pack / Take out / Move / Remove) as inline buttons.
+                     * Both variants right-flush so the column mirrors the
+                     * left-flush Name column.
+                     */}
+                    {characterId === undefined ? (
+                      <div className="-mr-2 flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          disabled={!canSplit}
+                          aria-label={`Split ${displayName}`}
+                          onClick={() => {
+                            setActiveItemId(row.id);
+                            setSplitOpen(true);
+                          }}
+                        >
+                          Split
+                        </Button>
+                        {canPack ? (
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
-                            aria-label={`Actions for ${displayName}`}
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            disabled={!canSplit}
-                            aria-label={`Split ${displayName}`}
-                            onSelect={() => {
+                            className="h-7 px-2 text-xs"
+                            aria-label={`Pack ${displayName} into a container`}
+                            onClick={() => {
                               setActiveItemId(row.id);
-                              setSplitOpen(true);
+                              setPackOpen(true);
                             }}
                           >
-                            Split
-                          </DropdownMenuItem>
-                          {characterId !== undefined ? (
-                            <>
-                              <DropdownMenuItem
-                                aria-label={`${row.equipped ? 'Unequip' : 'Equip'} ${displayName}`}
-                                className={row.equipped ? 'text-primary focus:text-primary' : ''}
-                                onSelect={() => {
-                                  // BUG-008 — `equip` mints `newItemInstanceId` via
-                                  // `dispatchMintingAction` so the reducer can
-                                  // auto-split a stacked row (quantity > 1) into a
-                                  // fresh quantity-1 row before flipping
-                                  // `equipped: true`. Ignored when quantity is 1.
-                                  if (row.equipped) {
-                                    dispatchOrToast(
-                                      {
-                                        type: 'unequip',
-                                        payload: { characterId, itemInstanceId: row.id },
-                                      },
-                                      'Could not unequip',
-                                    );
-                                  } else {
-                                    dispatchMintingOrToast(
-                                      {
-                                        type: 'equip',
-                                        payload: { characterId, itemInstanceId: row.id },
-                                      },
-                                      'Could not equip',
-                                    );
-                                  }
-                                }}
-                              >
-                                {row.equipped ? 'Unequip' : 'Equip'}
-                              </DropdownMenuItem>
-                              {/*
-                               * R2.1 — hide the Attune toggle entirely on rows whose
-                               * definition has `requiresAttunement !== true` (the
-                               * reducer rejects it anyway; hiding is cleaner UX than
-                               * disabling). `row.attuned === true` keeps Unattune
-                               * visible for legacy/cleanup state.
-                               */}
-                              {def?.requiresAttunement === true || row.attuned ? (
+                            Pack
+                          </Button>
+                        ) : null}
+                        {isContained ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            aria-label={`Take ${displayName} out of its container`}
+                            onClick={() => {
+                              dispatchMintingOrToast(
+                                {
+                                  type: 'transfer',
+                                  payload: {
+                                    itemInstanceId: row.id,
+                                    toStashId: row.ownerId,
+                                    quantity: row.quantity,
+                                    toContainerInstanceId: null,
+                                  },
+                                },
+                                'Could not take item out',
+                              );
+                            }}
+                          >
+                            Take out
+                          </Button>
+                        ) : null}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          aria-label={`Move ${displayName}`}
+                          onClick={() => {
+                            setActiveItemId(row.id);
+                            setMoveOpen(true);
+                          }}
+                        >
+                          Move
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                          aria-label={`Remove ${displayName}`}
+                          onClick={() => {
+                            void dispatch({
+                              type: 'consume',
+                              payload: { itemInstanceId: row.id, quantity: row.quantity },
+                            });
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="-mr-2 flex justify-end">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              aria-label={`Actions for ${displayName}`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              disabled={!canSplit}
+                              aria-label={`Split ${displayName}`}
+                              onSelect={() => {
+                                setActiveItemId(row.id);
+                                setSplitOpen(true);
+                              }}
+                            >
+                              Split
+                            </DropdownMenuItem>
+                            {characterId !== undefined ? (
+                              <>
                                 <DropdownMenuItem
-                                  // Pre-disable the "Attune" direction when slots are
-                                  // full — cheaper UX than a reject toast. Unattune
-                                  // stays enabled. R4.5 — DM/solo skip the disable
-                                  // and route through the cap-override confirm dialog.
-                                  disabled={
-                                    !row.attuned &&
-                                    attunementState !== null &&
-                                    !attunementState.hasFreeSlot &&
-                                    !userIsDmOrSolo
-                                  }
-                                  className={row.attuned ? 'text-primary focus:text-primary' : ''}
-                                  aria-label={`${row.attuned ? 'Unattune' : 'Attune'} ${displayName}`}
+                                  aria-label={`${row.equipped ? 'Unequip' : 'Equip'} ${displayName}`}
+                                  className={row.equipped ? 'text-primary focus:text-primary' : ''}
                                   onSelect={() => {
-                                    // R4.5 — DM cap-override branch: open the confirm
-                                    // dialog instead of dispatching directly.
-                                    if (
-                                      !row.attuned &&
-                                      attunementState !== null &&
-                                      !attunementState.hasFreeSlot &&
-                                      userIsDmOrSolo
-                                    ) {
-                                      setCapOverrideItemId(row.id);
-                                      return;
-                                    }
-                                    // BUG-008 — `attune` mints `newItemInstanceId` so
-                                    // the reducer can auto-split a stacked row before
-                                    // attuning. Ignored when quantity is 1.
-                                    if (row.attuned) {
+                                    // BUG-008 — `equip` mints `newItemInstanceId` via
+                                    // `dispatchMintingAction` so the reducer can
+                                    // auto-split a stacked row (quantity > 1) into a
+                                    // fresh quantity-1 row before flipping
+                                    // `equipped: true`. Ignored when quantity is 1.
+                                    if (row.equipped) {
                                       dispatchOrToast(
                                         {
-                                          type: 'unattune',
+                                          type: 'unequip',
                                           payload: { characterId, itemInstanceId: row.id },
                                         },
-                                        'Could not unattune',
+                                        'Could not unequip',
                                       );
                                     } else {
                                       dispatchMintingOrToast(
                                         {
-                                          type: 'attune',
+                                          type: 'equip',
                                           payload: { characterId, itemInstanceId: row.id },
                                         },
-                                        'Could not attune',
+                                        'Could not equip',
                                       );
                                     }
                                   }}
                                 >
-                                  {row.attuned ? 'Unattune' : 'Attune'}
+                                  {row.equipped ? 'Unequip' : 'Equip'}
                                 </DropdownMenuItem>
-                              ) : null}
-                            </>
-                          ) : null}
-                          {canPack ? (
+                                {/*
+                                 * R2.1 — hide the Attune toggle entirely on rows whose
+                                 * definition has `requiresAttunement !== true` (the
+                                 * reducer rejects it anyway; hiding is cleaner UX than
+                                 * disabling). `row.attuned === true` keeps Unattune
+                                 * visible for legacy/cleanup state.
+                                 */}
+                                {def?.requiresAttunement === true || row.attuned ? (
+                                  <DropdownMenuItem
+                                    // Pre-disable the "Attune" direction when slots are
+                                    // full — cheaper UX than a reject toast. Unattune
+                                    // stays enabled. R4.5 — DM/solo skip the disable
+                                    // and route through the cap-override confirm dialog.
+                                    disabled={
+                                      !row.attuned &&
+                                      attunementState !== null &&
+                                      !attunementState.hasFreeSlot &&
+                                      !userIsDmOrSolo
+                                    }
+                                    className={row.attuned ? 'text-primary focus:text-primary' : ''}
+                                    aria-label={`${row.attuned ? 'Unattune' : 'Attune'} ${displayName}`}
+                                    onSelect={() => {
+                                      // R4.5 — DM cap-override branch: open the confirm
+                                      // dialog instead of dispatching directly.
+                                      if (
+                                        !row.attuned &&
+                                        attunementState !== null &&
+                                        !attunementState.hasFreeSlot &&
+                                        userIsDmOrSolo
+                                      ) {
+                                        setCapOverrideItemId(row.id);
+                                        return;
+                                      }
+                                      // BUG-008 — `attune` mints `newItemInstanceId` so
+                                      // the reducer can auto-split a stacked row before
+                                      // attuning. Ignored when quantity is 1.
+                                      if (row.attuned) {
+                                        dispatchOrToast(
+                                          {
+                                            type: 'unattune',
+                                            payload: { characterId, itemInstanceId: row.id },
+                                          },
+                                          'Could not unattune',
+                                        );
+                                      } else {
+                                        dispatchMintingOrToast(
+                                          {
+                                            type: 'attune',
+                                            payload: { characterId, itemInstanceId: row.id },
+                                          },
+                                          'Could not attune',
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    {row.attuned ? 'Unattune' : 'Attune'}
+                                  </DropdownMenuItem>
+                                ) : null}
+                              </>
+                            ) : null}
+                            {canPack ? (
+                              <DropdownMenuItem
+                                aria-label={`Pack ${displayName} into a container`}
+                                onSelect={() => {
+                                  setActiveItemId(row.id);
+                                  setPackOpen(true);
+                                }}
+                              >
+                                Pack
+                              </DropdownMenuItem>
+                            ) : null}
+                            {isContained ? (
+                              <DropdownMenuItem
+                                aria-label={`Take ${displayName} out of its container`}
+                                onSelect={() => {
+                                  // R1.5 — direct dispatch (no modal): same-stash
+                                  // transfer with `toContainerInstanceId: null` unsets
+                                  // the container parent.
+                                  dispatchMintingOrToast(
+                                    {
+                                      type: 'transfer',
+                                      payload: {
+                                        itemInstanceId: row.id,
+                                        toStashId: row.ownerId,
+                                        quantity: row.quantity,
+                                        toContainerInstanceId: null,
+                                      },
+                                    },
+                                    'Could not take item out',
+                                  );
+                                }}
+                              >
+                                Take out
+                              </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuItem
-                              aria-label={`Pack ${displayName} into a container`}
+                              aria-label={`Move ${displayName}`}
                               onSelect={() => {
                                 setActiveItemId(row.id);
-                                setPackOpen(true);
+                                setMoveOpen(true);
                               }}
                             >
-                              Pack
+                              Move
                             </DropdownMenuItem>
-                          ) : null}
-                          {isContained ? (
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
-                              aria-label={`Take ${displayName} out of its container`}
+                              aria-label={`Remove ${displayName}`}
+                              className="text-destructive focus:bg-destructive focus:text-destructive-foreground"
                               onSelect={() => {
-                                // R1.5 — direct dispatch (no modal): same-stash
-                                // transfer with `toContainerInstanceId: null` unsets
-                                // the container parent.
-                                dispatchMintingOrToast(
-                                  {
-                                    type: 'transfer',
-                                    payload: {
-                                      itemInstanceId: row.id,
-                                      toStashId: row.ownerId,
-                                      quantity: row.quantity,
-                                      toContainerInstanceId: null,
-                                    },
-                                  },
-                                  'Could not take item out',
-                                );
+                                void dispatch({
+                                  type: 'consume',
+                                  payload: { itemInstanceId: row.id, quantity: row.quantity },
+                                });
                               }}
                             >
-                              Take out
+                              Remove
                             </DropdownMenuItem>
-                          ) : null}
-                          <DropdownMenuItem
-                            aria-label={`Move ${displayName}`}
-                            onSelect={() => {
-                              setActiveItemId(row.id);
-                              setMoveOpen(true);
-                            }}
-                          >
-                            Move
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            aria-label={`Remove ${displayName}`}
-                            className="text-destructive focus:bg-destructive focus:text-destructive-foreground"
-                            onSelect={() => {
-                              void dispatch({
-                                type: 'consume',
-                                payload: { itemInstanceId: row.id, quantity: row.quantity },
-                              });
-                            }}
-                          >
-                            Remove
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {activeItemId !== null ? (
         <>

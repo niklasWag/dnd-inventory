@@ -134,6 +134,7 @@ const CHARACTERS: AppState['characters'] = [
     abilityScores: { STR: 16 },
     maxAttunement: 3,
     inventoryStashId: 'inv-a',
+    wishlist: [],
   },
   {
     id: 'char-u-b',
@@ -147,6 +148,7 @@ const CHARACTERS: AppState['characters'] = [
     abilityScores: { STR: 10 },
     maxAttunement: 3,
     inventoryStashId: 'inv-b',
+    wishlist: [],
   },
 ];
 

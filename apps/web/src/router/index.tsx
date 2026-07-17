@@ -7,6 +7,7 @@ import { ProtectedRoute, PublicOnlyRoute } from '@/components/auth/ProtectedRout
 import { CharacterSheet } from '@/screens/CharacterSheet';
 import { CatalogBrowser } from '@/screens/CatalogBrowser';
 import { DmDashboard, DmOnlyRoute } from '@/screens/DmDashboard';
+import { EmailChange } from '@/screens/EmailChange';
 import { HistoryScreen } from '@/screens/HistoryScreen';
 import { HoardGenerator } from '@/screens/HoardGenerator';
 import { Hub } from '@/screens/Hub';
@@ -24,6 +25,7 @@ import { ShopDetail } from '@/screens/ShopDetail';
 import { ShopsList } from '@/screens/ShopsList';
 import { StorageDetail } from '@/screens/StorageDetail';
 import { StorageOverview } from '@/screens/StorageOverview';
+import { WishlistOverview } from '@/screens/WishlistOverview';
 
 /**
  * RH4.1 — URL-scoped router. Every party-scoped surface now takes
@@ -97,6 +99,10 @@ export const router = createBrowserRouter([
         children: [
           // App-wide settings (backup/restore, sign-out) — party-agnostic.
           { path: 'settings', Component: Settings },
+          // R10.1 — dual-OTP email change. Authenticated + unscoped; the
+          // screen renders its own AuthShell (no sidebar) and blocks the app
+          // until the flow completes or the user cancels.
+          { path: 'settings/email/change', Component: EmailChange },
           // Party-scoped subtree. Composition:
           //   PartyScopeSync — URL-vs-state reconciliation (RH4.1).
           //   PartyScopeGuard — cross-party access denial (RH4.3).
@@ -146,6 +152,8 @@ export const router = createBrowserRouter([
                       { path: 'loot/distribute', Component: LootDistributionWizard },
                       // R6.4 — Identification panel. DM-only.
                       { path: 'identify', Component: IdentificationPanel },
+                      // R10.5 — party-wide wishlist overview. DM-only.
+                      { path: 'wishlists', Component: WishlistOverview },
                     ],
                   },
                 ],

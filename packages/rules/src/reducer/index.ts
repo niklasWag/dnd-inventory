@@ -170,6 +170,10 @@ export function reduce(state: AppState, action: Action, ctx: ReducerContext): Re
       return editCharacter(state, action.payload);
     case 'delete-character':
       return deleteCharacter(state, action.payload);
+    case 'wishlist-add':
+      return wishlistAdd(state, action.payload);
+    case 'wishlist-remove':
+      return wishlistRemove(state, action.payload);
     case 'leave-party':
       return leaveParty(state, ctx);
     case 'kick-player':
@@ -385,6 +389,7 @@ function createCharacterInExistingParty(
     abilityScores: { STR: payload.str },
     maxAttunement: 3,
     inventoryStashId,
+    wishlist: [],
   };
 
   const newInventoryStash = {
@@ -645,6 +650,7 @@ function createCharacter(
         abilityScores: { STR: payload.str },
         maxAttunement: 3,
         inventoryStashId,
+        wishlist: [],
       },
     ],
     stashes: [
@@ -3799,8 +3805,95 @@ function editCharacter(
 }
 
 // -------------------------------------------------------------------- //
-// delete-character (R4.1.b)
+// wishlist-add / wishlist-remove (R10.5)
 // -------------------------------------------------------------------- //
+
+/**
+ * Append an item-wishlist entry (catalog item or free-text wish) to a
+ * character. The entry `id` is client-minted; a duplicate id is a bug
+ * (rejected). For a `catalog` entry the `definitionId` must exist in the
+ * catalog (belt-and-braces — the ItemPicker only offers real items). The
+ * log entry carries a human-readable `label` (item name or the wish text)
+ * so History renders without a catalog lookup.
+ */
+function wishlistAdd(
+  state: AppState,
+  payload: Extract<Action, { type: 'wishlist-add' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'wishlist-add');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`wishlist-add: unknown characterId ${payload.characterId}`);
+  }
+  const entry = payload.entry;
+  if (character.wishlist.some((e) => e.id === entry.id)) {
+    throw new Error(`wishlist-add: duplicate entry id ${entry.id}`);
+  }
+
+  let label: string;
+  if (entry.kind === 'catalog') {
+    const def = s.catalog.find((d) => d.id === entry.definitionId);
+    if (def === undefined) {
+      throw new Error(`wishlist-add: unknown definitionId ${entry.definitionId}`);
+    }
+    label = def.name;
+  } else {
+    label = entry.text;
+  }
+
+  const next = { ...character, wishlist: [...character.wishlist, payload.entry] };
+  return {
+    state: {
+      ...s,
+      characters: s.characters.map((c) => (c.id === character.id ? next : c)),
+    },
+    logEntries: [
+      {
+        type: 'wishlist-add',
+        payload: {
+          characterId: character.id,
+          entryId: payload.entry.id,
+          kind: payload.entry.kind,
+          label,
+        },
+      },
+    ],
+  };
+}
+
+/** Remove a wishlist entry by its id. A missing id is a no-op error. */
+function wishlistRemove(
+  state: AppState,
+  payload: Extract<Action, { type: 'wishlist-remove' }>['payload'],
+): ReducerResult {
+  const s = requireState(state, 'wishlist-remove');
+
+  const character = s.characters.find((c) => c.id === payload.characterId);
+  if (character === undefined) {
+    throw new Error(`wishlist-remove: unknown characterId ${payload.characterId}`);
+  }
+  if (!character.wishlist.some((e) => e.id === payload.entryId)) {
+    throw new Error(`wishlist-remove: entry ${payload.entryId} not in wishlist`);
+  }
+
+  const next = {
+    ...character,
+    wishlist: character.wishlist.filter((e) => e.id !== payload.entryId),
+  };
+  return {
+    state: {
+      ...s,
+      characters: s.characters.map((c) => (c.id === character.id ? next : c)),
+    },
+    logEntries: [
+      {
+        type: 'wishlist-remove',
+        payload: { characterId: character.id, entryId: payload.entryId },
+      },
+    ],
+  };
+}
 
 /**
  * Detach a Character from their party with full cascade per OUTLINE §8.3.

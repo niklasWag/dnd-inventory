@@ -135,6 +135,14 @@ model User {
   // events.signIn callback fills displayName from the Discord profile.
   needsDisplayName Boolean @default(false)
   createdAt     DateTime  @default(now())
+  // R10.4 — soft-delete marker. Account deletion is a soft-delete (not a
+  // hard row delete): the User row is preserved so `Party.ownerUserId` and
+  // `TransactionLog.actorUserId` RESTRICT FKs never break. On deletion we
+  // anonymize `displayName` → "[deleted user]", null `email`/`emailVerified`/
+  // `discordId` (releasing the UNIQUE addresses for reuse), delete all
+  // Session + Account rows, and stamp `deactivatedAt`. A stamped row can no
+  // longer log in (no session, no credentials) and is irreversible.
+  deactivatedAt DateTime?
 
   // R3.2 — Auth.js adapter relations.
   accounts Account[]
@@ -145,10 +153,12 @@ model User {
   memberships     PartyMembership[]
   transactionLogs TransactionLog[]
   pendingLinks    PendingDiscordLink[]
+  pendingEmailChange PendingEmailChange?
 
   // CHECK: discordId IS NOT NULL OR emailVerified IS NOT NULL — added in
   // migration tail per SECURITY §1.2 / OUTLINE §4 invariant. Prisma DSL
-  // cannot express it.
+  // cannot express it. R10.4 amended it to also allow `deactivatedAt IS NOT
+  // NULL` (a soft-deleted account is intentionally credential-less).
 }
 
 model Party {
@@ -260,6 +270,11 @@ model Character {
   // src/db/schema-invariants.test.ts (confdeferrable + confdeferred +
   // confdeltype = 'a').
   inventoryStashId   String          @unique
+  // R10.5 — per-character item wishlist (DM loot hint). Array of tagged
+  // entries `{ id, kind:'catalog', definitionId } | { id, kind:'text', text }`,
+  // validated by `wishlistEntrySchema` at the boundary. Stored as JSON (the
+  // entries are structured, unlike the flat `ItemDefinition.tags String[]`).
+  wishlist           Json            @default("[]")
 
   party        Party             @relation(fields: [partyId], references: [id], onDelete: Cascade)
   owner        User              @relation(fields: [ownerUserId], references: [id])
@@ -555,6 +570,32 @@ model PendingDiscordLink {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([expires])
+}
+
+// R10.1 — durable state for the user-initiated "change email" flow (dual
+// OTP: one code to the CURRENT address, one to the NEW address). Mirrors
+// PendingDiscordLink in shape. The two OTP codes live in VerificationToken
+// under namespaced identifiers (`emailchange-cur:<userId>` and
+// `emailchange-new:<userId>:<newEmail>`); this row only tracks the target
+// address + which legs are consumed. The actual User.email swap fires in a
+// single transaction only when BOTH `consumedAt` timestamps are set.
+//
+// @@unique([userId]) enforces one in-flight change per user — start upserts,
+// so a second tab starting a new flow invalidates the first. `expires`
+// bounds row growth (a future cron sweep can reap stale rows cheaply).
+model PendingEmailChange {
+  token                String    @id
+  userId               String
+  newEmail             String
+  currentOtpConsumedAt DateTime?
+  newOtpConsumedAt     DateTime?
+  expires              DateTime
+  createdAt            DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
   @@index([expires])
 }
 

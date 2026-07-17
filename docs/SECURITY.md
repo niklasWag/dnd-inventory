@@ -64,6 +64,7 @@ Per §3.1: 8-digit one-time code delivered over email. Used as a fallback for Di
 - **SMTP misconfiguration guard:** at server startup, if any of `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` is absent **or set to the empty string** (docker-compose's `${VAR:-}` substitution lands on empty strings, not "missing"), email auth is **disabled entirely** — the `/auth/email/*` routes return `503 email_auth_disabled`, the web's `GET /auth/methods` probe reports `email: false`, and the Login screen hides the button. In production the server logs a startup warning listing the missing vars but continues to boot. Mirrored by the Discord guard in §1.1.
 - **Display name prompt:** email-only users are prompted to enter a display name on first successful login before reaching the hub. The `displayName` field is required; the server rejects hub access until it is set.
 - **DB constraint:** `User` must have at least one of `discordId` (non-null) or `emailVerified` (non-null). Enforced as a Postgres `CHECK` constraint to prevent orphaned accounts.
+- **Email change requires dual-OTP (R10.1):** changing an already-set `User.email` (Settings → "Change email") demands a code to the **current** address AND a code to the **new** address before the swap commits. The current-address code proves the caller still controls the stored email; identity is derived from the session cookie server-side (§6), never from the request body — the code proves control of the *currently-stored* address for that `User.id`, not that the user retyped it. Both codes reuse the §1.2 machinery (10-minute TTL — tighter than login OTP, 5-strike per-`(email,ip)` lockout, single-use, never-in-URL). A server-side `PendingEmailChange` row (unique per `userId`, `expires`-bounded) holds the target address + which legs are consumed; the `User.email` swap fires only when both `consumedAt` timestamps are set, in one transaction. `newEmail` is re-checked against the `UNIQUE` index at both request and commit (a lost race returns `email_already_linked`, no mutation). On commit the **old address is released outright** — anyone (a fresh signup or another user adding a backup email) can claim it, matching the "your address is yours only while your account holds it" model; the confirm dialog states this. Stale `EmailAuthAttempt` rows for the old address are reaped on commit. The change is **not** written to `TransactionLog` (that table is party-scoped; an account-level change has no party — §4 audit note); the server request log + `emailVerified` re-stamp are the record.
 
 ### 1.3 Invite Codes
 
@@ -320,6 +321,28 @@ R3.4.b adds `GET /sync/export?partyId=<id>` so a synced user can download their 
 - Same auth + party-membership + `needsDisplayName` gates as `GET /sync/state` (per §2.1, identity is session-derived, never trusted from the request body); a non-member request returns `403`, an unknown party returns `404`, a `needsDisplayName: true` session returns `409 display_name_required`.
 - The endpoint returns the SAME `exportEnvelope` shape that the nightly snapshot writer produces (`packages/shared/src/schemas/exportEnvelope.ts`) — both go through `exportEnvelopeSchema.parse()` at the wire boundary, so any drift surfaces as a parse error before bytes leave the server. The web's existing import flow already round-trips this shape losslessly.
 - Snapshot files and the export endpoint are equivalent in terms of leaked data; the file-permission + retention guidance in §8 applies equally to whatever the user downloads (storing an export on a shared host is the user's responsibility, same as for snapshots).
+
+### 7.2 Account-wide export endpoint (R10.4)
+
+R10.4 adds `GET /users/me/export` for the Settings "Export my data" affordance: it bundles **one `exportEnvelope` per active party** the user belongs to (archived parties excluded, same filter as `GET /sync/parties`), wrapped as `{ schemaVersion, exportedAt, parties: ExportEnvelope[] }`.
+
+**Mitigations:**
+- Same auth + `needsDisplayName` gates as the per-party export. Each party's envelope is loaded via the same `loadAppStateForUser` membership-scoped loader — a user can only export parties they are an active member of, so it cannot leak another user's party.
+- Each envelope is `exportEnvelopeSchema.parse()`-d at the boundary before send (same drift guard as §7.1).
+- The bundle is the same class of data as the per-party export; the §8 file-permission caveat applies equally (the user is responsible for where they store the downloaded JSON).
+
+### 7.3 Account deletion (R10.4)
+
+`POST /users/me/delete` is a **soft delete** (see OUTLINE §8.4). Security-relevant points:
+
+| Concern | Notes / mitigation |
+|---|---|
+| **Identity** | Session-cookie-derived per §6 — the request body carries no user id. |
+| **Credential release** | `email` / `emailVerified` / `discordId` are nulled and all `Account` rows deleted, so the released addresses are free for a fresh signup. The old identity is **not** reserved for the original owner — same model as R10.1's email change (call this out in the confirm dialog). |
+| **Session teardown** | All `Session` rows are deleted (logs the user out on every device) and the caller's cookie is cleared; a deactivated account has no way to authenticate. |
+| **Audit-trail integrity** | The `User` row is preserved under an anonymized `displayName` (`[deleted user]`), so `TransactionLog.actorUserId` references in surviving parties stay valid and history for remaining members is not broken. No "silent mutation" of others' data — the log rows themselves are untouched, only the actor's display label changes. |
+| **Auth-present invariant** | The §1.2 CHECK is amended to allow `deactivatedAt IS NOT NULL`, since a deactivated account is intentionally credential-less (a live account still requires Discord or a verified email). |
+| **Sole-DM guard** | Deletion is refused (`sole_dm_must_transfer_first`) while the user is the sole DM of a multi-member party, so a party is never left leaderless by an account deletion. |
 
 ---
 

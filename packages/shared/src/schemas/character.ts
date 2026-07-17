@@ -47,6 +47,39 @@ export const encumbranceRuleSchema = z.enum(['off', 'phb', 'variant']);
 export type EncumbranceRule = z.infer<typeof encumbranceRuleSchema>;
 
 /**
+ * R10.5 — a single item-wishlist entry. A per-character list of things the
+ * player is hoping for; the DM sees it as a read-only hint when handing out
+ * loot. Two kinds:
+ *   - `catalog` — a concrete `ItemDefinition` (PHB/DMG/homebrew) picked via
+ *     the ItemPicker. The loot wizard can match a rolled item by
+ *     `definitionId` exactly.
+ *   - `text` — a free-text wish (e.g. "a flaming sword", "anything +CHA").
+ *     Plain text only, rendered as JSX children (SECURITY §4) — never HTML.
+ *
+ * Each entry carries a stable, client-minted `id` (uuid v7, like the
+ * `newItemInstanceId` id-injection convention) so `wishlist-remove` targets
+ * one entry unambiguously — free-text has no natural key and duplicate wishes
+ * are allowed.
+ */
+export const wishlistEntrySchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      id: z.string().min(1),
+      kind: z.literal('catalog'),
+      definitionId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      id: z.string().min(1),
+      kind: z.literal('text'),
+      text: z.string().trim().min(1).max(200),
+    })
+    .strict(),
+]);
+export type WishlistEntry = z.infer<typeof wishlistEntrySchema>;
+
+/**
  * Character — STR + creature-size drive the carrying-capacity math; the
  * rule + enforce flag live on `Party` per BUG-011 (party-wide house
  * rule). `maxAttunement` is stored but not enforced (MVP §6); R1.2 will
@@ -72,6 +105,9 @@ export const characterSchema = z
       .strict(),
     maxAttunement: z.number().int().min(0),
     inventoryStashId: z.string().min(1),
+    // R10.5 — per-character item wishlist (DM loot hint). Defaults to empty
+    // so pre-R10.5 character blobs parse cleanly.
+    wishlist: z.array(wishlistEntrySchema).default([]),
   })
   .strict();
 

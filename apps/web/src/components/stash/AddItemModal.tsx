@@ -83,7 +83,7 @@ export function AddItemModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display">Add item to {stashLabel}</DialogTitle>
           <DialogDescription>

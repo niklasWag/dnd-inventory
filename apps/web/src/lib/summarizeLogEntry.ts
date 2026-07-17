@@ -125,6 +125,10 @@ export function summarizeLogEntry(
       return `Renamed character "${entry.payload.oldName}" \u2192 "${entry.payload.newName}"`;
     case 'edit-character':
       return `Edited ${characterName(entry.payload.characterId)} \u2014 ${entry.payload.changedFields.join(' + ')}`;
+    case 'wishlist-add':
+      return `Added "${entry.payload.label}" to ${characterName(entry.payload.characterId)}'s wishlist`;
+    case 'wishlist-remove':
+      return `Removed an item from ${characterName(entry.payload.characterId)}'s wishlist`;
     case 'set-encumbrance':
       return `Party encumbrance: ${entry.payload.oldRule}\u2192${entry.payload.newRule}${entry.payload.oldEnforce !== entry.payload.newEnforce ? `, enforce=${String(entry.payload.newEnforce)}` : ''}`;
     case 'update-party-economy':

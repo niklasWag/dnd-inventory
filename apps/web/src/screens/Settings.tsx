@@ -6,8 +6,19 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Download, LogOut, Trash2, Upload } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Calendar,
+  Download,
+  LogOut,
+  Trash2,
+  Upload,
+  Users,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -20,6 +31,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { LinkedAccounts } from '@/components/auth/LinkedAccounts';
 import { ReplaceAllConfirmDialog } from '@/components/settings/ReplaceAllConfirmDialog';
 import { ThemeField } from '@/components/settings/ThemeField';
@@ -28,17 +41,26 @@ import {
   FollowClassField,
   HubLayoutField,
 } from '@/components/settings/AppearanceFields';
-import { loadAppState } from '@/db/load';
+import { listKnownPartyIds, loadAppState } from '@/db/load';
 import { clearCurrentPartyId, getCurrentPartyId } from '@/db/meta';
 import { deleteAppStateForParty } from '@/db/save';
 import { wipeAll } from '@/db/wipe';
-import { exportToFile, type ExportSnapshot } from '@/io/export';
+import { exportToFile, triggerDownload, type ExportSnapshot } from '@/io/export';
 import { importFromText, type ImportResult } from '@/io/import';
+import {
+  ApiError,
+  exportAccount,
+  listParties,
+  listSessions,
+  revokeOtherSessions,
+  revokeSession,
+  updateDisplayName,
+} from '@/lib/api';
 import { isServerMode } from '@/lib/serverMode';
 import { APP_VERSION } from '@/lib/version';
 import { useStore } from '@/store';
 import { useSession } from '@/store/session';
-import { appStateSchema, transactionLogEntrySchema } from '@app/shared';
+import { appStateSchema, transactionLogEntrySchema, type SessionSummary } from '@app/shared';
 
 /**
  * RH5.2 — persisted blob schema (mirrors `hydrate.ts`). Used below to
@@ -148,6 +170,126 @@ export function Settings(): ReactElement {
     }
   }
 
+  // R10.4 — profile hero stats (party count). Server mode fetches the
+  // parties list; local mode counts keyed Dexie blobs. Best-effort — a
+  // failure just leaves the stat hidden.
+  const [partyCount, setPartyCount] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const count = isServerMode
+          ? (await listParties()).parties.length
+          : (await listKnownPartyIds()).length;
+        if (!cancelled) setPartyCount(count);
+      } catch {
+        // Leave the stat hidden on failure.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // R10.4 — display-name edit dialog.
+  const [nameDialogOpen, setNameDialogOpen] = useState(false);
+  const [savingName, setSavingName] = useState(false);
+  const nameForm = useForm<{ displayName: string }>({
+    resolver: zodResolver(z.object({ displayName: z.string().trim().min(1).max(80) })),
+    defaultValues: { displayName: session.user?.displayName ?? '' },
+  });
+  async function handleSaveName(values: { displayName: string }): Promise<void> {
+    setSavingName(true);
+    try {
+      const res = await updateDisplayName(values.displayName);
+      session.setUserPatch({ ...res.user, id: res.user.id });
+      setNameDialogOpen(false);
+      toast.success('Display name updated');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.code : 'Could not update name');
+    } finally {
+      setSavingName(false);
+    }
+  }
+
+  // R10.4 — device sessions.
+  const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
+  useEffect(() => {
+    if (!isServerMode || session.user === null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await listSessions();
+        if (!cancelled) setSessions(res.sessions);
+      } catch {
+        if (!cancelled) setSessions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session.user]);
+
+  async function handleRevokeSession(id: string): Promise<void> {
+    try {
+      await revokeSession(id);
+      setSessions((prev) => (prev === null ? prev : prev.filter((s) => s.id !== id)));
+      toast.success('Session revoked');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.code : 'Could not revoke session');
+    }
+  }
+  async function handleRevokeOthers(): Promise<void> {
+    try {
+      await revokeOtherSessions();
+      setSessions((prev) => (prev === null ? prev : prev.filter((s) => s.current)));
+      toast.success('Signed out other devices');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.code : 'Could not sign out other devices');
+    }
+  }
+
+  // R10.4 — account-wide data export.
+  async function handleExportAccount(): Promise<void> {
+    try {
+      const body = await exportAccount();
+      triggerDownload(
+        `dnd-account-export-${new Date().toISOString().slice(0, 10)}.json`,
+        JSON.stringify(body, null, 2),
+      );
+      toast.success('Account data exported');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.code : 'Export failed');
+    }
+  }
+
+  // R10.4 — delete account (soft delete).
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  async function handleConfirmDeleteAccount(): Promise<void> {
+    setDeletingAccount(true);
+    try {
+      await session.deleteAccount();
+      setDeleteAccountOpen(false);
+      toast.success('Account deleted');
+      void navigate('/login', { replace: true });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'sole_dm_must_transfer_first') {
+        const partyId = (err.body as { partyId?: string } | undefined)?.partyId;
+        toast.error(
+          'You are the sole DM of a party with other members. Transfer the DM role first, then delete your account.',
+        );
+        if (partyId !== undefined) {
+          void navigate(`/party/${partyId}/settings`);
+        }
+      } else {
+        toast.error(err instanceof ApiError ? err.code : 'Could not delete account');
+      }
+    } finally {
+      setDeletingAccount(false);
+    }
+  }
+
   async function handleConfirmWipe(): Promise<void> {
     setWiping(true);
     try {
@@ -228,6 +370,22 @@ export function Settings(): ReactElement {
               {session.user.email !== undefined && session.user.email !== null ? (
                 <p className="truncate text-sm text-muted-foreground">{session.user.email}</p>
               ) : null}
+              {/* R10.4 — at-a-glance profile stats. Member-since from
+                  User.createdAt; party count from GET /sync/parties. */}
+              <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                {partyCount !== null ? (
+                  <span className="inline-flex items-center gap-1">
+                    <Users className="h-3 w-3" aria-hidden />
+                    {partyCount} {partyCount === 1 ? 'party' : 'parties'}
+                  </span>
+                ) : null}
+                {session.user.createdAt !== undefined && session.user.createdAt !== null ? (
+                  <span className="inline-flex items-center gap-1">
+                    <Calendar className="h-3 w-3" aria-hidden />
+                    Member since {formatMemberSince(session.user.createdAt)}
+                  </span>
+                ) : null}
+              </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 App version {APP_VERSION} · seed version {seedVersion}
               </p>
@@ -248,9 +406,38 @@ export function Settings(): ReactElement {
         <>
           <Section title="Account" desc="Your sign-in identity for this server.">
             <div className="-my-1 divide-y divide-border">
-              <Row label="Display name" value={session.user.displayName} />
+              <Row
+                label="Display name"
+                value={session.user.displayName}
+                action={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      nameForm.reset({ displayName: session.user?.displayName ?? '' });
+                      setNameDialogOpen(true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                }
+              />
               {session.user.email !== undefined && session.user.email !== null ? (
-                <Row label="Email" value={session.user.email} />
+                <Row
+                  label="Email"
+                  value={session.user.email}
+                  action={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void navigate('/settings/email/change');
+                      }}
+                    >
+                      Change
+                    </Button>
+                  }
+                />
               ) : null}
               {session.user.discordId !== undefined && session.user.discordId !== null ? (
                 <Row label="Discord" value={`id ${session.user.discordId}`} />
@@ -278,19 +465,60 @@ export function Settings(): ReactElement {
         </div>
       </Section>
 
-      {/* R3.5 — Sessions (Logout). Below Appearance per the mockup order.
-          Server mode only (local mode has no account session). */}
+      {/* R3.5 + R10.4 — Sessions. Device list (from /users/me/sessions):
+          the current device is badged; others get a Revoke button. Logout
+          + "Sign out other devices" below. Server mode only. */}
       {isServerMode && session.user !== null ? (
-        <Section title="Sessions" desc="Sign out on this device.">
-          <Button
-            variant="outline"
-            onClick={() => {
-              void handleLogout();
-            }}
-          >
-            <LogOut className="h-4 w-4" />
-            Logout
-          </Button>
+        <Section title="Sessions" desc="Devices signed in to your account.">
+          {sessions !== null && sessions.length > 0 ? (
+            <div className="-mt-1 mb-3 divide-y divide-border">
+              {sessions.map((s) => (
+                <Row
+                  key={s.id}
+                  label={s.current ? 'This device' : 'Signed-in device'}
+                  sub={`Active until ${formatSessionDate(s.expires)}`}
+                  action={
+                    s.current ? (
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400">
+                        Current
+                      </span>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          void handleRevokeSession(s.id);
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    )
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                void handleLogout();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </Button>
+            {sessions !== null && sessions.filter((s) => !s.current).length > 0 ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  void handleRevokeOthers();
+                }}
+              >
+                Sign out other devices
+              </Button>
+            ) : null}
+          </div>
         </Section>
       ) : null}
 
@@ -352,8 +580,35 @@ export function Settings(): ReactElement {
         </Section>
       ) : null}
 
-      {/* Danger zone — local data reset (wipe). Account deletion is not a
-          feature; this is the app-data reset. */}
+      {/* R10.4 — account danger zone (server mode): export all my data +
+          delete account (soft-delete). Distinct from the local-data wipe
+          below (which is the browser-local reset, both modes). */}
+      {isServerMode && session.user !== null ? (
+        <Section
+          title="Account danger zone"
+          desc="Export a copy of everything, or permanently delete your account."
+          danger
+        >
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                void handleExportAccount();
+              }}
+            >
+              <Download className="h-4 w-4" />
+              Export my data
+            </Button>
+            <Button variant="destructive" onClick={() => setDeleteAccountOpen(true)}>
+              <Trash2 className="h-4 w-4" />
+              Delete account
+            </Button>
+          </div>
+        </Section>
+      ) : null}
+
+      {/* Danger zone — local data reset (wipe). Distinct from account
+          deletion above; this is the browser-local app-data reset. */}
       <Section
         title="Danger zone"
         desc="Erase all locally stored data. This cannot be undone."
@@ -426,8 +681,98 @@ export function Settings(): ReactElement {
         onOpenChange={setImportDialogOpen}
         result={importResult}
       />
+
+      {/* R10.4 — display-name edit dialog. */}
+      <Dialog open={nameDialogOpen} onOpenChange={setNameDialogOpen}>
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              void nameForm.handleSubmit((v) => handleSaveName(v))(e);
+            }}
+            noValidate
+          >
+            <DialogHeader>
+              <DialogTitle className="font-display">Edit display name</DialogTitle>
+              <DialogDescription>
+                This is how you appear to other members across every party.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5 py-4">
+              <Label htmlFor="settings-display-name">Display name</Label>
+              <Input id="settings-display-name" autoFocus {...nameForm.register('displayName')} />
+              {nameForm.formState.errors.displayName ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {nameForm.formState.errors.displayName.message}
+                </p>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setNameDialogOpen(false)}
+                disabled={savingName}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={savingName}>
+                {savingName ? 'Saving…' : 'Save'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* R10.4 — delete-account confirm. Soft delete: characters removed,
+          solo-owned parties archived, name anonymized in shared histories,
+          credentials released. Irreversible. */}
+      <Dialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-display">Delete your account?</DialogTitle>
+            <DialogDescription>
+              This is permanent and cannot be undone. Your characters are removed from every party
+              (their items and currency return to each party&apos;s Recovered Loot), your name is
+              anonymized in shared histories, and your email is released for reuse. If you are the
+              sole DM of a party with other members, transfer the DM role first.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteAccountOpen(false)}
+              disabled={deletingAccount}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                void handleConfirmDeleteAccount();
+              }}
+              disabled={deletingAccount}
+            >
+              {deletingAccount ? 'Deleting…' : 'Delete account'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+/** R10.4 — "Member since {Mon YYYY}" from an ISO createdAt. */
+function formatMemberSince(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+/** R10.4 — short date for a session's expiry. */
+function formatSessionDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 /**

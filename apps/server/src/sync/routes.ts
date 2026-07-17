@@ -26,6 +26,7 @@ import type {
 } from '@app/shared';
 import { checkGuard, exportEnvelopeSchema, getActionMetadata } from '@app/shared';
 import {
+  currency,
   generateInviteCode,
   reduce,
   type Action as ReducerAction,
@@ -101,6 +102,8 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
         roles: ('dm' | 'player')[];
         memberCount: number;
         lastActivityAt: string | null;
+        itemCount: number;
+        totalCp: number;
       }
     >();
 
@@ -122,7 +125,7 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
         continue;
       }
 
-      const [memberRows, latest] = await Promise.all([
+      const [memberRows, latest, stashes] = await Promise.all([
         prisma.partyMembership.findMany({
           where: { partyId: m.partyId, leftAt: null },
           select: { userId: true },
@@ -132,8 +135,30 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
           orderBy: { timestamp: 'desc' },
           select: { timestamp: true },
         }),
+        // R10.3 — stats over ALL the party's stashes. `Stash.partyId` is set
+        // only for party / recovered-loot scopes; character stashes carry
+        // `partyId = null` and belong via `ownerCharacter.partyId`. Both arms
+        // OR'd so character inventories are included. Shop stock lives in a
+        // separate table (ShopStockEntry), so it's naturally excluded.
+        prisma.stash.findMany({
+          where: {
+            OR: [{ partyId: m.partyId }, { ownerCharacter: { partyId: m.partyId } }],
+          },
+          select: {
+            items: { select: { quantity: true } },
+            currency: { select: { cp: true, sp: true, ep: true, gp: true, pp: true } },
+          },
+        }),
       ]);
       const uniqueUserIds = new Set(memberRows.map((r) => r.userId));
+      const itemCount = stashes.reduce(
+        (n, s) => n + s.items.reduce((q, i) => q + i.quantity, 0),
+        0,
+      );
+      const totalCp = stashes.reduce(
+        (n, s) => n + (s.currency ? currency.toCopper(s.currency) : 0),
+        0,
+      );
 
       byPartyId.set(m.partyId, {
         id: m.partyId,
@@ -141,6 +166,8 @@ export function registerSyncRoutes(app: FastifyInstance, prisma: PrismaClient): 
         roles: [m.role],
         memberCount: uniqueUserIds.size,
         lastActivityAt: latest?.timestamp.toISOString() ?? null,
+        itemCount,
+        totalCp,
       });
     }
 

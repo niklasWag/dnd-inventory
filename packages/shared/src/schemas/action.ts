@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { creatureSizeSchema, encumbranceRuleSchema } from './character';
+import { creatureSizeSchema, encumbranceRuleSchema, wishlistEntrySchema } from './character';
 import {
   currencyDenominationSchema,
   itemCategorySchema,
@@ -610,6 +610,29 @@ const deleteCharacterAction = z.object({
 });
 
 /**
+ * R10.5 — item wishlist. `wishlist-add` appends a client-minted entry
+ * (catalog item or free-text wish) to a character's wishlist; the id is
+ * minted client-side so `wishlist-remove` can target one entry
+ * unambiguously (free-text has no natural key + duplicates are allowed).
+ * Editable by the character's owner or the DM/solo (server-enforced).
+ */
+const wishlistAddAction = z.object({
+  type: z.literal('wishlist-add'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    entry: wishlistEntrySchema,
+  }),
+});
+
+const wishlistRemoveAction = z.object({
+  type: z.literal('wishlist-remove'),
+  payload: z.object({
+    characterId: z.string().min(1),
+    entryId: z.string().min(1),
+  }),
+});
+
+/**
  * R4.1.c — `leave-party`. The actor self-removes from `partyId`.
  * Payload deliberately empty (no `partyId` in the wire shape) — the
  * server resolves the party from session + URL (SECURITY §2 "Server is
@@ -844,6 +867,8 @@ export const actionSchema = z.discriminatedUnion('type', [
   identifyBatchAction,
   editCharacterAction,
   deleteCharacterAction,
+  wishlistAddAction,
+  wishlistRemoveAction,
   leavePartyAction,
   kickPlayerAction,
   joinPartyAction,

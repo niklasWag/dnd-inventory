@@ -142,6 +142,8 @@ async function applyRestore(prisma: PrismaClient, envelope: ExportEnvelope): Pro
             strScore: ch.abilityScores.STR,
             maxAttunement: ch.maxAttunement,
             inventoryStashId: ch.inventoryStashId,
+            // R10.5 — preserve the wishlist on restore (lossless round-trip).
+            wishlist: ch.wishlist,
           },
         });
       }

@@ -1,6 +1,16 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Clock, Crown, Link as LinkIcon, Play, UserPlus, Users } from 'lucide-react';
+import {
+  ChevronRight,
+  Clock,
+  Coins,
+  Crown,
+  Link as LinkIcon,
+  Package,
+  Play,
+  UserPlus,
+  Users,
+} from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -29,12 +39,16 @@ import { seedCatalogIfNeeded } from '@/store/seed';
 import { pullState } from '@/sync/client';
 import { flush as flushSyncQueue } from '@/sync/queue';
 import { appStateSchema, transactionLogEntrySchema, type PartyListItem } from '@app/shared';
+import { currency } from '@app/rules';
 
 /**
  * A party the Hub can list + open, normalized across server + local mode.
  * Server rows carry role/member/activity metadata; local rows carry only
- * id + name (the full per-party stats — item/gold counts — live inside a
- * loaded party's state, which the Hub does NOT fetch; see R9 Notes).
+ * id + name. R10.3 — both modes now also carry per-party glance stats
+ * (`itemCount` = total item quantity across all the party's stashes;
+ * `totalCp` = integer copper-equivalent of all stash currency). Server
+ * mode gets them from `GET /sync/parties`; local mode computes them from
+ * the keyed Dexie AppState blob. Optional to cover the pre-load window.
  */
 interface HubParty {
   id: string;
@@ -43,6 +57,34 @@ interface HubParty {
   roles?: readonly string[];
   memberCount?: number;
   lastActivityAt?: string | null;
+  /** R10.3 — both modes once loaded */
+  itemCount?: number;
+  totalCp?: number;
+}
+
+/**
+ * R10.3 — per-party glance stats (total item quantity + gp-equivalent).
+ * The wire / Dexie blob carries integer `totalCp`; we divide to gp for
+ * display (SECURITY §3.2 — CP-integer only). Rendered as its own icon row
+ * under the party subtitle. Module-level so both `PartyChooser` (hero) and
+ * `PartyListDetail` can use it without prop-threading. Returns null until
+ * the stats have loaded.
+ */
+function partyStats(p: HubParty): ReactElement | null {
+  if (p.itemCount === undefined || p.totalCp === undefined) return null;
+  const gp = (p.totalCp / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return (
+    <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
+      <span className="inline-flex items-center gap-1">
+        <Package className="h-3 w-3" aria-hidden="true" />
+        {p.itemCount} items
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <Coins className="h-3 w-3" aria-hidden="true" />
+        {gp} gp
+      </span>
+    </div>
+  );
 }
 
 /**
@@ -94,7 +136,9 @@ export function Hub(): ReactElement {
    * because we don't need it server-side (server mode has its own
    * source of truth via `GET /sync/parties`).
    */
-  const [localParties, setLocalParties] = useState<{ id: string; name: string }[] | null>(null);
+  const [localParties, setLocalParties] = useState<
+    { id: string; name: string; itemCount: number; totalCp: number }[] | null
+  >(null);
 
   const [serverParties, setServerParties] = useState<PartyListItem[] | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -134,15 +178,26 @@ export function Hub(): ReactElement {
       const ids = await listKnownPartyIds();
       // Best-effort read; we tolerate a malformed blob by skipping its
       // row in the list (the per-party render is purely informational).
-      const rows: { id: string; name: string }[] = [];
+      const rows: { id: string; name: string; itemCount: number; totalCp: number }[] = [];
       for (const id of ids) {
         try {
           const raw = (await loadAppState(id)) as {
-            appState?: { party?: { id: string; name: string } };
+            appState?: {
+              party?: { id: string; name: string };
+              items?: { quantity: number }[];
+              currencies?: { cp: number; sp: number; ep: number; gp: number; pp: number }[];
+            };
           } | null;
           const party = raw?.appState?.party;
           if (party !== undefined && typeof party.name === 'string') {
-            rows.push({ id, name: party.name });
+            // R10.3 — glance stats over the whole local party. A local blob
+            // holds exactly one party's state, so every item/currency row
+            // belongs to it (no cross-party filter needed).
+            const items = raw?.appState?.items ?? [];
+            const currencies = raw?.appState?.currencies ?? [];
+            const itemCount = items.reduce((n, i) => n + i.quantity, 0);
+            const totalCp = currencies.reduce((n, c) => n + currency.toCopper(c), 0);
+            rows.push({ id, name: party.name, itemCount, totalCp });
           }
         } catch {
           // Skip — the per-party listing is non-critical.
@@ -151,7 +206,7 @@ export function Hub(): ReactElement {
       // Also include the currently-loaded party if it hasn't been saved
       // yet (fresh-create window before the debounce fires).
       if (loadedParty !== null && !rows.some((r) => r.id === loadedParty.id)) {
-        rows.push(loadedParty);
+        rows.push({ id: loadedParty.id, name: loadedParty.name, itemCount: 0, totalCp: 0 });
       }
       if (!cancelled) setLocalParties(rows);
     })();
@@ -451,6 +506,8 @@ export function Hub(): ReactElement {
           roles: p.roles,
           memberCount: p.memberCount,
           lastActivityAt: p.lastActivityAt,
+          itemCount: p.itemCount,
+          totalCp: p.totalCp,
         }))
     : localParties;
   const partiesLoading = parties === null;
@@ -843,6 +900,7 @@ function PartyChooser({
               ) : null}
               {partySubtitle(recent!)}
             </p>
+            {partyStats(recent!)}
           </div>
           <Button
             type="button"
@@ -879,6 +937,7 @@ function PartyChooser({
                   <div className="truncate text-[11px] text-muted-foreground">
                     {openingPartyId === p.id ? 'Opening…' : partySubtitle(p)}
                   </div>
+                  {partyStats(p)}
                 </div>
                 <ChevronRight
                   className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -968,6 +1027,7 @@ function PartyListDetail({
                 {selected.name}
               </h2>
               <p className="text-sm text-muted-foreground">{partySubtitle(selected)}</p>
+              {partyStats(selected)}
             </div>
             <Button
               type="button"

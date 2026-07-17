@@ -70,7 +70,7 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-[2fr_1fr] gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr]">
         <div className="space-y-1.5">
           <Label htmlFor="catalog-search">Search</Label>
           <Input
@@ -84,7 +84,7 @@ export function CatalogPicker({ stashId, stashLabel, onAdded }: CatalogPickerPro
         <div className="space-y-1.5">
           <Label htmlFor="catalog-category">Category</Label>
           <Select value={category} onValueChange={(v) => setCategory(v as 'all' | ItemCategory)}>
-            <SelectTrigger id="catalog-category">
+            <SelectTrigger id="catalog-category" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -152,7 +152,7 @@ function CatalogRow({ def, onAdd, addLabel }: CatalogRowProps): ReactElement {
   return (
     <li className="flex items-center gap-3 p-3">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{def.name}</span>
           <span className="rounded bg-muted px-1.5 py-0.5 text-xs uppercase text-muted-foreground">
             {def.source}
@@ -173,16 +173,18 @@ function CatalogRow({ def, onAdd, addLabel }: CatalogRowProps): ReactElement {
           setQty(Number.isFinite(next) && next >= 1 ? next : 1);
         }}
         aria-label={`Quantity for ${def.name}`}
-        className="w-20"
+        className="w-16 shrink-0"
       />
       <Button
         type="button"
         size="sm"
+        className="shrink-0"
         onClick={() => {
           onAdd(qty);
         }}
+        aria-label={addLabel}
       >
-        {addLabel}
+        Add
       </Button>
     </li>
   );

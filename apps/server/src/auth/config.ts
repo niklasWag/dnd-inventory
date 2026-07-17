@@ -192,6 +192,7 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
           emailVerified: Date | null;
           avatarUrl: string | null;
           discordId: string | null;
+          createdAt?: Date;
         };
         return {
           ...session,
@@ -204,6 +205,10 @@ export function buildAuthConfig({ prisma, env }: BuildAuthConfigOptions): AuthCo
             emailVerified: u.emailVerified?.toISOString() ?? null,
             avatarUrl: u.avatarUrl,
             discordId: u.discordId,
+            // R10.4 — member-since stat for the Settings profile hero.
+            // Optional-guarded so a partial adapter fixture never throws
+            // here (which would null the whole session).
+            createdAt: u.createdAt?.toISOString(),
           },
         };
       },

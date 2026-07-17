@@ -948,6 +948,57 @@ const deleteCharacterGuard: Guard<Extract<Action, { type: 'delete-character' }>>
 };
 
 /**
+ * R10.5 — `wishlist-add` / `wishlist-remove`. Editable by the character's
+ * owner OR the DM (DM is the strict superset per OUTLINE §8.1; solo bypass
+ * covers the party-of-one case). Same owner-or-DM shape as
+ * `delete-character`. The DM editing another player's wishlist is allowed
+ * and always goes through this logged action (never a silent write).
+ */
+const wishlistAddGuard: Guard<Extract<Action, { type: 'wishlist-add' }>> = (
+  state,
+  payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'wishlist-add: no state.' };
+  const ch = state.characters.find((c) => c.id === payload.characterId);
+  if (ch === undefined) {
+    return { ok: false, code: 'character_not_found', message: 'Character not found.' };
+  }
+  if (actor.role === 'dm') return { ok: true };
+  if (ch.ownerUserId !== actor.userId) {
+    return {
+      ok: false,
+      code: 'not_own_character',
+      message: "Cannot edit another player's wishlist.",
+    };
+  }
+  return { ok: true };
+};
+
+const wishlistRemoveGuard: Guard<Extract<Action, { type: 'wishlist-remove' }>> = (
+  state,
+  payload,
+  actor,
+) => {
+  if (state === null)
+    return { ok: false, code: 'state_not_initialized', message: 'wishlist-remove: no state.' };
+  const ch = state.characters.find((c) => c.id === payload.characterId);
+  if (ch === undefined) {
+    return { ok: false, code: 'character_not_found', message: 'Character not found.' };
+  }
+  if (actor.role === 'dm') return { ok: true };
+  if (ch.ownerUserId !== actor.userId) {
+    return {
+      ok: false,
+      code: 'not_own_character',
+      message: "Cannot edit another player's wishlist.",
+    };
+  }
+  return { ok: true };
+};
+
+/**
  * R4.1.c — `leave-party`. Self-service: any active member may leave
  * (the reducer enforces sole-member / sole-DM rejection separately).
  * The guard's role is purely "is the actor a member of this party at
@@ -1353,6 +1404,8 @@ export const guards: { [K in Action['type']]: Guard<Extract<Action, { type: K }>
   'identify-batch': identifyBatchGuard,
   'edit-character': editCharacterGuard,
   'delete-character': deleteCharacterGuard,
+  'wishlist-add': wishlistAddGuard,
+  'wishlist-remove': wishlistRemoveGuard,
   'leave-party': leavePartyGuard,
   'kick-player': kickPlayerGuard,
   'join-party': joinPartyGuard,

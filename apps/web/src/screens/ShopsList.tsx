@@ -108,15 +108,19 @@ export function ShopsList(): ReactElement {
           )}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-e1">
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface shadow-e1">
           <table className="w-full text-left text-sm" aria-label="Shops">
             <thead className="border-b border-border bg-surface-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-4 py-2.5 font-semibold">Name</th>
                 <th className="px-4 py-2.5 font-semibold">Status</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Modifier</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Sell rate</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Stock</th>
+                <th className="hidden px-4 py-2.5 text-right font-semibold sm:table-cell">
+                  Modifier
+                </th>
+                <th className="hidden px-4 py-2.5 text-right font-semibold sm:table-cell">
+                  Sell rate
+                </th>
+                <th className="hidden px-4 py-2.5 text-right font-semibold sm:table-cell">Stock</th>
                 <th className="px-4 py-2.5 text-right font-semibold">
                   <span className="sr-only">Open</span>
                 </th>
@@ -150,13 +154,15 @@ export function ShopsList(): ReactElement {
                       {shop.isOpen ? 'Open' : 'Closed'}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">
+                  <td className="hidden px-4 py-2.5 text-right tabular-nums sm:table-cell">
                     {String(shop.priceModifier)}×
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">
+                  <td className="hidden px-4 py-2.5 text-right tabular-nums sm:table-cell">
                     {String(shop.sellToMerchantRate)}×
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">{shop.stock.length}</td>
+                  <td className="hidden px-4 py-2.5 text-right tabular-nums sm:table-cell">
+                    {shop.stock.length}
+                  </td>
                   <td className="px-4 py-2.5 text-right">
                     <ChevronRight
                       className="ml-auto h-4 w-4 text-muted-foreground transition group-hover:translate-x-0.5"

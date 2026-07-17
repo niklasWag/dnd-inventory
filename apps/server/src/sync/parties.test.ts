@@ -204,6 +204,8 @@ describe('GET /sync/parties — happy paths (R3.5)', () => {
           roles: ('dm' | 'player')[];
           memberCount: number;
           lastActivityAt: string | null;
+          itemCount: number;
+          totalCp: number;
         }[];
       }>();
       expect(body.parties).toHaveLength(1);
@@ -211,6 +213,61 @@ describe('GET /sync/parties — happy paths (R3.5)', () => {
       expect(new Set(body.parties[0]!.roles)).toEqual(new Set(['dm', 'player']));
       expect(body.parties[0]!.memberCount).toBe(1);
       expect(body.parties[0]!.lastActivityAt).not.toBeNull();
+      // R10.3 — a fresh party has no items and no currency yet.
+      expect(body.parties[0]!.itemCount).toBe(0);
+      expect(body.parties[0]!.totalCp).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('R10.3 — itemCount + totalCp aggregate over a CHARACTER inventory stash (two-arm query)', async () => {
+    const { userId } = await seedUser();
+    const token = await seedSession(userId);
+    const app = await buildServer({ env, prisma });
+    try {
+      const { partyId } = await bootstrapParty(app, cookieHeader(env, token));
+
+      // The character inventory stash carries `partyId = null` and belongs
+      // to the party only via `ownerCharacter.partyId` — the edge the
+      // two-arm OR query must cover. Seed an item + currency directly on it.
+      const inv = await prisma.stash.findFirst({
+        where: { scope: 'character', ownerCharacter: { partyId } },
+        include: { currency: true },
+      });
+      if (inv === null) throw new Error('character inventory stash not found');
+
+      const def = await prisma.itemDefinition.create({
+        data: { id: `def-${newUuidV7()}`, name: 'Test Rope', source: 'PHB', category: 'gear' },
+      });
+      await prisma.itemInstance.create({
+        data: {
+          id: newUuidV7(),
+          ownerType: 'stash',
+          ownerId: inv.id,
+          definitionId: def.id,
+          quantity: 7,
+          equipped: false,
+          attuned: false,
+          identified: true,
+        },
+      });
+      // Bump the inventory currency to 250 cp (2 sp 5 cp → 25 cp; use gp for clarity: 2 gp 50 cp = 250 cp).
+      await prisma.currencyHolding.update({
+        where: { stashId: inv.id },
+        data: { gp: 2, cp: 50 },
+      });
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/sync/parties',
+        headers: { cookie: cookieHeader(env, token) },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{ parties: { itemCount: number; totalCp: number }[] }>();
+      expect(body.parties).toHaveLength(1);
+      expect(body.parties[0]!.itemCount).toBe(7);
+      expect(body.parties[0]!.totalCp).toBe(250);
     } finally {
       await app.close();
     }
