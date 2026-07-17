@@ -12,6 +12,7 @@ import {
   ScrollText,
   Sparkles,
   Square,
+  Swords,
   Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -196,6 +197,12 @@ export function DmDashboard(): ReactElement {
       label: 'Wishlists',
       desc: 'What players want',
       to: `/party/${partyId}/wishlists`,
+    },
+    {
+      icon: Swords,
+      label: 'Initiative',
+      desc: 'Run encounter turns',
+      to: `/party/${partyId}/initiative`,
     },
     {
       icon: Users,
