@@ -144,8 +144,8 @@ The app only requests scope `identify` (username + avatar). No email, no guilds.
 ### 3. Configure
 
 ```bash
-git clone https://github.com/<you>/invManagement.git
-cd invManagement/infra/docker
+git clone https://github.com/<you>/dnd-inventory.git
+cd dnd-inventory/infra/docker
 cp .env.example .env
 $EDITOR .env
 ```
