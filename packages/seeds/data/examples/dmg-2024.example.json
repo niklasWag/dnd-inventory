@@ -5,9 +5,216 @@
     "category": "consumable",
     "rarity": "common",
     "weight": 0.5,
-    "cost": { "amount": 50, "currency": "gp" },
     "description": "You regain 2d4+2 hit points when you drink this potion.",
-    "tags": ["potion", "healing"],
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-animal-friendship",
+    "name": "Potion of Animal Friendship",
+    "category": "consumable",
+    "rarity": "uncommon",
+    "weight": 0.5,
+    "description": "Grants the effect of Animal Friendship for 1 hour.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-clairvoyance",
+    "name": "Potion of Clairvoyance",
+    "category": "consumable",
+    "rarity": "rare",
+    "weight": 0.5,
+    "description": "Grants the effect of Clairvoyance without concentration.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-climbing",
+    "name": "Potion of Climbing",
+    "category": "consumable",
+    "rarity": "common",
+    "weight": 0.5,
+    "description": "Gain a climbing speed equal to your walking speed for 1 hour.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-diminution",
+    "name": "Potion of Diminution",
+    "category": "consumable",
+    "rarity": "rare",
+    "weight": 0.5,
+    "description": "You shrink to a smaller size for a limited time.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-flying",
+    "name": "Potion of Flying",
+    "category": "consumable",
+    "rarity": "very-rare",
+    "weight": 0.5,
+    "description": "Gain a flying speed equal to your walking speed for 1 hour.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-gaseous-form",
+    "name": "Potion of Gaseous Form",
+    "category": "consumable",
+    "rarity": "rare",
+    "weight": 0.5,
+    "description": "Grants the effect of Gaseous Form for 1 hour.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-growth",
+    "name": "Potion of Growth",
+    "category": "consumable",
+    "rarity": "uncommon",
+    "weight": 0.5,
+    "description": "You grow to a larger size for a limited time.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-heroism",
+    "name": "Potion of Heroism",
+    "category": "consumable",
+    "rarity": "rare",
+    "weight": 0.5,
+    "description": "Gain temporary hit points and the Bless effect for 1 hour.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-invisibility",
+    "name": "Potion of Invisibility",
+    "category": "consumable",
+    "rarity": "rare",
+    "weight": 0.5,
+    "description": "You become invisible for 1 hour.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-mind-reading",
+    "name": "Potion of Mind Reading",
+    "category": "consumable",
+    "rarity": "rare",
+    "weight": 0.5,
+    "description": "Grants the effect of Detect Thoughts for 10 minutes.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-speed",
+    "name": "Potion of Speed",
+    "category": "consumable",
+    "rarity": "very-rare",
+    "weight": 0.5,
+    "description": "Grants the effect of Haste for 1 minute without concentration.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "potion-of-water-breathing",
+    "name": "Potion of Water Breathing",
+    "category": "consumable",
+    "rarity": "uncommon",
+    "weight": 0.5,
+    "description": "You can breathe underwater for 1 hour.",
+    "tags": ["potion"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "spell-scroll-cantrip",
+    "name": "Spell Scroll (Cantrip)",
+    "category": "consumable",
+    "rarity": "common",
+    "weight": 0,
+    "description": "Single-use scroll holding a cantrip.",
+    "tags": ["scroll"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "spell-scroll-level-1",
+    "name": "Spell Scroll (1st Level)",
+    "category": "consumable",
+    "rarity": "common",
+    "weight": 0,
+    "description": "Single-use scroll holding a 1st-level spell.",
+    "tags": ["scroll"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "spell-scroll-level-3",
+    "name": "Spell Scroll (3rd Level)",
+    "category": "consumable",
+    "rarity": "uncommon",
+    "weight": 0,
+    "description": "Single-use scroll holding a 3rd-level spell.",
+    "tags": ["scroll"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "spell-scroll-level-9",
+    "name": "Spell Scroll (9th Level)",
+    "category": "consumable",
+    "rarity": "legendary",
+    "weight": 0,
+    "description": "Single-use scroll holding a 9th-level spell.",
+    "tags": ["scroll"],
     "charges": {
       "max": 1,
       "rechargeRule": "none"
@@ -19,7 +226,6 @@
     "category": "magic",
     "rarity": "uncommon",
     "weight": 1,
-    "requiresAttunement": false,
     "description": "This wand has 7 charges. Expend 1 or more to cast Magic Missile.",
     "tags": ["wand"],
     "charges": {
@@ -29,23 +235,564 @@
     }
   },
   {
-    "slug": "bag-of-holding-like",
-    "name": "Example Extradimensional Bag",
+    "slug": "wand-of-binding",
+    "name": "Wand of Binding",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Expend charges to cast Hold Monster or Hold Person, or to assist against an escape.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "wand-of-enemy-detection",
+    "name": "Wand of Enemy Detection",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "description": "Expend a charge to sense hostile creatures nearby.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 3,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d3"
+    }
+  },
+  {
+    "slug": "wand-of-fear",
+    "name": "Wand of Fear",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "description": "Expend charges to command or frighten creatures.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "wand-of-fireballs",
+    "name": "Wand of Fireballs",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Expend charges to cast Fireball.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "wand-of-lightning-bolts",
+    "name": "Wand of Lightning Bolts",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Expend charges to cast Lightning Bolt.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "wand-of-magic-detection",
+    "name": "Wand of Magic Detection",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "description": "Expend a charge to cast Detect Magic.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 3,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d3"
+    }
+  },
+  {
+    "slug": "wand-of-paralysis",
+    "name": "Wand of Paralysis",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Expend a charge to paralyze a creature on a failed save.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "wand-of-polymorph",
+    "name": "Wand of Polymorph",
+    "category": "magic",
+    "rarity": "very-rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Expend a charge to cast Polymorph.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "wand-of-secrets",
+    "name": "Wand of Secrets",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "description": "Expend a charge to detect hidden doors and traps nearby.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 3,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d3"
+    }
+  },
+  {
+    "slug": "wand-of-web",
+    "name": "Wand of Web",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Expend charges to cast Web.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "wand-of-wonder",
+    "name": "Wand of Wonder",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Expend a charge to trigger a random magical effect.",
+    "tags": ["wand"],
+    "charges": {
+      "max": 7,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+1"
+    }
+  },
+  {
+    "slug": "staff-of-fire",
+    "name": "Staff of Fire",
+    "category": "magic",
+    "rarity": "very-rare",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a druid, sorcerer, warlock, or wizard",
+    "description": "Expend charges for fire spells; grants resistance to fire.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 10,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+4"
+    }
+  },
+  {
+    "slug": "staff-of-frost",
+    "name": "Staff of Frost",
+    "category": "magic",
+    "rarity": "very-rare",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a druid, sorcerer, warlock, or wizard",
+    "description": "Expend charges for cold spells; grants resistance to cold.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 10,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+4"
+    }
+  },
+  {
+    "slug": "staff-of-healing",
+    "name": "Staff of Healing",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a bard, cleric, or druid",
+    "description": "Expend charges to cast healing spells.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 10,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+4"
+    }
+  },
+  {
+    "slug": "staff-of-power",
+    "name": "Staff of Power",
+    "category": "magic",
+    "rarity": "very-rare",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a sorcerer, warlock, or wizard",
+    "description": "Expend charges for a range of offensive and defensive spells.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 20,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "2d8+4"
+    }
+  },
+  {
+    "slug": "staff-of-striking",
+    "name": "Staff of Striking",
+    "category": "magic",
+    "rarity": "very-rare",
+    "weight": 4,
+    "requiresAttunement": true,
+    "description": "Expend charges to add force damage to a melee hit.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 10,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+4"
+    }
+  },
+  {
+    "slug": "staff-of-charming",
+    "name": "Staff of Charming",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a bard, cleric, druid, sorcerer, warlock, or wizard",
+    "description": "Expend charges to cast charm and compulsion spells.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 10,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d8+2"
+    }
+  },
+  {
+    "slug": "staff-of-swarming-insects",
+    "name": "Staff of Swarming Insects",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a bard, cleric, druid, sorcerer, warlock, or wizard",
+    "description": "Expend charges to summon insects or cast Insect Plague.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 10,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d6+4"
+    }
+  },
+  {
+    "slug": "staff-of-the-magi",
+    "name": "Staff of the Magi",
+    "category": "magic",
+    "rarity": "legendary",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a sorcerer, warlock, or wizard",
+    "description": "Expend charges for a wide range of spells; can absorb incoming spells.",
+    "tags": ["staff"],
+    "charges": {
+      "max": 50,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "4d6+2"
+    }
+  },
+  {
+    "slug": "decanter-of-endless-water",
+    "name": "Decanter of Endless Water",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 2,
+    "description": "Pour out water on command; each charge is one of the decanter modes.",
+    "tags": ["decanter"],
+    "charges": {
+      "max": 3,
+      "rechargeRule": "dawn"
+    }
+  },
+  {
+    "slug": "pearl-of-power",
+    "name": "Pearl of Power",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 0,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a spellcaster",
+    "description": "Recover an expended spell slot; usable once per day.",
+    "tags": ["wondrous"],
+    "charges": {
+      "max": 1,
+      "rechargeRule": "long-rest"
+    }
+  },
+  {
+    "slug": "wand-of-the-war-mage-plus-1",
+    "name": "Wand of the War Mage, +1",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "requiresAttunement": true,
+    "attunementPrereq": "Requires attunement by a spellcaster",
+    "description": "+1 bonus to spell attack rolls while held.",
+    "tags": ["wand"]
+  },
+  {
+    "slug": "cloak-of-the-bat",
+    "name": "Cloak of the Bat",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "description": "Advantage on Stealth checks; grants flight in dim light or darkness.",
+    "tags": ["cloak"]
+  },
+  {
+    "slug": "ring-of-shooting-stars",
+    "name": "Ring of Shooting Stars",
+    "category": "magic",
+    "rarity": "very-rare",
+    "weight": 0,
+    "requiresAttunement": true,
+    "description": "Gives light-based powers in dim light or darkness; expend charges for ball lightning or shooting stars.",
+    "tags": ["ring"],
+    "charges": {
+      "max": 6,
+      "rechargeRule": "dusk",
+      "rechargeAmount": "1d6"
+    }
+  },
+  {
+    "slug": "ring-of-the-ram",
+    "name": "Ring of the Ram",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 0,
+    "requiresAttunement": true,
+    "description": "Expend charges to make a ram-shaped force attack.",
+    "tags": ["ring"],
+    "charges": {
+      "max": 3,
+      "rechargeRule": "dawn",
+      "rechargeAmount": "1d3"
+    }
+  },
+  {
+    "slug": "ring-of-three-wishes",
+    "name": "Ring of Three Wishes",
+    "category": "magic",
+    "rarity": "legendary",
+    "weight": 0,
+    "description": "Expend a charge to cast Wish. Crumbles to dust when the last charge is used.",
+    "tags": ["ring"],
+    "charges": {
+      "max": 3,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "necklace-of-fireballs",
+    "name": "Necklace of Fireballs",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "description": "A string of beads; detach one to hurl as a Fireball. Starts with up to nine beads.",
+    "tags": ["necklace"],
+    "charges": {
+      "max": 9,
+      "rechargeRule": "none"
+    }
+  },
+  {
+    "slug": "bag-of-holding",
+    "name": "Bag of Holding",
     "category": "container",
     "rarity": "uncommon",
     "weight": 15,
-    "description": "This example bag ignores the weight of items placed inside it — only its own weight counts toward encumbrance.",
+    "description": "The interior holds far more than the exterior suggests; only the bag itself counts toward encumbrance.",
     "tags": ["container", "extradimensional"],
     "flatWeight": true
   },
   {
-    "slug": "ring-of-warmth-like",
-    "name": "Example Warmth Ring",
+    "slug": "handy-haversack",
+    "name": "Handy Haversack",
+    "category": "container",
+    "rarity": "rare",
+    "weight": 5,
+    "description": "A backpack with extradimensional side pouches; its contents do not add to carried weight.",
+    "tags": ["container", "extradimensional"],
+    "flatWeight": true
+  },
+  {
+    "slug": "portable-hole",
+    "name": "Portable Hole",
+    "category": "container",
+    "rarity": "rare",
+    "weight": 0,
+    "description": "A cloth that unfolds into a 6-foot-deep extradimensional hole; its contents do not add to carried weight.",
+    "tags": ["container", "extradimensional"],
+    "flatWeight": true
+  },
+  {
+    "slug": "ring-of-warmth",
+    "name": "Ring of Warmth",
     "category": "magic",
     "rarity": "uncommon",
+    "weight": 0,
     "requiresAttunement": true,
-    "attunementPrereq": "Requires attunement",
-    "description": "Example ring — carrying it protects the wearer from cold environments while attuned.",
-    "tags": ["ring", "attunement"]
+    "description": "Grants cold resistance and comfort in extreme cold while attuned.",
+    "tags": ["ring"]
+  },
+  {
+    "slug": "ring-of-protection",
+    "name": "Ring of Protection",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 0,
+    "requiresAttunement": true,
+    "description": "+1 bonus to AC and saving throws while attuned.",
+    "tags": ["ring"]
+  },
+  {
+    "slug": "cloak-of-protection",
+    "name": "Cloak of Protection",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "requiresAttunement": true,
+    "description": "+1 bonus to AC and saving throws while attuned.",
+    "tags": ["cloak"]
+  },
+  {
+    "slug": "amulet-of-health",
+    "name": "Amulet of Health",
+    "category": "magic",
+    "rarity": "rare",
+    "weight": 1,
+    "requiresAttunement": true,
+    "description": "Your Constitution score becomes 19 while attuned.",
+    "tags": ["amulet"]
+  },
+  {
+    "slug": "gauntlets-of-ogre-power",
+    "name": "Gauntlets of Ogre Power",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 2,
+    "requiresAttunement": true,
+    "description": "Your Strength score becomes 19 while attuned.",
+    "tags": ["gloves"]
+  },
+  {
+    "slug": "headband-of-intellect",
+    "name": "Headband of Intellect",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "requiresAttunement": true,
+    "description": "Your Intelligence score becomes 19 while attuned.",
+    "tags": ["headgear"]
+  },
+  {
+    "slug": "boots-of-elvenkind",
+    "name": "Boots of Elvenkind",
+    "category": "magic",
+    "rarity": "uncommon",
+    "weight": 1,
+    "description": "Your steps make no sound; advantage on Stealth checks that rely on moving silently.",
+    "tags": ["boots"]
+  },
+  {
+    "slug": "vorpal-sword",
+    "name": "Vorpal Sword",
+    "category": "weapon",
+    "rarity": "legendary",
+    "weight": 3,
+    "requiresAttunement": true,
+    "description": "+3 magic sword that can sever heads on a natural 20.",
+    "tags": ["weapon", "sword"]
+  },
+  {
+    "slug": "holy-avenger",
+    "name": "Holy Avenger",
+    "category": "weapon",
+    "rarity": "legendary",
+    "weight": 3,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a paladin",
+    "description": "+3 magic weapon with bonus radiant damage against fiends and undead.",
+    "tags": ["weapon", "sword"]
+  },
+  {
+    "slug": "robe-of-the-archmagi",
+    "name": "Robe of the Archmagi",
+    "category": "magic",
+    "rarity": "legendary",
+    "weight": 4,
+    "requiresAttunement": true,
+    "attunementPrereq": "by a sorcerer, warlock, or wizard",
+    "description": "Improves AC, saving throws, and spell attack numbers for spellcasters.",
+    "tags": ["robe"]
+  },
+  {
+    "slug": "sphere-of-annihilation",
+    "name": "Sphere of Annihilation",
+    "category": "magic",
+    "rarity": "legendary",
+    "weight": 0,
+    "description": "A black sphere that destroys any matter it touches.",
+    "tags": ["dangerous"]
+  },
+  {
+    "slug": "well-of-many-worlds",
+    "name": "Well of Many Worlds",
+    "category": "magic",
+    "rarity": "legendary",
+    "weight": 0,
+    "description": "A cloth that opens a portal to another world when laid out.",
+    "tags": ["portal"]
+  },
+  {
+    "slug": "dragon-orb",
+    "name": "Dragon Orb",
+    "category": "magic",
+    "rarity": "artifact",
+    "weight": 3,
+    "requiresAttunement": true,
+    "description": "Ancient magical orb that can dominate dragons; wielded at great personal risk.",
+    "tags": ["artifact", "orb"]
   }
 ]

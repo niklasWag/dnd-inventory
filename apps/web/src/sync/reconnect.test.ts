@@ -129,8 +129,17 @@ describe('R5.1.c — drainOutbox', () => {
   });
 
   it('drains outbox rows via POST /sync/actions, removing them on 200', async () => {
-    const { reconnect, fixtures, outbox, store } = await loadReconnect();
+    const { reconnect, fixtures, outbox, store, queue } = await loadReconnect();
+    // bootstrap() dispatches through the store; in server mode that POSTs to
+    // /sync/actions. Accept it (an unmatched request would park a stray outbox
+    // row) and drop any still-debounced batch so it cannot race the assertions.
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json({ applied: [], serverTime: '2026-07-03T12:34:56.000Z' }),
+      ),
+    );
     const base = fixtures.bootstrap();
+    queue.resetQueue();
 
     await outbox.enqueueToOutbox(base.partyId, [
       {
@@ -154,8 +163,14 @@ describe('R5.1.c — drainOutbox', () => {
           serverTime: '2026-07-03T12:34:57.000Z',
         }),
       ),
-      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () => {
-        actionsCallCount++;
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, async ({ request }) => {
+        // Count only the replayed outbox batch (the torch acquire); a late
+        // bootstrap batch may also reach this handler on a slow runner.
+        const body = (await request.json()) as {
+          actions: { type: string; payload: { definitionId?: string } }[];
+        };
+        if (body.actions.some((a) => a.payload.definitionId === 'phb-2024:torch'))
+          actionsCallCount++;
         return HttpResponse.json({ applied: [], serverTime: '2026-07-03T12:34:58.000Z' });
       }),
     );
@@ -168,7 +183,14 @@ describe('R5.1.c — drainOutbox', () => {
 
   it('leaves outbox rows in place when the network is still down', async () => {
     const { reconnect, fixtures, outbox, queue, store } = await loadReconnect();
+    // See the bootstrap note in the previous test.
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json({ applied: [], serverTime: '2026-07-03T12:34:56.000Z' }),
+      ),
+    );
     const base = fixtures.bootstrap();
+    queue.resetQueue();
 
     await outbox.enqueueToOutbox(base.partyId, [
       {
