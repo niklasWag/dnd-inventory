@@ -4,7 +4,10 @@
     "name": "Rope, Hempen (50 ft)",
     "category": "gear",
     "weight": 10,
-    "cost": { "amount": 1, "currency": "gp" },
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
     "description": "A coil of hempen rope. Has 2 hit points and can be burst with a DC 17 Strength check.",
     "tags": ["adventuring-gear", "utility"]
   },
@@ -13,35 +16,251 @@
     "name": "Torch",
     "category": "gear",
     "weight": 1,
-    "cost": { "amount": 1, "currency": "cp" },
+    "cost": {
+      "amount": 1,
+      "currency": "cp"
+    },
     "description": "A torch burns for 1 hour, casting bright light in a 20-foot radius and dim light for an additional 20 feet.",
     "tags": ["adventuring-gear", "light"]
+  },
+  {
+    "slug": "bedroll",
+    "name": "Bedroll",
+    "category": "gear",
+    "weight": 7,
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
+    "description": "A simple bedroll for sleeping outdoors.",
+    "tags": ["adventuring-gear"]
+  },
+  {
+    "slug": "rations-1day",
+    "name": "Rations (1 day)",
+    "category": "gear",
+    "weight": 2,
+    "cost": {
+      "amount": 5,
+      "currency": "sp"
+    },
+    "description": "Dry food suitable for one day of travel.",
+    "tags": ["adventuring-gear", "food"]
   },
   {
     "slug": "shortsword",
     "name": "Shortsword",
     "category": "weapon",
     "weight": 2,
-    "cost": { "amount": 10, "currency": "gp" },
+    "cost": {
+      "amount": 10,
+      "currency": "gp"
+    },
     "description": "Martial melee weapon. 1d6 piercing, Finesse, Light.",
     "tags": ["weapon", "martial", "melee"]
+  },
+  {
+    "slug": "rapier",
+    "name": "Rapier",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 25,
+      "currency": "gp"
+    },
+    "description": "Martial melee weapon. 1d8 piercing, Finesse.",
+    "tags": ["weapon", "martial", "melee"]
+  },
+  {
+    "slug": "greatclub",
+    "name": "Greatclub",
+    "category": "weapon",
+    "weight": 10,
+    "cost": {
+      "amount": 2,
+      "currency": "sp"
+    },
+    "description": "Simple melee weapon. 1d8 bludgeoning, Two-Handed.",
+    "tags": ["weapon", "simple", "melee"]
+  },
+  {
+    "slug": "longsword",
+    "name": "Longsword",
+    "category": "weapon",
+    "weight": 3,
+    "cost": {
+      "amount": 15,
+      "currency": "gp"
+    },
+    "description": "Martial melee weapon. 1d8 slashing, Versatile (1d10).",
+    "tags": ["weapon", "martial", "melee"]
+  },
+  {
+    "slug": "dagger",
+    "name": "Dagger",
+    "category": "weapon",
+    "weight": 1,
+    "cost": {
+      "amount": 2,
+      "currency": "gp"
+    },
+    "description": "Simple melee weapon. 1d4 piercing, Finesse, Light, Thrown (range 20/60).",
+    "tags": ["weapon", "simple", "melee"]
+  },
+  {
+    "slug": "longbow",
+    "name": "Longbow",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 50,
+      "currency": "gp"
+    },
+    "description": "Martial ranged weapon. 1d8 piercing, Heavy, Two-Handed, range 150/600.",
+    "tags": ["weapon", "martial", "ranged"]
+  },
+  {
+    "slug": "leather-armor",
+    "name": "Leather Armor",
+    "category": "armor",
+    "weight": 10,
+    "cost": {
+      "amount": 10,
+      "currency": "gp"
+    },
+    "description": "Light armor. AC 11 + Dex modifier.",
+    "tags": ["armor", "light"]
   },
   {
     "slug": "chain-mail",
     "name": "Chain Mail",
     "category": "armor",
     "weight": 55,
-    "cost": { "amount": 75, "currency": "gp" },
+    "cost": {
+      "amount": 75,
+      "currency": "gp"
+    },
     "description": "Heavy armor. AC 16; Strength 13 required; disadvantage on Stealth.",
     "tags": ["armor", "heavy"]
+  },
+  {
+    "slug": "shield",
+    "name": "Shield",
+    "category": "armor",
+    "weight": 6,
+    "cost": {
+      "amount": 10,
+      "currency": "gp"
+    },
+    "description": "Wielded in one hand. +2 bonus to AC.",
+    "tags": ["armor", "shield"]
   },
   {
     "slug": "healers-kit",
     "name": "Healer's Kit",
     "category": "tool",
     "weight": 3,
-    "cost": { "amount": 5, "currency": "gp" },
+    "cost": {
+      "amount": 5,
+      "currency": "gp"
+    },
     "description": "Ten charges of bandages, salves, and splints. Spend one charge to stabilize a creature at 0 HP.",
     "tags": ["kit", "healing"]
+  },
+  {
+    "slug": "thieves-tools",
+    "name": "Thieves' Tools",
+    "category": "tool",
+    "weight": 1,
+    "cost": {
+      "amount": 25,
+      "currency": "gp"
+    },
+    "description": "Lockpicks and small tools for opening locks and disarming traps.",
+    "tags": ["kit", "tools"]
+  },
+  {
+    "slug": "arrows-20",
+    "name": "Arrows (20)",
+    "category": "ammunition",
+    "weight": 1,
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
+    "description": "Twenty arrows for a shortbow or longbow.",
+    "tags": ["ammunition", "arrows"]
+  },
+  {
+    "slug": "crossbow-bolts-20",
+    "name": "Crossbow Bolts (20)",
+    "category": "ammunition",
+    "weight": 1.5,
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
+    "description": "Twenty bolts for a crossbow.",
+    "tags": ["ammunition", "bolts"]
+  },
+  {
+    "slug": "sling-bullets-20",
+    "name": "Sling Bullets (20)",
+    "category": "ammunition",
+    "weight": 1.5,
+    "cost": {
+      "amount": 4,
+      "currency": "cp"
+    },
+    "description": "Twenty bullets for a sling.",
+    "tags": ["ammunition", "bullets"]
+  },
+  {
+    "slug": "backpack",
+    "name": "Backpack",
+    "category": "container",
+    "weight": 5,
+    "cost": {
+      "amount": 2,
+      "currency": "gp"
+    },
+    "description": "Holds up to 30 pounds of gear.",
+    "tags": ["container"]
+  },
+  {
+    "slug": "pouch",
+    "name": "Pouch",
+    "category": "container",
+    "weight": 1,
+    "cost": {
+      "amount": 5,
+      "currency": "sp"
+    },
+    "description": "A cloth or leather pouch holding up to 6 pounds of gear.",
+    "tags": ["container"]
+  },
+  {
+    "slug": "sack",
+    "name": "Sack",
+    "category": "container",
+    "weight": 0.5,
+    "cost": {
+      "amount": 1,
+      "currency": "cp"
+    },
+    "description": "Holds up to 30 pounds of gear.",
+    "tags": ["container"]
+  },
+  {
+    "slug": "chest",
+    "name": "Chest",
+    "category": "container",
+    "weight": 25,
+    "cost": {
+      "amount": 5,
+      "currency": "gp"
+    },
+    "description": "Holds up to 300 pounds of gear.",
+    "tags": ["container"]
   }
 ]
