@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # Real Postgres for the server integration tests (BUG-001/002 class:
+      # FK / constraint defects that mocks cannot catch).
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dnd
+          POSTGRES_PASSWORD: dnd
+          POSTGRES_DB: dnd_inv_test
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U dnd -d dnd_inv_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://dnd:dnd@localhost:5434/dnd_inv_test
+      DATABASE_URL_TEST: postgresql://dnd:dnd@localhost:5434/dnd_inv_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version comes from the root package.json `packageManager` field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client + apply migrations
+        run: |
+          pnpm --filter ./apps/server exec prisma generate
+          pnpm --filter ./apps/server exec prisma migrate deploy
+
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+  # SECURITY §8: high/critical findings block release. Separate job so a new
+  # advisory doesn't mask real check failures.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm audit --audit-level high --prod
