@@ -64,6 +64,10 @@ jobs:
           pnpm --filter ./apps/server exec prisma generate
           pnpm --filter ./apps/server exec prisma migrate deploy
 
+      # Server integration tests acquire catalog items (FK on ItemDefinition).
+      - name: Seed item catalog (example seeds)
+        run: pnpm --filter ./apps/server db:seed
+
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm lint
