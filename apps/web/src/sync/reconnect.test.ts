@@ -130,9 +130,15 @@ describe('R5.1.c — drainOutbox', () => {
 
   it('drains outbox rows via POST /sync/actions, removing them on 200', async () => {
     const { reconnect, fixtures, outbox, store, queue } = await loadReconnect();
+    // bootstrap() dispatches through the store; in server mode that POSTs to
+    // /sync/actions. Accept it (an unmatched request would park a stray outbox
+    // row) and drop any still-debounced batch so it cannot race the assertions.
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json({ applied: [], serverTime: '2026-07-03T12:34:56.000Z' }),
+      ),
+    );
     const base = fixtures.bootstrap();
-    // bootstrap() dispatches through the store; in server mode that queues a
-    // debounced POST which can race the assertions on a slow runner.
     queue.resetQueue();
 
     await outbox.enqueueToOutbox(base.partyId, [
@@ -171,9 +177,15 @@ describe('R5.1.c — drainOutbox', () => {
 
   it('leaves outbox rows in place when the network is still down', async () => {
     const { reconnect, fixtures, outbox, queue, store } = await loadReconnect();
+    // bootstrap() dispatches through the store; in server mode that POSTs to
+    // /sync/actions. Accept it (an unmatched request would park a stray outbox
+    // row) and drop any still-debounced batch so it cannot race the assertions.
+    server.use(
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () =>
+        HttpResponse.json({ applied: [], serverTime: '2026-07-03T12:34:56.000Z' }),
+      ),
+    );
     const base = fixtures.bootstrap();
-    // bootstrap() dispatches through the store; in server mode that queues a
-    // debounced POST which can race the assertions on a slow runner.
     queue.resetQueue();
 
     await outbox.enqueueToOutbox(base.partyId, [
