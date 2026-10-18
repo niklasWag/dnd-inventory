@@ -163,8 +163,14 @@ describe('R5.1.c — drainOutbox', () => {
           serverTime: '2026-07-03T12:34:57.000Z',
         }),
       ),
-      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, () => {
-        actionsCallCount++;
+      http.post(`${TEST_SERVER_ORIGIN}/sync/actions`, async ({ request }) => {
+        // Count only the replayed outbox batch (the torch acquire); a late
+        // bootstrap batch may also reach this handler on a slow runner.
+        const body = (await request.json()) as {
+          actions: { type: string; payload: { definitionId?: string } }[];
+        };
+        if (body.actions.some((a) => a.payload.definitionId === 'phb-2024:torch'))
+          actionsCallCount++;
         return HttpResponse.json({ applied: [], serverTime: '2026-07-03T12:34:58.000Z' });
       }),
     );
