@@ -120,7 +120,7 @@
     "slug": "potion-of-invisibility",
     "name": "Potion of Invisibility",
     "category": "consumable",
-    "rarity": "very-rare",
+    "rarity": "rare",
     "weight": 0.5,
     "description": "You become invisible for 1 hour.",
     "tags": ["potion"],
@@ -561,7 +561,7 @@
   },
   {
     "slug": "wand-of-the-war-mage-plus-1",
-    "name": "Wand of the War Mage +1",
+    "name": "Wand of the War Mage, +1",
     "category": "magic",
     "rarity": "uncommon",
     "weight": 1,
@@ -616,7 +616,6 @@
     "category": "magic",
     "rarity": "legendary",
     "weight": 0,
-    "requiresAttunement": true,
     "description": "Expend a charge to cast Wish. Crumbles to dust when the last charge is used.",
     "tags": ["ring"],
     "charges": {

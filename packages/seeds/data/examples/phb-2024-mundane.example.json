@@ -1,14 +1,14 @@
 [
   {
     "slug": "rope-hempen-50ft",
-    "name": "Rope, Hempen (50 ft)",
+    "name": "Rope",
     "category": "gear",
-    "weight": 10,
+    "weight": 5,
     "cost": {
       "amount": 1,
       "currency": "gp"
     },
-    "description": "A coil of hempen rope. Has 2 hit points and can be burst with a DC 17 Strength check.",
+    "description": "Can be burst with a successful DC 20 Strength (Athletics) check; can bind a Grappled, Incapacitated, or Restrained creature.",
     "tags": ["adventuring-gear", "utility"]
   },
   {
@@ -37,14 +37,14 @@
   },
   {
     "slug": "rations-1day",
-    "name": "Rations (1 day)",
+    "name": "Rations",
     "category": "gear",
     "weight": 2,
     "cost": {
       "amount": 5,
       "currency": "sp"
     },
-    "description": "Dry food suitable for one day of travel.",
+    "description": "Travel-ready food such as jerky, dried fruit, hardtack, and nuts.",
     "tags": ["adventuring-gear", "food"]
   },
   {
@@ -192,8 +192,8 @@
     "tags": ["ammunition", "arrows"]
   },
   {
-    "slug": "crossbow-bolts-20",
-    "name": "Crossbow Bolts (20)",
+    "slug": "bolts-20",
+    "name": "Bolts (20)",
     "category": "ammunition",
     "weight": 1.5,
     "cost": {
@@ -205,7 +205,7 @@
   },
   {
     "slug": "sling-bullets-20",
-    "name": "Sling Bullets (20)",
+    "name": "Bullets, Sling (20)",
     "category": "ammunition",
     "weight": 1.5,
     "cost": {
@@ -564,30 +564,6 @@
     "tags": ["gear"]
   },
   {
-    "slug": "hammer",
-    "name": "Hammer",
-    "category": "gear",
-    "weight": 3,
-    "cost": {
-      "amount": 1,
-      "currency": "gp"
-    },
-    "description": "A general-purpose hammer.",
-    "tags": ["gear"]
-  },
-  {
-    "slug": "piton",
-    "name": "Piton",
-    "category": "gear",
-    "weight": 0.25,
-    "cost": {
-      "amount": 5,
-      "currency": "cp"
-    },
-    "description": "An iron spike for climbing.",
-    "tags": ["gear"]
-  },
-  {
     "slug": "hooded-lantern",
     "name": "Lantern, Hooded",
     "category": "gear",
@@ -633,18 +609,6 @@
       "currency": "sp"
     },
     "description": "Holds up to 4 pints of liquid.",
-    "tags": ["gear"]
-  },
-  {
-    "slug": "mess-kit",
-    "name": "Mess Kit",
-    "category": "gear",
-    "weight": 1,
-    "cost": {
-      "amount": 2,
-      "currency": "sp"
-    },
-    "description": "A tin box with a cup and simple cutlery.",
     "tags": ["gear"]
   },
   {
@@ -696,18 +660,6 @@
     "tags": ["gear"]
   },
   {
-    "slug": "rope-silk-50ft",
-    "name": "Rope, Silk (50 ft)",
-    "category": "gear",
-    "weight": 5,
-    "cost": {
-      "amount": 10,
-      "currency": "gp"
-    },
-    "description": "A strong, light silk rope.",
-    "tags": ["gear"]
-  },
-  {
     "slug": "grappling-hook",
     "name": "Grappling Hook",
     "category": "gear",
@@ -732,8 +684,8 @@
     "tags": ["gear"]
   },
   {
-    "slug": "tent-two-person",
-    "name": "Tent, Two-Person",
+    "slug": "tent",
+    "name": "Tent",
     "category": "gear",
     "weight": 20,
     "cost": {
@@ -849,18 +801,6 @@
       "currency": "gp"
     },
     "description": "Small tools for repairing and building gadgets.",
-    "tags": ["tool"]
-  },
-  {
-    "slug": "dice-set",
-    "name": "Dice Set",
-    "category": "tool",
-    "weight": 0,
-    "cost": {
-      "amount": 1,
-      "currency": "sp"
-    },
-    "description": "A set of gaming dice.",
     "tags": ["tool"]
   },
   {

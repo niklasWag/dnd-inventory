@@ -125,7 +125,7 @@ describe('ShopDetail (R6.2)', () => {
 
     // R9.7 — DM/solo flips to the player Storefront to buy.
     await user.click(screen.getByRole('button', { name: /^storefront$/i }));
-    await user.click(screen.getByRole('button', { name: /^buy rope, hempen/i }));
+    await user.click(screen.getByRole('button', { name: /^buy rope/i }));
 
     const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
     expect(shop.stock.find((e) => e.id === stockEntryId)!.quantity).toBe(4);
@@ -162,13 +162,13 @@ describe('ShopDetail (R6.2)', () => {
     // Pick a hempen rope from the catalog picker.
     await user.click(screen.getByRole('button', { name: /^pick item$/i }));
     const search = await screen.findByLabelText(/^search$/i);
-    await user.type(search, 'rope, hempen');
+    await user.type(search, 'rope');
     const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
     // First match wins — searchCatalog ranks name-exact highest.
     await user.click(pickBtns[0]!);
 
     // Confirm the selection is reflected in the read-only display.
-    expect(screen.getByText(/rope, hempen/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/^rope/i)[0]).toBeInTheDocument();
 
     // Set qty=5, submit.
     const qty = screen.getByLabelText(/^quantity$/i);
@@ -226,7 +226,7 @@ describe('ShopDetail (R6.2)', () => {
 
     await user.click(screen.getByRole('button', { name: /^pick item$/i }));
     const search = await screen.findByLabelText(/^search$/i);
-    await user.type(search, 'rope, hempen');
+    await user.type(search, 'rope');
     const pickBtns = await screen.findAllByRole('button', { name: /^pick$/i });
     await user.click(pickBtns[0]!);
 
@@ -337,7 +337,7 @@ describe('ShopDetail (R6.2)', () => {
 
     // Step the qty up to 2, then Buy 2.
     await user.click(screen.getByRole('button', { name: /increase quantity/i }));
-    await user.click(screen.getByRole('button', { name: /^buy rope, hempen/i }));
+    await user.click(screen.getByRole('button', { name: /^buy rope/i }));
 
     const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
     expect(shop.stock.find((e) => e.id === stockEntryId)!.quantity).toBe(3); // 5 − 2
@@ -363,7 +363,7 @@ describe('ShopDetail (R6.2)', () => {
 
     await user.click(screen.getByRole('button', { name: /sell items/i }));
     expect(screen.getByRole('heading', { name: /sell to cauldron/i })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /^sell rope, hempen/i }));
+    await user.click(screen.getByRole('button', { name: /^sell rope/i }));
 
     // One instance sold → a stock row now exists on the shop.
     const shop = useStore.getState().appState!.shops.find((sh) => sh.id === shopId)!;
