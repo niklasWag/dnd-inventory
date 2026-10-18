@@ -134,4 +134,4 @@ as the shape is valid.
 
 ## Attribution (SRD)
 
-The example items are based on the System Reference Document 5.2 (SRD 5.2) by Wizards of the Coast LLC, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Item names and mechanical values come from the SRD; the descriptions are short original summaries. They cover the shapes and the items the test suite relies on (all rarity tiers, charged items, flat-weight containers, ammunition, containers), so CI can run without the private PHB/DMG files.
+The example items are based on the System Reference Document 5.2.1 (SRD 5.2.1) by Wizards of the Coast LLC, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Item names and mechanical values come from the SRD; the descriptions are short original summaries. They cover the shapes and the items the test suite relies on (all rarity tiers, charged items, flat-weight containers, ammunition, containers), so CI can run without the private PHB/DMG files.
