@@ -129,8 +129,11 @@ describe('R5.1.c — drainOutbox', () => {
   });
 
   it('drains outbox rows via POST /sync/actions, removing them on 200', async () => {
-    const { reconnect, fixtures, outbox, store } = await loadReconnect();
+    const { reconnect, fixtures, outbox, store, queue } = await loadReconnect();
     const base = fixtures.bootstrap();
+    // bootstrap() dispatches through the store; in server mode that queues a
+    // debounced POST which can race the assertions on a slow runner.
+    queue.resetQueue();
 
     await outbox.enqueueToOutbox(base.partyId, [
       {
@@ -169,6 +172,9 @@ describe('R5.1.c — drainOutbox', () => {
   it('leaves outbox rows in place when the network is still down', async () => {
     const { reconnect, fixtures, outbox, queue, store } = await loadReconnect();
     const base = fixtures.bootstrap();
+    // bootstrap() dispatches through the store; in server mode that queues a
+    // debounced POST which can race the assertions on a slow runner.
+    queue.resetQueue();
 
     await outbox.enqueueToOutbox(base.partyId, [
       {
