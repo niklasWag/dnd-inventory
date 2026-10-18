@@ -262,5 +262,617 @@
     },
     "description": "Holds up to 300 pounds of gear.",
     "tags": ["container"]
+  },
+  {
+    "slug": "club",
+    "name": "Club",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 1,
+      "currency": "sp"
+    },
+    "description": "Simple melee weapon. 1d4 bludgeoning, Light.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "handaxe",
+    "name": "Handaxe",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 5,
+      "currency": "gp"
+    },
+    "description": "Simple melee weapon. 1d6 slashing, Light, Thrown.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "javelin",
+    "name": "Javelin",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 5,
+      "currency": "sp"
+    },
+    "description": "Simple melee weapon. 1d6 piercing, Thrown.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "light-hammer",
+    "name": "Light Hammer",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 2,
+      "currency": "gp"
+    },
+    "description": "Simple melee weapon. 1d4 bludgeoning, Light, Thrown.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "mace",
+    "name": "Mace",
+    "category": "weapon",
+    "weight": 4,
+    "cost": {
+      "amount": 5,
+      "currency": "gp"
+    },
+    "description": "Simple melee weapon. 1d6 bludgeoning.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "quarterstaff",
+    "name": "Quarterstaff",
+    "category": "weapon",
+    "weight": 4,
+    "cost": {
+      "amount": 2,
+      "currency": "sp"
+    },
+    "description": "Simple melee weapon. 1d6 bludgeoning, Versatile (1d8).",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "spear",
+    "name": "Spear",
+    "category": "weapon",
+    "weight": 3,
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
+    "description": "Simple melee weapon. 1d6 piercing, Thrown, Versatile (1d8).",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "light-crossbow",
+    "name": "Light Crossbow",
+    "category": "weapon",
+    "weight": 5,
+    "cost": {
+      "amount": 25,
+      "currency": "gp"
+    },
+    "description": "Simple ranged weapon. 1d8 piercing, Loading, Two-Handed.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "shortbow",
+    "name": "Shortbow",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 25,
+      "currency": "gp"
+    },
+    "description": "Simple ranged weapon. 1d6 piercing, Two-Handed.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "battleaxe",
+    "name": "Battleaxe",
+    "category": "weapon",
+    "weight": 4,
+    "cost": {
+      "amount": 10,
+      "currency": "gp"
+    },
+    "description": "Martial melee weapon. 1d8 slashing, Versatile (1d10).",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "greataxe",
+    "name": "Greataxe",
+    "category": "weapon",
+    "weight": 7,
+    "cost": {
+      "amount": 30,
+      "currency": "gp"
+    },
+    "description": "Martial melee weapon. 1d12 slashing, Heavy, Two-Handed.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "greatsword",
+    "name": "Greatsword",
+    "category": "weapon",
+    "weight": 6,
+    "cost": {
+      "amount": 50,
+      "currency": "gp"
+    },
+    "description": "Martial melee weapon. 2d6 slashing, Heavy, Two-Handed.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "warhammer",
+    "name": "Warhammer",
+    "category": "weapon",
+    "weight": 2,
+    "cost": {
+      "amount": 15,
+      "currency": "gp"
+    },
+    "description": "Martial melee weapon. 1d8 bludgeoning, Versatile (1d10).",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "scimitar",
+    "name": "Scimitar",
+    "category": "weapon",
+    "weight": 3,
+    "cost": {
+      "amount": 25,
+      "currency": "gp"
+    },
+    "description": "Martial melee weapon. 1d6 slashing, Finesse, Light.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "heavy-crossbow",
+    "name": "Heavy Crossbow",
+    "category": "weapon",
+    "weight": 18,
+    "cost": {
+      "amount": 50,
+      "currency": "gp"
+    },
+    "description": "Martial ranged weapon. 1d10 piercing, Heavy, Loading, Two-Handed.",
+    "tags": ["weapon"]
+  },
+  {
+    "slug": "padded-armor",
+    "name": "Padded Armor",
+    "category": "armor",
+    "weight": 8,
+    "cost": {
+      "amount": 5,
+      "currency": "gp"
+    },
+    "description": "Light armor. AC 11 + Dex modifier; disadvantage on Stealth.",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "studded-leather-armor",
+    "name": "Studded Leather Armor",
+    "category": "armor",
+    "weight": 13,
+    "cost": {
+      "amount": 45,
+      "currency": "gp"
+    },
+    "description": "Light armor. AC 12 + Dex modifier.",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "hide-armor",
+    "name": "Hide Armor",
+    "category": "armor",
+    "weight": 12,
+    "cost": {
+      "amount": 10,
+      "currency": "gp"
+    },
+    "description": "Medium armor. AC 12 + Dex modifier (max 2).",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "ring-mail",
+    "name": "Ring Mail",
+    "category": "armor",
+    "weight": 40,
+    "cost": {
+      "amount": 30,
+      "currency": "gp"
+    },
+    "description": "Heavy armor. AC 14; disadvantage on Stealth.",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "scale-mail",
+    "name": "Scale Mail",
+    "category": "armor",
+    "weight": 45,
+    "cost": {
+      "amount": 50,
+      "currency": "gp"
+    },
+    "description": "Medium armor. AC 14 + Dex modifier (max 2); disadvantage on Stealth.",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "breastplate",
+    "name": "Breastplate",
+    "category": "armor",
+    "weight": 20,
+    "cost": {
+      "amount": 400,
+      "currency": "gp"
+    },
+    "description": "Medium armor. AC 14 + Dex modifier (max 2).",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "half-plate-armor",
+    "name": "Half Plate Armor",
+    "category": "armor",
+    "weight": 40,
+    "cost": {
+      "amount": 750,
+      "currency": "gp"
+    },
+    "description": "Medium armor. AC 15 + Dex modifier (max 2); disadvantage on Stealth.",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "splint-armor",
+    "name": "Splint Armor",
+    "category": "armor",
+    "weight": 60,
+    "cost": {
+      "amount": 200,
+      "currency": "gp"
+    },
+    "description": "Heavy armor. AC 17; Strength 15 required; disadvantage on Stealth.",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "plate-armor",
+    "name": "Plate Armor",
+    "category": "armor",
+    "weight": 65,
+    "cost": {
+      "amount": 1500,
+      "currency": "gp"
+    },
+    "description": "Heavy armor. AC 18; Strength 15 required; disadvantage on Stealth.",
+    "tags": ["armor"]
+  },
+  {
+    "slug": "crowbar",
+    "name": "Crowbar",
+    "category": "gear",
+    "weight": 5,
+    "cost": {
+      "amount": 2,
+      "currency": "gp"
+    },
+    "description": "Gives leverage for forcing doors and crates open.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "hammer",
+    "name": "Hammer",
+    "category": "gear",
+    "weight": 3,
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
+    "description": "A general-purpose hammer.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "piton",
+    "name": "Piton",
+    "category": "gear",
+    "weight": 0.25,
+    "cost": {
+      "amount": 5,
+      "currency": "cp"
+    },
+    "description": "An iron spike for climbing.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "hooded-lantern",
+    "name": "Lantern, Hooded",
+    "category": "gear",
+    "weight": 2,
+    "cost": {
+      "amount": 5,
+      "currency": "gp"
+    },
+    "description": "Casts bright light in a 30-foot radius; the hood can dim it.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "oil-flask",
+    "name": "Oil (flask)",
+    "category": "gear",
+    "weight": 1,
+    "cost": {
+      "amount": 1,
+      "currency": "sp"
+    },
+    "description": "A flask of lamp oil; can fuel a lantern or be thrown.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "tinderbox",
+    "name": "Tinderbox",
+    "category": "gear",
+    "weight": 1,
+    "cost": {
+      "amount": 5,
+      "currency": "sp"
+    },
+    "description": "Flint, fire steel, and tinder for lighting fires.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "waterskin",
+    "name": "Waterskin",
+    "category": "gear",
+    "weight": 5,
+    "cost": {
+      "amount": 2,
+      "currency": "sp"
+    },
+    "description": "Holds up to 4 pints of liquid.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "mess-kit",
+    "name": "Mess Kit",
+    "category": "gear",
+    "weight": 1,
+    "cost": {
+      "amount": 2,
+      "currency": "sp"
+    },
+    "description": "A tin box with a cup and simple cutlery.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "blanket",
+    "name": "Blanket",
+    "category": "gear",
+    "weight": 3,
+    "cost": {
+      "amount": 5,
+      "currency": "sp"
+    },
+    "description": "A warm wool blanket.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "candle",
+    "name": "Candle",
+    "category": "gear",
+    "weight": 0,
+    "cost": {
+      "amount": 1,
+      "currency": "cp"
+    },
+    "description": "Burns for 1 hour, dim light in a 5-foot radius.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "lock",
+    "name": "Lock",
+    "category": "gear",
+    "weight": 1,
+    "cost": {
+      "amount": 10,
+      "currency": "gp"
+    },
+    "description": "A key lock; opening it without the key takes thieves' tools.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "manacles",
+    "name": "Manacles",
+    "category": "gear",
+    "weight": 6,
+    "cost": {
+      "amount": 2,
+      "currency": "gp"
+    },
+    "description": "Restrain a Small or Medium creature.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "rope-silk-50ft",
+    "name": "Rope, Silk (50 ft)",
+    "category": "gear",
+    "weight": 5,
+    "cost": {
+      "amount": 10,
+      "currency": "gp"
+    },
+    "description": "A strong, light silk rope.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "grappling-hook",
+    "name": "Grappling Hook",
+    "category": "gear",
+    "weight": 4,
+    "cost": {
+      "amount": 2,
+      "currency": "gp"
+    },
+    "description": "A hook that can be thrown to catch on a ledge.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "ladder-10ft",
+    "name": "Ladder (10 ft)",
+    "category": "gear",
+    "weight": 25,
+    "cost": {
+      "amount": 1,
+      "currency": "sp"
+    },
+    "description": "A wooden ladder.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "tent-two-person",
+    "name": "Tent, Two-Person",
+    "category": "gear",
+    "weight": 20,
+    "cost": {
+      "amount": 2,
+      "currency": "gp"
+    },
+    "description": "A simple canvas shelter for two.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "caltrops",
+    "name": "Caltrops",
+    "category": "gear",
+    "weight": 2,
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
+    "description": "A bag of 20 spikes that slow and wound creatures crossing them.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "ball-bearings",
+    "name": "Ball Bearings",
+    "category": "gear",
+    "weight": 2,
+    "cost": {
+      "amount": 1,
+      "currency": "gp"
+    },
+    "description": "A bag of 1,000 tiny metal balls that make an area slippery.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "spyglass",
+    "name": "Spyglass",
+    "category": "gear",
+    "weight": 1,
+    "cost": {
+      "amount": 1000,
+      "currency": "gp"
+    },
+    "description": "Objects viewed through it appear magnified.",
+    "tags": ["gear"]
+  },
+  {
+    "slug": "herbalism-kit",
+    "name": "Herbalism Kit",
+    "category": "tool",
+    "weight": 3,
+    "cost": {
+      "amount": 5,
+      "currency": "gp"
+    },
+    "description": "Pouches and tools for identifying herbs and making potions.",
+    "tags": ["tool"]
+  },
+  {
+    "slug": "disguise-kit",
+    "name": "Disguise Kit",
+    "category": "tool",
+    "weight": 3,
+    "cost": {
+      "amount": 25,
+      "currency": "gp"
+    },
+    "description": "Cosmetics and props for creating disguises.",
+    "tags": ["tool"]
+  },
+  {
+    "slug": "forgery-kit",
+    "name": "Forgery Kit",
+    "category": "tool",
+    "weight": 5,
+    "cost": {
+      "amount": 15,
+      "currency": "gp"
+    },
+    "description": "Papers, inks, and seals for forging documents.",
+    "tags": ["tool"]
+  },
+  {
+    "slug": "navigators-tools",
+    "name": "Navigator's Tools",
+    "category": "tool",
+    "weight": 2,
+    "cost": {
+      "amount": 25,
+      "currency": "gp"
+    },
+    "description": "Instruments for charting a course and fixing a position.",
+    "tags": ["tool"]
+  },
+  {
+    "slug": "smiths-tools",
+    "name": "Smith's Tools",
+    "category": "tool",
+    "weight": 8,
+    "cost": {
+      "amount": 20,
+      "currency": "gp"
+    },
+    "description": "Hammers, tongs, and other tools of a smith.",
+    "tags": ["tool"]
+  },
+  {
+    "slug": "tinkers-tools",
+    "name": "Tinker's Tools",
+    "category": "tool",
+    "weight": 10,
+    "cost": {
+      "amount": 50,
+      "currency": "gp"
+    },
+    "description": "Small tools for repairing and building gadgets.",
+    "tags": ["tool"]
+  },
+  {
+    "slug": "dice-set",
+    "name": "Dice Set",
+    "category": "tool",
+    "weight": 0,
+    "cost": {
+      "amount": 1,
+      "currency": "sp"
+    },
+    "description": "A set of gaming dice.",
+    "tags": ["tool"]
+  },
+  {
+    "slug": "lute",
+    "name": "Lute",
+    "category": "tool",
+    "weight": 2,
+    "cost": {
+      "amount": 35,
+      "currency": "gp"
+    },
+    "description": "A stringed musical instrument.",
+    "tags": ["tool"]
   }
 ]
