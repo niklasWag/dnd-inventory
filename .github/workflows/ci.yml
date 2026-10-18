@@ -51,6 +51,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Real PHB/DMG seed files are gitignored (private use only). Use the
+      # shape examples so the loader imports resolve.
+      - name: Stage example seed data
+        working-directory: packages/seeds/data
+        run: |
+          cp examples/phb-2024-mundane.example.json phb-2024-mundane.json
+          cp examples/dmg-2024.example.json dmg-2024.json
+
       - name: Generate Prisma client + apply migrations
         run: |
           pnpm --filter ./apps/server exec prisma generate
