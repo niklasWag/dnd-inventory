@@ -22,7 +22,7 @@
     "@app/rules": "workspace:*",
     "@app/seeds": "workspace:*",
     "@app/shared": "workspace:*",
-    "@auth/core": "^0.34.3",
+    "@auth/core": "^0.41.3",
     "@auth/prisma-adapter": "^2.11.2",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.0.1",
